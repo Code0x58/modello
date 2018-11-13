@@ -1,0 +1,48 @@
+# TODO: fill out with access related testing - maybe have in examples instead
+from modello import BoundInstanceDummy, InstanceDummy, Modello
+from sympy import simplify
+
+import pytest
+
+
+@pytest.fixture
+def example_class():
+    class ExampleClass(Modello):
+        thing = InstanceDummy("thing")
+
+    return ExampleClass
+
+
+def test_no_constraints():
+    """A model with no constraints just has dummy attributes."""
+    class ExampleClass(Modello):
+        thing = InstanceDummy("thing")
+
+    instance = ExampleClass("Example")
+    assert isinstance(instance.thing, BoundInstanceDummy)
+
+    instance = ExampleClass("Example", thing=1)
+    expected = simplify(1)
+    assert isinstance(instance.thing, type(expected))
+    assert instance.thing == expected
+
+
+def test_multiple_inheritance_expr_conflict():
+    """Overridded modello attributes are replaced with new values."""
+    class ExampleA(Modello):
+        conflicted = InstanceDummy("conflicted")
+        a = conflicted
+
+    class ExampleB(Modello):
+        conflicted = InstanceDummy("conflicted")
+        b = conflicted
+
+    class ExampleC(ExampleA, ExampleB):
+        pass
+
+    instance = ExampleC("Example")
+    assert instance.a == instance.b  # dummy is different by value is the same
+    assert instance.a == instance.conflicted
+
+    assert ExampleC.conflicted == ExampleB.conflicted
+    assert ExampleC.conflicted != ExampleA.conflicted
