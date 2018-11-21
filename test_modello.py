@@ -1,16 +1,6 @@
-# TODO: fill out with access related testing - maybe have in examples instead
+"""Functional tests for Modello instances."""
 from modello import BoundInstanceDummy, InstanceDummy, Modello
 from sympy import simplify
-
-import pytest
-
-
-@pytest.fixture
-def example_class():
-    class ExampleClass(Modello):
-        thing = InstanceDummy("thing")
-
-    return ExampleClass
 
 
 def test_no_constraints():

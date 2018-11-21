@@ -1,5 +1,7 @@
 #!/usr/bin/env python
+"""Module for symbolic modelling of systems."""
 import typing
+
 from sympy import Basic, Dummy, Eq, simplify, solve
 
 
@@ -11,6 +13,7 @@ class InstanceDummy(Dummy):
     """Dummy which will create a bound bummy on Modello instantiation."""
 
     def bound(self, model_name: str) -> "BoundInstanceDummy":
+        """Return an dummy bound to a modello instance."""
         return BoundInstanceDummy(model_name + "_" + self.name, **self.assumptions0)
 
 #    # for debugging
@@ -82,6 +85,7 @@ class ModelloMeta(type):
         return ModelloMetaNamespace(name, bases)
 
     def __new__(mcs, name: str, bases: typing.Tuple[type, ...], meta_namespace: ModelloMetaNamespace) -> type:
+        """Return a new class with modello attributes."""
         namespace = dict(meta_namespace)
         # could follow django's model of _meta? conflicts?
         namespace["_modello_namespace"] = meta_namespace
@@ -95,6 +99,7 @@ class ModelloMeta(type):
 
 class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
     """Base class for building symbolic models."""
+
     _modello_namespace: typing.ClassVar[ModelloMetaNamespace] = ModelloMetaNamespace("", [])
     _modello_class_constraints: typing.Dict[InstanceDummy, Basic] = {}
 

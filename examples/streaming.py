@@ -1,11 +1,11 @@
+"""Symbolic models for a system which contains units which have inputs and outputs."""
 from modello import InstanceDummy, Modello
 from sympy import Rational
 
 
 class ScalableFlow(Modello):
     """
-    Model for something that has input and output, which can be scaled and has
-    associated costs.
+    Something that has input and output, which can be scaled and has associated costs.
 
     Input and output are assumed to be something like frequency (Hz)
 
@@ -17,6 +17,7 @@ class ScalableFlow(Modello):
     >>> sde.unit_cost, sde.cost
     (_flow_unit_cost, _flow_unit_cost)
     """
+
     # latency calculations could also be included
     input = InstanceDummy("input", positive=True, rational=True)
     unit_output = InstanceDummy("unit_output", positive=True, rational=True)
@@ -34,6 +35,7 @@ class SingleDataEntryFlow(ScalableFlow):
     >>> sde.output
     520/1533
     """
+
     entry_time = InstanceDummy("entry_time", positive=True, rational=True)
     unit_output = Rational(8 * 260, 24 * 365) / entry_time
 
@@ -48,6 +50,7 @@ class DoubleDataEntryFlow(ScalableFlow):
     >>> dde.unit_output
     26/(219*_DDE_entry_time)
     """
+
     entry_time = InstanceDummy("entry_time", positive=True, rational=True)
     conflict_rate = InstanceDummy("resolution_rate", positive=True, rational=True)
     resolution_time = InstanceDummy("resolution_time", positive=True, rational=True)
