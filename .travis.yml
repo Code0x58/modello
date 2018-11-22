@@ -1,12 +1,7 @@
 language: python
 dist: trusty
 python:
-  - "3.3"
-  - "3.4"
-  - "3.5"
   - "3.6"
-  - "3.7-dev"
-  - "pypy3"
 script:
   - mkdir ci-reports
   - python setup.py test
