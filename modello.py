@@ -29,6 +29,7 @@ class ModelloMetaNamespace(dict):
     """This is so that Modello class definitions implicitly define symbols."""
 
     def __init__(self, name: str, bases: typing.List[type]) -> None:
+        """Create a namespace for a Modello class to use."""
         self.name = name
         self.attrs: typing.Dict[str, Basic] = {}
         self.dummies: typing.Dict[str, Dummy] = {}
@@ -59,6 +60,7 @@ class ModelloMetaNamespace(dict):
                     self.attrs[attr] = value.subs(self.dummy_overrides)
 
     def __setitem__(self, key: str, value: object) -> None:
+        """Manage modello attributes as values are assigned."""
         if isinstance(value, Basic):
             if key in self:
                 dummy = self.dummies[key]
@@ -82,6 +84,7 @@ class ModelloMeta(type):
 
     @classmethod
     def __prepare__(mcs, name: str, bases: typing.List[type]) -> ModelloMetaNamespace:
+        """Return a ModelloMetaNamespace instead of a plain dict to accumlate attributes on."""
         return ModelloMetaNamespace(name, bases)
 
     def __new__(mcs, name: str, bases: typing.Tuple[type, ...], meta_namespace: ModelloMetaNamespace) -> type:
@@ -104,6 +107,7 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
     _modello_class_constraints: typing.Dict[InstanceDummy, Basic] = {}
 
     def __init__(self, name: str, **value_map: typing.Dict[str, Basic]) -> None:
+        """Initialise a model instance and solve for each attribute."""
         instance_dummies = {
             class_dummy: class_dummy.bound(name)
             for class_dummy in self._modello_namespace.dummies.values()
