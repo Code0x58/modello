@@ -48,3 +48,4 @@ Run the tests and linting with `python setup.py test`.
  * think about extending the functionality to allow for a more complete system of constraints, use the RightAngleTriangle example as a base
  * work out patterns for labels/names on symbols so they render nicely
  * for mypy, consider getting value from or removing it
+ * implement a first attempt at nested models (named, rather than lists, which would be nice)
