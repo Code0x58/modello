@@ -1,6 +1,3 @@
-ci-reports/
+artefacts/
 .eggs/
-.ipynb_checkpoints/
-*.swp
-**/__pycache__/
 *.egg-info/
