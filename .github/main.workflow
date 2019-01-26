@@ -4,7 +4,7 @@ workflow "Publish on push to master" {
 }
 
 action "Test" {
-  uses = "docker://python:3.7-slim"
+  uses = "./.github/actions/test/"
   args = "python setup.py test"
 }
 
