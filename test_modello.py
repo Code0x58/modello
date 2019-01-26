@@ -18,7 +18,7 @@ def test_no_constraints():
 
 
 def test_multiple_inheritance_expr_conflict():
-    """Overridded modello attributes are replaced with new values."""
+    """Overrided modello attributes are replaced with new values."""
     class ExampleA(Modello):
         conflicted = InstanceDummy("conflicted")
         a = conflicted
@@ -31,7 +31,7 @@ def test_multiple_inheritance_expr_conflict():
         pass
 
     instance = ExampleC("Example")
-    assert instance.a == instance.b  # dummy is different by value is the same
+    assert instance.a == instance.b  # dummy is different but value is the same
     assert instance.a == instance.conflicted
 
     assert ExampleC.conflicted == ExampleB.conflicted
