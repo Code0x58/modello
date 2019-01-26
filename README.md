@@ -1,5 +1,3 @@
-[![Build Status](https://travis-ci.org/Code0x58/modello.svg?branch=master)](https://travis-ci.org/Code0x58/modello)
-
 # Modello
 This project aims to explore symbolic modelling with object orientated programming. The heavy lifting is done by the [sympy](https://www.sympy.org/en/index.html) library. This module just provides a class to derive models from.
 
