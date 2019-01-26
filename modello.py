@@ -28,7 +28,7 @@ class BoundInstanceDummy(InstanceDummy):
 class ModelloMetaNamespace(dict):
     """This is so that Modello class definitions implicitly define symbols."""
 
-    def __init__(self, name: str, bases: typing.List[type]) -> None:
+    def __init__(self, name: str, bases: typing.Tuple[type, ...]) -> None:
         """Create a namespace for a Modello class to use."""
         self.name = name
         self.attrs: typing.Dict[str, Basic] = {}
@@ -83,9 +83,12 @@ class ModelloMeta(type):
     """Used to make Modello class definitions use dummies."""
 
     @classmethod
-    def __prepare__(mcs, name: str, bases: typing.List[type]) -> ModelloMetaNamespace:
+    def __prepare__(metacls,
+                    __name: str,
+                    __bases: typing.Tuple[type, ...],
+                    **kwds: typing.Any) -> typing.Mapping[str, typing.Any]:
         """Return a ModelloMetaNamespace instead of a plain dict to accumlate attributes on."""
-        return ModelloMetaNamespace(name, bases)
+        return ModelloMetaNamespace(__name, __bases)
 
     def __new__(mcs, name: str, bases: typing.Tuple[type, ...], meta_namespace: ModelloMetaNamespace) -> type:
         """Return a new class with modello attributes."""
@@ -103,7 +106,7 @@ class ModelloMeta(type):
 class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
     """Base class for building symbolic models."""
 
-    _modello_namespace: typing.ClassVar[ModelloMetaNamespace] = ModelloMetaNamespace("", [])
+    _modello_namespace: typing.ClassVar[ModelloMetaNamespace] = ModelloMetaNamespace("", ())
     _modello_class_constraints: typing.Dict[InstanceDummy, Basic] = {}
 
     def __init__(self, name: str, **value_map: typing.Dict[str, Basic]) -> None:
