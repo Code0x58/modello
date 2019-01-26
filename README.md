@@ -38,11 +38,10 @@ Currently this requires Python 3.6+ but the version requirements can drop a coup
 
 
 ## Development
-Run the tests and linting with `python setup.py test`.
+Run the tests and linting with `python setup.py test`. Pushes have the test suite run against them, and will also publish a release if tagged thanks to GitHub Actions. You can reproduce the Actions locally using [act](https://github.com/nektos/act).
 
 ## TODO:
  * elaborate on tests/examples
- * build wheel and source distrobutions and publish
  * think about extending the functionality to allow for a more complete system of constraints, use the RightAngleTriangle example as a base
  * work out patterns for labels/names on symbols so they render nicely
  * for mypy, consider getting value from or removing it
