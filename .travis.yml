@@ -3,5 +3,5 @@ dist: trusty
 python:
   - "3.6"
 script:
-  - mkdir ci-reports
+  - mkdir artefacts/reports
   - python setup.py test
