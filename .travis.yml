@@ -1,7 +1,0 @@
-language: python
-dist: trusty
-python:
-  - "3.6"
-script:
-  - mkdir artefacts/reports
-  - python setup.py test
