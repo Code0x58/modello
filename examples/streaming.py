@@ -81,7 +81,7 @@ def test_scaling_system():
     a2↗
 
     """
-    # imagining the input is in Hz, unit output is in Hz, and unit cost is in $imoleons
+    # imagining the input is in Hz, unit output is in Hz, and unit cost is in $imoleon Hz
     a1 = ScalableFlow("a1", input=100, unit_cost=2, unit_output=1, fulfilment=1)
     a2 = ScalableFlow("a2", input=150, unit_cost=3, unit_output=1, fulfilment=1)
     b1 = ScalableFlow("b1", input=a1.output + a2.output, unit_cost=5, unit_output=1, fulfilment=1)
