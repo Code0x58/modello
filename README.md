@@ -25,8 +25,14 @@ The functionality is covered by tests in both `test_modello.py` and doctests+tes
 
 
 ## Installation
-Until a pypi release is made, this can be installed using one of:
+This can be installed using one of:
 ```sh
+# using pipenv
+pipenv install modello
+
+# using pip
+pip install --user modello
+
 # using git+pipenv
 pipenv install git+https://github.com/Code0x58/modello.git#egg=modello
 
@@ -38,7 +44,7 @@ Currently this requires Python 3.6+ but the version requirements can drop a coup
 
 
 ## Development
-Run the tests and linting with `python setup.py test`. Pushes have the test suite run against them, and will also publish a release if tagged thanks to GitHub Actions. You can reproduce the Actions locally using [act](https://github.com/nektos/act).
+Run the tests and linting with `python setup.py test`. Pushes have the test suite run against them, and will also publish a release if tagged thanks to GitHub Actions. You can reproduce the Actions locally using [act](https://github.com/nektos/act), e.g. `TWINE_USERNAME= TWINE_PASSWORD= act`.
 
 ## TODO:
  * elaborate on tests/examples
