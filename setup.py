@@ -24,6 +24,7 @@ setup(
     use_scm_version=True,
     install_requires=["sympy"],
     long_description=long_description,
+    long_description_content_type="text/markdown",
     description="sympy expressions in models",
     setup_requires=["setuptools_scm", "wheel", "pytest-runner"],
     tests_require=TEST_REQUIRES,
