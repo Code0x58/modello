@@ -26,6 +26,7 @@ class ScalableFlow(Modello):
     cost = unit_cost * ceiling(scale)
     output = unit_output * scale
     fulfilment = output / input
+    utilization = output / (ceiling(scale) * unit_output)
 
 
 class SingleDataEntryFlow(ScalableFlow):
@@ -93,3 +94,5 @@ def test_scaling_system():
     # cost is 1*2 + 2*3 + 3*5 + 3*7 + 3*11 = 77
     # without integer scaling cost is 1*2 + 1.5*3 + 2.5*5 + 2.5*7 + 2.5*11 = 64
     assert complete_fulfilment_cost == 77
+    assert a1.utilization == 1
+    assert a2.utilization == Rational(3, 4)
