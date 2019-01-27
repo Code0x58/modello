@@ -1,6 +1,7 @@
 """Script for testing and packaging this library."""
 import codecs
 import os
+from textwrap import dedent
 
 from setuptools import setup
 
@@ -31,4 +32,15 @@ setup(
     extras_require={"test": TEST_REQUIRES},
     py_modules=["modello"],
     python_requires=">=3.3",
+    license="MIT",
+    classifiers=dedent("""
+        Development Status :: 4 - Beta
+        Intended Audience :: Developers
+        Intended Audience :: Science/Research
+        License :: OSI Approved :: MIT License
+        Operating System :: OS Independent
+        Programming Language :: Python :: 3
+    """).strip().split('\n'),
+    keywords="symbolic modeling",
+    url="https://github.com/Code0x58/modello/",
 )

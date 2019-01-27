@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Module for symbolic modelling of systems."""
+"""Module for symbolic modeling of systems."""
 import typing
 
 from sympy import Basic, Dummy, Eq, simplify, solve

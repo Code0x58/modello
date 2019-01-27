@@ -1,5 +1,5 @@
 # Modello
-This project aims to explore symbolic modelling with object orientated programming. The heavy lifting is done by the [sympy](https://www.sympy.org/en/index.html) library. This module just provides a class to derive models from.
+This project aims to explore symbolic modeling with object orientated programming. The heavy lifting is done by the [sympy](https://www.sympy.org/en/index.html) library. This module just provides a class to derive models from.
 
 An example based on `examples/geometry.py`:
 ```python
