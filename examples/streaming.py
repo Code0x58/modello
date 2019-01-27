@@ -1,6 +1,6 @@
 """Symbolic models for a system which contains units which have inputs and outputs."""
 from modello import InstanceDummy, Modello
-from sympy import Rational
+from sympy import Rational, ceiling
 
 
 class ScalableFlow(Modello):
@@ -23,7 +23,7 @@ class ScalableFlow(Modello):
     unit_output = InstanceDummy("unit_output", positive=True, rational=True)
     unit_cost = InstanceDummy("unit_cost", positive=True, rational=True)
     scale = InstanceDummy("scale", positive=True, rational=True)
-    cost = unit_cost * scale
+    cost = unit_cost * ceiling(scale)
     output = unit_output * scale
     fulfilment = output / input
 
@@ -82,13 +82,14 @@ def test_scaling_system():
 
     """
     # imagining the input is in Hz, unit output is in Hz, and unit cost is in $imoleon Hz
-    a1 = ScalableFlow("a1", input=100, unit_cost=2, unit_output=1, fulfilment=1)
-    a2 = ScalableFlow("a2", input=150, unit_cost=3, unit_output=1, fulfilment=1)
-    b1 = ScalableFlow("b1", input=a1.output + a2.output, unit_cost=5, unit_output=1, fulfilment=1)
-    c1 = DoubleDataEntryFlow("c1", input=b1.output, unit_cost=7, unit_output=1, fulfilment=1)
-    d1 = ScalableFlow("d1", input=c1.output, unit_cost=11, unit_output=1, fulfilment=1)
+    a1 = ScalableFlow("a1", input=100, unit_cost=2, unit_output=100, fulfilment=1)
+    a2 = ScalableFlow("a2", input=150, unit_cost=3, unit_output=100, fulfilment=1)
+    b1 = ScalableFlow("b1", input=a1.output + a2.output, unit_cost=5, unit_output=100, fulfilment=1)
+    c1 = DoubleDataEntryFlow("c1", input=b1.output, unit_cost=7, unit_output=100, fulfilment=1)
+    d1 = ScalableFlow("d1", input=c1.output, unit_cost=11, unit_output=100, fulfilment=1)
 
     verticies = (a1, a2, b1, c1, d1)
     complete_fulfilment_cost = sum(map((lambda v: v.cost), verticies))
-    # 100*2 + 150*3 + 250 * 5 + 250 * 7 + 250 * 11 = 6400
-    assert complete_fulfilment_cost == 6400
+    # cost is 1*2 + 2*3 + 3*5 + 3*7 + 3*11 = 77
+    # without integer scaling cost is 1*2 + 1.5*3 + 2.5*5 + 2.5*7 + 2.5*11 = 64
+    assert complete_fulfilment_cost == 77
