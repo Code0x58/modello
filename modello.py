@@ -31,11 +31,16 @@ class ModelloMetaNamespace(dict):
     def __init__(self, name: str, bases: typing.Tuple[type, ...]) -> None:
         """Create a namespace for a Modello class to use."""
         self.name = name
+        # map of attributes to sympy Basic (e.g expression, value) objects
         self.attrs: typing.Dict[str, Basic] = {}
+        # map of attributes to InstanceDummy instances - metadata used by derived classes
         self.dummies: typing.Dict[str, Dummy] = {}
+        # map of attributes to non-modello managed objects
         self.other_attrs: typing.Dict[str, object] = {}
+        # map of dummies to dummies that override them - metadata used by derived classes
         self.dummy_overrides: typing.Dict[Dummy, Dummy] = {}
 
+        # build up the attributes from the base classes
         for base in bases:
             if ModelloSentinelClass not in base.mro():
                 continue
@@ -44,6 +49,7 @@ class ModelloMetaNamespace(dict):
             #  http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.19.3910&rep=rep1&type=pdf
 
             if parent_namespace:
+                # find which dummies are overridden by this base modello
                 for attr in self.dummies.keys() & parent_namespace.dummies.keys():
                     override_dummy = parent_namespace.dummies[attr]
                     base_dummy = self.dummies[attr]
@@ -54,7 +60,7 @@ class ModelloMetaNamespace(dict):
                 self.dummies.update(parent_namespace.dummies)
                 self.other_attrs.update(parent_namespace.other_attrs)
                 self.update(parent_namespace)
-
+            # substitute overridden dummies in the attributes
             if self.dummy_overrides:
                 for attr, value in self.attrs.items():
                     self.attrs[attr] = value.subs(self.dummy_overrides)
