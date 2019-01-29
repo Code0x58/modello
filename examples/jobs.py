@@ -95,7 +95,7 @@ class Job(Modello):
 
     This assumes all the values are yearly.
 
-    >>> job = Job("job", salary=32000, hours=253*8)
+    >>> job = Job("job", salary=32000, hours=253*8, expenses=0)
     >>> job.hourly_income.evalf(4)
     11.37
     >>> job.employer_expense.evalf(7)
@@ -104,6 +104,7 @@ class Job(Modello):
 
     salary = InstanceDummy("salery", rational=True, positive=True)
     hours = InstanceDummy("hours", rational=True, positive=True)
-    income = salary - IncomeTaxFunction(salary) - NationalInsuranceFunction(salary)
+    expenses = InstanceDummy("expenses")
+    income = salary - IncomeTaxFunction(salary) - NationalInsuranceFunction(salary) - expenses
     hourly_income = income / hours
     employer_expense = salary + EmployerNationalInsuranceFunction(salary)
