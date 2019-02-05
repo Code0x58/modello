@@ -73,8 +73,9 @@ def generate_piecewise_function(brackets):
     for i, (limit, tax) in enumerate(brackets[1:]):
         # add the increase in tax for each limit
         result += Heaviside(gross - limit, 0) * (tax - brackets[i][1]) * (gross - limit)
-    # Solvers aren't implemented for the Heaviside function, so convert to piecewise and factor out
-    piecewise = result.rewrite(Piecewise).replace(Heaviside(0), 0)
+    # Solvers aren't implemented for the Heaviside function, so convert to piecewise
+    # FIXME: apply appropriate constraints. If gross_income is positive the expression is positive
+    piecewise = result.rewrite(Piecewise)
 
     class F(Function):
         @classmethod
