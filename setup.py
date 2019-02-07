@@ -16,6 +16,7 @@ TEST_REQUIRES = [
     "pytest-cov>=2.6.1",
     "pytest-flake8",
     "pytest-mypy",
+    "pytest-pudb",
     "pytest>=4.1",
 ]
 setup(
