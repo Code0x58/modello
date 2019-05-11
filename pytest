@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+:<<"DOC"
+Wrapper script for pytest which uses pytest-runner. This lets you avoid running all tests at once as would happen with `python setup.py test`.
+
+This depends on the requirements being explicitly state in setup.py and not imported/loaded from elsewhere.
+
+DOC
+set -o pipefail -o errexit -o nounset
+
+here="$(dirname "$(readlink -f "$0")")"
+cd "$here"
+
+
+# download packages if they aren't ready, or if they might have changed
+if ! [[ -d ".eggs/" ]] || [[ setup.py -nt ".eggs/$(ls -tr .eggs/ | tail -n1)" ]]; then
+    # make sure eggs are installed
+    echo "Downloading required packages"
+    rm -fr ".eggs/"
+    python setup.py pytest --dry-run
+fi
+
+PYTHONPATH="$(echo .eggs/*.egg|tr ' ' ':')" exec python3 -m pytest "$@"

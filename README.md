@@ -46,9 +46,9 @@ Currently this requires Python 3.6+ but the version requirements can drop a coup
 ## Development
 Run the tests and linting with `python setup.py test`. Pushes have the test suite run against them, and will also publish a release if tagged thanks to GitHub Actions. You can reproduce the Actions locally using [act](https://github.com/nektos/act), e.g. `TWINE_USERNAME= TWINE_PASSWORD= act`.
 
-`setup.py` manages the installation of dependancies into `./.eggs/`, so after running all the tests once, you can use pytest to run individual tests with whatever parameters you want by using something like this:
+You can run all the tests with `python setup.py test`. If you want to run a subset of tests or otherwise pass arguments to pytest, use `./pytest …` e.g.:
 ```sh
-PYTHONPATH="$(echo .eggs/*.egg|tr ' ' ':')" python -m pytest examples/jobs.py::jobs.Job
+./pytest examples/jobs.py::jobs.Job
 ```
 
 ## TODO:
