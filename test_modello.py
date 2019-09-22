@@ -5,6 +5,7 @@ from sympy import simplify
 
 def test_no_constraints():
     """A model with no constraints just has dummy attributes."""
+
     class ExampleClass(Modello):
         thing = InstanceDummy("thing")
 
@@ -19,6 +20,7 @@ def test_no_constraints():
 
 def test_multiple_inheritance_expr_conflict():
     """Overrided modello attributes are replaced with new values."""
+
     class ExampleA(Modello):
         conflicted = InstanceDummy("conflicted")
         a = conflicted

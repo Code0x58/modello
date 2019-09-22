@@ -11,6 +11,7 @@ with codecs.open(os.path.join(here, "README.md"), encoding="utf-8") as f:
     long_description = f.read()
 
 TEST_REQUIRES = [
+    "flake8-black",
     "flake8-docstrings",
     "flake8-isort",
     "pytest-cov>=2.6.1",
@@ -34,14 +35,18 @@ setup(
     py_modules=["modello"],
     python_requires=">=3.3",
     license="MIT",
-    classifiers=dedent("""
+    classifiers=dedent(
+        """
         Development Status :: 4 - Beta
         Intended Audience :: Developers
         Intended Audience :: Science/Research
         License :: OSI Approved :: MIT License
         Operating System :: OS Independent
         Programming Language :: Python :: 3
-    """).strip().split('\n'),
+    """
+    )
+    .strip()
+    .split("\n"),
     keywords="symbolic modeling",
     url="https://github.com/Code0x58/modello/",
 )

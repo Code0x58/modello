@@ -13,8 +13,18 @@ def generate_piecewise_income_tax(year=YEAR):
     # XXX: this omits the income limit for personal allowance. A fix for this could be to add an additional
     #  bracket from £100,000 to £125,000 (for 2019)
     year_band_brackets = {
-        2018: ((-oo, 0), (11850, Rational(1, 5)), (46350, Rational(2, 5)), (150000, Rational(9, 20))),
-        2019: ((-oo, 0), (12500, Rational(1, 5)), (37500, Rational(2, 5)), (150000, Rational(9, 20))),
+        2018: (
+            (-oo, 0),
+            (11850, Rational(1, 5)),
+            (46350, Rational(2, 5)),
+            (150000, Rational(9, 20)),
+        ),
+        2019: (
+            (-oo, 0),
+            (12500, Rational(1, 5)),
+            (37500, Rational(2, 5)),
+            (150000, Rational(9, 20)),
+        ),
     }
     return generate_piecewise_function(year_band_brackets[year])
 
@@ -24,23 +34,55 @@ def generate_piecewise_national_insurance(year=YEAR, band="A"):
     # 2018-2019 UK band A NI
     year_band_brackets = {
         2018: {
-            "A": ((-oo, 0), (702 * 12, Rational(12, 100)), (3863 * 12, Rational(2, 100))),
-            "B": ((-oo, 0), (702 * 12, Rational(585, 100)), (3863 * 12, Rational(2, 100))),
+            "A": (
+                (-oo, 0),
+                (702 * 12, Rational(12, 100)),
+                (3863 * 12, Rational(2, 100)),
+            ),
+            "B": (
+                (-oo, 0),
+                (702 * 12, Rational(585, 100)),
+                (3863 * 12, Rational(2, 100)),
+            ),
             "C": ((-oo, 0),),
-            "H": ((-oo, 0), (702 * 12, Rational(12, 100)), (3863 * 12, Rational(2, 100))),
+            "H": (
+                (-oo, 0),
+                (702 * 12, Rational(12, 100)),
+                (3863 * 12, Rational(2, 100)),
+            ),
             "J": ((-oo, 0), (702 * 12, Rational(2, 100))),
-            "M": ((-oo, 0), (702 * 12, Rational(12, 100)), (3863 * 12, Rational(2, 100))),
+            "M": (
+                (-oo, 0),
+                (702 * 12, Rational(12, 100)),
+                (3863 * 12, Rational(2, 100)),
+            ),
             "Z": ((-oo, 0), (702 * 12, Rational(2, 100))),
         },
         2019: {
-            "A": ((-oo, 0), (719 * 12, Rational(12, 100)), (4167 * 12, Rational(2, 100))),
-            "B": ((-oo, 0), (219 * 12, Rational(585, 100)), (4167 * 12, Rational(2, 100))),
+            "A": (
+                (-oo, 0),
+                (719 * 12, Rational(12, 100)),
+                (4167 * 12, Rational(2, 100)),
+            ),
+            "B": (
+                (-oo, 0),
+                (219 * 12, Rational(585, 100)),
+                (4167 * 12, Rational(2, 100)),
+            ),
             "C": ((-oo, 0),),
-            "H": ((-oo, 0), (719 * 12, Rational(12, 100)), (4167 * 12, Rational(2, 100))),
+            "H": (
+                (-oo, 0),
+                (719 * 12, Rational(12, 100)),
+                (4167 * 12, Rational(2, 100)),
+            ),
             "J": ((-oo, 0), (719 * 12, Rational(2, 100))),
-            "M": ((-oo, 0), (719 * 12, Rational(12, 100)), (4167 * 12, Rational(2, 100))),
+            "M": (
+                (-oo, 0),
+                (719 * 12, Rational(12, 100)),
+                (4167 * 12, Rational(2, 100)),
+            ),
             "Z": ((-oo, 0), (719 * 12, Rational(2, 100))),
-        }
+        },
     }
     return generate_piecewise_function(year_band_brackets[year][band])
 
@@ -66,7 +108,7 @@ def generate_piecewise_employer_national_insurance(year=YEAR, band="A"):
             "J": ((-oo, 0), (719 * 12, Rational(138, 1000))),
             "M": ((-oo, 0), (4167 * 12, Rational(138, 1000))),
             "Z": ((-oo, 0), (4167 * 12, Rational(138, 1000))),
-        }
+        },
     }
     return generate_piecewise_function(year_band_brackets[year][band])
 
@@ -128,6 +170,11 @@ class Job(Modello):
     salary = InstanceDummy("salery", rational=True, positive=True)
     hours = InstanceDummy("hours", rational=True, positive=True)
     expenses = InstanceDummy("expenses")
-    income = salary - IncomeTaxFunction(salary) - NationalInsuranceFunction(salary) - expenses
+    income = (
+        salary
+        - IncomeTaxFunction(salary)
+        - NationalInsuranceFunction(salary)
+        - expenses
+    )
     hourly_income = income / hours
     employer_expense = salary + EmployerNationalInsuranceFunction(salary)

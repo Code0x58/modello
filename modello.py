@@ -16,6 +16,7 @@ class InstanceDummy(Dummy):
         """Return an dummy bound to a modello instance."""
         return BoundInstanceDummy(model_name + "_" + self.name, **self.assumptions0)
 
+
 #    # for debugging
 #    def _sympystr(self, printer):
 #        return "%s[%s]" % (self.name, self.dummy_index)
@@ -79,7 +80,9 @@ class ModelloMetaNamespace(dict):
             value = dummy
         elif key in self.attrs:
             # cannot overried a part of inherited expressions with a non-expression
-            raise ValueError("Cannot assign %s.%s to a non-expression" % (self.name, key))
+            raise ValueError(
+                "Cannot assign %s.%s to a non-expression" % (self.name, key)
+            )
         else:
             self.other_attrs[key] = value
         super().__setitem__(key, value)
@@ -89,14 +92,18 @@ class ModelloMeta(type):
     """Used to make Modello class definitions use dummies."""
 
     @classmethod
-    def __prepare__(metacls,
-                    __name: str,
-                    __bases: typing.Tuple[type, ...],
-                    **kwds: typing.Any) -> typing.Mapping[str, typing.Any]:
+    def __prepare__(
+        metacls, __name: str, __bases: typing.Tuple[type, ...], **kwds: typing.Any
+    ) -> typing.Mapping[str, typing.Any]:
         """Return a ModelloMetaNamespace instead of a plain dict to accumlate attributes on."""
         return ModelloMetaNamespace(__name, __bases)
 
-    def __new__(mcs, name: str, bases: typing.Tuple[type, ...], meta_namespace: ModelloMetaNamespace) -> type:
+    def __new__(
+        mcs,
+        name: str,
+        bases: typing.Tuple[type, ...],
+        meta_namespace: ModelloMetaNamespace,
+    ) -> type:
         """Return a new class with modello attributes."""
         namespace = dict(meta_namespace)
         # could follow django's model of _meta? conflicts?
@@ -112,7 +119,9 @@ class ModelloMeta(type):
 class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
     """Base class for building symbolic models."""
 
-    _modello_namespace: typing.ClassVar[ModelloMetaNamespace] = ModelloMetaNamespace("", ())
+    _modello_namespace: typing.ClassVar[ModelloMetaNamespace] = ModelloMetaNamespace(
+        "", ()
+    )
     _modello_class_constraints: typing.Dict[InstanceDummy, Basic] = {}
 
     def __init__(self, name: str, **value_map: typing.Dict[str, Basic]) -> None:
@@ -130,7 +139,9 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
             class_dummy = getattr(self, attr)
             instance_dummy = instance_dummies[class_dummy]
             instance_constraints[instance_dummy] = value
-        self._modello_instance_constraints: typing.Dict[BoundInstanceDummy, Basic] = instance_constraints
+        self._modello_instance_constraints: typing.Dict[
+            BoundInstanceDummy, Basic
+        ] = instance_constraints
 
         constraints = [
             Eq(instance_dummies[class_dummy], value.subs(instance_dummies))
@@ -158,7 +169,9 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
             elif instance_dummy in instance_constraints:
                 value = instance_constraints[instance_dummy]
             elif class_dummy in self._modello_class_constraints:
-                value = self._modello_class_constraints[class_dummy].subs(instance_dummies)
+                value = self._modello_class_constraints[class_dummy].subs(
+                    instance_dummies
+                )
             else:
                 value = instance_dummy
             setattr(self, attr, value)

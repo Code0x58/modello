@@ -17,4 +17,4 @@ class RightAngleTriangle(Modello):
 
     a = InstanceDummy("a", real=True, positive=True)
     b = InstanceDummy("b", real=True, positive=True)
-    c = sqrt(a**2 + b**2)
+    c = sqrt(a ** 2 + b ** 2)

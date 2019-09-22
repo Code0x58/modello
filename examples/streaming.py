@@ -61,10 +61,7 @@ class DoubleDataEntryFlow(ScalableFlow):
 
 def test_simple_system():
     """The wheels on the bus go round and round."""
-    channel_input_rates = {
-        "foo": 12,
-        "bar": 3,
-    }
+    channel_input_rates = {"foo": 12, "bar": 3}
     sde = SingleDataEntryFlow(
         "SDE",
         input=sum(channel_input_rates.values()),
@@ -85,9 +82,15 @@ def test_scaling_system():
     # imagining the input is in Hz, unit output is in Hz, and unit cost is in $imoleon Hz
     a1 = ScalableFlow("a1", input=100, unit_cost=2, unit_output=100, fulfilment=1)
     a2 = ScalableFlow("a2", input=150, unit_cost=3, unit_output=100, fulfilment=1)
-    b1 = ScalableFlow("b1", input=a1.output + a2.output, unit_cost=5, unit_output=100, fulfilment=1)
-    c1 = DoubleDataEntryFlow("c1", input=b1.output, unit_cost=7, unit_output=100, fulfilment=1)
-    d1 = ScalableFlow("d1", input=c1.output, unit_cost=11, unit_output=100, fulfilment=1)
+    b1 = ScalableFlow(
+        "b1", input=a1.output + a2.output, unit_cost=5, unit_output=100, fulfilment=1
+    )
+    c1 = DoubleDataEntryFlow(
+        "c1", input=b1.output, unit_cost=7, unit_output=100, fulfilment=1
+    )
+    d1 = ScalableFlow(
+        "d1", input=c1.output, unit_cost=11, unit_output=100, fulfilment=1
+    )
 
     verticies = (a1, a2, b1, c1, d1)
     complete_fulfilment_cost = sum(map((lambda v: v.cost), verticies))
