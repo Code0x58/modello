@@ -2,3 +2,4 @@ artefacts/
 .eggs/
 *.egg-info/
 .venv/
+notebooks/*.ipynb
