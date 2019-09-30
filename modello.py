@@ -103,7 +103,7 @@ class ModelloMeta(type):
         name: str,
         bases: typing.Tuple[type, ...],
         meta_namespace: ModelloMetaNamespace,
-    ) -> type:
+    ) -> typing.Any:
         """Return a new class with modello attributes."""
         namespace = dict(meta_namespace)
         # could follow django's model of _meta? conflicts?
