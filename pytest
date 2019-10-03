@@ -6,8 +6,7 @@ This depends on the requirements being explicitly state in setup.py and not impo
 
 DOC
 set -o pipefail -o errexit -o nounset
-
-here="$(dirname "$(readlink -f "$0")")"
+here="$(cd "$(dirname "$0")" && pwd)"
 cd "$here"
 
 
@@ -16,7 +15,7 @@ if ! [[ -d ".eggs/" ]] || [[ setup.py -nt ".eggs/$(ls -tr .eggs/ | tail -n1)" ]]
     # make sure eggs are installed
     echo "Downloading required packages"
     rm -fr ".eggs/"
-    python setup.py pytest --dry-run
+    python3 setup.py pytest --dry-run
 fi
 
 PYTHONPATH="$(echo .eggs/*.egg|tr ' ' ':')" exec python3 -m pytest "$@"
