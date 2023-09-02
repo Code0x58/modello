@@ -3,3 +3,4 @@ artefacts/
 *.egg-info/
 .venv/
 notebooks/*.ipynb
+.idea/

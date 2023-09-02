@@ -4,7 +4,7 @@ from functools import lru_cache
 from modello import InstanceDummy, Modello
 from sympy import Eq, Function, Heaviside, Piecewise, Rational, S, Symbol, oo, solve
 
-YEAR = 2019
+YEAR = 2023
 
 
 def generate_piecewise_income_tax(year=YEAR):
@@ -24,6 +24,17 @@ def generate_piecewise_income_tax(year=YEAR):
             (12500, Rational(1, 5)),
             (37500, Rational(2, 5)),
             (150000, Rational(9, 20)),
+        ),
+        2022: (
+            (-oo, Rational(1, 5)),
+            (37_700, Rational(2, 5)),
+            (150_000, Rational(9, 20)),
+        ),
+        2023: (
+            (-oo, 0),
+            (12_570, Rational(1, 5)),
+            (50_270, Rational(2, 5)),
+            (125_140, Rational(9, 20)),
         ),
     }
     return generate_piecewise_function(year_band_brackets[year])
@@ -83,6 +94,31 @@ def generate_piecewise_national_insurance(year=YEAR, band="A"):
             ),
             "Z": ((-oo, 0), (719 * 12, Rational(2, 100))),
         },
+        2023: {
+            "A": (
+                (-oo, 0),
+                (1048 * 12, Rational(12, 100)),
+                (4189 * 12, Rational(2, 100)),
+            ),
+            "B": (
+                (-oo, 0),
+                (1048 * 12, Rational(585, 100)),
+                (4189 * 12, Rational(2, 100)),
+            ),
+            "C": ((-oo, 0),),
+            "H": (
+                (-oo, 0),
+                (1048 * 12, Rational(12, 100)),
+                (4189 * 12, Rational(2, 100)),
+            ),
+            "J": ((-oo, 0), (1048 * 12, Rational(2, 100))),
+            "M": (
+                (-oo, 0),
+                (1048 * 12, Rational(12, 100)),
+                (4189 * 12, Rational(2, 100)),
+            ),
+            "Z": ((-oo, 0), (1048 * 12, Rational(2, 100))),
+        },
     }
     return generate_piecewise_function(year_band_brackets[year][band])
 
@@ -109,11 +145,20 @@ def generate_piecewise_employer_national_insurance(year=YEAR, band="A"):
             "M": ((-oo, 0), (4167 * 12, Rational(138, 1000))),
             "Z": ((-oo, 0), (4167 * 12, Rational(138, 1000))),
         },
+        2023: {
+            "A": ((-oo, 0), (1048 * 12, Rational(138, 1000))),
+            "B": ((-oo, 0), (1048 * 12, Rational(138, 1000))),
+            "C": ((-oo, 0), (1048 * 12, Rational(138, 1000))),
+            "H": ((-oo, 0), (4189 * 12, Rational(138, 1000))),
+            "J": ((-oo, 0), (1048 * 12, Rational(138, 1000))),
+            "M": ((-oo, 0), (4189 * 12, Rational(138, 1000))),
+            "Z": ((-oo, 0), (4189 * 12, Rational(138, 1000))),
+        },
     }
     return generate_piecewise_function(year_band_brackets[year][band])
 
 
-@lru_cache()
+@lru_cache(maxsize=None)
 def generate_piecewise_function(brackets):
     """Generate a piecewise for taxes.
 
@@ -162,19 +207,33 @@ class Job(Modello):
 
     >>> job = Job("job", salary=32000, hours=253*8, expenses=0)
     >>> job.hourly_income.evalf(4)
-    12.50
+    12.74
     >>> job.employer_expense.evalf(7)
-    35225.34
+    34680.51
     """
 
     salary = InstanceDummy("salery", rational=True, positive=True)
     hours = InstanceDummy("hours", rational=True, positive=True)
     expenses = InstanceDummy("expenses")
     income = (
-        salary
-        - IncomeTaxFunction(salary)
-        - NationalInsuranceFunction(salary)
-        - expenses
+            salary
+            - IncomeTaxFunction(salary)
+            - NationalInsuranceFunction(salary)
+            - expenses
     )
     hourly_income = income / hours
     employer_expense = salary + EmployerNationalInsuranceFunction(salary)
+
+
+def test_job():
+    """The job model can be used to work out what salary is needed to factor out expenses."""
+    expenses = 1_200
+    job_a = Job('job_a', salary=26_000, hours=(253 - 25) * 9, expenses=expenses)
+    # job_b adjusts the salary to make the income as though expenses were 0
+    job_b = Job('job_b',
+                income=job_a.income + job_a.expenses,
+                hours=job_a.hours,
+                expenses=job_a.expenses)
+    salary_difference = job_b.salary - job_a.salary
+    assert salary_difference > expenses
+    assert salary_difference == Rational(30000, 17)  # ~1764.71
