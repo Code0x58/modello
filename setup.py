@@ -15,7 +15,7 @@ TEST_REQUIRES = [
     "flake8-docstrings",
     "flake8-isort",
     "pytest-cov>=2.6.1",
-    "pytest-flake8",
+    "pytest-ruff",
     "pytest-mypy",
     "pytest-pudb",
     "pytest>=4.1",

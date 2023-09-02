@@ -2,7 +2,7 @@
 from functools import lru_cache
 
 from modello import InstanceDummy, Modello
-from sympy import Eq, Function, Heaviside, Piecewise, Rational, S, Symbol, oo, solve
+from sympy import Function, Heaviside, Piecewise, Rational, S, Symbol, oo
 
 YEAR = 2023
 
@@ -10,7 +10,7 @@ YEAR = 2023
 def generate_piecewise_income_tax(year=YEAR):
     """Assuming band A."""
     # 2019-2020 UK tax brackets
-    # XXX: this omits the income limit for personal allowance. A fix for this could be to add an additional
+    # XXX: this omits the income limit for personal allowance. A fix for this could be to add a
     #  bracket from £100,000 to £125,000 (for 2019)
     year_band_brackets = {
         2018: (
@@ -173,6 +173,7 @@ def generate_piecewise_function(brackets):
     >>> g(1234)
     0
     >>> x = Symbol("x")
+    >>> from sympy import solve, Eq
     >>> solve(Eq(f(x), 1))
     [20]
     """
