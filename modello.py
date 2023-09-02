@@ -2,7 +2,9 @@
 """Module for symbolic modeling of systems."""
 import typing
 
-from sympy import Basic, Dummy, Eq, simplify, solve
+from sympy import Basic, Dummy, Eq, solve
+# more verbose path as mypy sees sympy.simplify as a module
+from sympy.simplify.simplify import simplify
 
 
 class ModelloSentinelClass:
@@ -13,7 +15,7 @@ class InstanceDummy(Dummy):
     """Dummy which will create a bound bummy on Modello instantiation."""
 
     def bound(self, model_name: str) -> "BoundInstanceDummy":
-        """Return an dummy bound to a modello instance."""
+        """Return a dummy bound to a modello instance."""
         return BoundInstanceDummy(model_name + "_" + self.name, **self.assumptions0)
 
 
@@ -35,7 +37,7 @@ class ModelloMetaNamespace(dict):
         # map of attributes to sympy Basic (e.g expression, value) objects
         self.attrs: typing.Dict[str, Basic] = {}
         # map of attributes to InstanceDummy instances - metadata used by derived classes
-        self.dummies: typing.Dict[str, Dummy] = {}
+        self.dummies: typing.Dict[str, InstanceDummy] = {}
         # map of attributes to non-modello managed objects
         self.other_attrs: typing.Dict[str, object] = {}
         # map of dummies to dummies that override them - metadata used by derived classes
@@ -124,7 +126,7 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
     )
     _modello_class_constraints: typing.Dict[InstanceDummy, Basic] = {}
 
-    def __init__(self, name: str, **value_map: typing.Dict[str, Basic]) -> None:
+    def __init__(self, name: str, **value_map: Basic) -> None:
         """Initialise a model instance and solve for each attribute."""
         instance_dummies = {
             class_dummy: class_dummy.bound(name)
