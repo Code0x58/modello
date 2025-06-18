@@ -33,6 +33,7 @@ class ModelloMetaNamespace(dict):
 
     def __init__(self, name: str, bases: typing.Tuple[type, ...]) -> None:
         """Create a namespace for a Modello class to use."""
+        super().__init__()
         self.name = name
         # map of attributes to sympy Basic (e.g expression, value) objects
         self.attrs: typing.Dict[str, Basic] = {}
@@ -96,7 +97,7 @@ class ModelloMeta(type):
     @classmethod
     def __prepare__(
         metacls, __name: str, __bases: typing.Tuple[type, ...], **kwds: typing.Any
-    ) -> typing.Mapping[str, typing.Any]:
+    ) -> typing.MutableMapping[str, typing.Any]:
         """Return a ModelloMetaNamespace instead of a plain dict to accumlate attributes on."""
         return ModelloMetaNamespace(__name, __bases)
 

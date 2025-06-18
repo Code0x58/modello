@@ -40,15 +40,15 @@ pipenv install git+https://github.com/Code0x58/modello.git#egg=modello
 pip install --user git+https://github.com/Code0x58/modello.git#egg=modello
 ```
 
-Currently this requires Python 3.6+ but the version requirements can drop a couple of minor versions easily if there is interest. Python 2.7 isn't planned to be supported as the Modello class relies on [PEP-3115](https://www.python.org/dev/peps/pep-3115/).
+Currently this requires Python 3.8+ but the version requirements can drop a couple of minor versions easily if there is interest. Python 2.7 isn't planned to be supported as the Modello class relies on [PEP-3115](https://www.python.org/dev/peps/pep-3115/).
 
 
 ## Development
-Run the tests and linting with `python setup.py test`. Pushes have the test suite run against them, and will also publish a release if tagged thanks to GitHub Actions. You can reproduce the Actions locally using [act](https://github.com/nektos/act), e.g. `TWINE_USERNAME= TWINE_PASSWORD= act`.
+Run the tests and linting with `pytest`. Pushes have the test suite run against them, and will also publish a release if tagged thanks to GitHub Actions. You can reproduce the Actions locally using [act](https://github.com/nektos/act), e.g. `TWINE_USERNAME= TWINE_PASSWORD= act`.
 
-You can run all the tests with `python setup.py test`. If you want to run a subset of tests or otherwise pass arguments to pytest, use `./pytest …` e.g.:
+If you want to run a subset of tests or otherwise pass arguments to pytest, just invoke `pytest` directly, e.g.:
 ```sh
-./pytest examples/jobs.py::jobs.Job
+pytest examples/jobs.py::jobs.Job
 ```
 
 ## TODO:
