@@ -44,7 +44,7 @@ Currently this requires Python 3.8+ but the version requirements can drop a coup
 
 
 ## Development
-Run the tests and linting with `pytest`. Pushes have the test suite run against them, and will also publish a release if tagged thanks to GitHub Actions. You can reproduce the Actions locally using [act](https://github.com/nektos/act), e.g. `TWINE_USERNAME= TWINE_PASSWORD= act`.
+Install the development dependencies with `pip install --editable .[test]` and run the tests and linting with `pytest`. Pushes have the test suite run against them, and will also publish a release if tagged thanks to GitHub Actions. You can reproduce the Actions locally using [act](https://github.com/nektos/act), e.g. `TWINE_USERNAME= TWINE_PASSWORD= act`.
 
 If you want to run a subset of tests or otherwise pass arguments to pytest, just invoke `pytest` directly, e.g.:
 ```sh
