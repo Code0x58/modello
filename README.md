@@ -40,7 +40,7 @@ pipenv install git+https://github.com/Code0x58/modello.git#egg=modello
 pip install --user git+https://github.com/Code0x58/modello.git#egg=modello
 ```
 
-Currently this requires Python 3.6+ but the version requirements can drop a couple of minor versions easily if there is interest. Python 2.7 isn't planned to be supported as the Modello class relies on [PEP-3115](https://www.python.org/dev/peps/pep-3115/).
+Currently this requires Python 3.8+ but the version requirements can drop a couple of minor versions easily if there is interest. Python 2.7 isn't planned to be supported as the Modello class relies on [PEP-3115](https://www.python.org/dev/peps/pep-3115/).
 
 
 ## Development

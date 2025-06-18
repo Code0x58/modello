@@ -96,7 +96,7 @@ class ModelloMeta(type):
     @classmethod
     def __prepare__(
         metacls, __name: str, __bases: typing.Tuple[type, ...], **kwds: typing.Any
-    ) -> typing.Mapping[str, typing.Any]:
+    ) -> typing.MutableMapping[str, typing.Any]:
         """Return a ModelloMetaNamespace instead of a plain dict to accumlate attributes on."""
         return ModelloMetaNamespace(__name, __bases)
 
