@@ -21,4 +21,4 @@ jobs:
           pip install .[test]
       - name: Test with pytest
         run: |
-          pytest -vv --cov=modello
+          pytest -vv

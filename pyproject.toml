@@ -1,3 +1,80 @@
+[build-system]
+requires = ["setuptools>=61", "setuptools_scm[toml]>=7"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "modello"
+description = "sympy expressions in models"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [{name = "Oliver Bristow", email = "github+pypi@oliverbristow.co.uk"}]
+dependencies = ["sympy"]
+keywords = ["symbolic modeling"]
+urls = {homepage = "https://github.com/Code0x58/modello/"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+test = [
+    "flake8-black",
+    "flake8-docstrings",
+    "flake8-isort",
+    "pytest-cov>=2.6.1",
+    "pytest-ruff",
+    "pytest-mypy",
+    "pytest-pudb",
+    "pytest>=4.1",
+]
+
+[tool.setuptools]
+py-modules = ["modello"]
+
+[tool.setuptools_scm]
+
+[tool.pytest.ini_options]
+addopts = "--doctest-modules --doctest-report=udiff --cov=modello --cov-report=html --cov-report=term --mypy --ruff"
+python_files = ["test_modello.py", "examples/*.py"]
+cache_dir = "artefacts/reports/.pytest_cache"
+
+[tool.coverage.run]
+data_file = "artefacts/reports/.coverage"
+source = ["modello.py"]
+branch = true
+
+[tool.coverage.html]
+directory = "artefacts/reports/coverage-html"
+
+[tool.mypy]
+ignore_missing_imports = true
+cache_dir = "artefacts/reports/.mypy_cache"
+
+[tool.mypy-modello]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+
+[tool.isort]
+line_length = 120
+force_grid_wrap = 0
+use_parentheses = true
+include_trailing_comma = true
+combine_as_imports = true
+multi_line_output = 5
+
 [tool.ruff]
 line-length = 120
 target-version = "py311"
