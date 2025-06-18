@@ -17,7 +17,6 @@ TEST_REQUIRES = [
     "pytest-cov>=2.6.1",
     "pytest-ruff",
     "pytest-mypy",
-    "pytest-pudb",
     "pytest>=4.1",
 ]
 setup(

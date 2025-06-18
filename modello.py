@@ -33,6 +33,7 @@ class ModelloMetaNamespace(dict):
 
     def __init__(self, name: str, bases: typing.Tuple[type, ...]) -> None:
         """Create a namespace for a Modello class to use."""
+        super().__init__()
         self.name = name
         # map of attributes to sympy Basic (e.g expression, value) objects
         self.attrs: typing.Dict[str, Basic] = {}
