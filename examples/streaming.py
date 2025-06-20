@@ -59,6 +59,24 @@ class DoubleDataEntryFlow(ScalableFlow):
     unit_output = Rational(8 * 260, 24 * 365) / entry_time / 2
 
 
+class EntrySystem(Modello):
+    """Simple system demonstrating nesting of flows.
+
+    >>> sys = EntrySystem(
+    ...     "SYS",
+    ...     flow={"input": 20, "entry_time": 5, "unit_cost": Rational(1, 10), "scale": 2},
+    ...     overhead=1,
+    ... )
+    >>> sys.total_cost
+    6/5
+    """
+
+    flow = SingleDataEntryFlow
+    overhead = InstanceDummy("overhead", positive=True, rational=True)
+    total_cost = flow.cost + overhead
+
+
+
 def test_simple_system():
     """The wheels on the bus go round and round."""
     channel_input_rates = {"foo": 12, "bar": 3}
