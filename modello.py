@@ -29,7 +29,7 @@ class BoundInstanceDummy(InstanceDummy):
 
 
 class ModelloMetaNamespace(dict):
-    """This is so that Modello class definitions implicitly define symbols."""
+    """Namespace used when building :class:`Modello` subclasses."""
 
     def __init__(self, name: str, bases: typing.Tuple[type, ...]) -> None:
         """Create a namespace for a Modello class to use."""
@@ -98,6 +98,13 @@ class ModelloMetaNamespace(dict):
                     proxy_dummy = InstanceDummy(f"{key}_{class_dummy.name}", **class_dummy.assumptions0)
                     setattr(proxy, attr_name, proxy_dummy)
                     dummy_map[class_dummy] = proxy_dummy
+                # include proxies for child models so expressions can be substituted
+                for _nested_attr, (_, child_map) in model_cls._modello_nested_models.items():
+                    for child_dummy, child_proxy in child_map.items():
+                        proxy_dummy = InstanceDummy(
+                            f"{key}_{child_proxy.name}", **child_proxy.assumptions0
+                        )
+                        dummy_map[child_proxy] = proxy_dummy
                 for attr_name, expr in model_cls._modello_namespace.attrs.items():
                     if attr_name not in model_cls._modello_namespace.dummies:
                         setattr(proxy, attr_name, expr.subs(dummy_map))
@@ -148,44 +155,56 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
     # ------------------------------------------------------------------
     # Private helpers used by ``__init__``
     # ------------------------------------------------------------------
-    def _parse_nested_values(self, value_map: typing.Dict[str, Basic]) -> typing.Dict[str, typing.Union["Modello", typing.Dict[str, Basic]]]:
-        """Extract nested model data from ``value_map``.
+    @classmethod
+    def _parse_nested_values(
+        cls, value_map: typing.Mapping[str, Basic]
+    ) -> tuple[
+        typing.Dict[str, typing.Union["Modello", typing.Dict[str, Basic]]],
+        typing.Dict[str, Basic],
+    ]:
+        """Split ``value_map`` into nested and local values.
 
-        Unknown or ``None`` values are replaced with an empty mapping.
-        The extracted values are removed from ``value_map``.
+        Attributes matching ``cls._modello_nested_models`` are returned in the
+        ``nested`` dictionary. Unknown or ``None`` values produce an empty mapping
+        entry. The returned ``values`` mapping contains only attributes local to
+        this model.
         """
 
-        nested_values: typing.Dict[str, typing.Union["Modello", typing.Dict[str, Basic]]] = {}
-        for attr in self._modello_nested_models:
-            raw = value_map.pop(attr, {})
-            if isinstance(raw, Modello):
-                nested_values[attr] = raw
-            elif isinstance(raw, dict):
-                nested_values[attr] = raw
+        nested: dict[str, typing.Union["Modello", typing.Dict[str, Basic]]] = {}
+        remaining: dict[str, Basic] = {}
+        for key, val in value_map.items():
+            if key in cls._modello_nested_models:
+                if isinstance(val, Modello):
+                    nested[key] = val
+                elif isinstance(val, dict):
+                    nested[key] = val
+                else:
+                    nested[key] = {}
             else:
-                nested_values[attr] = {}
-        return nested_values
+                remaining[key] = val
+        return nested, remaining
 
+    @classmethod
     def _create_instance_dummies(
-        self, name: str
+        cls, name: str
     ) -> tuple[
         typing.Dict[InstanceDummy, BoundInstanceDummy],
         typing.Dict[str, typing.Dict[InstanceDummy, BoundInstanceDummy]],
     ]:
         """Bind all ``InstanceDummy`` objects to this instance.
 
-        Returns a tuple of ``instance_dummies`` for this model and a mapping for
-        each nested model that relates the child's class dummies to their bound
-        counterparts.
+        Returns a tuple containing a mapping of this model's dummies to their
+        bound counterparts and a mapping for each nested model that relates the
+        child's class dummies to their bound dummies.
         """
 
         instance_dummies: dict[InstanceDummy, BoundInstanceDummy] = {
             class_dummy: class_dummy.bound(name)
-            for class_dummy in self._modello_namespace.dummies.values()
+            for class_dummy in cls._modello_namespace.dummies.values()
         }
 
         nested_dummy_map: dict[str, dict[InstanceDummy, BoundInstanceDummy]] = {}
-        for attr, (_, mapping) in self._modello_nested_models.items():
+        for attr, (_, mapping) in cls._modello_nested_models.items():
             dummy_map: dict[InstanceDummy, BoundInstanceDummy] = {}
             for class_dummy, proxy_dummy in mapping.items():
                 bound = proxy_dummy.bound(name)
@@ -195,12 +214,12 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
 
         return instance_dummies, nested_dummy_map
 
+    @classmethod
     def _collect_instance_constraints(
-        self,
-        value_map: typing.Dict[str, Basic],
-        nested_values: typing.Dict[str, typing.Union["Modello", typing.Dict[str, Basic]]],
+        cls,
+        value_map: typing.Mapping[str, Basic],
+        nested_values: typing.Mapping[str, typing.Union["Modello", typing.Dict[str, Basic]]],
         instance_dummies: typing.Dict[InstanceDummy, BoundInstanceDummy],
-        nested_dummy_map: typing.Dict[str, typing.Dict[InstanceDummy, BoundInstanceDummy]],
     ) -> typing.Dict[BoundInstanceDummy, Basic]:
         """Convert provided values into instance constraints."""
 
@@ -208,12 +227,11 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
 
         for attr, value in value_map.items():
             simplified = simplify(value).subs(instance_dummies)
-            value_map[attr] = simplified
-            class_dummy = getattr(self, attr)
+            class_dummy = getattr(cls, attr)
             constraints[instance_dummies[class_dummy]] = simplified
 
         for attr, data in nested_values.items():
-            model_cls, mapping = self._modello_nested_models[attr]
+            model_cls, mapping = cls._modello_nested_models[attr]
             if isinstance(data, Modello):
                 for child_attr, class_dummy in model_cls._modello_namespace.dummies.items():
                     proxy_dummy = mapping[class_dummy]
@@ -227,20 +245,19 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
 
         return constraints
 
+    @classmethod
     def _build_constraints(
-        self,
+        cls,
         instance_dummies: typing.Dict[InstanceDummy, BoundInstanceDummy],
         instance_constraints: typing.Dict[BoundInstanceDummy, Basic],
-        nested_dummy_map: typing.Dict[str, typing.Dict[InstanceDummy, BoundInstanceDummy]],
     ) -> list[Eq]:
         """Compile a list of equations representing this instance."""
 
         constraints = [
             Eq(instance_dummies[class_dummy], value.subs(instance_dummies))
-            for class_dummy, value in self._modello_class_constraints.items()
+            for class_dummy, value in cls._modello_class_constraints.items()
         ]
-
-        for attr, (model_cls, mapping) in self._modello_nested_models.items():
+        for attr, (model_cls, mapping) in cls._modello_nested_models.items():
             for class_dummy, expr in model_cls._modello_class_constraints.items():
                 proxy_dummy = mapping[class_dummy]
                 constraints.append(Eq(instance_dummies[proxy_dummy], expr.subs(mapping).subs(instance_dummies)))
@@ -248,7 +265,8 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
         constraints.extend(Eq(d, v) for d, v in instance_constraints.items())
         return constraints
 
-    def _solve(self, constraints: list[Eq]) -> dict[BoundInstanceDummy, Basic]:
+    @staticmethod
+    def _solve(constraints: list[Eq]) -> dict[BoundInstanceDummy, Basic]:
         """Solve ``constraints`` and return a mapping of dummies to values."""
 
         if not constraints:
@@ -259,37 +277,41 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
             raise ValueError(f"{len(solutions)} solutions")
         return solutions[0]
 
+    @classmethod
     def _assign_local_values(
-        self,
+        cls,
         solution: dict[BoundInstanceDummy, Basic],
         instance_dummies: typing.Dict[InstanceDummy, BoundInstanceDummy],
         instance_constraints: typing.Dict[BoundInstanceDummy, Basic],
-    ) -> None:
-        """Set resolved values on this instance's own attributes."""
+    ) -> typing.Dict[str, Basic]:
+        """Return resolved values for this model's own attributes."""
 
-        for attr, class_dummy in self._modello_namespace.dummies.items():
+        values: dict[str, Basic] = {}
+        for attr, class_dummy in cls._modello_namespace.dummies.items():
             instance_dummy = instance_dummies[class_dummy]
             if instance_dummy in solution:
                 value = solution[instance_dummy]
             elif instance_dummy in instance_constraints:
                 value = instance_constraints[instance_dummy]
-            elif class_dummy in self._modello_class_constraints:
-                value = self._modello_class_constraints[class_dummy].subs(instance_dummies)
+            elif class_dummy in cls._modello_class_constraints:
+                value = cls._modello_class_constraints[class_dummy].subs(instance_dummies)
             else:
                 value = instance_dummy
-            setattr(self, attr, value)
+            values[attr] = value
+        return values
 
+    @classmethod
     def _instantiate_nested_models(
-        self,
+        cls,
         name: str,
         solution: dict[BoundInstanceDummy, Basic],
         instance_dummies: typing.Dict[InstanceDummy, BoundInstanceDummy],
         instance_constraints: typing.Dict[BoundInstanceDummy, Basic],
-        nested_dummy_map: typing.Dict[str, typing.Dict[InstanceDummy, BoundInstanceDummy]],
-    ) -> None:
-        """Create nested model instances using solved values."""
+    ) -> typing.Dict[str, "Modello"]:
+        """Instantiate nested models and return them."""
 
-        for attr, (model_cls, mapping) in self._modello_nested_models.items():
+        nested_instances: dict[str, Modello] = {}
+        for attr, (model_cls, mapping) in cls._modello_nested_models.items():
             value_kwargs: dict[str, Basic] = {}
             for child_attr, class_dummy in model_cls._modello_namespace.dummies.items():
                 proxy_dummy = mapping[class_dummy]
@@ -303,8 +325,8 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
                 else:
                     val = inst_dummy
                 value_kwargs[child_attr] = val
-            nested_instance = model_cls(f"{name}_{attr}", **value_kwargs)
-            setattr(self, attr, nested_instance)
+            nested_instances[attr] = model_cls(f"{name}_{attr}", **value_kwargs)
+        return nested_instances
 
     # ------------------------------------------------------------------
     # ``__init__`` orchestrates the above helpers
@@ -312,21 +334,26 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
     def __init__(self, name: str, **value_map: Basic) -> None:
         """Initialise a model instance and solve for all attributes."""
 
-        nested_values = self._parse_nested_values(value_map)
+        nested_values, local_values = self._parse_nested_values(value_map)
         instance_dummies, nested_dummy_map = self._create_instance_dummies(name)
         self._modello_instance_dummies = instance_dummies
 
         instance_constraints = self._collect_instance_constraints(
-            value_map, nested_values, instance_dummies, nested_dummy_map
+            local_values, nested_values, instance_dummies
         )
         self._modello_instance_constraints = instance_constraints
 
-        constraints = self._build_constraints(instance_dummies, instance_constraints, nested_dummy_map)
+        constraints = self._build_constraints(instance_dummies, instance_constraints)
         self._modello_constraints = constraints
 
         solution = self._solve(constraints)
 
-        self._assign_local_values(solution, instance_dummies, instance_constraints)
-        self._instantiate_nested_models(
-            name, solution, instance_dummies, instance_constraints, nested_dummy_map
+        values = self._assign_local_values(solution, instance_dummies, instance_constraints)
+        for attr, val in values.items():
+            setattr(self, attr, val)
+
+        nested_instances = self._instantiate_nested_models(
+            name, solution, instance_dummies, instance_constraints
         )
+        for attr, instance in nested_instances.items():
+            setattr(self, attr, instance)
