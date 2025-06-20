@@ -94,3 +94,38 @@ def test_nested_partial_values():
     # b defaults to dummy but derived c should resolve using constraints
     assert instance.child.c == instance.child.a + instance.child.b
     assert instance.c_total == instance.child.c + 1
+
+
+def test_helper_parse_nested_values():
+    """_parse_nested_values splits nested data from values."""
+
+    class Child(Modello):
+        x = InstanceDummy("x")
+
+    class Parent(Modello):
+        child = Child
+        y = InstanceDummy("y")
+
+    instance = object.__new__(Parent)
+    values = {"child": {"x": 5}, "y": 3}
+    nested = instance._parse_nested_values(values)
+    assert nested == {"child": {"x": 5}}
+    assert values == {"y": 3}
+
+
+def test_helper_create_instance_dummies():
+    """_create_instance_dummies binds dummies for the instance."""
+
+    class Child(Modello):
+        x = InstanceDummy("x")
+
+    class Parent(Modello):
+        child = Child
+        y = InstanceDummy("y")
+
+    instance = object.__new__(Parent)
+    dummies, nested = instance._create_instance_dummies("X")
+    assert dummies[Parent._modello_namespace.dummies["y"]].name.startswith("X_")
+    child_dummy = Child._modello_namespace.dummies["x"]
+    assert child_dummy in nested["child"]
+    assert nested["child"][child_dummy].name.startswith("X_")
