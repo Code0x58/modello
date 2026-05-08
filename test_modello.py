@@ -38,3 +38,41 @@ def test_multiple_inheritance_expr_conflict():
 
     assert ExampleC.conflicted == ExampleB.conflicted
     assert ExampleC.conflicted != ExampleA.conflicted
+
+
+def test_solver_unique_solution():
+    class Linear(Modello):
+        x = InstanceDummy("x")
+        y = InstanceDummy("y")
+        total = x + y
+
+    instance = Linear("L", x=2, total=5)
+    assert instance.y == 3
+
+
+def test_solver_multiple_solution_permissive_and_selector():
+    class Branches(Modello):
+        x = InstanceDummy("x")
+        y = x**2
+
+    permissive = Branches("B1", y=4, solution_mode="permissive")
+    assert isinstance(permissive.x, BoundInstanceDummy)
+
+    selected = Branches(
+        "B2",
+        y=4,
+        solution_selector=lambda solutions: max(
+            solutions, key=lambda sol: list(sol.values())[0]
+        ),
+    )
+    assert selected.x == 2
+
+
+def test_solver_underdetermined_set_strategy():
+    class Under(Modello):
+        x = InstanceDummy("x")
+        y = x
+
+    instance = Under("U", solver_strategy="set", solution_mode="permissive")
+    assert isinstance(instance.x, BoundInstanceDummy)
+    assert instance.y == instance.x
