@@ -1,5 +1,5 @@
-modello
-=======
+modello documentation
+=====================
 
 ``modello`` lets you express symbolic models as Python classes. SymPy handles
 the algebra; each model instance binds its own symbols and solves the equations
