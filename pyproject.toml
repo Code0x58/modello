@@ -12,7 +12,6 @@ license-files = ["LICENSE"]
 authors = [{name = "Oliver Bristow", email = "github+pypi@oliverbristow.co.uk"}]
 dependencies = ["sympy>=1.14.0"]
 keywords = ["symbolic modeling"]
-urls = {homepage = "https://github.com/Code0x58/modello/"}
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -28,6 +27,11 @@ classifiers = [
     "Programming Language :: Python :: 3.15",
 ]
 dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/Code0x58/modello/"
+Documentation = "https://modello.readthedocs.io/"
+Issues = "https://github.com/Code0x58/modello/issues"
 
 [project.optional-dependencies]
 test = [
@@ -46,6 +50,10 @@ dev = [
     "setuptools-scm>=10.3.4",
     "twine>=7.0.0",
 ]
+docs = [
+    "sphinx>=9.1.0",
+    "sphinx-rtd-theme>=3.1.0",
+]
 notebooks = [
     "jupyter>=1.1.1",
     "matplotlib>=3.11.2",
@@ -59,6 +67,7 @@ cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true 
 modello = { workspace = true }
 
 [tool.uv.dependency-groups]
+docs = { requires-python = ">=3.12" }
 notebooks = { requires-python = ">=3.11" }
 
 [tool.setuptools]
@@ -83,6 +92,7 @@ directory = "artefacts/reports/coverage-html"
 python_version = "3.10"
 ignore_missing_imports = true
 cache_dir = "artefacts/reports/.mypy_cache"
+exclude = ["^build/", "^docs/_build/", "^artefacts/", "^dist/"]
 
 [[tool.mypy.overrides]]
 module = "modello"

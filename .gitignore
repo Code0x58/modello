@@ -11,3 +11,4 @@ build/
 dist/
 coverage.xml
 test-results.xml
+docs/_build/
