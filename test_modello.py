@@ -1,11 +1,13 @@
 """Functional tests for Modello instances."""
 
 from collections import UserDict
+from decimal import Decimal
+from fractions import Fraction
 
 import pytest
 from sympy import S, Symbol, simplify
 
-from modello import BoundInstanceDummy, InstanceDummy, Modello
+from modello import BoundInstanceDummy, InstanceDummy, Modello, component
 
 
 def test_no_constraints():
@@ -45,8 +47,8 @@ def test_multiple_inheritance_expr_conflict():
     assert ExampleC.conflicted != ExampleA.conflicted
 
 
-def test_nested_models_dict():
-    """Nested models accept dictionaries of values."""
+def test_typed_component_declarations():
+    """Typed component declarations accept explicitly constructed children."""
 
     class Child(Modello):
         a = InstanceDummy("a")
@@ -54,17 +56,17 @@ def test_nested_models_dict():
         c = a + b
 
     class Parent(Modello):
-        child = Child
+        child = component(Child)
         d = InstanceDummy("d")
         e = child.c + d
 
-    instance = Parent("P", child={"a": 3, "b": 4}, d=5)
+    instance = Parent("P", child=Child("C", a=3, b=4), d=5)
     assert instance.child.c == 7
     assert instance.e == 12
 
 
 def test_nested_models_instance():
-    """Nested models accept pre-instantiated children."""
+    """Raw model class declarations still accept pre-instantiated children."""
 
     class Child(Modello):
         a = InstanceDummy("a")
@@ -83,6 +85,19 @@ def test_nested_models_instance():
     assert instance.e == 9
 
 
+@pytest.mark.parametrize("value", [2, 0.5, 1 + 2j, "x + 1", Decimal("0.5"), Fraction(1, 2), Symbol("x")])
+def test_scalar_input_types(value):
+    """The typed scalar input boundary preserves ordinary SymPy-compatible values."""
+
+    class Child(Modello):
+        x = InstanceDummy("x")
+
+    class Parent(Modello):
+        child = component(Child)
+
+    assert Parent("P", child=Child("C", x=value)).child.x == simplify(value)
+
+
 def test_nested_partial_values():
     """Unspecified nested attributes are solved with the parent."""
 
@@ -95,7 +110,7 @@ def test_nested_partial_values():
         child = Child
         c_total = child.c + 1
 
-    instance = Parent("P", child={"a": 2})
+    instance = Parent("P", child=Child("C", a=2))
     # b defaults to dummy but derived c should resolve using constraints
     assert instance.child.c == instance.child.a + instance.child.b
     assert instance.c_total == instance.child.c + 1
@@ -119,8 +134,8 @@ def test_nested_multiple_levels():
         right = Branch
         whole = left.total + right.total
 
-    left = Branch("L", leaf={"a": 1, "b": 2}, offset=1)
-    right = Branch("R", leaf={"a": 2, "b": 3}, offset=2)
+    left = Branch("L", leaf=Leaf("LL", a=1, b=2), offset=1)
+    right = Branch("R", leaf=Leaf("RL", a=2, b=3), offset=2)
     tree = Tree("T", left=left, right=right)
     assert tree.left.leaf.total == 3
     assert tree.left.total == 4
@@ -135,20 +150,21 @@ def test_nested_multiple_levels():
 
 def test_nested_geometry_forward_and_inverse():
     """Parent constraints solve descendants, including their own derived fields."""
+    from examples.geometry import RightAngleTriangle
     from examples.nested_geometry import Box
     from examples.nested_line import Line, Point
 
-    line = Line("L", start={"x": 0, "y": 0}, end={"x": 3, "y": 4})
+    line = Line("L", start=Point("start", x=0, y=0), end=Point("end", x=3, y=4))
     assert line.length == 5
     assert isinstance(line.start, Point)
     assert line.start is not line.end
 
-    box = Box("B", base={"b": 4}, height=12, diagonal=13)
+    box = Box("B", base=RightAngleTriangle("base", b=4), height=12, diagonal=13)
     assert (box.base.a, box.base.b, box.base.c) == (3, 4, 5)
 
 
-def test_deep_mappings_and_attribute_paths():
-    """Deep mappings and expressions resolve every level of a repeated subtree."""
+def test_deep_instances_and_attribute_paths():
+    """Instances and expressions resolve every level of a repeated subtree."""
 
     class Leaf(Modello):
         x = InstanceDummy("x")
@@ -164,7 +180,7 @@ def test_deep_mappings_and_attribute_paths():
         total = left.doubled + right.doubled
         deep = left.leaf.x + right.leaf.y
 
-    tree = Tree("T", left={"leaf": {"x": 2}}, right={"leaf": {"x": 5}})
+    tree = Tree("T", left=Branch("L", leaf=Leaf("LL", x=2)), right=Branch("R", leaf=Leaf("RL", x=5)))
     assert (tree.left.leaf.x, tree.left.leaf.y, tree.left.doubled) == (2, 3, 6)
     assert (tree.right.leaf.x, tree.right.leaf.y, tree.right.doubled) == (5, 6, 12)
     assert (tree.total, tree.deep) == (18, 8)
@@ -182,8 +198,8 @@ def test_missing_nested_inputs_remain_shared_parameters():
         child = Child
         total = child.total + 1
 
-    first = Parent("P", child={"a": 2})
-    second = Parent("P", child={"a": 2})
+    first = Parent("P", child=Child("C", a=2))
+    second = Parent("P", child=Child("C", a=2))
     assert isinstance(first.child.b, BoundInstanceDummy)
     assert first.child.b != second.child.b
     assert first.child.total == first.child.b + 2
@@ -241,7 +257,7 @@ def test_input_expressions_resolve_relative_and_sibling_symbols():
         right = Child
         total = left.x + right.x
 
-    parent = Parent("P", left={"x": Child.y + Parent.right.x, "y": 3}, right={"x": 2})
+    parent = Parent("P", left=Child("L", x=Child.y + Parent.right.x, y=3), right=Child("R", x=2))
     assert parent.left.x == 5
     assert parent.total == 7
 
@@ -263,8 +279,8 @@ def test_external_symbols_are_parameters_not_solver_unknowns():
     assert parent.total == parameter
 
 
-def test_nested_mapping_protocol_and_empty_models():
-    """Any mapping can supply values, and empty or unconstrained children work."""
+def test_empty_and_unconstrained_child_instances():
+    """Empty and unconstrained children can be supplied or omitted."""
 
     class Empty(Modello):
         pass
@@ -276,13 +292,13 @@ def test_nested_mapping_protocol_and_empty_models():
         empty = Empty
         child = Child
 
-    parent = Parent("P", child=UserDict(x=5), empty={})
+    parent = Parent("P", child=Child("C", x=5), empty=Empty("E"))
     assert parent.child.x == 5
     assert isinstance(parent.empty, Empty)
     assert isinstance(Parent("P").child.x, BoundInstanceDummy)
 
 
-@pytest.mark.parametrize("value", [None, 1, [], object()])
+@pytest.mark.parametrize("value", [None, 1, [], {}, {"x": 5}, UserDict(x=5), object()])
 def test_invalid_nested_values_are_rejected(value):
     """Invalid nested values are never silently treated as missing inputs."""
 
@@ -292,12 +308,12 @@ def test_invalid_nested_values_are_rejected(value):
     class Parent(Modello):
         child = Child
 
-    with pytest.raises(TypeError, match="child.*Child.*mapping"):
+    with pytest.raises(TypeError, match="child must be a Child instance"):
         Parent("P", child=value)
 
 
-def test_unknown_nested_attributes_report_the_complete_path():
-    """Misspelled values identify the path that failed validation."""
+def test_unknown_attributes_and_deep_mappings_are_rejected():
+    """Unknown keywords and mappings at every constructor boundary are invalid."""
 
     class Leaf(Modello):
         x = InstanceDummy("x")
@@ -308,8 +324,12 @@ def test_unknown_nested_attributes_report_the_complete_path():
     class Tree(Modello):
         branch = Branch
 
-    with pytest.raises(TypeError, match="branch.leaf.typo"):
-        Tree("T", branch={"leaf": {"typo": 1}})
+    with pytest.raises(TypeError, match="branch must be a Branch instance"):
+        Tree("T", branch={"leaf": {"x": 1}})
+    with pytest.raises(TypeError, match="leaf must be a Leaf instance"):
+        Tree("T", branch=Branch("B", leaf={"x": 1}))
+    with pytest.raises(TypeError, match="Unknown model attribute 'typo'"):
+        Leaf("L", typo=1)
     with pytest.raises(TypeError, match="Unknown model attribute 'typo'"):
         Tree("T", typo=1)
 
@@ -349,9 +369,9 @@ def test_scalar_aliases_keep_all_supplied_constraints():
     parent = Parent("P", alias=3)
     assert (parent.child.x, parent.child.alias, parent.alias) == (3, 3, 3)
     with pytest.raises(ValueError, match="0 solutions"):
-        Parent("P", child={"x": 1, "alias": 2})
+        Parent("P", child=Child("C", x=1, alias=2))
     with pytest.raises(ValueError, match="0 solutions"):
-        Parent("P", child={"x": 1}, alias=2)
+        Parent("P", child=Child("C", x=1), alias=2)
 
 
 def test_inconsistent_and_ambiguous_nested_systems_are_rejected():
@@ -368,9 +388,9 @@ def test_inconsistent_and_ambiguous_nested_systems_are_rejected():
     with pytest.raises(ValueError, match="2 solutions"):
         Parent("P", total=5)
     with pytest.raises(ValueError, match="0 solutions"):
-        Parent("P", child={"x": 2}, total=10)
+        Parent("P", child=Child("C", x=2), total=10)
     with pytest.raises(ValueError, match="0 solutions"):
-        Parent("P", child={"x": 2, "squared": 99})
+        Parent("P", child=Child("C", x=2, squared=99))
 
 
 def test_overriding_a_child_rebinds_inherited_expressions():
@@ -396,10 +416,10 @@ def test_overriding_a_child_rebinds_inherited_expressions():
     class Restored(Derived):
         child = Child
 
-    parent = Derived("D", child={"x": 2})
+    parent = Derived("D", child=Replacement("C", x=2))
     assert (parent.child.y, parent.total, parent.doubled, parent.alias) == (12, 13, 24, 2)
-    assert Parent("P", child={"x": 2}).total == 4
-    assert Restored("R", child={"x": 2}).total == 4
+    assert Parent("P", child=Child("C", x=2)).total == 4
+    assert Restored("R", child=Child("C", x=2)).total == 4
 
 
 def test_nested_overrides_follow_existing_multiple_base_precedence():
@@ -424,7 +444,7 @@ def test_nested_overrides_follow_existing_multiple_base_precedence():
     class Combined(First, Second):
         pass
 
-    instance = Combined("C", child={"x": 2})
+    instance = Combined("C", child=Replacement("R", x=2))
     assert (instance.child.y, instance.a, instance.b) == (12, 12, 12)
 
 
@@ -450,7 +470,7 @@ def test_removed_referenced_child_fields_are_rejected():
         child = Replacement
         total = child.y + 1
 
-    assert Valid("V", child={"y": 2}).total == 3
+    assert Valid("V", child=Replacement("R", y=2)).total == 3
 
 
 def test_overridden_scalar_assumptions_reach_inherited_expressions():
@@ -489,7 +509,7 @@ def test_ordinary_method_inheritance_and_super_survive_nesting():
     class Parent(Modello):
         child = Grandchild
 
-    assert Parent("P", child={"x": 1}).child.label() == "base derived"
+    assert Parent("P", child=Grandchild("G", x=1)).child.label() == "base derived"
 
 
 def test_alias_definitions_add_constraints_instead_of_overwriting_them():
@@ -520,7 +540,7 @@ def test_derived_field_assumptions_filter_multiple_roots():
     class Parent(Modello):
         child = Child
 
-    parent = Parent("P", child={"squared": 9})
+    parent = Parent("P", child=Child("C", squared=9))
     assert (parent.child.x, parent.child.positive) == (3, 5)
 
 
@@ -535,7 +555,7 @@ def test_undefined_derived_values_are_not_solutions():
         child = Child
 
     with pytest.raises(ValueError, match="0 solutions"):
-        Parent("P", child={"x": 0})
+        Parent("P", child=Child("C", x=0))
 
 
 def test_cyclic_definitions_are_solved_as_simultaneous_equations():
@@ -564,12 +584,14 @@ def test_invalid_scalar_values_identify_the_field(value):
     class Parent(Modello):
         child = Child
 
+    source = Child("C")
+    source.x = value
     with pytest.raises(TypeError, match="child.x.*scalar"):
-        Parent("P", child={"x": value})
+        Parent("P", child=source)
 
 
-def test_nested_mapping_keys_are_attribute_names():
-    """Mappings with non-string keys have a clear validation error."""
+def test_nested_reference_unknown_attributes():
+    """Unknown class reference attributes have a clear validation error."""
 
     class Child(Modello):
         x = InstanceDummy("x")
@@ -577,8 +599,6 @@ def test_nested_mapping_keys_are_attribute_names():
     class Parent(Modello):
         child = Child
 
-    with pytest.raises(TypeError, match="child keys must be attribute names"):
-        Parent("P", child={1: 2})
     with pytest.raises(AttributeError, match="Child.*nope"):
         Parent.child.nope
 
@@ -667,7 +687,7 @@ def test_instance_subclasses_must_retain_the_declared_child_shape():
         payload = Base
 
     with pytest.raises(TypeError, match="missing payload.child.x"):
-        Parent("P", payload=Derived("D", child={"y": 3}))
+        Parent("P", payload=Derived("D", child=Replacement("R", y=3)))
 
 
 def test_nested_construction_uses_declarations_without_child_initializers():
@@ -702,9 +722,9 @@ def test_constants_and_positive_inputs_cannot_be_contradicted():
         child = Child
 
     with pytest.raises(ValueError, match="0 solutions"):
-        Parent("P", child={"x": 0})
+        Parent("P", child=Child("C", x=0))
     with pytest.raises(ValueError, match="0 solutions"):
-        Parent("P", child={"fixed": 2})
+        Parent("P", child=Child("C", fixed=2))
 
 
 def test_metadata_prefix_is_reserved_for_model_fields():
@@ -725,7 +745,7 @@ def test_reference_helpers_do_not_shadow_public_model_fields():
         child = Child
         total = child.create + 1
 
-    assert Parent("P", child={"create": 2}).total == 3
+    assert Parent("P", child=Child("C", create=2)).total == 3
 
 
 def test_class_body_component_aliases_require_an_explicit_model_class():
@@ -752,7 +772,7 @@ def test_undefined_candidates_are_filtered_before_selecting_a_root():
     class Parent(Modello):
         child = Child
 
-    parent = Parent("P", child={"polynomial": 0})
+    parent = Parent("P", child=Child("C", polynomial=0))
     assert (parent.child.x, parent.child.inverse) == (1, 1)
 
 
@@ -767,7 +787,7 @@ def test_external_bound_symbols_remain_owned_by_the_source_instance():
         doubled = child.x * 2
 
     source = Child("external")
-    parent = Parent("P", child={"x": source.x})
+    parent = Parent("P", child=Child("C", x=source.x))
     assert parent.child.x == source.x
     assert parent.doubled == 2 * source.x
     assert isinstance(source.x, BoundInstanceDummy)

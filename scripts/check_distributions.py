@@ -24,6 +24,7 @@ distribution = metadata.distribution("modello")
 assert distribution.metadata["License-Expression"] == "MIT"
 assert distribution.metadata.get_all("License-File")
 assert distribution.metadata["Requires-Python"] == ">=3.10"
+assert Path(modello.__file__).with_name("py.typed").is_file()
 if sys.argv[1]:
     assert distribution.version == sys.argv[1], distribution.version
 
@@ -36,12 +37,18 @@ assert RightAngleTriangle("T", a=3, b=4).c == 5
 assert RightAngleTriangle("T", b=4, c=5).a == 3
 
 class Box(modello.Modello):
-    base = RightAngleTriangle
+    base = modello.component(RightAngleTriangle)
     height = modello.InstanceDummy("height", positive=True)
     diagonal = sqrt(base.c**2 + height**2)
 
-box = Box("B", base={"b": 4}, height=12, diagonal=13)
+box = Box("B", base=RightAngleTriangle("base", b=4), height=12, diagonal=13)
 assert (box.base.a, box.base.b, box.base.c) == (3, 4, 5)
+try:
+    Box("B", base={"b": 4})
+except TypeError:
+    pass
+else:
+    raise AssertionError("Component mappings must be rejected")
 
 first = RightAngleTriangle("T")
 second = RightAngleTriangle("T")
@@ -62,6 +69,24 @@ def check_wheel(wheel: Path, directory: Path, requirements: Path, expected_versi
     subprocess.run(["uv", "pip", "install", "--python", str(python), "--no-deps", str(wheel)], check=True)
     subprocess.run(
         [str(python), "-I", "-c", SMOKE_TEST, expected_version],
+        cwd=directory,
+        check=True,
+    )
+    typing_check = directory / "typing_checks.py"
+    typing_check.write_text((Path(__file__).resolve().parents[1] / "typing_checks.py").read_text())
+    mypy_config = directory / "mypy.ini"
+    mypy_config.write_text("[mypy]\nignore_missing_imports = true\n")
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "mypy",
+            "--config-file",
+            str(mypy_config),
+            "--python-executable",
+            str(python),
+            str(typing_check),
+        ],
         cwd=directory,
         check=True,
     )

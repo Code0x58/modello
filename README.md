@@ -31,21 +31,26 @@ The functionality is covered by tests in both `test_modello.py` and doctests+tes
 Models can contain named components. Using the triangle above:
 
 ```python
+from modello import component
+
+
 class Box(Modello):
-    base = RightAngleTriangle
+    base = component(RightAngleTriangle)
     height = InstanceDummy("height", positive=True)
     diagonal = sqrt(base.c**2 + height**2)
 
 
-box = Box("B", base={"b": 4}, height=12, diagonal=13)
+box = Box("B", base=RightAngleTriangle("base", b=4), height=12, diagonal=13)
 assert box.base.a == 3
 ```
 
-Nested mappings and compatible model instances can supply component values at
-any declared depth. The whole tree is solved together; omitted inputs stay
-symbolic unless constraints determine them. See the
+Pass instances of the declared component classes at any depth; dictionaries are
+not accepted. The whole tree is solved together; omitted inputs stay symbolic
+unless constraints determine them. Supplied children are copied, so the parent
+can complete their missing inputs without mutating the originals. See the
 [nested-model guide](https://modello.readthedocs.io/en/latest/nesting.html) for
-snapshot, inheritance, and construction semantics.
+snapshot, inheritance, and construction semantics. `component(Model)` also
+gives child attributes their model instance type for static checking.
 
 
 ## Installation
@@ -98,6 +103,5 @@ pytest examples/jobs.py::jobs.Job
  * elaborate on tests/examples
  * think about extending the functionality to allow for a more complete system of constraints, use the RightAngleTriangle example as a base
  * work out patterns for labels/names on symbols so they render nicely
- * for mypy, consider getting value from or removing it
  * think about the possibility of symbolic (instance) dummies to allow live updates to system rather than modello instantiation being final
  * think about defaults (e.g expenses=0)

@@ -2,14 +2,37 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar, MutableMapping, cast
+from decimal import Decimal
+from fractions import Fraction
+from typing import Any, ClassVar, MutableMapping, Protocol, TypeAlias, TypeVar, cast
 
 from sympy import Basic, Dummy, Eq, Expr, S, SympifyError, solve
 from sympy.simplify.simplify import simplify
 
 FieldPath = tuple[str, ...]
+
+
+class SymbolicScalar(Protocol):
+    """The scalar expression surface used for typing SymPy-compatible inputs.
+
+    SymPy's untyped ``Expr`` would make a constructor union accept any object,
+    including dictionaries. This protocol keeps the input boundary typed.
+    Runtime validation still requires a SymPy scalar expression.
+    """
+
+    @property
+    def free_symbols(self) -> set[Any]:
+        """Return the expression's free symbols."""
+        ...
+
+    @property
+    def is_commutative(self) -> bool | None:
+        """Return the expression's commutativity assumption."""
+        ...
+
+
+ScalarValue: TypeAlias = SymbolicScalar | int | float | complex | str | Decimal | Fraction
 
 
 class ModelloSentinelClass:
@@ -208,8 +231,8 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
     _modello_instance_constraints: dict[BoundInstanceDummy, Basic]
     _modello_constraints: list[Basic]
 
-    def __init__(self, name: str, **value_map: object) -> None:
-        """Accept scalar values and child mappings or compatible model instances."""
+    def __init__(self, name: str, **value_map: ScalarValue | Modello) -> None:
+        """Accept scalar values and compatible child model instances."""
         bindings = {d: d.bound(name) for d in dict.fromkeys(self._modello_fields.values())}
         fields = {path: bindings[d] for path, d in self._modello_fields.items()}
         constraints = [Eq(bindings[d], expr.xreplace(bindings)) for d, expr in self._modello_class_constraints]
@@ -227,41 +250,34 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
             inputs[fields[path]] = value
             constraints.append(Eq(fields[path], value))
 
-        def collect(model: type[Modello], values: Mapping[str, object] | Modello, prefix: FieldPath) -> None:
-            """Validate nested inputs and rebind snapshots of existing children."""
-            scope = {**bindings, **{d: fields[prefix + path] for path, d in model._modello_fields.items()}}
-            if isinstance(values, Modello):
-                if not isinstance(values, model):
-                    raise TypeError(f"{'.'.join(prefix)} must be a {model.__name__} instance or a mapping")
-                source_fields = type(values)._modello_fields
-                for path in model._modello_fields:
-                    if path not in source_fields:
-                        raise TypeError(f"Child instance is missing {'.'.join((*prefix, *path))}")
-                scope.update(
-                    (values._modello_instance_dummies[source_fields[path]], fields[prefix + path])
+        for attr, value in value_map.items():
+            if attr in self._modello_namespace.dummies:
+                add_value((attr,), value, bindings)
+                continue
+            child = self._modello_namespace.nested_models.get(attr)
+            if child is None:
+                raise TypeError(f"Unknown model attribute {attr!r}")
+            model = child._modello_model
+            if not isinstance(value, model):
+                raise TypeError(f"{attr} must be a {model.__name__} instance")
+            prefix = (attr,)
+            source_fields = type(value)._modello_fields
+            for path in model._modello_fields:
+                if path not in source_fields:
+                    raise TypeError(f"Child instance is missing {'.'.join((attr, *path))}")
+            scope = {
+                **bindings,
+                **{d: fields[prefix + path] for path, d in model._modello_fields.items()},
+                **{
+                    value._modello_instance_dummies[source_fields[path]]: fields[prefix + path]
                     for path in model._modello_fields
-                )
-                for path in model._modello_fields:
-                    value: object = values
-                    for attr in path:
-                        value = getattr(value, attr)
-                    add_value((*prefix, *path), value, scope)
-                return
-            for attr, value in values.items():
-                if not isinstance(attr, str):
-                    raise TypeError(f"{'.'.join(prefix)} keys must be attribute names")
-                path = (*prefix, attr)
-                if attr in model._modello_namespace.dummies:
-                    add_value(path, value, scope)
-                elif attr in model._modello_namespace.nested_models:
-                    child_model = model._modello_namespace.nested_models[attr]._modello_model
-                    if not isinstance(value, (Mapping, Modello)):
-                        raise TypeError(f"{'.'.join(path)} must be a {child_model.__name__} instance or a mapping")
-                    collect(child_model, value, path)
-                else:
-                    raise TypeError(f"Unknown model attribute {'.'.join(path)!r}")
-
-        collect(type(self), value_map, ())
+                },
+            }
+            for path in model._modello_fields:
+                scalar: object = value
+                for part in path:
+                    scalar = getattr(scalar, part)
+                add_value((attr, *path), scalar, scope)
         if S.false in constraints:
             raise ValueError("0 solutions (inconsistent constraints)")
         constraints = [eq for eq in constraints if eq is not S.true]
@@ -313,3 +329,15 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
                 setattr(instance, attr, child_instance)
 
         populate(self, type(self), ())
+
+
+_ModelT = TypeVar("_ModelT", bound=Modello)
+
+
+def component(model: type[_ModelT]) -> _ModelT:
+    """Declare a named child with its instance type in a model class body.
+
+    The metaclass replaces this class declaration with scoped symbols during
+    class construction and a model instance during instance construction.
+    """
+    return cast(_ModelT, model)

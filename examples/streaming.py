@@ -2,7 +2,7 @@
 
 from sympy import Rational, ceiling
 
-from modello import InstanceDummy, Modello
+from modello import InstanceDummy, Modello, component
 
 
 class ScalableFlow(Modello):
@@ -66,14 +66,14 @@ class EntrySystem(Modello):
 
     >>> sys = EntrySystem(
     ...     "SYS",
-    ...     flow={"input": 20, "entry_time": 5, "unit_cost": Rational(1, 10), "scale": 2},
+    ...     flow=SingleDataEntryFlow("flow", input=20, entry_time=5, unit_cost=Rational(1, 10), scale=2),
     ...     overhead=1,
     ... )
     >>> sys.total_cost
     6/5
     """
 
-    flow = SingleDataEntryFlow
+    flow = component(SingleDataEntryFlow)
     overhead = InstanceDummy("overhead", positive=True, rational=True)
     total_cost = flow.cost + overhead
 
