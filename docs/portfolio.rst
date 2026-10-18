@@ -189,24 +189,23 @@ expressions over vectors. Matrix inputs and time reductions would need their own
 shape, axis, and execution semantics before becoming core model fields.
 
 The tests also build a portfolio with a third explicit GOOGL position. Inherited
-weights follow the new NAV expression correctly. Extending the numerical example
-still requires changes to its data fields, input/output bindings, and covariance
-and attribution fields. That is where a generalisation layer would be useful.
+weights follow the new NAV expression correctly. Extending this fixed
+two-instrument numerical example requires changes to its data fields,
+input/output bindings, and covariance and attribution fields.
 
-A next experiment could compile a declarative instrument universe into the same
-named model structure:
+The :doc:`named-member extension <named_members>` takes the next step: it
+projects positions to values and weights, reduces them to NAV, and carries the
+same names through data binding and risk calculations. Further work could:
 
-* Give each member a stable name, instrument type, currency, and data binding.
-* Derive aggregate value and weight expressions from those declarations.
-* Generate matching typed data and result fields, with one canonical instrument
-  ordering for covariance matrices and attribution.
-* Produce an execution plan for pointwise, lagged, and reduction operations.
+* Carry domain identity and knowledge of particular keys through static typing.
+* Represent projected maps as model fields that can receive constraints.
+* Describe observation and member axes explicitly in an execution plan for
+  pointwise, lagged, and reduction operations.
 
 Membership changes would produce a new definition and compiled plan. This keeps
-the first implementation's explicit identities while removing repeated edits to
-aggregate formulas. Static typing of generated fields needs deliberate support,
-such as generated declarations or stubs, rather than replacing named members
-with untyped mappings.
+the explicit identities while removing repeated edits to aggregate formulas.
+Typing each particular member's concrete subtype may need generated
+declarations or stubs alongside the common value type exposed by a map.
 
 The broader compute questions exposed here are typed axes and units, numeric
 precision, partial evaluation, reusable execution plans, and the boundary between

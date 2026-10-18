@@ -1,0 +1,198 @@
+"""Check named portfolio computation against the original model and matrix math."""
+
+from datetime import date
+from math import sqrt
+
+import pytest
+from sympy import ImmutableMatrix, Rational, ones
+
+from examples.named_members import NamedMap
+from examples.named_portfolio import (
+    Alphabet,
+    AlphabetPosition,
+    EquityMembers,
+    NamedMarketData,
+    NamedPortfolioPricer,
+    ThreeEquities,
+    example_named_market_data,
+    example_named_portfolio,
+    portfolio_model,
+)
+from examples.portfolio import (
+    AAPL,
+    MSFT,
+    ApplePosition,
+    Equity,
+    EquityPosition,
+    MicrosoftPosition,
+    PortfolioPricer,
+    USDCash,
+    example_market_data,
+    example_portfolio,
+)
+from modello import BoundInstanceDummy, Modello, component
+
+
+def two_equities():
+    return portfolio_model(EquityMembers)(
+        "two",
+        equities=EquityMembers(
+            "equities", aapl=ApplePosition("apple", quantity=10), msft=MicrosoftPosition("microsoft", quantity=20)
+        ),
+        cash=USDCash("cash", amount=100),
+    )
+
+
+def test_named_calculation_reproduces_original_portfolio():
+    data = example_market_data()
+    reference = PortfolioPricer(example_portfolio())(data)
+    actual = NamedPortfolioPricer(two_equities())(
+        NamedMarketData(data.aapl.close.dates, NamedMap({"msft": data.msft, "aapl": data.aapl}))
+    )
+    assert tuple(actual.positions) == ("aapl", "msft")
+    assert actual.nav == reference.nav
+    for name, expected_position in (("aapl", reference.aapl), ("msft", reference.msft)):
+        for field in ("value", "weight", "returns", "return_contribution"):
+            observed = getattr(actual.positions[name], field)
+            expected = getattr(expected_position, field)
+            assert observed.dates == expected.dates
+            assert observed.values == pytest.approx(expected.values, abs=1e-15)
+    assert actual.cash_value == reference.cash_value
+    result = actual.analytics(periods_per_year=252)
+    expected = reference.analytics(periods_per_year=252)
+    for attr in ("total_return", "mean_period_return", "annualized_volatility", "maximum_drawdown"):
+        assert getattr(result, attr) == pytest.approx(getattr(expected, attr))
+    cov = result.annualized_covariance
+    assert cov["aapl"]["msft"] == pytest.approx(expected.annualized_covariance.cross_covariance)
+    risk = result.latest_weights_risk
+    assert risk.volatility == pytest.approx(expected.latest_weights_risk.volatility)
+    assert risk.contributions["aapl"] == pytest.approx(expected.latest_weights_risk.aapl_contribution)
+
+
+def test_new_member_flows_through_aggregates_and_all_projections():
+    portfolio = example_named_portfolio()
+    path = NamedPortfolioPricer(portfolio)(example_named_market_data())
+    assert path.nav.values == (3100, 3105, 3030, 3190, 3230)
+    assert (
+        tuple(portfolio.positions) == tuple(portfolio.values) == tuple(portfolio.weights) == ("aapl", "msft", "googl")
+    )
+    assert tuple(path.positions) == tuple(path.values) == tuple(path.weights) == ("aapl", "msft", "googl")
+    assert path.values["googl"].values == (1000, 1005, 990, 1010, 1020)
+    for index, nav in enumerate(path.nav.values):
+        assert nav == sum(value.values[index] for value in path.values.values()) + path.cash_value.values[index]
+        total_weight = sum(weight.values[index] for weight in path.weights.values()) + path.cash_weight.values[index]
+        assert total_weight == pytest.approx(1)
+    returns = path.nav.simple_returns()
+    for index, actual in enumerate(returns.values):
+        assert sum(position.return_contribution.values[index] for position in path.positions.values()) == pytest.approx(
+            actual, abs=1e-15
+        )
+
+
+def test_named_covariance_and_risk_agree_with_independent_matrix_calculation():
+    path = NamedPortfolioPricer(example_named_portfolio())(example_named_market_data())
+    result = path.analytics(periods_per_year=252)
+    names = tuple(path.positions)
+    observations = ImmutableMatrix.hstack(*(path.positions[name].returns.as_vector() for name in names))
+    count = observations.rows
+    centered = observations - ones(count, 1) * (ones(1, count) * observations / count)
+    cov = centered.T * centered * 252 / (count - 1)
+    weights = ImmutableMatrix([path.weights[name].values[-1] for name in names])
+    volatility = sqrt(float((weights.T * cov * weights)[0]))
+    assert result.latest_weights_risk.volatility == pytest.approx(volatility)
+    for i, left in enumerate(names):
+        for j, right in enumerate(names):
+            assert result.annualized_covariance[left][right] == pytest.approx(float(cov[i, j]))
+        contribution = float(weights[i] * (cov * weights)[i]) / volatility
+        assert result.latest_weights_risk.contributions[left] == pytest.approx(contribution)
+    assert sum(result.latest_weights_risk.contributions.values()) == pytest.approx(volatility)
+
+
+def test_map_reduction_keeps_inverse_valuation():
+    source = ThreeEquities(
+        "equities",
+        aapl=ApplePosition("apple", instrument=AAPL("quote", price=100)),
+        msft=MicrosoftPosition("microsoft", quantity=20, instrument=MSFT("quote", price=50)),
+        googl=AlphabetPosition("alphabet", quantity=1, instrument=Alphabet("quote", price=1000)),
+    )
+    portfolio = portfolio_model(ThreeEquities)("target", equities=source, cash=USDCash("cash", amount=100), nav=3100)
+    assert portfolio.positions["aapl"].quantity == 10
+    assert portfolio.weights == {"aapl": Rational(10, 31), "msft": Rational(10, 31), "googl": Rational(10, 31)}
+    assert isinstance(source.aapl.quantity, BoundInstanceDummy)
+
+
+def test_empty_equity_domain_is_a_cash_portfolio():
+    class NoEquities(Modello):
+        pass
+
+    portfolio = portfolio_model(NoEquities)("cash", cash=USDCash("cash", amount=100))
+    dates = example_named_market_data().dates
+    path = NamedPortfolioPricer(portfolio)(NamedMarketData(dates, NamedMap({})))
+    assert portfolio.positions == portfolio.values == portfolio.weights == {}
+    assert path.positions == path.values == path.weights == {}
+    assert path.nav.values == (100,) * len(dates)
+    assert path.cash_weight.values == (1,) * len(dates)
+    result = path.analytics(periods_per_year=252)
+    assert result.annualized_covariance == result.latest_weights_risk.contributions == {}
+    assert result.total_return == result.annualized_volatility == result.latest_weights_risk.volatility == 0
+
+
+@pytest.mark.parametrize("names", [("aapl", "msft"), ("aapl", "msft", "googl", "extra")])
+def test_price_domain_must_match_the_compiled_model(names):
+    data = example_named_market_data()
+    prices = NamedMap((name, data.prices[name] if name in data.prices else data.prices["aapl"]) for name in names)
+    with pytest.raises(ValueError, match="Member names differ"):
+        NamedPortfolioPricer(example_named_portfolio())(NamedMarketData(data.dates, prices))
+
+
+def test_names_and_instrument_types_are_distinct_checks():
+    data = example_named_market_data()
+    prices = NamedMap({"aapl": data.prices["msft"], "msft": data.prices["aapl"], "googl": data.prices["googl"]})
+    with pytest.raises(ValueError, match="Price instrument must be AAPL"):
+        NamedPortfolioPricer(example_named_portfolio())(NamedMarketData(data.dates, prices))
+
+
+def test_every_price_vector_uses_the_declared_date_axis():
+    data = example_named_market_data()
+    dates = tuple(date(2026, 2, day) for day in range(2, 7))
+    with pytest.raises(ValueError, match="match the observation dates"):
+        NamedMarketData(dates, data.prices)
+    for invalid in ((), (dates[0],), (dates[1], dates[0]), (dates[0], dates[0])):
+        with pytest.raises(ValueError, match="at least two strictly increasing"):
+            NamedMarketData(invalid, NamedMap({}))
+
+
+def test_invalid_compilation_inputs():
+    with pytest.raises(ValueError, match="position quantities"):
+        NamedPortfolioPricer(portfolio_model(EquityMembers)("missing"))
+    portfolio = portfolio_model(EquityMembers)(
+        "known prices",
+        equities=EquityMembers(
+            "equities",
+            aapl=ApplePosition("apple", quantity=10, instrument=AAPL("quote", price=100)),
+            msft=MicrosoftPosition("microsoft", quantity=20, instrument=MSFT("quote", price=50)),
+        ),
+        cash=USDCash("cash", amount=100),
+    )
+    with pytest.raises(ValueError, match="independent symbolic input"):
+        NamedPortfolioPricer(portfolio)
+
+
+def test_currency_needs_an_explicit_conversion_model():
+    class EuroEquity(Equity):
+        ticker = "EUR-example"
+        currency = "EUR"
+
+    class EuroPosition(EquityPosition):
+        instrument = component(EuroEquity)
+
+    class EuroMembers(Modello):
+        euro = component(EuroPosition)
+
+    portfolio = portfolio_model(EuroMembers)(
+        "mixed currencies",
+        equities=EuroMembers("equities", euro=EuroPosition("euro", quantity=1)),
+        cash=USDCash("cash", amount=1),
+    )
+    with pytest.raises(ValueError, match="requires USD"):
+        NamedPortfolioPricer(portfolio)

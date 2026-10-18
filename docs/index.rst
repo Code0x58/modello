@@ -42,6 +42,8 @@ illustrate symbolic modeling with fixed historical rates.
 
 The :doc:`portfolio analytics experiment <portfolio>` combines named equity
 positions with price vectors, return attribution, and sample risk estimates.
+Its :doc:`named-member extension <named_members>` explores projection and
+reduction over maps of typed positions and their weights.
 
 .. toctree::
    :maxdepth: 2
@@ -49,6 +51,7 @@ positions with price vectors, return attribution, and sample risk estimates.
    api
    nesting
    portfolio
+   named_members
    contributing
 
 * :ref:`genindex`

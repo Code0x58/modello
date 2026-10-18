@@ -120,7 +120,7 @@ class Series:
         return Series(self.dates, tuple(values))
 
 
-_EquityT = TypeVar("_EquityT", bound=Equity)
+_EquityT = TypeVar("_EquityT", bound=Equity, covariant=True)
 
 
 @dataclass(frozen=True)
