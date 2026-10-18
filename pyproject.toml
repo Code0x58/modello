@@ -1,44 +1,74 @@
 [build-system]
-requires = ["setuptools>=61", "setuptools_scm[toml]>=7"]
+requires = ["setuptools>=84.0.0", "setuptools-scm>=10.3.4"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "modello"
 description = "sympy expressions in models"
 readme = "README.md"
-requires-python = ">=3.7"
-license = {text = "MIT"}
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{name = "Oliver Bristow", email = "github+pypi@oliverbristow.co.uk"}]
-dependencies = ["sympy"]
+dependencies = ["sympy>=1.14.0"]
 keywords = ["symbolic modeling"]
-urls = {homepage = "https://github.com/Code0x58/modello/"}
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
 ]
 dynamic = ["version"]
 
+[project.urls]
+Homepage = "https://github.com/Code0x58/modello/"
+Documentation = "https://modello.readthedocs.io/"
+Issues = "https://github.com/Code0x58/modello/issues"
+
 [project.optional-dependencies]
 test = [
-    "flake8-black",
-    "flake8-docstrings",
-    "flake8-isort",
-    "pytest-cov>=2.6.1",
-    "pytest-ruff",
-    "pytest-mypy",
-    "pytest>=4.1",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
 ]
+
+[dependency-groups]
+dev = [
+    "modello[test]",
+    "build>=1.6.1",
+    "mypy>=2.4.0",
+    "packaging>=26.3",
+    "ruff>=0.17.1",
+    "setuptools>=84.0.0",
+    "setuptools-scm>=10.3.4",
+    "twine>=7.0.0",
+]
+docs = [
+    "sphinx>=9.1.0",
+    "sphinx-rtd-theme>=3.1.0",
+]
+notebooks = [
+    "jupyter>=1.1.1",
+    "matplotlib>=3.11.2",
+    "pandas>=3.0.6",
+]
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
+
+[tool.uv.sources]
+modello = { workspace = true }
+
+[tool.uv.dependency-groups]
+docs = { requires-python = ">=3.12" }
+notebooks = { requires-python = ">=3.11" }
 
 [tool.setuptools]
 py-modules = ["modello"]
@@ -46,7 +76,7 @@ py-modules = ["modello"]
 [tool.setuptools_scm]
 
 [tool.pytest.ini_options]
-addopts = "--doctest-modules --doctest-report=udiff --cov=modello --cov-report=html --cov-report=term --mypy --ruff"
+addopts = "--doctest-modules --doctest-glob=*.rst --doctest-report=udiff --cov=modello --cov-report=html --cov-report=term"
 python_files = ["test_modello.py", "examples/*.py"]
 cache_dir = "artefacts/reports/.pytest_cache"
 
@@ -59,22 +89,20 @@ branch = true
 directory = "artefacts/reports/coverage-html"
 
 [tool.mypy]
+python_version = "3.10"
 ignore_missing_imports = true
 cache_dir = "artefacts/reports/.mypy_cache"
+exclude = ["^build/", "^docs/_build/", "^artefacts/", "^dist/"]
 
-[tool.mypy-modello]
+[[tool.mypy.overrides]]
+module = "modello"
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 
-[tool.isort]
-line_length = 120
-force_grid_wrap = 0
-use_parentheses = true
-include_trailing_comma = true
-combine_as_imports = true
-multi_line_output = 5
-
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

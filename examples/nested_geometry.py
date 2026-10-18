@@ -6,9 +6,11 @@
 >>> box.diagonal
 13
 """
-from modello import InstanceDummy, Modello
-from examples.geometry import RightAngleTriangle
+
 from sympy import sqrt
+
+from examples.geometry import RightAngleTriangle
+from modello import InstanceDummy, Modello
 
 
 class Box(Modello):
@@ -16,5 +18,4 @@ class Box(Modello):
 
     base = RightAngleTriangle
     height = InstanceDummy("height", positive=True)
-    diagonal = sqrt(base.c ** 2 + height ** 2)
-
+    diagonal = sqrt(base.c**2 + height**2)

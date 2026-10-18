@@ -4,8 +4,10 @@
 >>> line.length
 5
 """
-from modello import InstanceDummy, Modello
+
 from sympy import sqrt
+
+from modello import InstanceDummy, Modello
 
 
 class Point(Modello):
