@@ -44,6 +44,8 @@ The :doc:`portfolio analytics experiment <portfolio>` combines named equity
 positions with price vectors, return attribution, and sample risk estimates.
 Its :doc:`named-member extension <named_members>` explores projection and
 reduction over maps of typed positions and their weights.
+The :doc:`account and execution walkthrough <accounts>` adds external market and
+transaction sources, time-aware signals, ledger replay, and execution costs.
 
 .. toctree::
    :maxdepth: 2
@@ -52,6 +54,7 @@ reduction over maps of typed positions and their weights.
    nesting
    portfolio
    named_members
+   accounts
    contributing
 
 * :ref:`genindex`

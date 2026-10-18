@@ -130,6 +130,11 @@ Ticker identity and member identity remain distinct concepts.
 The original experiment's assumptions and distinction between observed-path
 volatility and fixed-reference-weight risk apply here as well.
 
+The :doc:`account system <accounts>` extends the same valuation and analytics
+with changing positions, an external transaction log, signals, and execution
+benchmarks. It separates the member-name axis from the observation, publication,
+and decision times.
+
 Implications for a compute framework
 ------------------------------------
 

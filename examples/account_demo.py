@@ -1,0 +1,135 @@
+"""Run an account, signal, and execution-analysis system over external CSV fixtures.
+
+Run ``python -m examples.account_demo --json /tmp/account-report.json``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from examples.account import Account, AccountEngine, AccountPath, AccountSnapshot
+from examples.account_sources import CSVMarketSource, CSVTransactionSource, MarketSource, TransactionSource, timestamp
+from examples.execution import ExecutionBenchmark, benchmark_executions
+from examples.named_members import NamedMap
+from examples.named_portfolio import EquityMembers, portfolio_model
+from examples.portfolio import AAPL, MSFT, ApplePosition, Equity, MicrosoftPosition, USDCash
+from examples.series import Series
+from examples.signals import MomentumSignals, OrderIntent, TargetWeights, positive_signal_targets, rebalance_orders
+
+
+@dataclass(frozen=True)
+class ResearchRun:
+    """Inspectable intermediate layers rather than a monolithic backtest result."""
+
+    account: AccountPath
+    signals: NamedMap[Series[datetime]]
+    targets: TargetWeights
+    orders: NamedMap[OrderIntent]
+    execution: NamedMap[ExecutionBenchmark]
+
+
+def run(market_source: MarketSource, transaction_source: TransactionSource) -> ResearchRun:
+    """Bind replaceable sources to one deterministic research scenario."""
+    opening = portfolio_model(EquityMembers)(
+        "opening",
+        equities=EquityMembers(
+            "equities", aapl=ApplePosition("apple", quantity=10), msft=MicrosoftPosition("microsoft", quantity=10)
+        ),
+        cash=USDCash("cash", amount=1000),
+    )
+    times = tuple(timestamp(f"2026-01-{day:02d}T16:01:00Z") for day in range(5, 9))
+    account = Account("research", times[0], opening)
+    market = market_source.load()
+    ledger = transaction_source.load()
+    age = timedelta(days=4)
+    engine = AccountEngine(account, market, max_price_age=age)
+    decision_at = timestamp("2026-01-07T09:00:00Z")
+    decision = engine.evaluate(ledger, (times[0], decision_at)).snapshots[-1]
+    feature_prices = market.map(lambda history: history.sample((*times[:2], decision_at), max_age=age))
+    signals = MomentumSignals(feature_prices, lookback=2).load()
+    targets = positive_signal_targets(signals, decision_at)
+    orders = rebalance_orders(decision, targets, batch="rebalance-1", arrival_at=timestamp("2026-01-07T09:05:00Z"))
+    execution = benchmark_executions(orders, ledger, market, at=timestamp("2026-01-07T09:15:00Z"), max_price_age=age)
+    return ResearchRun(engine.evaluate(ledger, times), signals, targets, orders, execution)
+
+
+def example_run() -> ResearchRun:
+    """Use synthetic, independent market and broker files shipped with the example."""
+    directory = Path(__file__).with_name("data") / "portfolio"
+    return run(
+        CSVMarketSource(directory / "market.csv", NamedMap({"aapl": AAPL, "msft": MSFT})),
+        CSVTransactionSource(directory / "transactions.csv"),
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", type=Path, help="Write the account and benchmark layers to a JSON report")
+    arguments = parser.parse_args()
+    result = example_run()
+    path = result.account
+    print("Synthetic USD account; external market prints and transaction log")
+    print("Time                             AAPL shares  MSFT shares      Cash        NAV   Unit NAV")
+    for snapshot in path.snapshots:
+        print(
+            f"{snapshot.at.isoformat()}  {snapshot.quantities['aapl']:11.4f}  {snapshot.quantities['msft']:11.4f}"
+            f"  {snapshot.cash:8.2f}  {snapshot.nav:9.2f}  {snapshot.unit_nav:9.4f}"
+        )
+    print("Targets:", dict(result.targets.weights))
+    print("Time-weighted price-and-income return:", f"{path.analytics(periods_per_year=252).total_return:.4%}")
+    print("P&L:", path.pnl.total.values, "External capital:", path.pnl.external_flows.values)
+    print("NAV reconciliation residuals:", path.reconciliation.values)
+    for order_id, report in result.execution.items():
+        print(
+            f"{order_id}: filled {report.filled_quantity:.4f}, remaining {report.remaining_quantity:.4f}, "
+            f"model slippage USD {report.model_slippage_cost:.4f}, "
+            f"implementation shortfall USD {report.implementation_shortfall:.4f}"
+        )
+    if arguments.json:
+        payload = {
+            "snapshots": [asdict_snapshot(snapshot) for snapshot in path.snapshots],
+            "targets": dict(result.targets.weights),
+            "signals": {
+                name: {at.isoformat(): value for at, value in zip(series.times, series.values, strict=True)}
+                for name, series in result.signals.items()
+            },
+            "execution": {name: asdict(report) for name, report in result.execution.items()},
+            "pnl": {
+                "profit": path.pnl.total.values,
+                "external_flows": path.pnl.external_flows.values,
+                "residuals": path.reconciliation.values,
+            },
+        }
+        arguments.json.write_text(json.dumps(payload, default=encode_value, indent=2) + "\n")
+        print("Report:", arguments.json)
+
+
+def asdict_snapshot(snapshot: AccountSnapshot) -> dict[str, object]:
+    """Serialize named maps without copying mapping proxies or model instances."""
+    return {
+        "at": snapshot.at.isoformat(),
+        "known_at": snapshot.known_at.isoformat(),
+        "account": snapshot.account,
+        "quantities": dict(snapshot.quantities),
+        "prices": dict(snapshot.prices),
+        "values": dict(snapshot.values),
+        "cash": snapshot.cash,
+        "nav": snapshot.nav,
+        "unit_nav": snapshot.unit_nav,
+    }
+
+
+def encode_value(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, type) and issubclass(value, Equity):
+        return value.ticker
+    raise TypeError(f"Cannot encode {type(value).__name__}")
+
+
+if __name__ == "__main__":
+    main()

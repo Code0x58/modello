@@ -73,7 +73,7 @@ This keeps instrument identity and time alignment available during calculation.
 >>> path = pricer(data)
 >>> path.nav.values
 (2100.0, 2100.0, 2040.0, 2180.0, 2210.0)
->>> round(path.aapl.weight.values[0], 4), round(path.aapl.weight.values[-1], 4)
+>>> round(path.weights["aapl"].values[0], 4), round(path.weights["aapl"].values[-1], 4)
 (0.4762, 0.4661)
 
 The pricer compiles the model's scalar formulas once, then evaluates that
@@ -114,8 +114,9 @@ allocation.
 64.7513
 
 ``annualized_volatility`` measures the observed buy-and-hold return path.
-``annualized_covariance`` is the sample equity-return covariance matrix, ordered
-AAPL then MSFT, using ``n - 1`` degrees of freedom. Variance is multiplied by the
+``annualized_covariance`` is a named map of sample equity-return covariance rows,
+indexed as ``result.annualized_covariance["aapl"]["msft"]`` and using ``n - 1``
+degrees of freedom. Variance is multiplied by the
 caller-supplied observations per year. Observations should be evenly spaced in
 that trading calendar; irregular data needs resampling before annualizing. This
 scaling assumes comparable, uncorrelated periods.
@@ -137,7 +138,7 @@ section 3.1 <https://arxiv.org/html/0708.2542v3#S3.SS1>`_.
 >>> round(result.latest_weights_risk.volatility * 100, 4)
 65.1128
 >>> risk = result.latest_weights_risk
->>> round((risk.aapl_contribution + risk.msft_contribution) * 100, 4)
+>>> round((sum(risk.contributions.values())) * 100, 4)
 65.1128
 
 The two volatility figures differ because one uses the drifting historical
@@ -163,9 +164,9 @@ One exploratory run on Python 3.14.8 with SymPy 1.14.0 gave these rounded median
    * - Construct the symbolic portfolio
      - 48 ms
    * - Compile its numerical calculation
-     - 2.2 ms
+     - 1.5 ms
    * - Evaluate complete paths for 10,000 observations
-     - 27 ms
+     - 54 ms
    * - Construct and solve a portfolio for each of 10 observations
      - 788 ms
 

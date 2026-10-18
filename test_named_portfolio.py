@@ -51,7 +51,7 @@ def test_named_calculation_reproduces_original_portfolio():
     )
     assert tuple(actual.positions) == ("aapl", "msft")
     assert actual.nav == reference.nav
-    for name, expected_position in (("aapl", reference.aapl), ("msft", reference.msft)):
+    for name, expected_position in (("aapl", reference.positions["aapl"]), ("msft", reference.positions["msft"])):
         for field in ("value", "weight", "returns", "return_contribution"):
             observed = getattr(actual.positions[name], field)
             expected = getattr(expected_position, field)
@@ -63,10 +63,10 @@ def test_named_calculation_reproduces_original_portfolio():
     for attr in ("total_return", "mean_period_return", "annualized_volatility", "maximum_drawdown"):
         assert getattr(result, attr) == pytest.approx(getattr(expected, attr))
     cov = result.annualized_covariance
-    assert cov["aapl"]["msft"] == pytest.approx(expected.annualized_covariance.cross_covariance)
+    assert cov["aapl"]["msft"] == pytest.approx(expected.annualized_covariance["aapl"]["msft"])
     risk = result.latest_weights_risk
     assert risk.volatility == pytest.approx(expected.latest_weights_risk.volatility)
-    assert risk.contributions["aapl"] == pytest.approx(expected.latest_weights_risk.aapl_contribution)
+    assert risk.contributions["aapl"] == pytest.approx(expected.latest_weights_risk.contributions["aapl"])
 
 
 def test_new_member_flows_through_aggregates_and_all_projections():

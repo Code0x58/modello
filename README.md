@@ -69,6 +69,10 @@ for more examples of composition and symbolic inputs. The
 tax models. The [API reference](https://modello.readthedocs.io/en/latest/api.html)
 describes the available classes and functions.
 
+The [account research guide](https://modello.readthedocs.io/en/latest/accounts.html)
+follows market data and a transaction log through positions, signals, portfolio
+performance, and execution analysis.
+
 ## Development
 
 See [Contributing and releases](docs/contributing.rst) for environment setup,

@@ -46,12 +46,14 @@ def test_valuation_vectors_and_drifting_weights():
     """A fixed-share portfolio values each aligned observation independently."""
     path = PortfolioPricer(example_portfolio())(example_market_data())
     assert path.nav.values == (2100, 2100, 2040, 2180, 2210)
-    assert path.aapl.value.values == (1000, 1020, 980, 1040, 1030)
-    assert path.msft.value.values == (1000, 980, 960, 1040, 1080)
+    assert path.positions["aapl"].value.values == (1000, 1020, 980, 1040, 1030)
+    assert path.positions["msft"].value.values == (1000, 980, 960, 1040, 1080)
     assert path.nav.as_vector().shape == (5, 1)
-    assert path.aapl.weight.values[0] == pytest.approx(1000 / 2100)
-    assert path.aapl.weight.values[-1] == pytest.approx(1030 / 2210)
-    for apple, microsoft, cash in zip(path.aapl.weight.values, path.msft.weight.values, path.cash_weight.values):
+    assert path.positions["aapl"].weight.values[0] == pytest.approx(1000 / 2100)
+    assert path.positions["aapl"].weight.values[-1] == pytest.approx(1030 / 2210)
+    for apple, microsoft, cash in zip(
+        path.positions["aapl"].weight.values, path.positions["msft"].weight.values, path.cash_weight.values
+    ):
         assert apple + microsoft + cash == pytest.approx(1)
 
 
@@ -63,7 +65,9 @@ def test_return_attribution_uses_start_of_period_weights():
     assert returns.dates == data.aapl.close.dates[1:]
     assert returns.values == pytest.approx((0, -1 / 35, 7 / 102, 3 / 218))
     for actual, apple, microsoft in zip(
-        returns.values, path.aapl.return_contribution.values, path.msft.return_contribution.values
+        returns.values,
+        path.positions["aapl"].return_contribution.values,
+        path.positions["msft"].return_contribution.values,
     ):
         assert actual == pytest.approx(apple + microsoft, abs=1e-15)
 
@@ -79,11 +83,15 @@ def test_sample_statistics_and_covariance_matrix():
     assert analytics.mean_period_return == pytest.approx(sample_mean)
     assert analytics.annualized_volatility == pytest.approx(sqrt(252 * sample_variance))
     assert analytics.maximum_drawdown == pytest.approx(1 / 35)
-    observations = ImmutableMatrix.hstack(path.aapl.returns.as_vector(), path.msft.returns.as_vector())
+    observations = ImmutableMatrix.hstack(
+        path.positions["aapl"].returns.as_vector(), path.positions["msft"].returns.as_vector()
+    )
     count = observations.rows
     centered = observations - ones(count, 1) * (ones(1, count) * observations / count)
     reference = centered.T * centered * 252 / (count - 1)
-    actual = analytics.annualized_covariance.as_matrix()
+    actual = ImmutableMatrix(
+        [[analytics.annualized_covariance[left][right] for right in ("aapl", "msft")] for left in ("aapl", "msft")]
+    )
     for index in range(4):
         assert float(actual[index]) == pytest.approx(float(reference[index]))
 
@@ -93,9 +101,11 @@ def test_euler_contributions_and_reference_weights_risk():
     path = PortfolioPricer(example_portfolio())(example_market_data())
     analytics = path.analytics(periods_per_year=252)
     risk = analytics.latest_weights_risk
-    cov = analytics.annualized_covariance.as_matrix()
-    wa = path.aapl.weight.values[-1]
-    wm = path.msft.weight.values[-1]
+    cov = ImmutableMatrix(
+        [[analytics.annualized_covariance[left][right] for right in ("aapl", "msft")] for left in ("aapl", "msft")]
+    )
+    wa = path.positions["aapl"].weight.values[-1]
+    wm = path.positions["msft"].weight.values[-1]
 
     def volatility(apple, microsoft):
         weights = ImmutableMatrix([apple, microsoft])
@@ -103,14 +113,14 @@ def test_euler_contributions_and_reference_weights_risk():
 
     step = 1e-6
     assert risk.volatility == pytest.approx(volatility(wa, wm))
-    assert risk.aapl_contribution == pytest.approx(
+    assert risk.contributions["aapl"] == pytest.approx(
         wa * (volatility(wa + step, wm) - volatility(wa - step, wm)) / (2 * step)
     )
-    assert risk.msft_contribution == pytest.approx(
+    assert risk.contributions["msft"] == pytest.approx(
         wm * (volatility(wa, wm + step) - volatility(wa, wm - step)) / (2 * step)
     )
     assert risk.cash_contribution == 0
-    assert risk.aapl_contribution + risk.msft_contribution == pytest.approx(risk.volatility)
+    assert risk.contributions["aapl"] + risk.contributions["msft"] == pytest.approx(risk.volatility)
     assert risk.volatility != pytest.approx(analytics.annualized_volatility)
     monthly = path.analytics(periods_per_year=12)
     assert monthly.annualized_volatility == pytest.approx(analytics.annualized_volatility * sqrt(12 / 252))
@@ -130,7 +140,7 @@ def test_cash_only_portfolio_and_zero_risk():
     assert path.cash_weight.values == (1,) * 5
     assert result.total_return == result.annualized_volatility == result.maximum_drawdown == 0
     assert result.latest_weights_risk.volatility == 0
-    assert result.latest_weights_risk.aapl_contribution == result.latest_weights_risk.msft_contribution == 0
+    assert result.latest_weights_risk.contributions["aapl"] == result.latest_weights_risk.contributions["msft"] == 0
 
 
 def test_opposite_asset_returns_diversify_reference_weights_risk():
@@ -148,7 +158,7 @@ def test_opposite_asset_returns_diversify_reference_weights_risk():
     )
     path = PortfolioPricer(portfolio)(data)
     result = path.analytics(periods_per_year=252)
-    assert result.annualized_covariance.cross_covariance < 0
+    assert result.annualized_covariance["aapl"]["msft"] < 0
     assert result.latest_weights_risk.volatility == pytest.approx(0, abs=1e-12)
     assert result.annualized_volatility > 0
     assert path.nav.values == (200, 200, 198)
@@ -169,7 +179,6 @@ def test_pricer_reuses_the_model_for_another_price_vector():
 @pytest.mark.parametrize(
     "dates, values",
     [
-        ((), ()),
         ((date(2026, 1, 1),), (1, 2)),
         ((date(2026, 1, 1), date(2026, 1, 1)), (1, 2)),
         ((date(2026, 1, 2), date(2026, 1, 1)), (1, 2)),

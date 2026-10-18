@@ -5,14 +5,11 @@ Run ``python -m examples.named_portfolio`` from a checkout.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
-from math import sqrt
-from statistics import covariance, mean, variance
-from typing import Generic, TypeVar, cast
+from typing import Generic, Protocol, TypeVar
 
-from sympy import Expr, Symbol, lambdify
+from sympy import Expr, Symbol
 
 from examples.named_members import NamedMap, component_members
 from examples.portfolio import (
@@ -21,11 +18,14 @@ from examples.portfolio import (
     EquityPosition,
     EquityPrices,
     MicrosoftPosition,
-    PositionPath,
     Series,
     USDCash,
     example_market_data,
 )
+from examples.portfolio_analytics import NamedAnalytics as NamedAnalytics
+from examples.portfolio_analytics import NamedPortfolioPath, PositionPath
+from examples.portfolio_analytics import NamedRisk as NamedRisk
+from examples.scalar_plan import ScalarPlan
 from modello import InstanceDummy, Modello, component
 
 _Members = TypeVar("_Members", bound=Modello)
@@ -92,84 +92,37 @@ class NamedMarketData:
             raise ValueError("Every price vector must match the observation dates")
 
 
-@dataclass(frozen=True)
-class NamedRisk:
-    """Fixed-reference-weight volatility and its named equity contributions."""
-
-    volatility: float
-    contributions: NamedMap[float]
-
-
-@dataclass(frozen=True)
-class NamedAnalytics:
-    """Path statistics and covariance indexed by two member-name axes."""
-
-    total_return: float
-    mean_period_return: float
-    annualized_volatility: float
-    maximum_drawdown: float
-    annualized_covariance: NamedMap[NamedMap[float]]
-    latest_weights_risk: NamedRisk
-
-
-@dataclass(frozen=True)
-class NamedPortfolioPath:
-    """Named equity paths with a common observation axis and USD cash."""
-
-    positions: NamedMap[PositionPath]
-    cash_value: Series
-    cash_weight: Series
-    nav: Series
+class PortfolioView(Protocol):
+    """The symbolic inputs required by the compiled portfolio calculation."""
 
     @property
-    def values(self) -> NamedMap[Series]:
-        """Expose value vectors using the same position names."""
-        return self.positions.map(lambda position: position.value)
+    def positions(self) -> NamedMap[EquityPosition]: ...
 
     @property
-    def weights(self) -> NamedMap[Series]:
-        """Expose weight vectors using the same position names."""
-        return self.positions.map(lambda position: position.weight)
+    def values(self) -> NamedMap[Expr]: ...
 
-    def analytics(self, *, periods_per_year: int) -> NamedAnalytics:
-        """Reduce time observations while retaining the member domain."""
-        if isinstance(periods_per_year, bool) or not isinstance(periods_per_year, int) or periods_per_year <= 0:
-            raise ValueError("periods_per_year must be a positive integer")
-        returns = self.nav.simple_returns().values
-        if len(returns) < 2:
-            raise ValueError("Sample risk estimates need at least three price observations")
-        asset_returns = self.positions.map(lambda position: position.returns.values)
-        cov = asset_returns.map(
-            lambda left: asset_returns.map(lambda right: covariance(left, right) * periods_per_year)
-        )
-        weights = self.weights.map(lambda series: series.values[-1])
-        weighted_returns = weights.combine(
-            asset_returns, lambda weight, series: tuple(weight * value for value in series)
-        )
-        fixed_returns = tuple(
-            sum(series[index] for series in weighted_returns.values()) for index in range(len(returns))
-        )
-        volatility = sqrt(variance(fixed_returns) * periods_per_year)
-        contributions = weights.combine(
-            cov,
-            lambda weight, row: (
-                weight * sum(row.combine(weights, lambda c, w: c * w).values()) / volatility if volatility else 0.0
-            ),
-        )
-        return NamedAnalytics(
-            self.nav.values[-1] / self.nav.values[0] - 1,
-            mean(returns),
-            sqrt(variance(returns) * periods_per_year),
-            -min(self.nav.drawdowns().values),
-            cov,
-            NamedRisk(volatility, contributions),
-        )
+    @property
+    def cash(self) -> USDCash: ...
+
+    @property
+    def nav(self) -> Expr: ...
+
+
+def valuation_outputs(portfolio: PortfolioView) -> NamedMap[Expr]:
+    """Use namespaced outputs so member names cannot collide with totals."""
+    return NamedMap(
+        [
+            *((f"value:{name}", value) for name, value in portfolio.values.items()),
+            ("cash", portfolio.cash.amount),
+            ("nav", portfolio.nav),
+        ]
+    )
 
 
 class NamedPortfolioPricer:
     """Compile all named equity values and reuse the plan on aligned price data."""
 
-    def __init__(self, portfolio: NamedPortfolio[_Members]) -> None:
+    def __init__(self, portfolio: PortfolioView) -> None:
         """Bind known quantities, cash, member names, and instrument identities."""
         self._instruments = portfolio.positions.map(lambda position: type(position.instrument))
         if any(instrument.currency != "USD" for instrument in self._instruments.values()):
@@ -180,10 +133,7 @@ class NamedPortfolioPricer:
         outputs = (*portfolio.values.values(), portfolio.cash.amount, portfolio.nav)
         if set().union(*(expression.free_symbols for expression in outputs)) - set(prices.values()):
             raise ValueError("Specify all position quantities and the cash balance before compiling")
-        self._calculate = cast(
-            Callable[..., tuple[float, ...]],
-            lambdify(tuple(prices.values()), outputs, modules="math", cse=True, docstring_limit=0),
-        )
+        self._plan = ScalarPlan(prices, valuation_outputs(portfolio))
 
     def __call__(self, data: NamedMarketData) -> NamedPortfolioPath:
         """Align data by name before constructing the numerical input layout."""
@@ -194,19 +144,14 @@ class NamedPortfolioPricer:
             return prices.close
 
         prices = self._instruments.combine(data.prices, checked_prices)
-        rows = tuple(
-            self._calculate(*(series.values[index] for series in prices.values())) for index in range(len(data.dates))
-        )
+        outputs = self._plan.over(data.dates, prices)
 
-        def column(index: int) -> Series:
-            return Series(data.dates, tuple(row[index] for row in rows))
-
-        nav = column(len(prices) + 1)
+        nav = outputs["nav"]
         if any(value <= 0 for value in nav.values):
             raise ValueError("Portfolio value must stay strictly positive")
 
-        def position(name: str, index: int) -> PositionPath:
-            value = column(index)
+        def position(name: str) -> PositionPath:
+            value = outputs[f"value:{name}"]
             weight = Series(data.dates, tuple(v / n for v, n in zip(value.values, nav.values, strict=True)))
             returns = prices[name].simple_returns()
             contribution = Series(
@@ -215,9 +160,9 @@ class NamedPortfolioPricer:
             )
             return PositionPath(value, weight, returns, contribution)
 
-        cash = column(len(prices))
+        cash = outputs["cash"]
         return NamedPortfolioPath(
-            NamedMap((name, position(name, index)) for index, name in enumerate(prices)),
+            NamedMap((name, position(name)) for name in prices),
             cash,
             Series(data.dates, tuple(c / n for c, n in zip(cash.values, nav.values, strict=True))),
             nav,

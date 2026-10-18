@@ -2,5 +2,5 @@ include LICENSE README.md pyproject.toml uv.lock
 include test_*.py typing_checks.py
 recursive-include docs *.py *.rst
 prune docs/_build
-recursive-include examples *.py
+recursive-include examples *.py *.csv
 recursive-include scripts *.py
