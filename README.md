@@ -65,9 +65,9 @@ for editors and type checkers.
 
 Follow the [nested-model guide](https://modello.readthedocs.io/en/latest/nesting.html)
 for more examples of composition and symbolic inputs. The
-[examples directory](examples/) includes geometry, flow, and tax models, and the
-[API reference](https://modello.readthedocs.io/en/latest/api.html) describes the
-available classes and functions.
+[examples directory](examples/) includes geometry, flow, portfolio analytics, and
+tax models. The [API reference](https://modello.readthedocs.io/en/latest/api.html)
+describes the available classes and functions.
 
 ## Development
 

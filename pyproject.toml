@@ -80,7 +80,7 @@ modello = ["py.typed"]
 
 [tool.pytest.ini_options]
 addopts = "--doctest-modules --doctest-glob=*.rst --doctest-report=udiff --cov=modello --cov-report=html --cov-report=term"
-python_files = ["test_modello.py", "examples/*.py"]
+python_files = ["test_*.py", "examples/*.py"]
 cache_dir = "artefacts/reports/.pytest_cache"
 
 [tool.coverage.run]

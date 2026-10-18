@@ -40,11 +40,15 @@ The `examples directory <https://github.com/Code0x58/modello/tree/master/example
 contains geometry, flow-scaling, and historical tax-model examples. Tax examples
 illustrate symbolic modeling with fixed historical rates.
 
+The :doc:`portfolio analytics experiment <portfolio>` combines named equity
+positions with price vectors, return attribution, and sample risk estimates.
+
 .. toctree::
    :maxdepth: 2
 
    api
    nesting
+   portfolio
    contributing
 
 * :ref:`genindex`
