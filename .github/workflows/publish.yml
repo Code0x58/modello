@@ -4,25 +4,73 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
 jobs:
-  build-and-publish:
+  validate:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: validate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      UV_LOCKED: "true"
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      RELEASE_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Check out release commit and tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify release tag still identifies this commit
+        run: test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$RELEASE_COMMIT"
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.1"
+          python-version: "3.14"
+      - name: Install locked build dependencies
+        run: uv sync --dev
+      - name: Build distributions
+        run: uv build --no-build-isolation --python .venv/bin/python
+      - name: Check distribution metadata
+        run: uv run --dev twine check --strict dist/*
+      - name: Validate release version and installed distributions
+        run: uv run --dev python scripts/check_distributions.py dist --expected-version "$RELEASE_TAG"
+      - name: Store validated distributions
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: pypi
       url: https://pypi.org/p/modello
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Download validated distributions
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          python-version: '3.x'
-      - name: Build package
-        run: |
-          python -m pip install --upgrade pip build
-          python -m build
-        # the publishing uses PyPI's trusted publishing, so configured on pypi instead of using secrets
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags')
+          name: release-distributions
+          path: dist
+      - name: Publish to PyPI with Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1

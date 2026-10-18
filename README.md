@@ -1,6 +1,8 @@
 # Modello
 This project aims to explore symbolic modeling with object orientated programming. The heavy lifting is done by the [sympy](https://www.sympy.org/en/index.html) library. This module just provides a class to derive models from.
 
+[Documentation](https://modello.readthedocs.io/) covers the API, development checks, and release workflow.
+
 An example based on `examples/geometry.py`:
 ```python
 from modello import InstanceDummy, Modello
@@ -54,6 +56,16 @@ documented in [notebooks/README.md](notebooks/README.md).
 
 You can also install test dependencies with `pip install --editable '.[test]'`.
 Ruff and mypy run separately from pytest, avoiding the old pytest lint plugins.
+
+Build the documentation with Python 3.12 or newer:
+
+```sh
+uv sync --locked --group docs --python 3.12
+uv run --locked --group docs sphinx-build --fail-on-warning --keep-going --builder=html docs docs/_build/html
+```
+
+See [Contributing and releases](docs/contributing.rst) for distribution checks,
+Read the Docs setup, and the validated PyPI Trusted Publishing workflow.
 
 If you want to run a subset of tests or otherwise pass arguments to pytest, just invoke `pytest` directly, e.g.:
 ```sh
