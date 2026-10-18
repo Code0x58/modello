@@ -35,8 +35,10 @@ Build and validate both distribution formats:
 Start with an empty ``dist`` directory so that it contains exactly one wheel
 and one source distribution. Builds use the installed, locked backend. The
 distribution check installs locked runtime dependencies and the wheel in a fresh
-environment outside the checkout, checks metadata and forward/inverse solving,
-then rebuilds the source distribution and repeats the checks.
+environment outside the checkout, checks metadata, forward/inverse solving, and
+the installed type annotations, then rebuilds the source distribution and repeats
+the checks. ``typing_checks.py`` includes valid calls and expected type errors;
+unused-ignore checks ensure mypy continues to catch those errors.
 
 Read the Docs
 -------------

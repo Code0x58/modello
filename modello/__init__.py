@@ -13,13 +13,9 @@ from sympy.simplify.simplify import simplify
 FieldPath = tuple[str, ...]
 
 
+# A structural protocol keeps untyped SymPy imports out of the input union.
 class SymbolicScalar(Protocol):
-    """The scalar expression surface used for typing SymPy-compatible inputs.
-
-    SymPy's untyped ``Expr`` would make a constructor union accept any object,
-    including dictionaries. This protocol keeps the input boundary typed.
-    Runtime validation still requires a SymPy scalar expression.
-    """
+    """A scalar expression accepted by the constructor's input annotations."""
 
     @property
     def free_symbols(self) -> set[Any]:
@@ -33,10 +29,6 @@ class SymbolicScalar(Protocol):
 
 
 ScalarValue: TypeAlias = SymbolicScalar | int | float | complex | str | Decimal | Fraction
-
-
-class ModelloSentinelClass:
-    """Identify models while the metaclass is constructing Modello itself."""
 
 
 class InstanceDummy(Dummy):
@@ -149,7 +141,7 @@ class ModelloMetaNamespace(dict):
 
     def __setitem__(self, key: str, value: object) -> None:
         """Record expressions or create a scoped reference for a model class."""
-        is_model = isinstance(value, type) and issubclass(value, ModelloSentinelClass)
+        is_model = isinstance(value, ModelloMeta)
         if (isinstance(value, Basic) or is_model) and key.startswith("_modello_"):
             raise ValueError("The _modello_ prefix is reserved for model metadata")
         if isinstance(value, Basic):
@@ -168,7 +160,9 @@ class ModelloMetaNamespace(dict):
             if key in self.dummies:
                 raise ValueError(f"Cannot replace scalar {self.name}.{key} with a nested model")
             child = _ModelReference._modello_create(cast(type[Modello], value), key)
-            self._replace(self._child_replacements(key, child))
+            replacements = self._child_replacements(key, child)
+            if replacements:
+                self._replace(replacements)
             self.nested_models[key] = child
             value = child
         elif isinstance(value, _ModelReference):
@@ -221,22 +215,19 @@ class ModelloMeta(type):
         return super().__new__(mcs, name, bases, namespace)
 
 
-class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
+class Modello(metaclass=ModelloMeta):
     """Build a symbolic model, solving its named children together with it."""
 
     _modello_namespace: ClassVar[ModelloMetaNamespace] = ModelloMetaNamespace("", ())
     _modello_fields: ClassVar[dict[FieldPath, InstanceDummy]] = {}
     _modello_class_constraints: ClassVar[tuple[tuple[InstanceDummy, Basic], ...]] = ()
     _modello_instance_dummies: dict[InstanceDummy, BoundInstanceDummy]
-    _modello_instance_constraints: dict[BoundInstanceDummy, Basic]
-    _modello_constraints: list[Basic]
 
     def __init__(self, name: str, **value_map: ScalarValue | Modello) -> None:
         """Accept scalar values and compatible child model instances."""
         bindings = {d: d.bound(name) for d in dict.fromkeys(self._modello_fields.values())}
         fields = {path: bindings[d] for path, d in self._modello_fields.items()}
         constraints = [Eq(bindings[d], expr.xreplace(bindings)) for d, expr in self._modello_class_constraints]
-        inputs: dict[BoundInstanceDummy, Basic] = {}
 
         def add_value(path: FieldPath, raw: object, scope: dict[InstanceDummy, BoundInstanceDummy]) -> None:
             """Translate a supplied scalar into the shared instance scope."""
@@ -247,7 +238,6 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
             if not isinstance(value, Expr):
                 raise TypeError(f"{'.'.join(path)} must be a SymPy-compatible scalar")
             value = value.xreplace(scope)
-            inputs[fields[path]] = value
             constraints.append(Eq(fields[path], value))
 
         for attr, value in value_map.items():
@@ -316,10 +306,6 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
         def populate(instance: Modello, model: type[Modello], prefix: FieldPath) -> None:
             """Materialize descendants directly from the one shared solution."""
             instance._modello_instance_dummies = {d: fields[prefix + path] for path, d in model._modello_fields.items()}
-            instance._modello_instance_constraints = {
-                d: inputs[d] for d in instance._modello_instance_dummies.values() if d in inputs
-            }
-            instance._modello_constraints = constraints
             for attr in model._modello_namespace.dummies:
                 bound = fields[prefix + (attr,)]
                 setattr(instance, attr, solution[bound])
@@ -337,7 +323,9 @@ _ModelT = TypeVar("_ModelT", bound=Modello)
 def component(model: type[_ModelT]) -> _ModelT:
     """Declare a named child with its instance type in a model class body.
 
-    The metaclass replaces this class declaration with scoped symbols during
-    class construction and a model instance during instance construction.
+    Use ``child = component(Child)``, then supply a ``Child`` instance when
+    constructing the parent model.
     """
+    # The class namespace turns this declaration into a scoped reference;
+    # populated models expose an instance of this type instead.
     return cast(_ModelT, model)

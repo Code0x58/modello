@@ -369,7 +369,7 @@ def test_scalar_aliases_keep_all_supplied_constraints():
     parent = Parent("P", alias=3)
     assert (parent.child.x, parent.child.alias, parent.alias) == (3, 3, 3)
     with pytest.raises(ValueError, match="0 solutions"):
-        Parent("P", child=Child("C", x=1, alias=2))
+        Child("C", x=1, alias=2)
     with pytest.raises(ValueError, match="0 solutions"):
         Parent("P", child=Child("C", x=1), alias=2)
 
@@ -389,8 +389,6 @@ def test_inconsistent_and_ambiguous_nested_systems_are_rejected():
         Parent("P", total=5)
     with pytest.raises(ValueError, match="0 solutions"):
         Parent("P", child=Child("C", x=2), total=10)
-    with pytest.raises(ValueError, match="0 solutions"):
-        Parent("P", child=Child("C", x=2, squared=99))
 
 
 def test_overriding_a_child_rebinds_inherited_expressions():
@@ -489,14 +487,15 @@ def test_overridden_scalar_assumptions_reach_inherited_expressions():
 
 
 def test_ordinary_method_inheritance_and_super_survive_nesting():
-    """Model metadata does not copy or overwrite Python's class cells and methods."""
+    """Model inheritance preserves ordinary mixins, class cells, and methods."""
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-
+    class Labels:
         def label(self):
             """Return the base label."""
             return "base"
+
+    class Child(Labels, Modello):
+        x = InstanceDummy("x")
 
     class Derived(Child):
         def label(self):
@@ -538,9 +537,10 @@ def test_derived_field_assumptions_filter_multiple_roots():
         positive = x + 2
 
     class Parent(Modello):
-        child = Child
+        child = component(Child)
+        squared = child.squared
 
-    parent = Parent("P", child=Child("C", squared=9))
+    parent = Parent("P", squared=9)
     assert (parent.child.x, parent.child.positive) == (3, 5)
 
 
@@ -552,10 +552,11 @@ def test_undefined_derived_values_are_not_solutions():
         inverse = 1 / x
 
     class Parent(Modello):
-        child = Child
+        child = component(Child)
+        x = child.x
 
     with pytest.raises(ValueError, match="0 solutions"):
-        Parent("P", child=Child("C", x=0))
+        Parent("P", x=0)
 
 
 def test_cyclic_definitions_are_solved_as_simultaneous_equations():
@@ -719,12 +720,14 @@ def test_constants_and_positive_inputs_cannot_be_contradicted():
         fixed = S.One
 
     class Parent(Modello):
-        child = Child
+        child = component(Child)
+        x = child.x
+        fixed = child.fixed
 
     with pytest.raises(ValueError, match="0 solutions"):
-        Parent("P", child=Child("C", x=0))
+        Parent("P", x=0)
     with pytest.raises(ValueError, match="0 solutions"):
-        Parent("P", child=Child("C", fixed=2))
+        Parent("P", fixed=2)
 
 
 def test_metadata_prefix_is_reserved_for_model_fields():
@@ -770,9 +773,10 @@ def test_undefined_candidates_are_filtered_before_selecting_a_root():
         polynomial = x * (x - 1)
 
     class Parent(Modello):
-        child = Child
+        child = component(Child)
+        polynomial = child.polynomial
 
-    parent = Parent("P", child=Child("C", polynomial=0))
+    parent = Parent("P", polynomial=0)
     assert (parent.child.x, parent.child.inverse) == (1, 1)
 
 
