@@ -1,6 +1,8 @@
 """Functional tests for Modello instances."""
-from modello import BoundInstanceDummy, InstanceDummy, Modello
+
 from sympy import simplify
+
+from modello import BoundInstanceDummy, InstanceDummy, Modello
 
 
 def test_no_constraints():

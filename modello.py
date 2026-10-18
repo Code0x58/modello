@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 """Module for symbolic modeling of systems."""
+
 import typing
 
 from sympy import Basic, Dummy, Eq, solve
+
 # more verbose path as mypy sees sympy.simplify as a module
 from sympy.simplify.simplify import simplify
 
@@ -83,9 +85,7 @@ class ModelloMetaNamespace(dict):
             value = dummy
         elif key in self.attrs:
             # cannot overried a part of inherited expressions with a non-expression
-            raise ValueError(
-                "Cannot assign %s.%s to a non-expression" % (self.name, key)
-            )
+            raise ValueError("Cannot assign %s.%s to a non-expression" % (self.name, key))
         else:
             self.other_attrs[key] = value
         super().__setitem__(key, value)
@@ -122,16 +122,13 @@ class ModelloMeta(type):
 class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
     """Base class for building symbolic models."""
 
-    _modello_namespace: typing.ClassVar[ModelloMetaNamespace] = ModelloMetaNamespace(
-        "", ()
-    )
+    _modello_namespace: typing.ClassVar[ModelloMetaNamespace] = ModelloMetaNamespace("", ())
     _modello_class_constraints: typing.Dict[InstanceDummy, Basic] = {}
 
     def __init__(self, name: str, **value_map: Basic) -> None:
         """Initialise a model instance and solve for each attribute."""
         instance_dummies = {
-            class_dummy: class_dummy.bound(name)
-            for class_dummy in self._modello_namespace.dummies.values()
+            class_dummy: class_dummy.bound(name) for class_dummy in self._modello_namespace.dummies.values()
         }
         self._modello_instance_dummies = instance_dummies
 
@@ -142,18 +139,13 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
             class_dummy = getattr(self, attr)
             instance_dummy = instance_dummies[class_dummy]
             instance_constraints[instance_dummy] = value
-        self._modello_instance_constraints: typing.Dict[
-            BoundInstanceDummy, Basic
-        ] = instance_constraints
+        self._modello_instance_constraints: typing.Dict[BoundInstanceDummy, Basic] = instance_constraints
 
         constraints = [
             Eq(instance_dummies[class_dummy], value.subs(instance_dummies))
             for class_dummy, value in self._modello_class_constraints.items()
         ]
-        constraints.extend(
-            Eq(instance_dummy, value)
-            for instance_dummy, value in instance_constraints.items()
-        )
+        constraints.extend(Eq(instance_dummy, value) for instance_dummy, value in instance_constraints.items())
         # handy for debugging
         self._modello_constraints: typing.List[Eq] = constraints
 
@@ -172,9 +164,7 @@ class Modello(ModelloSentinelClass, metaclass=ModelloMeta):
             elif instance_dummy in instance_constraints:
                 value = instance_constraints[instance_dummy]
             elif class_dummy in self._modello_class_constraints:
-                value = self._modello_class_constraints[class_dummy].subs(
-                    instance_dummies
-                )
+                value = self._modello_class_constraints[class_dummy].subs(instance_dummies)
             else:
                 value = instance_dummy
             setattr(self, attr, value)

@@ -27,24 +27,33 @@ The functionality is covered by tests in both `test_modello.py` and doctests+tes
 ## Installation
 This can be installed using one of:
 ```sh
-# using pipenv
-pipenv install modello
-
 # using pip
 pip install --user modello
-
-# using git+pipenv
-pipenv install git+https://github.com/Code0x58/modello.git#egg=modello
 
 # using git+pip
 pip install --user git+https://github.com/Code0x58/modello.git#egg=modello
 ```
 
-Currently this requires Python 3.8+ but the version requirements can drop a couple of minor versions easily if there is interest. Python 2.7 isn't planned to be supported as the Modello class relies on [PEP-3115](https://www.python.org/dev/peps/pep-3115/).
+Requires Python 3.10 or newer and SymPy 1.14 or newer.
 
 
 ## Development
-Install the development dependencies with `pip install --editable .[test]` and run the tests and linting with `pytest`. Pushes have the test suite run against them, and will also publish a release if tagged thanks to GitHub Actions. You can reproduce the Actions locally using [act](https://github.com/nektos/act), e.g. `TWINE_USERNAME= TWINE_PASSWORD= act`.
+Use uv 0.13.1 or newer to install the locked development environment and run the checks:
+
+```sh
+uv sync --locked --dev
+uv run --locked ruff format --check --diff .
+uv run --locked ruff check .
+uv run --locked mypy .
+uv run --locked pytest
+```
+
+Format changes with `uv run ruff format .`. Refresh all Python dependencies with
+`uv lock --upgrade` and commit `uv.lock`. The optional notebook environment is
+documented in [notebooks/README.md](notebooks/README.md).
+
+You can also install test dependencies with `pip install --editable '.[test]'`.
+Ruff and mypy run separately from pytest, avoiding the old pytest lint plugins.
 
 If you want to run a subset of tests or otherwise pass arguments to pytest, just invoke `pytest` directly, e.g.:
 ```sh
