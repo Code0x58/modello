@@ -44,6 +44,7 @@ illustrate symbolic modeling with fixed historical rates.
    :maxdepth: 2
 
    api
+   nesting
    contributing
 
 * :ref:`genindex`

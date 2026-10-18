@@ -2,7 +2,7 @@
 
 from sympy import Rational, ceiling
 
-from modello import InstanceDummy, Modello
+from modello import InstanceDummy, Modello, component
 
 
 class ScalableFlow(Modello):
@@ -59,6 +59,23 @@ class DoubleDataEntryFlow(ScalableFlow):
     resolution_time = InstanceDummy("resolution_time", positive=True, rational=True)
     disagreement_rate = InstanceDummy("disagreement_rate", positive=True, rational=True)
     unit_output = Rational(8 * 260, 24 * 365) / entry_time / 2
+
+
+class EntrySystem(Modello):
+    """Simple system demonstrating nesting of flows.
+
+    >>> sys = EntrySystem(
+    ...     "SYS",
+    ...     flow=SingleDataEntryFlow("flow", input=20, entry_time=5, unit_cost=Rational(1, 10), scale=2),
+    ...     overhead=1,
+    ... )
+    >>> sys.total_cost
+    6/5
+    """
+
+    flow = component(SingleDataEntryFlow)
+    overhead = InstanceDummy("overhead", positive=True, rational=True)
+    total_cost = flow.cost + overhead
 
 
 def test_simple_system():
