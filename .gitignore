@@ -4,3 +4,10 @@ artefacts/
 .venv/
 notebooks/*.ipynb
 .idea/
+__pycache__/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+coverage.xml
+test-results.xml
