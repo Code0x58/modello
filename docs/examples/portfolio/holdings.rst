@@ -13,12 +13,12 @@ price returns under those assumptions.
 Run the example
 ---------------
 
-From a source checkout, install the development environment and run:
+Install the examples and run:
 
 .. code-block:: console
 
-   $ uv sync --locked --dev
-   $ uv run --locked python -m examples.portfolio
+   $ pip install "modello[examples]"
+   $ python -m examples.portfolio
 
 The runner lives in ``examples/portfolio/explicit.py`` and imports its shared instrument
 and holding definitions from ``examples/portfolio/models.py``. The

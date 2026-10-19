@@ -5,18 +5,21 @@ The portfolio examples build on the symbolic modeling API in :mod:`modello`.
 The core package defines models, typed components, independent instance symbols,
 and joint equation solving. Its runtime dependency is SymPy.
 
-The research code lives under ``examples/``. Run it from a checkout or an
-extracted source distribution:
+The research code lives under ``examples/`` and is included in the installed
+wheel. Install the examples extra and run the walkthroughs:
 
 .. code-block:: console
 
-   $ uv sync --locked --dev
-   $ uv run --locked python -m examples.portfolio
-   $ uv run --locked python -m examples.portfolio.named
-   $ uv run --locked python -m examples.portfolio.demo --html /tmp/account.html --json /tmp/account.json
+   $ pip install "modello[examples]"
+   $ python -m examples.portfolio
+   $ python -m examples.portfolio.named
+   $ python -m examples.portfolio.demo --html /tmp/account.html --json /tmp/account.json
 
-The installed wheel contains the ``modello`` package. Research modules and CSV
-fixtures are included in the source distribution for readers to run and adapt.
+The wheel includes both the ``modello`` and ``examples`` packages, including
+the portfolio's CSV fixtures. Example modules load when explicitly imported.
+The current examples need only the standard library and the core SymPy
+dependency; the ``examples`` extra groups any future additional requirements.
+Readers can also use a checkout or source distribution to adapt the examples.
 
 Start with numeric data
 -----------------------

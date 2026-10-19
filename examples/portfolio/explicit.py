@@ -1,6 +1,6 @@
 """An explicit equity portfolio evaluated over synthetic price vectors.
 
-Run ``python -m examples.portfolio`` from a checkout for the worked example.
+Run ``python -m examples.portfolio`` for the worked example.
 """
 
 from __future__ import annotations

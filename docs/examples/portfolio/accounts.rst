@@ -6,13 +6,14 @@ with an external transaction log and time-aware market observations. It follows
 one USD account from opening holdings through signals, intended orders, partial
 executions, a deposit, and dividend income.
 
-Run the scenario from a checkout:
+Install the examples and run the scenario:
 
 .. code-block:: console
 
-   $ uv run --locked python -m examples.portfolio.demo
-   $ uv run --locked python -m examples.portfolio.demo --json /tmp/account-report.json
-   $ uv run --locked python -m examples.portfolio.demo --html /tmp/account-report.html
+   $ pip install "modello[examples]"
+   $ python -m examples.portfolio.demo
+   $ python -m examples.portfolio.demo --json /tmp/account-report.json
+   $ python -m examples.portfolio.demo --html /tmp/account-report.html
 
 The :doc:`symbolic reporting walkthrough <reporting>` adds account and instrument
 tables, signal P&L attribution, utility derivatives, and interactive timelines.

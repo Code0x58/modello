@@ -9,11 +9,12 @@ as NAV. Covariance has two member-name axes.
 
 The named map lives in ``examples/compute/named_map.py``; the Modello adapter is
 in ``examples/named_members.py``. The portfolio application is in
-``examples/portfolio/named.py``. Run it from a checkout:
+``examples/portfolio/named.py``. Install the examples and run it:
 
 .. code-block:: console
 
-   $ uv run --locked python -m examples.portfolio.named
+   $ pip install "modello[examples]"
+   $ python -m examples.portfolio.named
 
 Project and combine named values
 --------------------------------

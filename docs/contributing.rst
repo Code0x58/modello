@@ -37,8 +37,18 @@ and one source distribution. Builds use the installed, locked backend. The
 distribution check installs locked runtime dependencies and the wheel in a fresh
 environment outside the checkout, checks metadata, forward/inverse solving, and
 the installed type annotations, then rebuilds the source distribution and repeats
-the checks. ``typing_checks.py`` includes valid calls and expected type errors;
-unused-ignore checks ensure mypy continues to catch those errors.
+the checks. It also selects the ``examples`` extra on both installed wheels,
+checks the packaged CSV fixtures, and runs the three portfolio walkthroughs,
+including HTML and JSON output. The core and generic-example typing contracts
+include valid calls and expected type errors; unused-ignore checks ensure mypy
+continues to catch those errors against the installed packages.
+
+The wheel bundles the ``examples`` modules and fixtures. ``modello[examples]``
+selects their optional runtime requirements; currently these are satisfied by
+the standard library and the core SymPy dependency, so the extra's requirement
+list is empty. Add future example-specific dependencies to this extra. Package
+selection and data files belong in the setuptools configuration, independently
+of dependency selection.
 
 Read the Docs
 -------------

@@ -76,6 +76,13 @@ with a separate documentation section. The
 [named-solving design note](https://modello.readthedocs.io/en/latest/design/named_solving.html)
 describes the general modeling feature being explored.
 
+Install and run the examples with their bundled synthetic data:
+
+```sh
+pip install "modello[examples]"
+python -m examples.portfolio.demo --html account.html --json account.json
+```
+
 ## Development
 
 See [Contributing and releases](docs/contributing.rst) for environment setup,

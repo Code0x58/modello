@@ -16,7 +16,8 @@ Generate the same self-contained report locally:
 
 .. code-block:: console
 
-   $ uv run --locked python -m examples.portfolio.demo --html /tmp/account.html --json /tmp/account.json
+   $ pip install "modello[examples]"
+   $ python -m examples.portfolio.demo --html /tmp/account.html --json /tmp/account.json
 
 The HTML runs offline. Both outputs use the same typed ``AccountReport``;
 rendering introduces no further P&L calculations. The implementation lives in

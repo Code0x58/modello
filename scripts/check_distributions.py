@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -25,7 +26,7 @@ assert distribution.metadata["License-Expression"] == "MIT"
 assert distribution.metadata.get_all("License-File")
 assert distribution.metadata["Requires-Python"] == ">=3.10"
 assert Path(modello.__file__).with_name("py.typed").is_file()
-assert not any(str(path).startswith("examples/") for path in distribution.files or ())
+assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
 assert not any(name == "examples" or name.startswith("examples.") for name in sys.modules)
 if sys.argv[1]:
     assert distribution.version == sys.argv[1], distribution.version
@@ -58,9 +59,30 @@ assert first.a != second.a
 print(f"Validated {distribution.metadata['Name']} {distribution.version}")
 """
 
+EXAMPLES_SMOKE_TEST = """
+from importlib import resources
+from pathlib import Path
+import sys
 
-def check_wheel(wheel: Path, directory: Path, requirements: Path, expected_version: str) -> None:
-    """Install locked dependencies and one wheel, then exercise the public API."""
+import examples
+from examples.geometry import RightAngleTriangle
+from examples.compute.named_map import NamedMap
+
+assert Path(examples.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+assert Path(examples.__file__).with_name("py.typed").is_file()
+assert RightAngleTriangle("T", a=3, b=4).c == 5
+assert NamedMap({"a": 2}).map(lambda value: value * 3) == {"a": 6}
+data = resources.files("examples.portfolio").joinpath("data")
+for name in ("market.csv", "transactions.csv", "benchmark.csv"):
+    assert data.joinpath(name).is_file(), name
+print("Validated installed example modules, type marker, and portfolio fixtures")
+"""
+
+
+def check_wheel(
+    wheel: Path, directory: Path, requirements: Path, examples_requirements: Path, expected_version: str
+) -> None:
+    """Exercise the base library and the examples extra outside the checkout."""
     environment = directory / "environment"
     python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     subprocess.run(["uv", "venv", "--python", sys.executable, str(environment)], check=True)
@@ -74,8 +96,26 @@ def check_wheel(wheel: Path, directory: Path, requirements: Path, expected_versi
         cwd=directory,
         check=True,
     )
-    typing_check = directory / "typing_checks.py"
-    typing_check.write_text((Path(__file__).resolve().parents[1] / "typing_checks.py").read_text())
+
+    subprocess.run(
+        ["uv", "pip", "install", "--python", str(python), "--require-hashes", "-r", str(examples_requirements)],
+        check=True,
+    )
+    subprocess.run(["uv", "pip", "install", "--python", str(python), "--no-deps", f"{wheel}[examples]"], check=True)
+    subprocess.run([str(python), "-I", "-c", EXAMPLES_SMOKE_TEST], cwd=directory, check=True)
+    for module in ("examples.portfolio", "examples.portfolio.named", "examples.portfolio.demo"):
+        arguments = [str(python), "-I", "-m", module]
+        if module == "examples.portfolio.demo":
+            arguments.extend(["--json", str(directory / "report.json"), "--html", str(directory / "report.html")])
+        subprocess.run(arguments, cwd=directory, check=True, stdout=subprocess.DEVNULL)
+    assert json.loads((directory / "report.json").read_text())["snapshots"][-1]["nav"] == 3066.9
+    assert (directory / "report.html").read_text().startswith("<!doctype html>")
+    print(f"Validated all installed portfolio runners from {wheel.name}", flush=True)
+    typing_checks = []
+    for name in ("typing_checks.py", "test_named_members.py", "test_series_plan.py"):
+        target = directory / name
+        target.write_text((Path(__file__).resolve().parents[1] / name).read_text())
+        typing_checks.append(str(target))
     mypy_config = directory / "mypy.ini"
     mypy_config.write_text("[mypy]\nignore_missing_imports = true\n")
     subprocess.run(
@@ -87,7 +127,7 @@ def check_wheel(wheel: Path, directory: Path, requirements: Path, expected_versi
             str(mypy_config),
             "--python-executable",
             str(python),
-            str(typing_check),
+            *typing_checks,
         ],
         cwd=directory,
         check=True,
@@ -115,22 +155,25 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="modello-distributions-") as temporary:
         scratch = Path(temporary)
         requirements = scratch / "runtime-requirements.txt"
-        subprocess.run(
-            [
-                "uv",
-                "export",
-                "--project",
-                str(Path(__file__).resolve().parents[1]),
-                "--locked",
-                "--no-dev",
-                "--no-emit-project",
-                "--output-file",
-                str(requirements),
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
-        check_wheel(wheels[0], scratch / "wheel", requirements, expected_version)
+        examples_requirements = scratch / "examples-requirements.txt"
+        for target, options in ((requirements, ()), (examples_requirements, ("--extra", "examples"))):
+            subprocess.run(
+                [
+                    "uv",
+                    "export",
+                    "--project",
+                    str(Path(__file__).resolve().parents[1]),
+                    "--locked",
+                    "--no-dev",
+                    "--no-emit-project",
+                    *options,
+                    "--output-file",
+                    str(target),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+        check_wheel(wheels[0], scratch / "wheel", requirements, examples_requirements, expected_version)
         rebuilt = scratch / "rebuilt"
         subprocess.run(
             [
@@ -149,7 +192,7 @@ def main() -> None:
         rebuilt_wheels = list(rebuilt.glob("*.whl"))
         if len(rebuilt_wheels) != 1:
             parser.error("the source distribution must build exactly one wheel")
-        check_wheel(rebuilt_wheels[0], scratch / "sdist", requirements, expected_version)
+        check_wheel(rebuilt_wheels[0], scratch / "sdist", requirements, examples_requirements, expected_version)
 
 
 if __name__ == "__main__":

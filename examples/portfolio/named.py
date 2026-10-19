@@ -1,6 +1,6 @@
 """Portfolio computation over named members, using synthetic observations.
 
-Run ``python -m examples.portfolio.named`` from a checkout.
+Run ``python -m examples.portfolio.named`` for the worked example.
 """
 
 from __future__ import annotations
