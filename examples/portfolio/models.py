@@ -12,7 +12,7 @@ from modello import InstanceDummy, Modello, component
 
 @dataclass(frozen=True)
 class Equity:
-    """An equity identified in a provider's symbol namespace and quote currency."""
+    """Serializable quote identity, separate from a configured data request."""
 
     symbol: str
     provider: str

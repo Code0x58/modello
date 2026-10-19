@@ -64,8 +64,8 @@ Members are still declared as named, typed model components:
 and populated models. The adapter checks that every component belongs to the
 supplied common type.
 
-``basket_model(EquityMembers, instruments)`` binds one ``Equity`` record to each
-holding name and builds the basket's ordinary scalar equations. Its total is:
+``basket_model(EquityMembers, providers)`` binds one ``EquityProvider`` request
+to each holding name and builds the basket's ordinary scalar equations. Its total is:
 
 .. code-block:: python
 
@@ -82,8 +82,8 @@ capital base to account NAV:
    nav = basket.capital
    nav = basket.market_value + cash.amount
 
-The populated basket associates every symbolic position with its ``Equity``
-record and capital base through an ``EquityHolding`` view. Its ``positions``,
+The populated basket associates every symbolic position with its configured
+provider, derived ``Equity`` identity, and capital base through an ``EquityHolding`` view. Its ``positions``,
 ``values``, and ``weights`` maps preserve the declared names. Member allocation
 is defined once by ``EquityHolding.weight``; the basket projects that property:
 
@@ -109,8 +109,8 @@ The worked example adds Alphabet by extending the declaration:
    class ThreeEquities(EquityMembers):
        googl = component(EquityPosition)
 
-   instruments = NamedMap({**EQUITIES, "googl": Equity("GOOGL", "synthetic")})
-   ThreeEquityBasket = basket_model(ThreeEquities, instruments)
+   providers = NamedMap({**EQUITY_PROVIDERS, "googl": DummyEquityProvider(symbol="GOOGL")})
+   ThreeEquityBasket = basket_model(ThreeEquities, providers)
    Portfolio = portfolio_model(ThreeEquityBasket)
 
 Supply its holding and price vector under ``googl``. The same aggregate,
@@ -146,7 +146,9 @@ member must also match the declared instrument identity and observation dates.
 Names identify positions, so separate named positions may hold the same equity.
 Provider-symbol identity and member identity remain distinct concepts. The same
 instrument can appear in separate strategy sleeves with independent quantities
-and weights; the market source can reuse its history for both.
+and weights; :doc:`equivalent provider requests <providers>` share one history
+within a load. The provider map is the stored binding; instrument identities
+are derived from it.
 
 The original experiment's assumptions and distinction between observed-path
 volatility and fixed-reference-weight risk apply here as well.

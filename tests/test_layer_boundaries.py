@@ -19,6 +19,11 @@ import sys
 from datetime import date
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
+from examples.compute.providers import Provider, load_providers
+class ValueProvider(Provider[int]):
+    def load(self) -> int:
+        return 7
+assert load_providers(NamedMap({"number": ValueProvider()})) == {"number": 7}
 series = Series((date(2026, 1, 1), date(2026, 1, 2)), (100, 110))
 assert series.lag().values == (100,)
 assert NamedMap({'price': series}).map(lambda item: item.values[-1]) == {'price': 110}

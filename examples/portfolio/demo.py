@@ -12,12 +12,15 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from examples.compute.named_map import NamedMap
+from examples.compute.providers import Provider, load_providers
 from examples.compute.series import Series
 from examples.portfolio.account import Account, AccountEngine, AccountPath, AccountSnapshot
+from examples.portfolio.basket import basket_model
 from examples.portfolio.execution import ExecutionBenchmark, benchmark_executions
 from examples.portfolio.models import EquityPosition, USDCash
-from examples.portfolio.named import Basket, EquityMembers, portfolio_model
+from examples.portfolio.named import EQUITY_PROVIDERS, EquityMembers, portfolio_model
 from examples.portfolio.performance import Comparison, PerformanceIndex, compare
+from examples.portfolio.providers import EquityProvider
 from examples.portfolio.report_html import render_html, report_data
 from examples.portfolio.reporting import AccountReport, OrderAttribution
 from examples.portfolio.reporting import report as build_report
@@ -30,10 +33,8 @@ from examples.portfolio.signals import (
 )
 from examples.portfolio.sources import (
     CSVIndexSource,
-    CSVMarketSource,
     CSVTransactionSource,
-    MarketSource,
-    TransactionSource,
+    TransactionLog,
     timestamp,
 )
 from examples.portfolio.utility import cara, crra
@@ -55,8 +56,9 @@ class ResearchRun:
     execution: NamedMap[ExecutionBenchmark]
 
 
-def run(market_source: MarketSource, transaction_source: TransactionSource) -> ResearchRun:
+def run(providers: NamedMap[EquityProvider], transaction_source: Provider[TransactionLog]) -> ResearchRun:
     """Bind replaceable sources to one deterministic research scenario."""
+    Basket = basket_model(EquityMembers, providers)
     opening = portfolio_model(Basket)(
         "opening",
         basket=Basket(
@@ -69,7 +71,7 @@ def run(market_source: MarketSource, transaction_source: TransactionSource) -> R
     )
     times = tuple(timestamp(f"2026-01-{day:02d}T16:01:00Z") for day in range(5, 9))
     account = Account("research", times[0], opening)
-    market = market_source.load(opening.instruments)
+    market = load_providers(opening.providers)
     ledger = transaction_source.load()
     age = timedelta(days=4)
     engine = AccountEngine(account, market, max_price_age=age)
@@ -87,7 +89,7 @@ def example_run() -> ResearchRun:
     """Use synthetic, independent market and broker files shipped with the example."""
     directory = Path(__file__).with_name("data")
     return run(
-        CSVMarketSource(directory / "market.csv"),
+        EQUITY_PROVIDERS,
         CSVTransactionSource(directory / "transactions.csv"),
     )
 

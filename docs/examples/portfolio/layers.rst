@@ -60,6 +60,21 @@ Account P&L uses these interval changes; cumulative report charts use the same
 accumulation operation. Adding an opening balance or a chart's zero point is
 an explicit choice at the consumer boundary.
 
+Acquire typed inputs explicitly
+--------------------------------
+
+``examples/compute/providers.py`` defines the abstract ``Provider[T]`` contract:
+a configured request whose ``load()`` returns ``T``. Its generic batch loader
+preserves names and reuses equivalent requests within one call. A later call
+acquires fresh inputs. This module uses only the standard library and the
+numeric named map; it imports neither Modello nor the portfolio package.
+
+Financial implementations live in ``examples/portfolio/providers.py``.
+``EquityProvider`` returns ``PriceHistory`` and exposes its quote identity before
+loading. CSV transaction and index sources implement the same generic contract
+with ``TransactionLog`` and ``Series[datetime]`` results. The
+:doc:`provider walkthrough <providers>` shows configuration and acquisition.
+
 Compile expressions separately
 -------------------------------
 
@@ -91,6 +106,9 @@ computation helpers; importing those helpers does not load the portfolio package
    * - Numeric data
      - ``compute.named_map``, ``compute.series``
      - Named domains and explicit observation axes; standard library only.
+   * - Data acquisition
+     - ``compute.providers``
+     - Generic typed requests and per-load reuse; standard library only.
    * - Symbolic execution
      - ``compute.scalar_plan``
      - SymPy compilation and numerical execution, independent of domain models.
@@ -103,7 +121,7 @@ computation helpers; importing those helpers does not load the portfolio package
        ``portfolio.utility``
      - Domain relationships, ledger transitions, and analytics.
    * - Sources and presentation
-     - ``portfolio.sources``, ``portfolio.explicit``, ``portfolio.demo``,
+     - ``portfolio.providers``, ``portfolio.sources``, ``portfolio.explicit``, ``portfolio.demo``,
        ``portfolio.report_html``
      - External observations, scenario assembly, and report rendering.
 

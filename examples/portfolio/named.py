@@ -16,7 +16,8 @@ from examples.compute.scalar_plan import ScalarPlan
 from examples.compute.series import Series
 from examples.portfolio.analytics import NamedPortfolioPath, PositionPath
 from examples.portfolio.basket import EquityBasket, EquityHolding, basket_model
-from examples.portfolio.models import AAPL, GOOGL, MSFT, Equity, EquityPosition, EquityPrices, USDCash
+from examples.portfolio.models import GOOGL, Equity, EquityPosition, EquityPrices, USDCash
+from examples.portfolio.providers import DummyEquityProvider, EquityProvider
 from modello import Modello, component
 
 _Members = TypeVar("_Members", bound=Modello)
@@ -55,6 +56,10 @@ class NamedPortfolio(Modello, Generic[_Members]):
     def instruments(self) -> NamedMap[Equity]:
         """Bind each holding name to its instrument's provider and symbol."""
         return self.basket.instruments
+
+    @property
+    def providers(self) -> NamedMap[EquityProvider]:
+        return self.basket.providers
 
     @property
     def cash_weight(self) -> Expr:
@@ -184,9 +189,11 @@ class ThreeEquities(EquityMembers):
     googl = component(EquityPosition)
 
 
-EQUITIES = NamedMap({"aapl": AAPL, "msft": MSFT})
-Basket = basket_model(EquityMembers, EQUITIES)
-ThreeEquityBasket = basket_model(ThreeEquities, NamedMap({**EQUITIES, "googl": GOOGL}))
+EQUITY_PROVIDERS = NamedMap({"aapl": DummyEquityProvider(symbol="AAPL"), "msft": DummyEquityProvider(symbol="MSFT")})
+Basket = basket_model(EquityMembers, EQUITY_PROVIDERS)
+ThreeEquityBasket = basket_model(
+    ThreeEquities, NamedMap({**EQUITY_PROVIDERS, "googl": DummyEquityProvider(symbol="GOOGL")})
+)
 
 
 def example_named_portfolio() -> NamedPortfolio[ThreeEquities]:

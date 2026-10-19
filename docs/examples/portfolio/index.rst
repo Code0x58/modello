@@ -18,6 +18,7 @@ Start with fixed holdings, then follow the named-member and account extensions:
 
    holdings
    named_members
+   providers
    accounts
    reporting
    layers

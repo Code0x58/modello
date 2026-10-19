@@ -22,6 +22,8 @@ from examples.portfolio.named import (
     example_named_portfolio,
     portfolio_model,
 )
+from examples.portfolio.providers import DummyEquityProvider, EquityProvider
+from examples.portfolio.sources import PriceHistory
 from modello import BoundInstanceDummy, Modello, component
 
 
@@ -168,7 +170,7 @@ def test_currency_needs_an_explicit_conversion_model():
     class EuroMembers(Modello):
         euro = component(EquityPosition)
 
-    EuroBasket = basket_model(EuroMembers, NamedMap({"euro": Equity("EXAMPLE", "synthetic", "EUR")}))
+    EuroBasket = basket_model(EuroMembers, NamedMap({"euro": DummyEquityProvider(symbol="EXAMPLE", currency="EUR")}))
     portfolio = portfolio_model(EuroBasket)(
         "mixed currencies",
         basket=EuroBasket("basket", members=EuroMembers("members", euro=EquityPosition("euro", quantity=1))),
@@ -185,6 +187,11 @@ def _typing_contract() -> None:
     equity: Equity = portfolio.basket.instruments["aapl"]
     assert equity.symbol == "AAPL"
     holding: EquityHolding = portfolio.positions["aapl"]
+    provider: EquityProvider = holding.provider
+    history: PriceHistory = provider.load()
+    assert history.equity == equity
+    assert isinstance(provider, DummyEquityProvider)
     instrument: Equity = holding.instrument
     assert instrument.symbol == "AAPL" and holding.weight.free_symbols
     portfolio.basket.members.aapl = USDCash("cash")  # type: ignore[assignment]
+    _wrong_result: Equity = provider.load()  # type: ignore[assignment]

@@ -2,13 +2,12 @@
 
 import pytest
 
-from examples.compute.named_map import NamedMap
+from examples.compute.providers import load_providers
 from examples.portfolio.account import Account, AccountEngine
 from examples.portfolio.demo import example_run, research_report
-from examples.portfolio.models import AAPL, MSFT, EquityPosition, USDCash
-from examples.portfolio.named import Basket, EquityMembers, portfolio_model
+from examples.portfolio.models import EquityPosition, USDCash
+from examples.portfolio.named import EQUITY_PROVIDERS, Basket, EquityMembers, portfolio_model
 from examples.portfolio.sources import (
-    CSVMarketSource,
     CSVTransactionSource,
 )
 
@@ -17,7 +16,7 @@ from ._data import AGE, DATA, TIMES
 
 @pytest.fixture(scope="module")
 def market():
-    return CSVMarketSource(DATA / "market.csv").load(NamedMap({"aapl": AAPL, "msft": MSFT}))
+    return load_providers(EQUITY_PROVIDERS)
 
 
 @pytest.fixture(scope="module")

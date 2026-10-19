@@ -31,13 +31,15 @@ Model instruments and holdings
 An ``Equity`` is an immutable instrument record: a provider-specific symbol and
 quote currency. Every equity uses the same ``EquityPosition`` model. The
 position contains a symbolic ``Quote`` and a quantity; its market value is
-quantity times price. Instrument identity is bound once at the basket level:
+quantity times price. Each holding is bound to a configured data provider at
+the basket level:
 
 .. code-block:: python
 
    from examples.compute.named_map import NamedMap
    from examples.portfolio.basket import basket_model
-   from examples.portfolio.models import Equity, EquityPosition
+   from examples.portfolio.models import EquityPosition
+   from examples.portfolio.providers import DummyEquityProvider
    from examples.portfolio.named import portfolio_model
    from modello import Modello, component
 
@@ -46,8 +48,8 @@ quantity times price. Instrument identity is bound once at the basket level:
        msft = component(EquityPosition)
 
    Basket = basket_model(Holdings, NamedMap({
-       "aapl": Equity("AAPL", provider="synthetic"),
-       "msft": Equity("MSFT", provider="synthetic"),
+       "aapl": DummyEquityProvider(symbol="AAPL"),
+       "msft": DummyEquityProvider(symbol="MSFT"),
    }))
    Portfolio = portfolio_model(Basket)
 
@@ -55,8 +57,8 @@ The portfolio contains a basket and cash. The basket contains its named holding
 group and derives total market value and allocation from that group:
 
 .. mermaid::
-   :caption: Portfolio composition and instrument bindings
-   :alt: The portfolio contains an equity basket and USD cash. The basket contains named generic equity positions and binds their names to provider symbols.
+   :caption: Portfolio composition and provider bindings
+   :alt: The portfolio contains an equity basket and USD cash. The basket contains named generic equity positions and binds their names to configured data providers.
 
    flowchart TD
        portfolio[Portfolio] --> basket[Equity basket]
@@ -64,8 +66,8 @@ group and derives total market value and allocation from that group:
        basket --> members[Named holdings]
        members --> apple[aapl: EquityPosition]
        members --> microsoft[msft: EquityPosition]
-       basket --> bindings[Instrument bindings]
-       bindings --> symbols[Provider, symbol, currency]
+       basket --> bindings[Configured providers]
+       bindings --> symbols[Symbol and source parameters]
 
 ``basket.market_value`` is the sum of member values. ``portfolio.nav`` adds
 cash to that total and also supplies ``basket.capital``, the positive allocation
@@ -75,19 +77,22 @@ weights add to the basket's weight, and basket plus cash weight adds to one.
 Adding a holding requires no new value or weight formula.
 
 ``basket.positions[name]`` is an ``EquityHolding`` view that associates the
-numeric model with its instrument record and allocation base. It exposes
-``instrument.symbol``, ``instrument.provider``, ``quantity``, ``price``,
+numeric model with its provider, instrument record, and allocation base. It exposes
+``provider``, ``instrument.symbol``, ``quantity``, ``price``,
 ``market_value``, and ``weight``. For example:
 
 >>> from examples.portfolio.explicit import example_portfolio
 >>> apple = example_portfolio().basket.positions["aapl"]
 >>> apple.instrument.symbol, apple.instrument.provider, apple.quantity
 ('AAPL', 'synthetic', 10)
+>>> type(apple.provider).__name__
+'DummyEquityProvider'
 
 The underlying symbolic component remains available as ``apple.model``, or
 through the typed member attribute ``basket.members.aapl``. Instrument records
 and contextual queries belong to the basket layer; the model's equations are
-ordinary Modello scalars and components.
+ordinary Modello scalars and components. The :doc:`provider guide <providers>`
+explains typed results, explicit loading, and shared requests.
 
 A weight belongs to an allocation context: a holding can have one weight in an
 account and another within an equity-only sleeve. Here weights always use

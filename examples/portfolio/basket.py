@@ -10,6 +10,7 @@ from sympy import Expr, S
 from examples.compute.named_map import NamedMap
 from examples.named_members import component_members
 from examples.portfolio.models import Equity, EquityPosition
+from examples.portfolio.providers import EquityProvider
 from modello import InstanceDummy, Modello, component
 
 _Members = TypeVar("_Members", bound=Modello)
@@ -20,8 +21,12 @@ class EquityHolding:
     """A typed position view with instrument identity and its allocation context."""
 
     model: EquityPosition
-    instrument: Equity
+    provider: EquityProvider
     capital: Expr
+
+    @property
+    def instrument(self) -> Equity:
+        return self.provider.instrument
 
     @property
     def quantity(self) -> Expr:
@@ -44,16 +49,21 @@ class EquityBasket(Modello, Generic[_Members]):
     """Named holdings, their provider bindings, and weights in a common capital base."""
 
     members: _Members
-    instruments: NamedMap[Equity]
+    providers: NamedMap[EquityProvider]
     capital: Expr
     market_value: Expr
     weight: Expr
 
     @property
+    def instruments(self) -> NamedMap[Equity]:
+        """Derive quote identities from the configured providers."""
+        return self.providers.map(lambda provider: provider.instrument)
+
+    @property
     def positions(self) -> NamedMap[EquityHolding]:
         """Associate each symbolic holding with its instrument and capital base."""
         return component_members(self.members, EquityPosition).combine(
-            self.instruments, lambda model, instrument: EquityHolding(model, instrument, self.capital)
+            self.providers, lambda model, provider: EquityHolding(model, provider, self.capital)
         )
 
     @property
@@ -66,19 +76,19 @@ class EquityBasket(Modello, Generic[_Members]):
         return self.positions.map(lambda position: position.weight)
 
 
-def basket_model(members: type[_Members], instruments: NamedMap[Equity]) -> type[EquityBasket[_Members]]:
+def basket_model(members: type[_Members], providers: NamedMap[EquityProvider]) -> type[EquityBasket[_Members]]:
     """Bind explicitly declared positions once, then derive the basket's formulas."""
     member_type = members
-    bindings = instruments
+    bindings = providers
     # Validate before compiling, including when every holding is still symbolic.
     declared = component_members(member_type, EquityPosition)
-    bindings = declared.combine(bindings, lambda position, equity: equity)
-    if any(not isinstance(equity, Equity) for equity in bindings.values()):
-        raise TypeError("Basket instruments must be Equity instances")
+    bindings = declared.combine(bindings, lambda position, provider: provider)
+    if any(not isinstance(provider, EquityProvider) for provider in bindings.values()):
+        raise TypeError("Basket providers must be EquityProvider instances")
 
     class Basket(EquityBasket[_Members]):
         members = component(member_type)
-        instruments = bindings
+        providers = bindings
         capital = InstanceDummy("capital", positive=True)
         market_value = sum(
             (position.market_value for position in component_members(members, EquityPosition).values()), S.Zero

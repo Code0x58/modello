@@ -9,9 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from math import isfinite
 from pathlib import Path
-from typing import Protocol
 
-from examples.compute.named_map import NamedMap
+from examples.compute.providers import Provider
 from examples.compute.series import Series, utc_time
 from examples.portfolio.models import Equity
 
@@ -81,12 +80,6 @@ class PriceHistory:
         )
         volume = sum(volume for _, volume in rows)
         return sum(price * size for price, size in rows) / volume if volume else None
-
-
-class MarketSource(Protocol):
-    """A replaceable source of an explicitly named instrument universe."""
-
-    def load(self, instruments: NamedMap[Equity]) -> NamedMap[PriceHistory]: ...
 
 
 @dataclass(frozen=True)
@@ -205,12 +198,6 @@ class TransactionLog:
         )
 
 
-class TransactionSource(Protocol):
-    """A replaceable external accounting or broker feed."""
-
-    def load(self) -> TransactionLog: ...
-
-
 def csv_rows(path: Path, fields: set[str]) -> list[dict[str, str]]:
     """Read a declared feed schema and report malformed rows at the boundary."""
     with path.open(newline="") as stream:
@@ -225,7 +212,7 @@ def csv_rows(path: Path, fields: set[str]) -> list[dict[str, str]]:
 
 
 @dataclass(frozen=True)
-class CSVIndexSource:
+class CSVIndexSource(Provider[Series[datetime]]):
     """Load a total-return index already aligned to a reporting schedule."""
 
     path: Path
@@ -236,40 +223,7 @@ class CSVIndexSource:
 
 
 @dataclass(frozen=True)
-class CSVMarketSource:
-    """Load provider symbols once and project their histories onto holding names."""
-
-    path: Path
-
-    def load(self, instruments: NamedMap[Equity]) -> NamedMap[PriceHistory]:
-        rows = csv_rows(self.path, {"provider", "symbol", "currency", "at", "available_at", "price", "volume"})
-        by_symbol: dict[tuple[str, str], list[dict[str, str]]] = {}
-        for row in rows:
-            by_symbol.setdefault((row["provider"], row["symbol"]), []).append(row)
-        loaded: dict[Equity, PriceHistory] = {}
-
-        def history(equity: Equity) -> PriceHistory:
-            if equity in loaded:
-                return loaded[equity]
-            key = (equity.provider, equity.symbol)
-            if key not in by_symbol:
-                raise ValueError(f"No market data for {equity.provider}:{equity.symbol}")
-            points = sorted(by_symbol[key], key=lambda row: timestamp(row["at"]))
-            if any(row["currency"] != equity.currency for row in points):
-                raise ValueError(f"Market currency for {equity.provider}:{equity.symbol} must be {equity.currency}")
-            loaded[equity] = PriceHistory(
-                equity,
-                Series(tuple(timestamp(row["at"]) for row in points), tuple(float(row["price"]) for row in points)),
-                tuple(timestamp(row["available_at"]) for row in points),
-                tuple(float(row["volume"]) for row in points),
-            )
-            return loaded[equity]
-
-        return instruments.map(history)
-
-
-@dataclass(frozen=True)
-class CSVTransactionSource:
+class CSVTransactionSource(Provider[TransactionLog]):
     """Adapt a separate account ledger without coupling it to price acquisition."""
 
     path: Path

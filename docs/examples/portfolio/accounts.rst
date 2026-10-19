@@ -49,8 +49,8 @@ The example has explicit boundaries:
        ledger -->|Reported fills| execution
        market -->|Independent prints| execution
 
-``MarketSource`` and ``TransactionSource`` are small protocols implemented by
-CSV adapters. ``SignalSource`` supplies named signal vectors; the example uses
+``EquityProvider`` is an abstract ``Provider[PriceHistory]``. The transaction
+adapter implements ``Provider[TransactionLog]``. ``SignalSource`` supplies named signal vectors; the example uses
 trailing momentum. ``TargetWeights`` is the allocation boundary: the example
 equally weights positive signals with 80% equity exposure and leaves the rest
 in cash. An optimiser could consume forecasts, risk estimates, and constraints
@@ -65,26 +65,25 @@ come from the separate transaction log and join to intentions through
 Bind instruments to providers
 -----------------------------
 
-The :doc:`basket definition <holdings>` binds each named holding to an ``Equity``
-record containing ``symbol``, ``provider``, and ``currency``. These are ordinary
-typed metadata, separate from the symbolic price and quantity fields.
-``opening.basket.positions[name]`` exposes that instrument record and the
-holding's value and weight together as a typed view.
-``MarketSource.load(instruments)`` requests that universe and returns histories
-under the holding names expected by valuation, signals, and execution analysis.
+The :doc:`basket definition <holdings>` binds each named holding to a configured
+``EquityProvider``. For example, ``DummyEquityProvider(symbol="AAPL")`` identifies
+and loads the supplied synthetic Apple prints. ``CSVEquityProvider`` accepts a
+symbol, path, provider namespace, and quote currency for an external CSV.
 
-The CSV adapter reads ``provider,symbol,currency,at,available_at,price,volume``.
-It indexes rows by provider and symbol, checks the quote currency, and loads
-only the requested instruments. Extra symbols in a provider feed need no
-portfolio declarations. Two named holdings in the same instrument share a
-single immutable history. Renaming a holding changes its ledger/member name,
-while its provider symbol and source file can stay the same.
+The basket stores its provider map once. Its ``instruments`` map derives the
+serializable quote identities, while ``positions[name]`` exposes the provider,
+identity, quantity, value, and contextual weight together. Instrument metadata
+is available while defining a symbolic model; loading is an explicit step:
 
-For another provider, implement the same small source protocol; the provider
-name selects its symbol namespace and is part of quote identity. The example
-uses only the local ``synthetic`` provider. Provider symbols are quote bindings,
-not a security master: cross-provider identifiers, corporate actions, and
-currency conversion would need explicit models and data.
+.. code-block:: python
+
+   market = load_providers(opening.providers)
+
+``load_providers`` preserves holding names and shares equivalent requests in
+that batch. Different provider types or request parameters remain distinct,
+even with equal symbol text. A later call reloads the data. The
+:doc:`provider guide <providers>` describes the generic return type, CSV schema,
+and how another equity provider can supply the same accounting layer.
 
 Observe time and availability
 -----------------------------
@@ -133,7 +132,7 @@ the market source supplies the price variables.
        cash=USDCash("cash", amount=1000),
    )
    account = Account("research", opened_at, opening)
-   market = market_source.load(opening.instruments)
+   market = load_providers(opening.providers)
    engine = AccountEngine(account, market, max_price_age=timedelta(days=4))
    path = engine.evaluate(transaction_log, valuation_times)
 
