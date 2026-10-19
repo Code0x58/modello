@@ -44,7 +44,7 @@ def test_signal_targets_and_rebalance_quantities(scenario):
     assert apple.quantity == pytest.approx(0.8 * 2520 / 104 - 10)
     assert microsoft.quantity == -10
     assert apple.model_price == 104
-    assert apple.equity is AAPL and microsoft.equity is MSFT
+    assert apple.equity == AAPL and microsoft.equity == MSFT
     for invalid in ({"aapl": -0.1}, {"aapl": 1.1}, {"aapl": float("nan")}):
         with pytest.raises(ValueError):
             TargetWeights(DECISION, NamedMap(invalid))

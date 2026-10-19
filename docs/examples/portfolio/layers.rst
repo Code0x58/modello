@@ -98,7 +98,7 @@ computation helpers; importing those helpers does not load the portfolio package
      - ``named_members``
      - Project declared Modello components into a named domain.
    * - Financial models and calculations
-     - ``portfolio.models``, ``portfolio.named``, ``portfolio.account``,
+     - ``portfolio.models``, ``portfolio.basket``, ``portfolio.named``, ``portfolio.account``,
        ``portfolio.signals``, ``portfolio.performance``, ``portfolio.reporting``,
        ``portfolio.utility``
      - Domain relationships, ledger transitions, and analytics.

@@ -8,57 +8,32 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from sympy import Expr
-
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
 from examples.portfolio.analytics import NamedPortfolioPath
-from examples.portfolio.models import (
-    AAPL,
-    MSFT,
-    ApplePosition,
-    EquityPosition,
-    EquityPrices,
-    MicrosoftPosition,
-    USDCash,
+from examples.portfolio.models import AAPL, MSFT, EquityPosition, EquityPrices, USDCash
+from examples.portfolio.named import (
+    Basket,
+    EquityMembers,
+    NamedMarketData,
+    NamedPortfolio,
+    NamedPortfolioPricer,
+    portfolio_model,
 )
-from examples.portfolio.named import NamedMarketData, NamedPortfolioPricer
-from modello import InstanceDummy, Modello, component
 
-
-class Portfolio(Modello):
-    """Two named equity positions and cash, held without trading."""
-
-    aapl = component(ApplePosition)
-    msft = component(MicrosoftPosition)
-    cash = component(USDCash)
-    nav = InstanceDummy("nav", positive=True)
-    nav = aapl.market_value + msft.market_value + cash.amount
-    aapl_weight = aapl.market_value / nav
-    msft_weight = msft.market_value / nav
-    cash_weight = cash.amount / nav
-
-    @property
-    def positions(self) -> NamedMap[EquityPosition]:
-        """Expose the explicitly declared positions to the shared evaluator."""
-        return NamedMap({"aapl": self.aapl, "msft": self.msft})
-
-    @property
-    def values(self) -> NamedMap[Expr]:
-        """Project positions to market values."""
-        return self.positions.map(lambda position: position.market_value)
+Portfolio = portfolio_model(Basket)
 
 
 @dataclass(frozen=True)
 class MarketData:
     """The explicit portfolio's two aligned price vectors."""
 
-    aapl: EquityPrices[AAPL]
-    msft: EquityPrices[MSFT]
+    aapl: EquityPrices
+    msft: EquityPrices
 
     def __post_init__(self) -> None:
         """Require instrument identity and exact date alignment."""
-        if self.aapl.equity is not AAPL or self.msft.equity is not MSFT:
+        if self.aapl.equity != AAPL or self.msft.equity != MSFT:
             raise ValueError("AAPL and MSFT price histories must match their named fields")
         if self.aapl.close.times != self.msft.close.times:
             raise ValueError("Price histories must use the same observation dates")
@@ -67,7 +42,7 @@ class MarketData:
 class PortfolioPricer:
     """Compile a scalar model once, then evaluate its formulas over price vectors."""
 
-    def __init__(self, portfolio: Portfolio) -> None:
+    def __init__(self, portfolio: NamedPortfolio[EquityMembers]) -> None:
         """Freeze known holdings and cash into a reusable numerical calculation."""
         self._pricer = NamedPortfolioPricer(portfolio)
 
@@ -76,12 +51,18 @@ class PortfolioPricer:
         return self._pricer(NamedMarketData(data.aapl.close.times, NamedMap({"aapl": data.aapl, "msft": data.msft})))
 
 
-def example_portfolio() -> Portfolio:
+def example_portfolio() -> NamedPortfolio[EquityMembers]:
     """Ten AAPL shares, twenty MSFT shares, and USD 100 cash."""
     return Portfolio(
         "holdings",
-        aapl=ApplePosition("apple", quantity=10),
-        msft=MicrosoftPosition("microsoft", quantity=20),
+        basket=Basket(
+            "basket",
+            members=EquityMembers(
+                "equities",
+                aapl=EquityPosition("apple", quantity=10),
+                msft=EquityPosition("microsoft", quantity=20),
+            ),
+        ),
         cash=USDCash("cash", amount=100),
     )
 

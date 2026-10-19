@@ -8,14 +8,19 @@ from modello import Modello, _ModelReference
 _Model = TypeVar("_Model", bound=Modello)
 
 
-def component_members(group: Modello, member_type: type[_Model]) -> NamedMap[_Model]:
+def component_members(group: Modello | type[Modello], member_type: type[_Model]) -> NamedMap[_Model]:
     """View a model's named children as members of one common model type.
 
     This small adapter is the experiment's only dependency on Modello metadata.
-    It handles both a class-body component reference and a populated instance.
+    It handles a model class, a class-body reference, or a populated instance.
     A group contains only components; scalar results belong on the parent.
     """
-    model = group._modello_model if isinstance(group, _ModelReference) else type(group)
+    if isinstance(group, type):
+        model = group
+    elif isinstance(group, _ModelReference):
+        model = group._modello_model
+    else:
+        model = type(group)
     namespace = model._modello_namespace
     if namespace.dummies:
         raise TypeError("A member group must contain only model components")

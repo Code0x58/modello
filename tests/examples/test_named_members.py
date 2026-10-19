@@ -34,6 +34,13 @@ def test_component_view_retains_concrete_instances():
     assert view.map(lambda reading: reading.value) == {"inlet": 3, "outlet": 7}
 
 
+def test_component_declaration_can_be_viewed_without_constructing_an_instance():
+    declared = component_members(Readings, Reading)
+    assert declared["inlet"].value == Readings.inlet.value
+    assert declared["outlet"].value == Readings.outlet.value
+    assert declared["inlet"].value != Readings("measured").inlet.value
+
+
 def test_component_view_checks_its_common_value_type():
     class Other(Modello):
         pass

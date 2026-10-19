@@ -68,7 +68,7 @@ class OrderIntent:
     id: str
     account: str
     member: str
-    equity: type[Equity]
+    equity: Equity
     decision_at: datetime
     arrival_at: datetime
     quantity: float

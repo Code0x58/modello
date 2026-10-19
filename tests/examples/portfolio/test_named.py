@@ -1,4 +1,5 @@
 # mypy: warn-unused-ignores
+
 """Named holdings and their shared valuation plans."""
 
 from datetime import date
@@ -7,15 +8,16 @@ import pytest
 from sympy import Rational
 
 from examples.compute.named_map import NamedMap
+from examples.portfolio.basket import EquityHolding, basket_model
 from examples.portfolio.explicit import PortfolioPricer, example_market_data, example_portfolio
-from examples.portfolio.models import AAPL, MSFT, ApplePosition, Equity, EquityPosition, MicrosoftPosition, USDCash
+from examples.portfolio.models import Equity, EquityPosition, Quote, USDCash
 from examples.portfolio.named import (
-    Alphabet,
-    AlphabetPosition,
+    Basket,
     EquityMembers,
     NamedMarketData,
     NamedPortfolioPricer,
     ThreeEquities,
+    ThreeEquityBasket,
     example_named_market_data,
     example_named_portfolio,
     portfolio_model,
@@ -24,10 +26,13 @@ from modello import BoundInstanceDummy, Modello, component
 
 
 def two_equities():
-    return portfolio_model(EquityMembers)(
+    return portfolio_model(Basket)(
         "two",
-        equities=EquityMembers(
-            "equities", aapl=ApplePosition("apple", quantity=10), msft=MicrosoftPosition("microsoft", quantity=20)
+        basket=Basket(
+            "basket",
+            members=EquityMembers(
+                "equities", aapl=EquityPosition("apple", quantity=10), msft=EquityPosition("microsoft", quantity=20)
+            ),
         ),
         cash=USDCash("cash", amount=100),
     )
@@ -82,11 +87,13 @@ def test_new_member_flows_through_aggregates_and_all_projections():
 def test_map_reduction_keeps_inverse_valuation():
     source = ThreeEquities(
         "equities",
-        aapl=ApplePosition("apple", instrument=AAPL("quote", price=100)),
-        msft=MicrosoftPosition("microsoft", quantity=20, instrument=MSFT("quote", price=50)),
-        googl=AlphabetPosition("alphabet", quantity=1, instrument=Alphabet("quote", price=1000)),
+        aapl=EquityPosition("apple", instrument=Quote("quote", price=100)),
+        msft=EquityPosition("microsoft", quantity=20, instrument=Quote("quote", price=50)),
+        googl=EquityPosition("alphabet", quantity=1, instrument=Quote("quote", price=1000)),
     )
-    portfolio = portfolio_model(ThreeEquities)("target", equities=source, cash=USDCash("cash", amount=100), nav=3100)
+    portfolio = portfolio_model(ThreeEquityBasket)(
+        "target", basket=ThreeEquityBasket("basket", members=source), cash=USDCash("cash", amount=100), nav=3100
+    )
     assert portfolio.positions["aapl"].quantity == 10
     assert portfolio.weights == {"aapl": Rational(10, 31), "msft": Rational(10, 31), "googl": Rational(10, 31)}
     assert isinstance(source.aapl.quantity, BoundInstanceDummy)
@@ -96,7 +103,7 @@ def test_empty_equity_domain_is_a_cash_portfolio():
     class NoEquities(Modello):
         pass
 
-    portfolio = portfolio_model(NoEquities)("cash", cash=USDCash("cash", amount=100))
+    portfolio = portfolio_model(basket_model(NoEquities, NamedMap({})))("cash", cash=USDCash("cash", amount=100))
     dates = example_named_market_data().times
     path = NamedPortfolioPricer(portfolio)(NamedMarketData(dates, NamedMap({})))
     assert portfolio.positions == portfolio.values == portfolio.weights == {}
@@ -140,13 +147,16 @@ def test_every_price_vector_uses_the_declared_date_axis():
 
 def test_invalid_compilation_inputs():
     with pytest.raises(ValueError, match="position quantities"):
-        NamedPortfolioPricer(portfolio_model(EquityMembers)("missing"))
-    portfolio = portfolio_model(EquityMembers)(
+        NamedPortfolioPricer(portfolio_model(Basket)("missing"))
+    portfolio = portfolio_model(Basket)(
         "known prices",
-        equities=EquityMembers(
-            "equities",
-            aapl=ApplePosition("apple", quantity=10, instrument=AAPL("quote", price=100)),
-            msft=MicrosoftPosition("microsoft", quantity=20, instrument=MSFT("quote", price=50)),
+        basket=Basket(
+            "basket",
+            members=EquityMembers(
+                "equities",
+                aapl=EquityPosition("apple", quantity=10, instrument=Quote("quote", price=100)),
+                msft=EquityPosition("microsoft", quantity=20, instrument=Quote("quote", price=50)),
+            ),
         ),
         cash=USDCash("cash", amount=100),
     )
@@ -155,19 +165,13 @@ def test_invalid_compilation_inputs():
 
 
 def test_currency_needs_an_explicit_conversion_model():
-    class EuroEquity(Equity):
-        ticker = "EUR-example"
-        currency = "EUR"
-
-    class EuroPosition(EquityPosition):
-        instrument = component(EuroEquity)
-
     class EuroMembers(Modello):
-        euro = component(EuroPosition)
+        euro = component(EquityPosition)
 
-    portfolio = portfolio_model(EuroMembers)(
+    EuroBasket = basket_model(EuroMembers, NamedMap({"euro": Equity("EXAMPLE", "synthetic", "EUR")}))
+    portfolio = portfolio_model(EuroBasket)(
         "mixed currencies",
-        equities=EuroMembers("equities", euro=EuroPosition("euro", quantity=1)),
+        basket=EuroBasket("basket", members=EuroMembers("members", euro=EquityPosition("euro", quantity=1))),
         cash=USDCash("cash", amount=1),
     )
     with pytest.raises(ValueError, match="requires USD"):
@@ -175,7 +179,12 @@ def test_currency_needs_an_explicit_conversion_model():
 
 
 def _typing_contract() -> None:
-    portfolio = portfolio_model(EquityMembers)("portfolio")
-    apple: ApplePosition = portfolio.equities.aapl
-    assert apple.instrument.ticker == "AAPL"
-    portfolio.equities.aapl = USDCash("cash")  # type: ignore[assignment]
+    portfolio = portfolio_model(Basket)("portfolio")
+    apple: EquityPosition = portfolio.basket.members.aapl
+    assert apple.instrument.price.free_symbols
+    equity: Equity = portfolio.basket.instruments["aapl"]
+    assert equity.symbol == "AAPL"
+    holding: EquityHolding = portfolio.positions["aapl"]
+    instrument: Equity = holding.instrument
+    assert instrument.symbol == "AAPL" and holding.weight.free_symbols
+    portfolio.basket.members.aapl = USDCash("cash")  # type: ignore[assignment]

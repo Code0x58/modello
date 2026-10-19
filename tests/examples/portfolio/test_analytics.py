@@ -11,12 +11,13 @@ from examples.portfolio.explicit import MarketData, Portfolio, PortfolioPricer, 
 from examples.portfolio.models import (
     AAPL,
     MSFT,
-    ApplePosition,
+    EquityPosition,
     EquityPrices,
-    MicrosoftPosition,
     USDCash,
 )
 from examples.portfolio.named import (
+    Basket,
+    EquityMembers,
     NamedPortfolioPricer,
     example_named_market_data,
     example_named_portfolio,
@@ -98,8 +99,12 @@ def test_opposite_asset_returns_diversify_reference_weights_risk():
     """Negative covariance can offset fixed-weight risk while buy-and-hold weights drift."""
     portfolio = Portfolio(
         "opposite returns",
-        aapl=ApplePosition("apple", quantity=1),
-        msft=MicrosoftPosition("microsoft", quantity=1),
+        basket=Basket(
+            "basket",
+            members=EquityMembers(
+                "members", aapl=EquityPosition("apple", quantity=1), msft=EquityPosition("microsoft", quantity=1)
+            ),
+        ),
         cash=USDCash("cash", amount=0),
     )
     dates = (date(2026, 1, 5), date(2026, 1, 6), date(2026, 1, 7))

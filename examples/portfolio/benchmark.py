@@ -14,11 +14,11 @@ from examples.portfolio.models import AAPL, MSFT, EquityPrices
 _Result = TypeVar("_Result")
 
 
-class QuotedPortfolio(Portfolio):
+class QuotedPortfolio(Portfolio):  # type: ignore[misc, valid-type]
     """Expose quote aliases so the baseline needs only one joint solve per row."""
 
-    aapl_price = Portfolio.aapl.instrument.price
-    msft_price = Portfolio.msft.instrument.price
+    aapl_price = Portfolio.basket.members.aapl.instrument.price
+    msft_price = Portfolio.basket.members.msft.instrument.price
 
 
 def measure(call: Callable[[], _Result], samples: int = 5) -> tuple[float, _Result]:
@@ -60,8 +60,7 @@ def main() -> None:
             float(
                 QuotedPortfolio(
                     "point",
-                    aapl=model.aapl,
-                    msft=model.msft,
+                    basket=model.basket,
                     cash=model.cash,
                     aapl_price=apple,
                     msft_price=microsoft,

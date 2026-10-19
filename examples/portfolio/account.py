@@ -17,7 +17,7 @@ from examples.compute.scalar_plan import ScalarPlan
 from examples.compute.series import Series, utc_time
 from examples.portfolio.analytics import NamedAnalytics, analyse
 from examples.portfolio.models import Equity
-from examples.portfolio.named import NamedPortfolio, portfolio_model, valuation_outputs
+from examples.portfolio.named import NamedPortfolio, valuation_outputs
 from examples.portfolio.sources import CashFlow, Fill, Income, PriceHistory, TransactionLog, finite
 from modello import Modello
 
@@ -45,7 +45,7 @@ class AccountSnapshot:
     at: datetime
     known_at: datetime
     account: str
-    instruments: NamedMap[type[Equity]]
+    instruments: NamedMap[Equity]
     quantities: NamedMap[float]
     prices: NamedMap[float]
     values: NamedMap[float]
@@ -199,11 +199,11 @@ class AccountEngine:
         max_price_age: timedelta,
     ) -> None:
         self.account = account
-        instruments = account.opening.positions.map(lambda position: type(position.instrument))
+        instruments = account.opening.instruments
         self.instruments = instruments
 
-        def checked(instrument: type, history: PriceHistory) -> PriceHistory:
-            if history.equity is not instrument or instrument.currency != "USD":
+        def checked(instrument: Equity, history: PriceHistory) -> PriceHistory:
+            if history.equity != instrument or instrument.currency != "USD":
                 raise ValueError("Account price histories must match the declared USD instruments")
             return history
 
@@ -211,7 +211,7 @@ class AccountEngine:
         if max_price_age < timedelta(0):
             raise ValueError("Price age must be nonnegative")
         self.max_price_age = max_price_age
-        prices = account.opening.positions.map(lambda position: position.instrument.price)
+        prices = account.opening.positions.map(lambda position: position.price)
         if not all(isinstance(price, Symbol) for price in prices.values()) or len(set(prices.values())) != len(prices):
             raise ValueError("Leave opening prices as independent symbolic inputs for the market source")
         try:
@@ -221,10 +221,10 @@ class AccountEngine:
             raise ValueError("Specify all opening quantities and cash") from error
         finite(*self._opening_quantities.values(), self._opening_cash)
         self._check_balances(dict(self._opening_quantities), self._opening_cash)
-        template = portfolio_model(type(account.opening.equities))("valuation")
+        template = type(account.opening)("valuation")
         inputs = NamedMap(
             [
-                *((f"price:{name}", position.instrument.price) for name, position in template.positions.items()),
+                *((f"price:{name}", position.price) for name, position in template.positions.items()),
                 *((f"quantity:{name}", position.quantity) for name, position in template.positions.items()),
                 ("cash", template.cash.amount),
             ]

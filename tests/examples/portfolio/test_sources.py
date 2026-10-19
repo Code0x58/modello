@@ -7,7 +7,7 @@ import pytest
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
-from examples.portfolio.models import AAPL, MSFT
+from examples.portfolio.models import AAPL, MSFT, Equity
 from examples.portfolio.signals import MomentumSignals
 from examples.portfolio.sources import (
     CashFlow,
@@ -56,10 +56,10 @@ def test_feed_schema_identity_and_invalid_events_are_rejected(tmp_path, market):
     bad = tmp_path / "bad.csv"
     bad.write_text("member,price\naapl,100\n")
     with pytest.raises(ValueError, match="unique columns"):
-        CSVMarketSource(bad, NamedMap({"aapl": AAPL})).load()
+        CSVMarketSource(bad).load(NamedMap({"aapl": AAPL}))
     bad.write_text((DATA / "market.csv").read_text().replace(",AAPL,", ",MSFT,"))
-    with pytest.raises(ValueError, match="ticker for aapl"):
-        CSVMarketSource(bad, NamedMap({"aapl": AAPL, "msft": MSFT})).load()
+    with pytest.raises(ValueError, match="No market data for synthetic:AAPL"):
+        CSVMarketSource(bad).load(NamedMap({"aapl": AAPL, "msft": MSFT}))
     with pytest.raises(ValueError, match="available|publication"):
         replace(market["aapl"], available_at=market["aapl"].available_at[::-1])
     with pytest.raises(ValueError, match="strictly positive"):
@@ -79,3 +79,26 @@ def test_csv_index_source_preserves_schedule_and_validates_schema(tmp_path):
     source.write_text("at,price\n2025-01-01T12:00:00Z,100\n")
     with pytest.raises(ValueError, match="level"):
         CSVIndexSource(source).load()
+
+
+def test_provider_symbols_are_independent_of_member_names_and_shared(tmp_path):
+    source = CSVMarketSource(DATA / "market.csv")
+    equity = Equity("AAPL", provider="synthetic")
+    histories = source.load(NamedMap({"growth": equity, "income": AAPL}))
+    assert tuple(histories) == ("growth", "income")
+    assert histories["growth"] is histories["income"]
+    assert histories["growth"].equity == AAPL
+    assert histories["growth"].prices.values[0] == 100
+    assert source.load(NamedMap({})) == {}
+    # A provider's namespace is part of quote identity, even with the same symbol.
+    with pytest.raises(ValueError, match="No market data for other:AAPL"):
+        source.load(NamedMap({"growth": Equity("AAPL", provider="other")}))
+    with pytest.raises(ValueError, match="Market currency.*must be EUR"):
+        source.load(NamedMap({"growth": Equity("AAPL", "synthetic", "EUR")}))
+    path = tmp_path / "providers.csv"
+    original = (DATA / "market.csv").read_text()
+    extra = original.replace("synthetic", "other").splitlines()[1:]
+    path.write_text(original + "\n".join(extra) + "\n")
+    histories = CSVMarketSource(path).load(NamedMap({"one": AAPL, "two": Equity("AAPL", "other")}))
+    assert histories["one"].prices == histories["two"].prices
+    assert histories["one"].equity != histories["two"].equity

@@ -10,30 +10,35 @@ from examples.portfolio.explicit import MarketData, Portfolio, PortfolioPricer, 
 from examples.portfolio.models import (
     AAPL,
     MSFT,
-    ApplePosition,
-    Equity,
     EquityPosition,
     EquityPrices,
-    MicrosoftPosition,
+    Quote,
     USDCash,
 )
-from modello import BoundInstanceDummy, component
+from examples.portfolio.named import Basket, EquityMembers
+from modello import BoundInstanceDummy
 
 
 def test_explicit_instrument_types_and_inverse_valuation():
     """A NAV constraint solves the quantity of an explicitly named equity."""
-    source = ApplePosition("apple", instrument=AAPL("quote", price=100))
+    source = EquityPosition("apple", instrument=Quote("quote", price=100))
     portfolio = Portfolio(
         "target",
-        aapl=source,
-        msft=MicrosoftPosition("microsoft", quantity=20, instrument=MSFT("quote", price=50)),
+        basket=Basket(
+            "basket",
+            members=EquityMembers(
+                "members",
+                aapl=source,
+                msft=EquityPosition("microsoft", quantity=20, instrument=Quote("quote", price=50)),
+            ),
+        ),
         cash=USDCash("cash", amount=100),
         nav=2100,
     )
-    assert portfolio.aapl.instrument.ticker == "AAPL"
-    assert portfolio.msft.instrument.ticker == "MSFT"
-    assert portfolio.aapl.quantity == 10
-    assert portfolio.aapl_weight == Rational(10, 21)
+    assert portfolio.instruments["aapl"].symbol == "AAPL"
+    assert portfolio.instruments["msft"].symbol == "MSFT"
+    assert portfolio.basket.members.aapl.quantity == 10
+    assert portfolio.basket.weights["aapl"] == Rational(10, 21)
     assert isinstance(source.quantity, BoundInstanceDummy)
 
 
@@ -55,8 +60,12 @@ def test_cash_only_portfolio_and_zero_risk():
     """Zero equity positions have zero returns and risk without dividing by zero."""
     portfolio = Portfolio(
         "cash only",
-        aapl=ApplePosition("apple", quantity=0),
-        msft=MicrosoftPosition("microsoft", quantity=0),
+        basket=Basket(
+            "basket",
+            members=EquityMembers(
+                "members", aapl=EquityPosition("apple", quantity=0), msft=EquityPosition("microsoft", quantity=0)
+            ),
+        ),
         cash=USDCash("cash", amount=100),
     )
     path = PortfolioPricer(portfolio)(example_market_data())
@@ -100,35 +109,15 @@ def test_compile_requires_fixed_holdings_and_independent_symbolic_prices():
     for price in (100, Symbol("shared", positive=True)):
         portfolio = Portfolio(
             "known or linked quotes",
-            aapl=ApplePosition("apple", quantity=10, instrument=AAPL("quote", price=price)),
-            msft=MicrosoftPosition("microsoft", quantity=20, instrument=MSFT("quote", price=price)),
+            basket=Basket(
+                "basket",
+                members=EquityMembers(
+                    "members",
+                    aapl=EquityPosition("apple", quantity=10, instrument=Quote("quote", price=price)),
+                    msft=EquityPosition("microsoft", quantity=20, instrument=Quote("quote", price=price)),
+                ),
+            ),
             cash=USDCash("cash", amount=100),
         )
         with pytest.raises(ValueError, match="independent symbolic input"):
             PortfolioPricer(portfolio)
-
-
-def test_another_named_instrument_can_extend_the_symbolic_model():
-    """A third explicit position works, including inherited weights, without containers."""
-
-    class Alphabet(Equity):
-        ticker = "GOOGL"
-
-    class AlphabetPosition(EquityPosition):
-        instrument = component(Alphabet)
-
-    class ExtendedPortfolio(Portfolio):
-        googl = component(AlphabetPosition)
-        nav = Portfolio.aapl.market_value + Portfolio.msft.market_value + Portfolio.cash.amount + googl.market_value
-        googl_weight = googl.market_value / nav
-
-    portfolio = ExtendedPortfolio(
-        "three equities",
-        aapl=ApplePosition("apple", quantity=10, instrument=AAPL("quote", price=100)),
-        msft=MicrosoftPosition("microsoft", quantity=20, instrument=MSFT("quote", price=50)),
-        cash=USDCash("cash", amount=100),
-        googl=AlphabetPosition("alphabet", quantity=1, instrument=Alphabet("quote", price=1000)),
-    )
-    assert portfolio.nav == 3100
-    assert portfolio.aapl_weight == portfolio.msft_weight == portfolio.googl_weight == Rational(10, 31)
-    assert portfolio.cash_weight == Rational(1, 31)

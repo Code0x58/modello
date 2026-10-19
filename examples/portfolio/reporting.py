@@ -147,8 +147,8 @@ def report(
         order = attribution.order
         if order_id != order.id or order.account != path.snapshots[0].account or order.member not in members:
             raise ValueError("Attribution must identify an order for this account and instrument")
-        if order.equity is not path.snapshots[0].instruments[order.member]:
-            raise ValueError("Attribution must match the declared instrument type")
+        if order.equity != path.snapshots[0].instruments[order.member]:
+            raise ValueError("Attribution must match the declared instrument identity")
         for signal, weight in attribution.weights.items():
             if signal not in signals or order.member not in signals[signal]:
                 raise ValueError("Attribution needs a named signal history for the order's instrument")

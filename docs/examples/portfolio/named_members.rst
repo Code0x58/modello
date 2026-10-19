@@ -56,33 +56,48 @@ Members are still declared as named, typed model components:
 .. code-block:: python
 
    class EquityMembers(Modello):
-       aapl = component(ApplePosition)
-       msft = component(MicrosoftPosition)
+       aapl = component(EquityPosition)
+       msft = component(EquityPosition)
 
 ``component_members(group, EquityPosition)`` exposes those components as a
-``NamedMap[EquityPosition]``. It works both while defining equations and on a
-populated model. Concrete instrument types remain attached to each position.
-The adapter checks that all members belong to the supplied common type.
+``NamedMap[EquityPosition]``. It works on model classes, class-body references,
+and populated models. The adapter checks that every component belongs to the
+supplied common type.
 
-``portfolio_model(EquityMembers)`` builds a model whose NAV equation is:
+``basket_model(EquityMembers, instruments)`` binds one ``Equity`` record to each
+holding name and builds the basket's ordinary scalar equations. Its total is:
 
 .. code-block:: python
 
-   nav = sum(
+   market_value = sum(
        position.market_value
-       for position in component_members(equities, EquityPosition).values()
-   ) + cash.amount
+       for position in component_members(members, EquityPosition).values()
+   )
 
-The resulting portfolio exposes ``positions``, ``values``, and ``weights`` as
-maps. Its weight query is simply:
+``portfolio_model(Basket)`` places that basket beside cash and relates its
+capital base to account NAV:
 
 .. code-block:: python
 
-   self.values.map(lambda value: value / self.nav)
+   nav = basket.capital
+   nav = basket.market_value + cash.amount
 
-Construct the member group using position instances, then supply that group to
-the portfolio. The named group also retains its ordinary typed attributes such
-as ``equities.aapl``.
+The populated basket associates every symbolic position with its ``Equity``
+record and capital base through an ``EquityHolding`` view. Its ``positions``,
+``values``, and ``weights`` maps preserve the declared names. Member allocation
+is defined once by ``EquityHolding.weight``; the basket projects that property:
+
+.. code-block:: python
+
+   self.positions.map(lambda position: position.weight)
+
+The numerical plan compiles these weight expressions alongside values and NAV,
+so the time-series evaluation uses the model's allocation formulas too.
+
+The portfolio forwards these maps for account-level consumers. The named
+holding group also retains ordinary typed attributes such as
+``portfolio.basket.members.aapl``. Value and weight projections follow the
+declared holdings automatically.
 
 Add a member once
 -----------------
@@ -92,9 +107,11 @@ The worked example adds Alphabet by extending the declaration:
 .. code-block:: python
 
    class ThreeEquities(EquityMembers):
-       googl = component(AlphabetPosition)
+       googl = component(EquityPosition)
 
-   Portfolio = portfolio_model(ThreeEquities)
+   instruments = NamedMap({**EQUITIES, "googl": Equity("GOOGL", "synthetic")})
+   ThreeEquityBasket = basket_model(ThreeEquities, instruments)
+   Portfolio = portfolio_model(ThreeEquityBasket)
 
 Supply its holding and price vector under ``googl``. The same aggregate,
 valuation, weight, attribution, and risk calculations handle all three members:
@@ -123,11 +140,13 @@ Cash retains its own value and weight paths and has zero return and risk
 contribution. An empty equity declaration also works: NAV is the cash balance,
 the projected equity maps are empty, and equity risk is zero.
 
-The pricing plan binds names to instrument types before constructing a numeric
+The pricing plan binds holding names to instrument records before constructing a numeric
 input layout. Feed order can change without changing the result. Each feed
 member must also match the declared instrument identity and observation dates.
 Names identify positions, so separate named positions may hold the same equity.
-Ticker identity and member identity remain distinct concepts.
+Provider-symbol identity and member identity remain distinct concepts. The same
+instrument can appear in separate strategy sleeves with independent quantities
+and weights; the market source can reuse its history for both.
 
 The original experiment's assumptions and distinction between observed-path
 volatility and fixed-reference-weight risk apply here as well.
@@ -145,7 +164,7 @@ exact-domain combination, and reduction. The position domain and observation
 axis remain separate. Market value is pointwise on both axes; returns shift the
 observation axis; covariance reduces time and introduces a second member axis.
 
-The model factory expands the member reduction into ordinary scalar equations
+The basket factory expands the member reduction into ordinary scalar equations
 once per definition. NAV still supports inverse valuation through the joint
 solver. A new member declaration produces a new model and pricing plan. Adding
 holdings and data is then a binding task, rather than a rewrite of the formulas.

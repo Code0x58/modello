@@ -15,8 +15,8 @@ from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
 from examples.portfolio.account import Account, AccountEngine, AccountPath, AccountSnapshot
 from examples.portfolio.execution import ExecutionBenchmark, benchmark_executions
-from examples.portfolio.models import AAPL, MSFT, ApplePosition, Equity, MicrosoftPosition, USDCash
-from examples.portfolio.named import EquityMembers, portfolio_model
+from examples.portfolio.models import EquityPosition, USDCash
+from examples.portfolio.named import Basket, EquityMembers, portfolio_model
 from examples.portfolio.performance import Comparison, PerformanceIndex, compare
 from examples.portfolio.report_html import render_html, report_data
 from examples.portfolio.reporting import AccountReport, OrderAttribution
@@ -57,16 +57,19 @@ class ResearchRun:
 
 def run(market_source: MarketSource, transaction_source: TransactionSource) -> ResearchRun:
     """Bind replaceable sources to one deterministic research scenario."""
-    opening = portfolio_model(EquityMembers)(
+    opening = portfolio_model(Basket)(
         "opening",
-        equities=EquityMembers(
-            "equities", aapl=ApplePosition("apple", quantity=10), msft=MicrosoftPosition("microsoft", quantity=10)
+        basket=Basket(
+            "basket",
+            members=EquityMembers(
+                "equities", aapl=EquityPosition("apple", quantity=10), msft=EquityPosition("microsoft", quantity=10)
+            ),
         ),
         cash=USDCash("cash", amount=1000),
     )
     times = tuple(timestamp(f"2026-01-{day:02d}T16:01:00Z") for day in range(5, 9))
     account = Account("research", times[0], opening)
-    market = market_source.load()
+    market = market_source.load(opening.instruments)
     ledger = transaction_source.load()
     age = timedelta(days=4)
     engine = AccountEngine(account, market, max_price_age=age)
@@ -84,7 +87,7 @@ def example_run() -> ResearchRun:
     """Use synthetic, independent market and broker files shipped with the example."""
     directory = Path(__file__).with_name("data")
     return run(
-        CSVMarketSource(directory / "market.csv", NamedMap({"aapl": AAPL, "msft": MSFT})),
+        CSVMarketSource(directory / "market.csv"),
         CSVTransactionSource(directory / "transactions.csv"),
     )
 
@@ -213,8 +216,6 @@ def asdict_snapshot(snapshot: AccountSnapshot) -> dict[str, object]:
 def encode_value(value: object) -> str:
     if isinstance(value, datetime):
         return value.isoformat()
-    if isinstance(value, type) and issubclass(value, Equity):
-        return value.ticker
     raise TypeError(f"Cannot encode {type(value).__name__}")
 
 

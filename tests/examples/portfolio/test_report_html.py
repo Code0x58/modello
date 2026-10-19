@@ -10,6 +10,7 @@ import pytest
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
 from examples.portfolio.account import Account, AccountEngine
+from examples.portfolio.basket import basket_model
 from examples.portfolio.demo import performance_comparison
 from examples.portfolio.models import USDCash
 from examples.portfolio.named import portfolio_model
@@ -67,7 +68,7 @@ def test_report_supports_longer_histories_and_supplied_benchmark_context():
         timestamp("2025-01-01T16:00:00Z"),
     )
     name = "Long <account> & research"
-    opening = portfolio_model(CashMembers)("opening", cash=USDCash("cash", amount=100))
+    opening = portfolio_model(basket_model(CashMembers, NamedMap({})))("opening", cash=USDCash("cash", amount=100))
     engine = AccountEngine(Account(name, times[0], opening), NamedMap({}), max_price_age=timedelta(0))
     ledger = TransactionLog(tuple(Income(str(i), name, at, at, 10) for i, at in enumerate(times[1:])))
     path = engine.evaluate(ledger, times)

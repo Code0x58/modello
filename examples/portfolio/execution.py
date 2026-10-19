@@ -54,7 +54,7 @@ def benchmark_executions(
         if at < order.arrival_at:
             raise ValueError("Execution assessment must be at or after order arrival")
         history = market[order.member]
-        if history.equity is not order.equity:
+        if history.equity != order.equity:
             raise ValueError("Execution benchmark instrument must match the model order")
         decision = history.mark(order.decision_at, max_age=max_price_age)
         arrival = history.mark(order.arrival_at, max_age=max_price_age)

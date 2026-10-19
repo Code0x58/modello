@@ -4,50 +4,44 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import ClassVar, Generic, TypeVar
+from typing import ClassVar
 
 from examples.compute.series import Series
 from modello import InstanceDummy, Modello, component
 
 
-class Equity(Modello):
-    """A quoted equity, with identity and currency attached to its type."""
+@dataclass(frozen=True)
+class Equity:
+    """An equity identified in a provider's symbol namespace and quote currency."""
 
-    ticker: ClassVar[str]
-    currency: ClassVar[str] = "USD"
+    symbol: str
+    provider: str
+    currency: str = "USD"
+
+    def __post_init__(self) -> None:
+        if any(
+            not isinstance(value, str) or not value.strip() for value in (self.symbol, self.provider, self.currency)
+        ):
+            raise ValueError("An equity needs a symbol, provider, and quote currency")
+
+
+AAPL = Equity("AAPL", provider="synthetic")
+MSFT = Equity("MSFT", provider="synthetic")
+GOOGL = Equity("GOOGL", provider="synthetic")
+
+
+class Quote(Modello):
+    """A symbolic price; provider identity is supplied by the basket binding."""
+
     price = InstanceDummy("price", positive=True)
-
-
-class AAPL(Equity):
-    """Apple equity; example observations are synthetic."""
-
-    ticker = "AAPL"
-
-
-class MSFT(Equity):
-    """Microsoft equity; example observations are synthetic."""
-
-    ticker = "MSFT"
 
 
 class EquityPosition(Modello):
     """A long position in an equity, separate from the instrument itself."""
 
-    instrument = component(Equity)
+    instrument = component(Quote)
     quantity = InstanceDummy("quantity", nonnegative=True)
     market_value = quantity * instrument.price
-
-
-class ApplePosition(EquityPosition):
-    """An explicitly typed position in AAPL."""
-
-    instrument = component(AAPL)
-
-
-class MicrosoftPosition(EquityPosition):
-    """An explicitly typed position in MSFT."""
-
-    instrument = component(MSFT)
 
 
 class USDCash(Modello):
@@ -57,14 +51,11 @@ class USDCash(Modello):
     amount = InstanceDummy("amount", nonnegative=True)
 
 
-_EquityT = TypeVar("_EquityT", bound=Equity, covariant=True)
-
-
 @dataclass(frozen=True)
-class EquityPrices(Generic[_EquityT]):
+class EquityPrices:
     """An instrument's positive closing prices on a dated observation axis."""
 
-    equity: type[_EquityT]
+    equity: Equity
     close: Series[date]
 
     def __post_init__(self) -> None:

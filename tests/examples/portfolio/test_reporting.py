@@ -9,6 +9,7 @@ from sympy import Rational, diff, simplify
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
 from examples.portfolio.account import Account, AccountEngine
+from examples.portfolio.basket import basket_model
 from examples.portfolio.models import MSFT, USDCash
 from examples.portfolio.named import portfolio_model
 from examples.portfolio.reporting import AccountPnL, InstrumentPnL, OrderAttribution, report
@@ -123,7 +124,9 @@ def test_cash_only_reports_separate_income_and_external_capital():
 
     start = timestamp("2026-01-05T16:01:00Z")
     times = tuple(start + timedelta(days=i) for i in range(3))
-    account = Account("cash", start, portfolio_model(Empty)("opening", cash=USDCash("cash", amount=100)))
+    account = Account(
+        "cash", start, portfolio_model(basket_model(Empty, NamedMap({})))("opening", cash=USDCash("cash", amount=100))
+    )
     engine = AccountEngine(account, NamedMap({}), max_price_age=timedelta(days=1))
     ledger = TransactionLog(
         (CashFlow("deposit", "cash", times[1], times[1], 500), Income("interest", "cash", times[2], times[2], 10))

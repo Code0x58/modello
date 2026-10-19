@@ -31,7 +31,7 @@ def finite(*values: float) -> None:
 class PriceHistory:
     """Unadjusted trade prints with separate economic and publication times."""
 
-    equity: type[Equity]
+    equity: Equity
     prices: Series[datetime]
     available_at: tuple[datetime, ...]
     volumes: tuple[float, ...]
@@ -61,9 +61,9 @@ class PriceHistory:
         at = utc_time(at)
         index = bisect_right(self.available_at, at) - 1
         if index < 0:
-            raise ValueError(f"No {self.equity.ticker} price is available at {at}")
+            raise ValueError(f"No {self.equity.symbol} price is available at {at}")
         if max_age < timedelta(0) or at - self.prices.times[index] > max_age:
-            raise ValueError(f"{self.equity.ticker} price at {at} is stale")
+            raise ValueError(f"{self.equity.symbol} price at {at} is stale")
         return self.prices.values[index]
 
     def sample(self, times: tuple[datetime, ...], *, max_age: timedelta) -> Series[datetime]:
@@ -86,7 +86,7 @@ class PriceHistory:
 class MarketSource(Protocol):
     """A replaceable source of an explicitly named instrument universe."""
 
-    def load(self) -> NamedMap[PriceHistory]: ...
+    def load(self, instruments: NamedMap[Equity]) -> NamedMap[PriceHistory]: ...
 
 
 @dataclass(frozen=True)
@@ -237,28 +237,35 @@ class CSVIndexSource:
 
 @dataclass(frozen=True)
 class CSVMarketSource:
-    """Adapt trade-print CSV data to the declared instrument names."""
+    """Load provider symbols once and project their histories onto holding names."""
 
     path: Path
-    instruments: NamedMap[type[Equity]]
 
-    def load(self) -> NamedMap[PriceHistory]:
-        rows = csv_rows(self.path, {"member", "ticker", "at", "available_at", "price", "volume"})
-        if set(row["member"] for row in rows) != set(self.instruments):
-            raise ValueError("Market CSV member names must match the declared universe")
+    def load(self, instruments: NamedMap[Equity]) -> NamedMap[PriceHistory]:
+        rows = csv_rows(self.path, {"provider", "symbol", "currency", "at", "available_at", "price", "volume"})
+        by_symbol: dict[tuple[str, str], list[dict[str, str]]] = {}
+        for row in rows:
+            by_symbol.setdefault((row["provider"], row["symbol"]), []).append(row)
+        loaded: dict[Equity, PriceHistory] = {}
 
-        def history(name: str, equity: type[Equity]) -> PriceHistory:
-            points = sorted((row for row in rows if row["member"] == name), key=lambda row: timestamp(row["at"]))
-            if any(row["ticker"] != equity.ticker for row in points):
-                raise ValueError(f"Market CSV ticker for {name} must be {equity.ticker}")
-            return PriceHistory(
+        def history(equity: Equity) -> PriceHistory:
+            if equity in loaded:
+                return loaded[equity]
+            key = (equity.provider, equity.symbol)
+            if key not in by_symbol:
+                raise ValueError(f"No market data for {equity.provider}:{equity.symbol}")
+            points = sorted(by_symbol[key], key=lambda row: timestamp(row["at"]))
+            if any(row["currency"] != equity.currency for row in points):
+                raise ValueError(f"Market currency for {equity.provider}:{equity.symbol} must be {equity.currency}")
+            loaded[equity] = PriceHistory(
                 equity,
                 Series(tuple(timestamp(row["at"]) for row in points), tuple(float(row["price"]) for row in points)),
                 tuple(timestamp(row["available_at"]) for row in points),
                 tuple(float(row["volume"]) for row in points),
             )
+            return loaded[equity]
 
-        return NamedMap((name, history(name, equity)) for name, equity in self.instruments.items())
+        return instruments.map(history)
 
 
 @dataclass(frozen=True)

@@ -14,10 +14,10 @@ from sympy import Expr, Symbol
 from examples.compute.named_map import NamedMap
 from examples.compute.scalar_plan import ScalarPlan
 from examples.compute.series import Series
-from examples.named_members import component_members
 from examples.portfolio.analytics import NamedPortfolioPath, PositionPath
-from examples.portfolio.models import ApplePosition, Equity, EquityPosition, EquityPrices, MicrosoftPosition, USDCash
-from modello import InstanceDummy, Modello, component
+from examples.portfolio.basket import EquityBasket, EquityHolding, basket_model
+from examples.portfolio.models import AAPL, GOOGL, MSFT, Equity, EquityPosition, EquityPrices, USDCash
+from modello import Modello, component
 
 _Members = TypeVar("_Members", bound=Modello)
 
@@ -25,44 +25,51 @@ _Members = TypeVar("_Members", bound=Modello)
 class EquityMembers(Modello):
     """A declared domain of two named equity positions."""
 
-    aapl = component(ApplePosition)
-    msft = component(MicrosoftPosition)
+    aapl = component(EquityPosition)
+    msft = component(EquityPosition)
 
 
 class NamedPortfolio(Modello, Generic[_Members]):
     """Common queries for portfolios built from an equity member declaration."""
 
-    equities: _Members
+    basket: EquityBasket[_Members]
     cash: USDCash
     nav: Expr
 
     @property
-    def positions(self) -> NamedMap[EquityPosition]:
+    def positions(self) -> NamedMap[EquityHolding]:
         """Expose positions with a shared value type and their declared names."""
-        return component_members(self.equities, EquityPosition)
+        return self.basket.positions
 
     @property
     def values(self) -> NamedMap[Expr]:
         """Project each position to its market value."""
-        return self.positions.map(lambda position: position.market_value)
+        return self.basket.values
 
     @property
     def weights(self) -> NamedMap[Expr]:
         """Project market values to equity weights on the same named domain."""
-        return self.values.map(lambda value: value / self.nav)
+        return self.basket.weights
+
+    @property
+    def instruments(self) -> NamedMap[Equity]:
+        """Bind each holding name to its instrument's provider and symbol."""
+        return self.basket.instruments
+
+    @property
+    def cash_weight(self) -> Expr:
+        return self.cash.amount / self.nav
 
 
-def portfolio_model(equity_members: type[_Members]) -> type[NamedPortfolio[_Members]]:
-    """Compile a member declaration into a portfolio's scalar equations."""
+def portfolio_model(basket: type[EquityBasket[_Members]]) -> type[NamedPortfolio[_Members]]:
+    """Place a basket beside cash, using account NAV as their allocation base."""
+    basket_type = basket
 
     class Portfolio(NamedPortfolio[_Members]):
-        equities = component(equity_members)
+        basket = component(basket_type)
         cash = component(USDCash)
-        nav = InstanceDummy("nav", positive=True)
-        nav = (
-            sum(position.market_value for position in component_members(equities, EquityPosition).values())
-            + cash.amount
-        )
+        nav = basket.capital
+        nav = basket.market_value + cash.amount
 
     return Portfolio
 
@@ -72,7 +79,7 @@ class NamedMarketData:
     """An observation axis and price vectors identified by member name."""
 
     times: tuple[date, ...]
-    prices: NamedMap[EquityPrices[Equity]]
+    prices: NamedMap[EquityPrices]
 
     def __post_init__(self) -> None:
         """Keep a common axis, including when the equity domain is empty."""
@@ -87,13 +94,22 @@ class PortfolioView(Protocol):
     """The symbolic inputs required by the compiled portfolio calculation."""
 
     @property
-    def positions(self) -> NamedMap[EquityPosition]: ...
+    def positions(self) -> NamedMap[EquityHolding]: ...
+
+    @property
+    def instruments(self) -> NamedMap[Equity]: ...
 
     @property
     def values(self) -> NamedMap[Expr]: ...
 
     @property
+    def weights(self) -> NamedMap[Expr]: ...
+
+    @property
     def cash(self) -> USDCash: ...
+
+    @property
+    def cash_weight(self) -> Expr: ...
 
     @property
     def nav(self) -> Expr: ...
@@ -104,7 +120,9 @@ def valuation_outputs(portfolio: PortfolioView) -> NamedMap[Expr]:
     return NamedMap(
         [
             *((f"value:{name}", value) for name, value in portfolio.values.items()),
+            *((f"weight:{name}", weight) for name, weight in portfolio.weights.items()),
             ("cash", portfolio.cash.amount),
+            ("cash_weight", portfolio.cash_weight),
             ("nav", portfolio.nav),
         ]
     )
@@ -115,10 +133,10 @@ class NamedPortfolioPricer:
 
     def __init__(self, portfolio: PortfolioView) -> None:
         """Bind known quantities, cash, member names, and instrument identities."""
-        self._instruments = portfolio.positions.map(lambda position: type(position.instrument))
+        self._instruments = portfolio.instruments
         if any(instrument.currency != "USD" for instrument in self._instruments.values()):
             raise ValueError("The example requires USD equities and cash")
-        prices = portfolio.positions.map(lambda position: position.instrument.price)
+        prices = portfolio.positions.map(lambda position: position.price)
         if not all(isinstance(price, Symbol) for price in prices.values()) or len(set(prices.values())) != len(prices):
             raise ValueError("Leave each instrument price as an independent symbolic input")
         outputs = (*portfolio.values.values(), portfolio.cash.amount, portfolio.nav)
@@ -129,9 +147,9 @@ class NamedPortfolioPricer:
     def __call__(self, data: NamedMarketData) -> NamedPortfolioPath[date]:
         """Align data by name before constructing the numerical input layout."""
 
-        def checked_prices(instrument: type[Equity], prices: EquityPrices[Equity]) -> Series[date]:
-            if instrument is not prices.equity:
-                raise ValueError(f"Price instrument must be {instrument.ticker}")
+        def checked_prices(instrument: Equity, prices: EquityPrices) -> Series[date]:
+            if instrument != prices.equity:
+                raise ValueError(f"Price instrument must be {instrument.symbol}")
             return prices.close
 
         prices = self._instruments.combine(data.prices, checked_prices)
@@ -143,7 +161,7 @@ class NamedPortfolioPricer:
 
         def position(name: str) -> PositionPath[date]:
             value = outputs[f"value:{name}"]
-            weight = Series(data.times, tuple(v / n for v, n in zip(value.values, nav.values, strict=True)))
+            weight = outputs[f"weight:{name}"]
             returns = prices[name].simple_returns()
             contribution = Series(
                 returns.times,
@@ -155,38 +173,34 @@ class NamedPortfolioPricer:
         return NamedPortfolioPath(
             NamedMap((name, position(name)) for name in prices),
             cash,
-            Series(data.times, tuple(c / n for c, n in zip(cash.values, nav.values, strict=True))),
+            outputs["cash_weight"],
             nav,
         )
 
 
-class Alphabet(Equity):
-    """A third equity type for extending the declared member domain."""
-
-    ticker = "GOOGL"
-
-
-class AlphabetPosition(EquityPosition):
-    """A named holding in Alphabet equity."""
-
-    instrument = component(Alphabet)
-
-
 class ThreeEquities(EquityMembers):
-    """Add one declaration; aggregates and projected maps follow automatically."""
+    """Add one generic position; aggregates and projected maps follow automatically."""
 
-    googl = component(AlphabetPosition)
+    googl = component(EquityPosition)
+
+
+EQUITIES = NamedMap({"aapl": AAPL, "msft": MSFT})
+Basket = basket_model(EquityMembers, EQUITIES)
+ThreeEquityBasket = basket_model(ThreeEquities, NamedMap({**EQUITIES, "googl": GOOGL}))
 
 
 def example_named_portfolio() -> NamedPortfolio[ThreeEquities]:
     """Three declared equities with fixed quantities and USD cash."""
-    return portfolio_model(ThreeEquities)(
+    return portfolio_model(ThreeEquityBasket)(
         "holdings",
-        equities=ThreeEquities(
-            "equities",
-            aapl=ApplePosition("apple", quantity=10),
-            msft=MicrosoftPosition("microsoft", quantity=20),
-            googl=AlphabetPosition("alphabet", quantity=1),
+        basket=ThreeEquityBasket(
+            "basket",
+            members=ThreeEquities(
+                "equities",
+                aapl=EquityPosition("apple", quantity=10),
+                msft=EquityPosition("microsoft", quantity=20),
+                googl=EquityPosition("alphabet", quantity=1),
+            ),
         ),
         cash=USDCash("cash", amount=100),
     )
@@ -203,7 +217,7 @@ def example_named_market_data() -> NamedMarketData:
             {
                 "aapl": data.aapl,
                 "msft": data.msft,
-                "googl": EquityPrices(Alphabet, Series(data.aapl.close.times, (1000, 1005, 990, 1010, 1020))),
+                "googl": EquityPrices(GOOGL, Series(data.aapl.close.times, (1000, 1005, 990, 1010, 1020))),
             }
         ),
     )

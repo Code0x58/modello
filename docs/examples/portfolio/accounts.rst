@@ -57,10 +57,34 @@ in cash. An optimiser could consume forecasts, risk estimates, and constraints
 and return the same type. Accounting and expression execution need no knowledge
 of that policy's objective or solver.
 
-An ``OrderIntent`` records the account, named position, equity type, decision
+An ``OrderIntent`` records the account, named position, equity identity, decision
 time, arrival time, signed intended shares, and model execution price. Fills
 come from the separate transaction log and join to intentions through
 ``order_id``. Manual fills without a model order still affect the account.
+
+Bind instruments to providers
+-----------------------------
+
+The :doc:`basket definition <holdings>` binds each named holding to an ``Equity``
+record containing ``symbol``, ``provider``, and ``currency``. These are ordinary
+typed metadata, separate from the symbolic price and quantity fields.
+``opening.basket.positions[name]`` exposes that instrument record and the
+holding's value and weight together as a typed view.
+``MarketSource.load(instruments)`` requests that universe and returns histories
+under the holding names expected by valuation, signals, and execution analysis.
+
+The CSV adapter reads ``provider,symbol,currency,at,available_at,price,volume``.
+It indexes rows by provider and symbol, checks the quote currency, and loads
+only the requested instruments. Extra symbols in a provider feed need no
+portfolio declarations. Two named holdings in the same instrument share a
+single immutable history. Renaming a holding changes its ledger/member name,
+while its provider symbol and source file can stay the same.
+
+For another provider, implement the same small source protocol; the provider
+name selects its symbol namespace and is part of quote identity. The example
+uses only the local ``synthetic`` provider. Provider symbols are quote bindings,
+not a security master: cross-provider identifiers, corporate actions, and
+currency conversion would need explicit models and data.
 
 Observe time and availability
 -----------------------------
@@ -95,17 +119,21 @@ the market source supplies the price variables.
 
 .. code-block:: python
 
-   Portfolio = portfolio_model(EquityMembers)
+   Portfolio = portfolio_model(Basket)
    opening = Portfolio(
        "opening",
-       equities=EquityMembers(
-           "equities",
-           aapl=ApplePosition("apple", quantity=10),
-           msft=MicrosoftPosition("microsoft", quantity=10),
+       basket=Basket(
+           "basket",
+           members=EquityMembers(
+               "equities",
+               aapl=EquityPosition("apple", quantity=10),
+               msft=EquityPosition("microsoft", quantity=10),
+           ),
        ),
        cash=USDCash("cash", amount=1000),
    )
    account = Account("research", opened_at, opening)
+   market = market_source.load(opening.instruments)
    engine = AccountEngine(account, market, max_price_age=timedelta(days=4))
    path = engine.evaluate(transaction_log, valuation_times)
 
@@ -332,3 +360,24 @@ The numerical paths use floats. This makes the experiment useful for analytics
 and numerical reconciliation; a production cash ledger would also need a
 specified currency rounding policy. Allocation policies and broker submission
 belong at the application boundary.
+
+Other useful composition boundaries
+-----------------------------------
+
+The current symbolic composition is account portfolio → equity basket → named
+holdings → quotes, with cash alongside the basket. The account owns the ledger
+and valuation schedule; an instrument owns quote identity, while quantities
+belong to holdings. This keeps shared market data independent of account state.
+
+Further natural groupings are strategy sleeves or asset-class baskets, cash
+balances by currency, and executions grouped by order. A multi-basket account
+would need explicit capital bases and qualified holding names so the same
+instrument can occur in several sleeves. Currency baskets also need FX
+valuation before their totals can be added. These are extension points rather
+than additional machinery in the current funded, USD-only example.
+
+Signal attribution already has a separate source → instrument view. This is
+useful because two signals can contribute to the same holding; forcing signals
+into the ownership tree would lose that relationship. Similarly, market prints
+and transactions retain their own observation/publication axes and are sampled
+onto an account's timeline at the calculation boundary.

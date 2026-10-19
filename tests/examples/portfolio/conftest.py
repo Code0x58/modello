@@ -5,8 +5,8 @@ import pytest
 from examples.compute.named_map import NamedMap
 from examples.portfolio.account import Account, AccountEngine
 from examples.portfolio.demo import example_run, research_report
-from examples.portfolio.models import AAPL, MSFT, ApplePosition, MicrosoftPosition, USDCash
-from examples.portfolio.named import EquityMembers, portfolio_model
+from examples.portfolio.models import AAPL, MSFT, EquityPosition, USDCash
+from examples.portfolio.named import Basket, EquityMembers, portfolio_model
 from examples.portfolio.sources import (
     CSVMarketSource,
     CSVTransactionSource,
@@ -17,7 +17,7 @@ from ._data import AGE, DATA, TIMES
 
 @pytest.fixture(scope="module")
 def market():
-    return CSVMarketSource(DATA / "market.csv", NamedMap({"aapl": AAPL, "msft": MSFT})).load()
+    return CSVMarketSource(DATA / "market.csv").load(NamedMap({"aapl": AAPL, "msft": MSFT}))
 
 
 @pytest.fixture(scope="module")
@@ -27,10 +27,13 @@ def ledger():
 
 @pytest.fixture(scope="module")
 def engine(market):
-    opening = portfolio_model(EquityMembers)(
+    opening = portfolio_model(Basket)(
         "opening",
-        equities=EquityMembers(
-            "equities", aapl=ApplePosition("apple", quantity=10), msft=MicrosoftPosition("microsoft", quantity=10)
+        basket=Basket(
+            "basket",
+            members=EquityMembers(
+                "equities", aapl=EquityPosition("apple", quantity=10), msft=EquityPosition("microsoft", quantity=10)
+            ),
         ),
         cash=USDCash("cash", amount=1000),
     )

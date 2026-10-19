@@ -2,9 +2,9 @@ Portfolio analytics experiment
 ==============================
 
 This example explores how named models and dated price vectors can work
-together. It defines AAPL and MSFT as equity types, holds them in two named
-positions, and adds a USD cash balance. Holdings stay fixed; prices and weights
-change across observations.
+together. It holds AAPL and MSFT in two named positions inside an equity basket,
+then adds a USD cash balance alongside that basket. Holdings stay fixed;
+prices and weights change across observations.
 
 The data is synthetic. The example assumes USD quotes, nonnegative holdings,
 no trades or distributions, and cash with no interest accrual. Its returns are
@@ -28,29 +28,80 @@ modules.
 Model instruments and holdings
 ------------------------------
 
-An ``Equity`` has a symbolic price. ``AAPL`` and ``MSFT`` attach ticker identity
-to that type. A position contains an instrument and a quantity; its market value
-is quantity times price. The portfolio declares its members directly:
+An ``Equity`` is an immutable instrument record: a provider-specific symbol and
+quote currency. Every equity uses the same ``EquityPosition`` model. The
+position contains a symbolic ``Quote`` and a quantity; its market value is
+quantity times price. Instrument identity is bound once at the basket level:
 
 .. code-block:: python
 
-   class Portfolio(Modello):
-       aapl = component(ApplePosition)
-       msft = component(MicrosoftPosition)
-       cash = component(USDCash)
-       nav = InstanceDummy("nav", positive=True)
-       nav = aapl.market_value + msft.market_value + cash.amount
-       aapl_weight = aapl.market_value / nav
-       msft_weight = msft.market_value / nav
-       cash_weight = cash.amount / nav
+   from examples.compute.named_map import NamedMap
+   from examples.portfolio.basket import basket_model
+   from examples.portfolio.models import Equity, EquityPosition
+   from examples.portfolio.named import portfolio_model
+   from modello import Modello, component
+
+   class Holdings(Modello):
+       aapl = component(EquityPosition)
+       msft = component(EquityPosition)
+
+   Basket = basket_model(Holdings, NamedMap({
+       "aapl": Equity("AAPL", provider="synthetic"),
+       "msft": Equity("MSFT", provider="synthetic"),
+   }))
+   Portfolio = portfolio_model(Basket)
+
+The portfolio contains a basket and cash. The basket contains its named holding
+group and derives total market value and allocation from that group:
+
+.. mermaid::
+   :caption: Portfolio composition and instrument bindings
+   :alt: The portfolio contains an equity basket and USD cash. The basket contains named generic equity positions and binds their names to provider symbols.
+
+   flowchart TD
+       portfolio[Portfolio] --> basket[Equity basket]
+       portfolio --> cash[USD cash]
+       basket --> members[Named holdings]
+       members --> apple[aapl: EquityPosition]
+       members --> microsoft[msft: EquityPosition]
+       basket --> bindings[Instrument bindings]
+       bindings --> symbols[Provider, symbol, currency]
+
+``basket.market_value`` is the sum of member values. ``portfolio.nav`` adds
+cash to that total and also supplies ``basket.capital``, the positive allocation
+base. ``basket.weight`` is its total value divided by capital;
+``basket.weights`` projects every member's value into that same base. Member
+weights add to the basket's weight, and basket plus cash weight adds to one.
+Adding a holding requires no new value or weight formula.
+
+``basket.positions[name]`` is an ``EquityHolding`` view that associates the
+numeric model with its instrument record and allocation base. It exposes
+``instrument.symbol``, ``instrument.provider``, ``quantity``, ``price``,
+``market_value``, and ``weight``. For example:
+
+>>> from examples.portfolio.explicit import example_portfolio
+>>> apple = example_portfolio().basket.positions["aapl"]
+>>> apple.instrument.symbol, apple.instrument.provider, apple.quantity
+('AAPL', 'synthetic', 10)
+
+The underlying symbolic component remains available as ``apple.model``, or
+through the typed member attribute ``basket.members.aapl``. Instrument records
+and contextual queries belong to the basket layer; the model's equations are
+ordinary Modello scalars and components.
+
+A weight belongs to an allocation context: a holding can have one weight in an
+account and another within an equity-only sleeve. Here weights always use
+account NAV, including cash, rather than rescaling equities to sum to one. A
+standalone basket can use another explicit capital base. Its scalar ``weight``
+can also constrain an inverse solve.
 
 Create a portfolio with known quantities and cash, leaving prices symbolic:
 
 >>> from examples.portfolio.explicit import PortfolioPricer, example_market_data, example_portfolio
 >>> holdings = example_portfolio()
->>> holdings.aapl.instrument.ticker, holdings.aapl.quantity
+>>> holdings.instruments["aapl"].symbol, holdings.basket.members.aapl.quantity
 ('AAPL', 10)
->>> holdings.msft.instrument.ticker, holdings.msft.quantity
+>>> holdings.instruments["msft"].symbol, holdings.basket.members.msft.quantity
 ('MSFT', 20)
 >>> holdings.cash.amount
 100
@@ -63,7 +114,7 @@ Bind price vectors
 ------------------
 
 ``Series`` owns an immutable vector and its ordered observation dates.
-``EquityPrices[AAPL]`` pairs a price series with its equity type. ``MarketData``
+``EquityPrices`` pairs a price series with an ``Equity`` identity record. ``MarketData``
 has named ``aapl`` and ``msft`` fields and requires their dates to match exactly.
 This keeps instrument identity and time alignment available during calculation.
 
@@ -171,13 +222,13 @@ One exploratory run on Python 3.14.8 with SymPy 1.14.0 gave these rounded median
    * - Work
      - Time
    * - Construct the symbolic portfolio
-     - 48 ms
+     - 143 ms
    * - Compile its numerical calculation
-     - 1.5 ms
+     - 2.4 ms
    * - Evaluate complete paths for 10,000 observations
-     - 54 ms
+     - 53 ms
    * - Construct and solve a portfolio for each of 10 observations
-     - 788 ms
+     - 1,352 ms
 
 Data creation and risk analytics are outside these timings. The solve-per-row
 baseline reuses the component instances and performs one joint solve per row;
@@ -198,10 +249,11 @@ value, weights, and inverse valuation. An execution layer can reuse those
 expressions over vectors. Matrix inputs and time reductions would need their own
 shape, axis, and execution semantics before becoming core model fields.
 
-The tests also build a portfolio with a third explicit GOOGL position. Inherited
-weights follow the new NAV expression correctly. Extending this fixed
-two-instrument numerical example requires changes to its data fields,
-input/output bindings, and covariance and attribution fields.
+The :doc:`named-member extension <named_members>` adds a third explicit GOOGL
+holding and its instrument binding. The basket reduction, projected weights,
+valuation plan, covariance, and attribution all follow the declared domain.
+The fixed two-field ``MarketData`` above is a small introductory adapter; the
+named calculation accepts any explicitly declared holding domain.
 
 The :doc:`named-member extension <named_members>` takes the next step: it
 projects positions to values and weights, reduces them to NAV, and carries the
@@ -214,8 +266,9 @@ same names through data binding and risk calculations. Further work could:
 
 Membership changes would produce a new definition and compiled plan. This keeps
 the explicit identities while removing repeated edits to aggregate formulas.
-Typing each particular member's concrete subtype may need generated
-declarations or stubs alongside the common value type exposed by a map.
+The typed holding attributes remain available alongside the common value type
+exposed by a map. Provider symbols are data, so adding an instrument does not
+require defining an instrument or position subclass.
 
 The broader compute questions exposed here are typed axes and units, numeric
 precision, partial evaluation, reusable execution plans, and the boundary between

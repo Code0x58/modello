@@ -4,8 +4,9 @@ import pytest
 
 from examples.compute.named_map import NamedMap
 from examples.portfolio.account import Account, AccountEngine
-from examples.portfolio.models import AAPL, MSFT, ApplePosition, MicrosoftPosition, USDCash
-from examples.portfolio.named import EquityMembers, portfolio_model
+from examples.portfolio.basket import basket_model
+from examples.portfolio.models import EquityPosition, Quote, USDCash
+from examples.portfolio.named import Basket, EquityMembers, portfolio_model
 from examples.portfolio.signals import TargetWeights, rebalance_orders
 from examples.portfolio.sources import (
     CashFlow,
@@ -57,7 +58,7 @@ def test_empty_equity_account_flows_are_not_investment_returns():
     class Empty(Modello):
         pass
 
-    opening = portfolio_model(Empty)("cash", cash=USDCash("cash", amount=100))
+    opening = portfolio_model(basket_model(Empty, NamedMap({})))("cash", cash=USDCash("cash", amount=100))
     engine = AccountEngine(Account("cash", TIMES[0], opening), NamedMap({}), max_price_age=AGE)
     ledger = TransactionLog(
         (
@@ -135,12 +136,15 @@ def test_price_identity_staleness_and_mark_grid_are_checked(engine, market):
 
 
 def test_account_does_not_drop_opening_valuation_constraints(market):
-    opening = portfolio_model(EquityMembers)(
+    opening = portfolio_model(Basket)(
         "fixed quotes",
-        equities=EquityMembers(
-            "equities",
-            aapl=ApplePosition("apple", quantity=10, instrument=AAPL("quote", price=100)),
-            msft=MicrosoftPosition("microsoft", quantity=10, instrument=MSFT("quote", price=50)),
+        basket=Basket(
+            "basket",
+            members=EquityMembers(
+                "equities",
+                aapl=EquityPosition("apple", quantity=10, instrument=Quote("quote", price=100)),
+                msft=EquityPosition("microsoft", quantity=10, instrument=Quote("quote", price=50)),
+            ),
         ),
         cash=USDCash("cash", amount=1000),
     )
