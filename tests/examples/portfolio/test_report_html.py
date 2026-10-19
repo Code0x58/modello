@@ -10,14 +10,13 @@ import pytest
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
 from examples.portfolio.account import Account, AccountEngine
-from examples.portfolio.basket import EquityBasket
+from examples.portfolio.basket import EquityBasket, EquityHoldings
 from examples.portfolio.models import USDCash
 from examples.portfolio.named import NamedPortfolio
 from examples.portfolio.performance import PerformanceIndex
 from examples.portfolio.report_html import render_html, report_data
 from examples.portfolio.reporting import AccountReport
 from examples.portfolio.sources import Income, TransactionLog, timestamp
-from modello import Modello
 
 
 def test_report_html_and_json_preserve_values_and_escape_user_labels(reporting, scenario):
@@ -60,16 +59,14 @@ def test_utility_table_aligns_values_by_name(reporting, scenario):
 
 
 def test_report_supports_longer_histories_and_supplied_benchmark_context():
-    class CashMembers(Modello):
+    class CashMembers(EquityHoldings):
         pass
 
     times = tuple(timestamp(f"2024-{month:02d}-01T16:00:00Z") for month in (1, 4, 7, 10)) + (
         timestamp("2025-01-01T16:00:00Z"),
     )
     name = "Long <account> & research"
-    opening = NamedPortfolio.define(EquityBasket.define(CashMembers, NamedMap({})))(
-        "opening", cash=USDCash("cash", amount=100)
-    )
+    opening = NamedPortfolio.define(EquityBasket.define(CashMembers))("opening", cash=USDCash("cash", amount=100))
     engine = AccountEngine(Account(name, times[0], opening), NamedMap({}), max_price_age=timedelta(0))
     ledger = TransactionLog(tuple(Income(str(i), name, at, at, 10) for i, at in enumerate(times[1:])))
     path = engine.evaluate(ledger, times)

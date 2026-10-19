@@ -31,7 +31,7 @@ GOOGL = Equity("GOOGL", provider="synthetic")
 
 
 class Quote(Modello):
-    """A symbolic price; provider identity is supplied by the basket binding."""
+    """A symbolic price; provider identity comes from the holding declaration."""
 
     price = InstanceDummy("price", positive=True)
 

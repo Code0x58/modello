@@ -6,12 +6,13 @@ import pytest
 from sympy import Rational, simplify
 
 from examples.compute.named_map import NamedMap
-from examples.portfolio.basket import EquityBasket
+from examples.named_members import bound_component
+from examples.portfolio.basket import EquityBasket, EquityHoldings, equity
 from examples.portfolio.explicit import MarketData, Portfolio
 from examples.portfolio.models import AAPL, MSFT, Equity, EquityPosition, Quote, USDCash
 from examples.portfolio.named import Basket, EquityMembers, NamedMarketData, NamedPortfolio, NamedPortfolioPricer
 from examples.portfolio.providers import DummyEquityProvider
-from modello import BoundInstanceDummy, InstanceDummy, Modello, component
+from modello import BoundInstanceDummy, InstanceDummy, component
 
 
 def test_basket_owns_value_and_weights_without_per_member_formulas():
@@ -65,50 +66,67 @@ def test_symbolic_weights_share_the_portfolio_nav():
 
 
 def test_binding_order_follows_the_component_declaration():
-    ReorderedBasket = EquityBasket.define(
-        EquityMembers, NamedMap({"msft": DummyEquityProvider("MSFT"), "aapl": DummyEquityProvider("AAPL")})
-    )
+    class Reordered(EquityHoldings):
+        msft = equity(DummyEquityProvider("MSFT"))
+        aapl = equity(DummyEquityProvider("AAPL"))
+
+    ReorderedBasket = EquityBasket.define(Reordered)
     basket = ReorderedBasket("basket")
-    assert tuple(basket.positions) == tuple(basket.instruments) == ("aapl", "msft")
+    assert tuple(basket.positions) == tuple(basket.providers) == tuple(basket.instruments) == ("msft", "aapl")
     assert basket.positions["aapl"].instrument == AAPL
 
 
 def test_binding_requires_the_declared_position_domain_and_type():
-    for bindings in (
-        NamedMap({"aapl": DummyEquityProvider("AAPL")}),
-        NamedMap(
-            {
-                "aapl": DummyEquityProvider("AAPL"),
-                "msft": DummyEquityProvider("MSFT"),
-                "extra": DummyEquityProvider("AAPL"),
-            }
-        ),
-    ):
-        with pytest.raises(ValueError, match="Member names differ"):
-            EquityBasket.define(EquityMembers, bindings)
-
-    class Mixed(Modello):
-        balance = component(USDCash)
-
-    class Scalars(Modello):
-        value = InstanceDummy("value")
-
     with pytest.raises(TypeError, match="EquityPosition component"):
-        EquityBasket.define(Mixed, NamedMap({"balance": DummyEquityProvider("AAPL")}))
+
+        class Mixed(EquityHoldings):
+            balance = bound_component(USDCash, DummyEquityProvider("AAPL"))
+
     with pytest.raises(TypeError, match="only model components"):
-        EquityBasket.define(Scalars, NamedMap({}))
-    with pytest.raises(TypeError, match="EquityProvider instances"):
-        EquityBasket.define(EquityMembers, NamedMap({"aapl": AAPL, "msft": MSFT}))
+
+        class Scalars(EquityHoldings):
+            value = InstanceDummy("value")
+
+    with pytest.raises(TypeError, match="EquityProvider"):
+        equity(AAPL)
+    with pytest.raises(TypeError, match="EquityProvider bindings"):
+
+        class WrongBinding(EquityHoldings):
+            aapl = bound_component(EquityPosition, AAPL)
+
+    with pytest.raises(ValueError, match="Member names differ"):
+
+        class Missing(EquityHoldings):
+            aapl = component(EquityPosition)
+
+    with pytest.raises(TypeError, match="derive from the holding declarations"):
+
+        class SeparateBinding(EquityBasket[EquityMembers]):
+            members = component(EquityMembers)
+            providers = NamedMap({"aapl": DummyEquityProvider("MSFT"), "msft": DummyEquityProvider("AAPL")})
+            market_value = EquityBasket.total(members)
+
+
+def test_inherited_holding_changes_its_provider_and_component_together():
+    class Extended(EquityMembers):
+        msft = equity(DummyEquityProvider("AAPL"))
+        extra = equity(DummyEquityProvider("AAPL"))
+
+    basket = EquityBasket.define(Extended)("basket")
+    assert tuple(basket.positions) == tuple(basket.providers) == ("aapl", "msft", "extra")
+    assert basket.instruments == {"aapl": AAPL, "msft": AAPL, "extra": AAPL}
+    assert Basket("original").instruments["msft"] == MSFT
+    portfolio = NamedPortfolio.define(type(basket))("portfolio")
+    histories = portfolio.load_market()
+    assert histories["aapl"] is histories["msft"] is histories["extra"]
 
 
 def test_same_instrument_can_have_separate_holdings_and_weights():
-    class Sleeves(Modello):
-        growth = component(EquityPosition)
-        income = component(EquityPosition)
+    class Sleeves(EquityHoldings):
+        growth = equity(DummyEquityProvider("AAPL"))
+        income = equity(DummyEquityProvider("AAPL"))
 
-    AppleBasket = EquityBasket.define(
-        Sleeves, NamedMap({"growth": DummyEquityProvider("AAPL"), "income": DummyEquityProvider("AAPL")})
-    )
+    AppleBasket = EquityBasket.define(Sleeves)
     portfolio = NamedPortfolio.define(AppleBasket)(
         "two sleeves",
         basket=AppleBasket(

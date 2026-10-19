@@ -4,7 +4,7 @@ import pytest
 
 from examples.compute.named_map import NamedMap
 from examples.portfolio.account import Account, AccountEngine
-from examples.portfolio.basket import EquityBasket
+from examples.portfolio.basket import EquityBasket, EquityHoldings
 from examples.portfolio.models import EquityPosition, Quote, USDCash
 from examples.portfolio.named import Basket, EquityMembers, NamedPortfolio
 from examples.portfolio.signals import TargetWeights
@@ -15,7 +15,6 @@ from examples.portfolio.sources import (
     TransactionLog,
     timestamp,
 )
-from modello import Modello
 
 from ._data import AGE, DECISION, TIMES
 
@@ -55,10 +54,10 @@ def test_cash_flow_valuation_does_not_depend_on_the_output_grid(engine, ledger):
 
 
 def test_empty_equity_account_flows_are_not_investment_returns():
-    class Empty(Modello):
+    class Empty(EquityHoldings):
         pass
 
-    opening = NamedPortfolio.define(EquityBasket.define(Empty, NamedMap({})))("cash", cash=USDCash("cash", amount=100))
+    opening = NamedPortfolio.define(EquityBasket.define(Empty))("cash", cash=USDCash("cash", amount=100))
     engine = AccountEngine(Account("cash", TIMES[0], opening), NamedMap({}), max_price_age=AGE)
     ledger = TransactionLog(
         (

@@ -31,28 +31,23 @@ Model instruments and holdings
 An ``Equity`` is an immutable instrument record: a provider-specific symbol and
 quote currency. Every equity uses the same ``EquityPosition`` model. The
 position contains a symbolic ``Quote`` and a quantity; its market value is
-quantity times price. Each holding is bound to a configured data provider at
-the basket level:
+quantity times price. Declare each holding together with its configured data
+provider:
 
 .. code-block:: python
 
-   from examples.compute.named_map import NamedMap
-   from examples.portfolio.basket import EquityBasket
-   from examples.portfolio.models import EquityPosition, USDCash
+   from examples.portfolio.basket import EquityBasket, EquityHoldings, equity
+   from examples.portfolio.models import USDCash
    from examples.portfolio.named import NamedPortfolio
    from examples.portfolio.providers import DummyEquityProvider
-   from modello import Modello, component
+   from modello import component
 
-   class Holdings(Modello):
-       aapl = component(EquityPosition)
-       msft = component(EquityPosition)
+   class Holdings(EquityHoldings):
+       aapl = equity(DummyEquityProvider(symbol="AAPL"))
+       msft = equity(DummyEquityProvider(symbol="MSFT"))
 
    class Basket(EquityBasket[Holdings]):
        members = component(Holdings)
-       providers = NamedMap({
-           "aapl": DummyEquityProvider(symbol="AAPL"),
-           "msft": DummyEquityProvider(symbol="MSFT"),
-       })
        market_value = EquityBasket.total(members)
 
    class Portfolio(NamedPortfolio[Holdings]):
@@ -61,12 +56,17 @@ the basket level:
        nav = basket.capital
        nav = basket.market_value + cash.amount
 
+``equity(provider)`` declares an ordinary typed ``EquityPosition`` component and
+attaches its acquisition request to the same member name. ``EquityHoldings``
+keeps this binding through inheritance and solving. The basket derives its
+providers, instruments, values, and weights from that one declaration.
+
 The portfolio contains a basket and cash. The basket contains its named holding
 group and derives total market value and allocation from that group:
 
 .. mermaid::
    :caption: Portfolio composition and provider bindings
-   :alt: The portfolio contains an equity basket and USD cash. The basket contains named generic equity positions and binds their names to configured data providers.
+   :alt: The portfolio contains an equity basket and USD cash. Each named equity position carries its configured data provider.
 
    flowchart TD
        portfolio[Portfolio] --> basket[Equity basket]
@@ -74,8 +74,8 @@ group and derives total market value and allocation from that group:
        basket --> members[Named holdings]
        members --> apple[aapl: EquityPosition]
        members --> microsoft[msft: EquityPosition]
-       basket --> bindings[Configured providers]
-       bindings --> symbols[Symbol and source parameters]
+       apple --> apple_source[DummyEquityProvider: AAPL]
+       microsoft --> microsoft_source[DummyEquityProvider: MSFT]
 
 ``basket.market_value`` is the sum of member values. ``portfolio.nav`` adds
 cash to that total and also supplies ``basket.capital``, the positive allocation
@@ -97,8 +97,8 @@ numeric model with its provider, instrument record, and allocation base. It expo
 'DummyEquityProvider'
 
 The underlying symbolic component remains available as ``apple.model``, or
-through the typed member attribute ``basket.members.aapl``. Instrument records
-and contextual queries belong to the basket layer; the model's equations are
+through the typed member attribute ``basket.members.aapl``. The basket projects
+the declared provider bindings and adds contextual queries; the model's equations are
 ordinary Modello scalars and components. The :doc:`provider guide <providers>`
 explains typed results, explicit loading, and shared requests.
 

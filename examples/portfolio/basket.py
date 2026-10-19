@@ -8,13 +8,31 @@ from typing import Generic, TypeVar
 from sympy import Expr, S
 
 from examples.compute.named_map import NamedMap
-from examples.named_members import component_members
+from examples.named_members import BoundMembers, bound_component, component_members, member_bindings
 from examples.portfolio.models import Equity, EquityPosition
 from examples.portfolio.providers import EquityProvider
 from modello import InstanceDummy, Modello, component
 
-_Members = TypeVar("_Members", bound=Modello)
-_Declared = TypeVar("_Declared", bound=Modello)
+
+def equity(provider: EquityProvider) -> EquityPosition:
+    """Declare a generic equity position with its configured price provider."""
+    if not isinstance(provider, EquityProvider):
+        raise TypeError("An equity holding needs an EquityProvider")
+    return bound_component(EquityPosition, provider)
+
+
+class EquityHoldings(BoundMembers[EquityProvider]):
+    """Equity components whose provider travels with the member declaration."""
+
+    def __init_subclass__(cls) -> None:
+        super().__init_subclass__()
+        component_members(cls, EquityPosition)
+        if any(not isinstance(provider, EquityProvider) for provider in member_bindings(cls).values()):
+            raise TypeError("Equity holdings need EquityProvider bindings")
+
+
+_Members = TypeVar("_Members", bound=EquityHoldings)
+_Declared = TypeVar("_Declared", bound=EquityHoldings)
 
 
 @dataclass(frozen=True)
@@ -50,10 +68,14 @@ class EquityBasket(Modello, Generic[_Members]):
     """Named holdings, their provider bindings, and weights in a common capital base."""
 
     members: _Members
-    providers: NamedMap[EquityProvider]
     capital = InstanceDummy("capital", positive=True)
     market_value = InstanceDummy("market_value", nonnegative=True)
     weight = market_value / capital
+
+    @property
+    def providers(self) -> NamedMap[EquityProvider]:
+        """Project acquisition requests from the holding declarations."""
+        return member_bindings(self.members)
 
     @property
     def instruments(self) -> NamedMap[Equity]:
@@ -78,11 +100,10 @@ class EquityBasket(Modello, Generic[_Members]):
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
-        declared = component_members(cls.members, EquityPosition)
-        bindings = declared.combine(cls.providers, lambda position, provider: provider)
-        if any(not isinstance(provider, EquityProvider) for provider in bindings.values()):
-            raise TypeError("Basket providers must be EquityProvider instances")
-        cls.providers = bindings
+        if "providers" in cls.__dict__:
+            raise TypeError("Basket providers derive from the holding declarations")
+        component_members(cls.members, EquityPosition)
+        member_bindings(cls.members)
 
     @staticmethod
     def total(members: Modello) -> Expr:
@@ -90,13 +111,12 @@ class EquityBasket(Modello, Generic[_Members]):
         return sum((position.market_value for position in component_members(members, EquityPosition).values()), S.Zero)
 
     @staticmethod
-    def define(members: type[_Declared], providers: NamedMap[EquityProvider]) -> type[EquityBasket[_Declared]]:
+    def define(members: type[_Declared]) -> type[EquityBasket[_Declared]]:
         """Build the same declaration when the holding domain is supplied at runtime."""
-        member_type, bindings = members, providers
+        member_type = members
 
         class Basket(EquityBasket[_Declared]):
             members = component(member_type)
-            providers = bindings
             market_value = EquityBasket.total(members)
 
         return Basket

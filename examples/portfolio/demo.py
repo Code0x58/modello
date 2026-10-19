@@ -16,6 +16,7 @@ from examples.compute.named_map import NamedMap
 from examples.compute.providers import Provider
 from examples.compute.series import Series
 from examples.portfolio.account import Account, AccountPath, AccountSnapshot
+from examples.portfolio.basket import EquityHoldings
 from examples.portfolio.execution import ExecutionBenchmark
 from examples.portfolio.explicit import Portfolio
 from examples.portfolio.models import EquityPosition, USDCash
@@ -34,9 +35,8 @@ from examples.portfolio.sources import (
     timestamp,
 )
 from examples.portfolio.utility import CashUtility
-from modello import Modello
 
-_Members = TypeVar("_Members", bound=Modello)
+_Members = TypeVar("_Members", bound=EquityHoldings)
 
 CONTEXT = (
     "Synthetic observations demonstrate accounting and reporting mechanics; "

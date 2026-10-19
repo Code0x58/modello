@@ -50,21 +50,23 @@ A holding name identifies an account position. A provider symbol identifies
 an instrument in a particular feed. For example, separate growth and income
 holdings can request the same equity:
 
->>> from examples.compute.named_map import NamedMap
->>> from examples.compute.providers import load_providers
->>> requests = NamedMap({
-...     "growth": DummyEquityProvider(symbol="AAPL"),
-...     "income": DummyEquityProvider(symbol="AAPL"),
-... })
->>> market = load_providers(requests)
+>>> from examples.portfolio.basket import EquityBasket, EquityHoldings, equity
+>>> from examples.portfolio.named import NamedPortfolio
+>>> class Sleeves(EquityHoldings):
+...     growth = equity(request)
+...     income = equity(request)
+>>> Basket = EquityBasket.define(Sleeves)
+>>> portfolio = NamedPortfolio.define(Basket)("sleeves")
+>>> market = portfolio.load_market()
 >>> tuple(market), market["growth"] is market["income"]
 (('growth', 'income'), True)
 
-The basket's provider map owns this binding. Its instrument map is a projection
-of provider metadata. Quantities and weights stay independent for each holding.
-Using symbols as member keys would still require a map, while tying the holding
-name to a provider's naming rules. Symbols may also differ between feeds or
-contain punctuation that is inconvenient in a Python component attribute.
+Each ``equity(request)`` declaration couples the symbolic position and its
+provider under one holding name. The basket projects ``providers`` and
+``instruments`` from those declarations; inheritance carries both parts
+together. Quantities and weights stay independent for each holding. Symbols
+may differ between feeds or contain punctuation that is inconvenient in a
+Python component attribute.
 
 The loader caches by concrete provider class and request during that call. The supplied
 providers are frozen dataclasses whose equality includes their concrete type

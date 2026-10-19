@@ -8,7 +8,7 @@ import pytest
 from sympy import Rational
 
 from examples.compute.named_map import NamedMap
-from examples.portfolio.basket import EquityBasket, EquityHolding
+from examples.portfolio.basket import EquityBasket, EquityHolding, EquityHoldings, equity
 from examples.portfolio.explicit import MarketData, Portfolio
 from examples.portfolio.models import Equity, EquityPosition, Quote, USDCash
 from examples.portfolio.named import (
@@ -24,7 +24,7 @@ from examples.portfolio.named import (
 )
 from examples.portfolio.providers import DummyEquityProvider, EquityProvider
 from examples.portfolio.sources import PriceHistory
-from modello import BoundInstanceDummy, Modello, component
+from modello import BoundInstanceDummy
 
 
 def two_equities():
@@ -102,12 +102,10 @@ def test_map_reduction_keeps_inverse_valuation():
 
 
 def test_empty_equity_domain_is_a_cash_portfolio():
-    class NoEquities(Modello):
+    class NoEquities(EquityHoldings):
         pass
 
-    portfolio = NamedPortfolio.define(EquityBasket.define(NoEquities, NamedMap({})))(
-        "cash", cash=USDCash("cash", amount=100)
-    )
+    portfolio = NamedPortfolio.define(EquityBasket.define(NoEquities))("cash", cash=USDCash("cash", amount=100))
     dates = example_named_market_data().times
     path = NamedPortfolioPricer(portfolio).over(NamedMarketData(dates, NamedMap({})))
     assert portfolio.positions == portfolio.values == portfolio.weights == {}
@@ -169,12 +167,10 @@ def test_invalid_compilation_inputs():
 
 
 def test_currency_needs_an_explicit_conversion_model():
-    class EuroMembers(Modello):
-        euro = component(EquityPosition)
+    class EuroMembers(EquityHoldings):
+        euro = equity(DummyEquityProvider(symbol="EXAMPLE", currency="EUR"))
 
-    EuroBasket = EquityBasket.define(
-        EuroMembers, NamedMap({"euro": DummyEquityProvider(symbol="EXAMPLE", currency="EUR")})
-    )
+    EuroBasket = EquityBasket.define(EuroMembers)
     portfolio = NamedPortfolio.define(EuroBasket)(
         "mixed currencies",
         basket=EuroBasket("basket", members=EuroMembers("members", euro=EquityPosition("euro", quantity=1))),
@@ -188,14 +184,18 @@ def _typing_contract() -> None:
     portfolio = NamedPortfolio.define(Basket)("portfolio")
     apple: EquityPosition = portfolio.basket.members.aapl
     assert apple.instrument.price.free_symbols
-    equity: Equity = portfolio.basket.instruments["aapl"]
-    assert equity.symbol == "AAPL"
+    identity: Equity = portfolio.basket.instruments["aapl"]
+    assert identity.symbol == "AAPL"
     holding: EquityHolding = portfolio.positions["aapl"]
     provider: EquityProvider = holding.provider
     history: PriceHistory = provider.load()
-    assert history.equity == equity
+    assert history.equity == identity
     assert isinstance(provider, DummyEquityProvider)
     instrument: Equity = holding.instrument
     assert instrument.symbol == "AAPL" and holding.weight.free_symbols
     portfolio.basket.members.aapl = USDCash("cash")  # type: ignore[assignment]
     _wrong_result: Equity = provider.load()  # type: ignore[assignment]
+    declared: EquityPosition = equity(provider)
+    assert declared
+    _wrong_holding: USDCash = equity(provider)  # type: ignore[assignment]
+    equity(equity)  # type: ignore[arg-type]

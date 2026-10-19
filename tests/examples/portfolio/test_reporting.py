@@ -8,12 +8,11 @@ import pytest
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
 from examples.portfolio.account import Account, AccountEngine
-from examples.portfolio.basket import EquityBasket
+from examples.portfolio.basket import EquityBasket, EquityHoldings
 from examples.portfolio.models import MSFT, USDCash
 from examples.portfolio.named import NamedPortfolio
 from examples.portfolio.reporting import AccountReport, OrderAttribution
 from examples.portfolio.sources import CashFlow, Fill, Income, TransactionLog, timestamp
-from modello import Modello
 
 
 def attribute(scenario, *, path=None, weights=None, signals=None, orders=None):
@@ -89,7 +88,7 @@ def test_income_after_a_position_is_closed_is_unattributed_to_sleeves(scenario, 
 
 
 def test_cash_only_reports_separate_income_and_external_capital():
-    class Empty(Modello):
+    class Empty(EquityHoldings):
         pass
 
     start = timestamp("2026-01-05T16:01:00Z")
@@ -97,7 +96,7 @@ def test_cash_only_reports_separate_income_and_external_capital():
     account = Account(
         "cash",
         start,
-        NamedPortfolio.define(EquityBasket.define(Empty, NamedMap({})))("opening", cash=USDCash("cash", amount=100)),
+        NamedPortfolio.define(EquityBasket.define(Empty))("opening", cash=USDCash("cash", amount=100)),
     )
     engine = AccountEngine(account, NamedMap({}), max_price_age=timedelta(days=1))
     ledger = TransactionLog(

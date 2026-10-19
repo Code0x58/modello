@@ -17,22 +17,22 @@ from examples.compute.providers import load_providers
 from examples.compute.scalar_plan import ScalarPlan
 from examples.compute.series import Series
 from examples.portfolio.analytics import NamedPortfolioPath, PositionPath
-from examples.portfolio.basket import EquityBasket, EquityHolding
+from examples.portfolio.basket import EquityBasket, EquityHolding, EquityHoldings, equity
 from examples.portfolio.models import GOOGL, Equity, EquityPosition, EquityPrices, USDCash
 from examples.portfolio.providers import DummyEquityProvider, EquityProvider
 from examples.portfolio.sources import PriceHistory
 from examples.symbolic import SymbolicModel, ViewFields
-from modello import Modello, component
+from modello import component
 
-_Members = TypeVar("_Members", bound=Modello)
-_Declared = TypeVar("_Declared", bound=Modello)
+_Members = TypeVar("_Members", bound=EquityHoldings)
+_Declared = TypeVar("_Declared", bound=EquityHoldings)
 
 
-class EquityMembers(Modello):
+class EquityMembers(EquityHoldings):
     """A declared domain of two named equity positions."""
 
-    aapl = component(EquityPosition)
-    msft = component(EquityPosition)
+    aapl = equity(DummyEquityProvider(symbol="AAPL"))
+    msft = equity(DummyEquityProvider(symbol="MSFT"))
 
 
 class NamedPortfolio(SymbolicModel, Generic[_Members]):
@@ -193,17 +193,13 @@ class NamedPortfolioPricer(Generic[_Members]):
 class ThreeEquities(EquityMembers):
     """Add one generic position; aggregates and projected maps follow automatically."""
 
-    googl = component(EquityPosition)
-
-
-EQUITY_PROVIDERS = NamedMap({"aapl": DummyEquityProvider(symbol="AAPL"), "msft": DummyEquityProvider(symbol="MSFT")})
+    googl = equity(DummyEquityProvider(symbol="GOOGL"))
 
 
 class Basket(EquityBasket[EquityMembers]):
     """A declared equity basket with provider bindings and an explicit reduction."""
 
     members = component(EquityMembers)
-    providers = EQUITY_PROVIDERS
     market_value = EquityBasket.total(members)
 
 
@@ -211,7 +207,6 @@ class ThreeEquityBasket(EquityBasket[ThreeEquities]):
     """The same basket equations over an extended named holding domain."""
 
     members = component(ThreeEquities)
-    providers = NamedMap({**EQUITY_PROVIDERS, "googl": DummyEquityProvider(symbol="GOOGL")})
     market_value = EquityBasket.total(members)
 
 

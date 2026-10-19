@@ -120,7 +120,7 @@ computation helpers; importing those helpers does not load the portfolio package
      - SymPy compilation and numerical execution, independent of domain models.
    * - Model adapter
      - ``named_members``, ``symbolic``
-     - Project declared Modello components into a named domain.
+     - Project declared components and their bindings; compile model views.
    * - Financial models and calculations
      - ``portfolio.models``, ``portfolio.basket``, ``portfolio.named``, ``portfolio.account``,
        ``portfolio.signals``, ``portfolio.postings``, ``portfolio.pnl``,
@@ -132,10 +132,15 @@ computation helpers; importing those helpers does not load the portfolio package
        ``portfolio.report_html``
      - External observations, scenario assembly, and report rendering.
 
-The ``component_members`` adapter is the research layer's single access point
-to Modello's private component metadata. A future extracted model integration
-would need to preserve that adapter boundary or establish a public reflection
-interface. The numeric data types and expression executor do not depend on it.
+The ``examples/named_members.py`` adapter contains the research layer's access
+to Modello's component metadata and class namespace. ``BoundMembers`` and
+``bound_component`` pair a typed component with external metadata in one
+declaration; the financial ``EquityHoldings`` and ``equity(provider)`` helpers
+specialise that pairing for price requests. The adapter records bindings while
+delegating component scoping and equation construction to Modello. A future
+extracted model integration would need to preserve that boundary or establish
+a public declaration/reflection interface. The numeric data types and
+expression executor do not depend on it.
 
 The core API and the research interfaces have separate scopes: the experiments
 exercise possible higher layers without adding collection fields, time-series

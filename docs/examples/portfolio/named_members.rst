@@ -55,18 +55,22 @@ Members are still declared as named, typed model components:
 
 .. code-block:: python
 
-   class EquityMembers(Modello):
-       aapl = component(EquityPosition)
-       msft = component(EquityPosition)
+   class EquityMembers(EquityHoldings):
+       aapl = equity(DummyEquityProvider(symbol="AAPL"))
+       msft = equity(DummyEquityProvider(symbol="MSFT"))
+
+Each line declares a typed ``EquityPosition`` and its provider together.
+The holding name is written once; provider and instrument maps are derived
+from the same declaration.
 
 ``component_members(group, EquityPosition)`` exposes those components as a
 ``NamedMap[EquityPosition]``. It works on model classes, class-body references,
 and populated models. The adapter checks that every component belongs to the
 supplied common type.
 
-The declared ``Basket`` binds an ``EquityProvider`` request to each holding
-name. Its reduction is an ordinary scalar equation. For definitions assembled
-from runtime configuration, ``EquityBasket.define(EquityMembers, providers)``
+The declared ``Basket`` uses those holdings and their ``EquityProvider`` requests.
+Its reduction is an ordinary scalar equation. For definitions assembled
+from runtime configuration, ``EquityBasket.define(EquityMembers)``
 builds the same composition. Its total is:
 
 .. code-block:: python
@@ -109,14 +113,15 @@ The worked example adds Alphabet by extending the declaration:
 .. code-block:: python
 
    class ThreeEquities(EquityMembers):
-       googl = component(EquityPosition)
+       googl = equity(DummyEquityProvider(symbol="GOOGL"))
 
    class ThreeEquityBasket(EquityBasket[ThreeEquities]):
        members = component(ThreeEquities)
-       providers = NamedMap({**EQUITY_PROVIDERS, "googl": DummyEquityProvider(symbol="GOOGL")})
        market_value = EquityBasket.total(members)
 
-Supply its holding and price vector under ``googl``. The same aggregate,
+The existing components and their requests are inherited together. Replacing a
+member's ``equity(...)`` declaration replaces its provider too. Supply its
+quantity and price vector under ``googl``. The same aggregate,
 valuation, weight, attribution, and risk calculations handle all three members:
 
 >>> from examples.portfolio.named import (
@@ -150,7 +155,7 @@ Names identify positions, so separate named positions may hold the same equity.
 Provider-symbol identity and member identity remain distinct concepts. The same
 instrument can appear in separate strategy sleeves with independent quantities
 and weights; :doc:`equivalent provider requests <providers>` share one history
-within a load. The provider map is the stored binding; instrument identities
+within a load. The provider map projects the holding declarations; instrument identities
 are derived from it.
 
 The original experiment's assumptions and distinction between observed-path

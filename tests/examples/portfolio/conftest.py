@@ -2,11 +2,10 @@
 
 import pytest
 
-from examples.compute.providers import load_providers
 from examples.portfolio.account import Account, AccountEngine
 from examples.portfolio.demo import ResearchScenario
 from examples.portfolio.models import EquityPosition, USDCash
-from examples.portfolio.named import EQUITY_PROVIDERS, Basket, EquityMembers, NamedPortfolio
+from examples.portfolio.named import Basket, EquityMembers, NamedPortfolio
 from examples.portfolio.sources import (
     CSVTransactionSource,
 )
@@ -16,7 +15,7 @@ from ._data import AGE, DATA, TIMES
 
 @pytest.fixture(scope="module")
 def market():
-    return load_providers(EQUITY_PROVIDERS)
+    return NamedPortfolio.define(Basket)("market").load_market()
 
 
 @pytest.fixture(scope="module")

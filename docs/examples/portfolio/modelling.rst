@@ -17,9 +17,12 @@ The :doc:`holdings guide <holdings>` declares a basket and portfolio as classes:
 
 .. code-block:: python
 
+   class Holdings(EquityHoldings):
+       aapl = equity(DummyEquityProvider(symbol="AAPL"))
+       msft = equity(DummyEquityProvider(symbol="MSFT"))
+
    class Basket(EquityBasket[Holdings]):
        members = component(Holdings)
-       providers = configured_providers
        market_value = EquityBasket.total(members)
 
    class Portfolio(NamedPortfolio[Holdings]):
@@ -28,7 +31,9 @@ The :doc:`holdings guide <holdings>` declares a basket and portfolio as classes:
        nav = basket.capital
        nav = basket.market_value + cash.amount
 
-Membership is explicit. The reduction builds one symbolic value expression;
+Each holding and its provider are declared together. The basket projects
+those requests under the component names, keeping acquisition and the symbolic
+domain aligned. The reduction builds one symbolic value expression;
 the basket's inherited weight equation uses the portfolio's capital base.
 ``EquityBasket.define(...)`` and ``NamedPortfolio.define(...)`` build equivalent
 classes when the composition is selected from runtime configuration.
