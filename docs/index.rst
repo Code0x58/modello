@@ -46,6 +46,8 @@ Its :doc:`named-member extension <named_members>` explores projection and
 reduction over maps of typed positions and their weights.
 The :doc:`account and execution walkthrough <accounts>` adds external market and
 transaction sources, time-aware signals, ledger replay, and execution costs.
+Its :doc:`symbolic reporting layer <reporting>` adds signal P&L attribution,
+cash-utility derivatives, and account/instrument tables and timeline charts.
 
 .. toctree::
    :maxdepth: 2
@@ -55,6 +57,7 @@ transaction sources, time-aware signals, ledger replay, and execution costs.
    portfolio
    named_members
    accounts
+   reporting
    contributing
 
 * :ref:`genindex`

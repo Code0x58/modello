@@ -72,6 +72,9 @@ describes the available classes and functions.
 The [account research guide](https://modello.readthedocs.io/en/latest/accounts.html)
 follows market data and a transaction log through positions, signals, portfolio
 performance, and execution analysis.
+The [symbolic reporting walkthrough](https://modello.readthedocs.io/en/latest/reporting.html)
+shows signal P&L attribution and cash-utility derivatives in account and
+instrument tables with interactive timelines.
 
 ## Development
 

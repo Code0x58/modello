@@ -25,8 +25,12 @@ from examples.named_members import NamedMap
 from examples.named_portfolio import EquityMembers, portfolio_model
 from examples.performance import Comparison, PerformanceIndex, compare
 from examples.portfolio import AAPL, MSFT, ApplePosition, Equity, MicrosoftPosition, USDCash
+from examples.report_html import render_html, report_data
+from examples.reporting import AccountReport, OrderAttribution
+from examples.reporting import report as build_report
 from examples.series import Series
 from examples.signals import MomentumSignals, OrderIntent, TargetWeights, positive_signal_targets, rebalance_orders
+from examples.utility import cara, crra
 
 
 @dataclass(frozen=True)
@@ -92,10 +96,12 @@ def performance_comparison(path: AccountPath) -> Comparison[datetime]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", type=Path, help="Write the account and benchmark layers to a JSON report")
+    parser.add_argument("--html", type=Path, help="Write account/instrument tables and interactive timeline charts")
     arguments = parser.parse_args()
     result = example_run()
     path = result.account
     comparison = performance_comparison(path)
+    reporting = research_report(result)
     print("Synthetic USD account; external market prints and transaction log")
     print("Time                             AAPL shares  MSFT shares      Cash        NAV   Unit NAV")
     for snapshot in path.snapshots:
@@ -130,6 +136,7 @@ def main() -> None:
         )
     if arguments.json:
         payload = {
+            "reporting": report_data(reporting),
             "performance": {
                 "portfolio_name": comparison.portfolio_name,
                 "benchmark_name": comparison.benchmark_name,
@@ -162,6 +169,19 @@ def main() -> None:
         }
         arguments.json.write_text(json.dumps(payload, default=encode_value, indent=2) + "\n")
         print("Report:", arguments.json)
+    if arguments.html:
+        arguments.html.write_text(render_html(reporting, comparison), encoding="utf-8")
+        print("Dashboard:", arguments.html)
+
+
+def research_report(result: ResearchRun) -> AccountReport:
+    """Declare the scenario's attribution policy and illustrative wealth preferences."""
+    return build_report(
+        result.account,
+        result.orders.map(lambda order: OrderAttribution(order, NamedMap({"momentum": 1.0}))),
+        signals=NamedMap({"momentum": result.signals}),
+        utilities=NamedMap({"cara": cara(0.001), "crra": crra(2)}),
+    )
 
 
 def asdict_snapshot(snapshot: AccountSnapshot) -> dict[str, object]:

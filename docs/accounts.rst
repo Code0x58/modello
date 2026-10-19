@@ -12,6 +12,10 @@ Run the scenario from a checkout:
 
    $ uv run --locked python -m examples.account_demo
    $ uv run --locked python -m examples.account_demo --json /tmp/account-report.json
+   $ uv run --locked python -m examples.account_demo --html /tmp/account-report.html
+
+The :doc:`symbolic reporting walkthrough <reporting>` adds account and instrument
+tables, signal P&L attribution, utility derivatives, and interactive timelines.
 
 All observations are synthetic. The source files are independent:
 ``examples/data/portfolio/market.csv`` contains market trade prints, while
