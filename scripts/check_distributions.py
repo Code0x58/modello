@@ -25,6 +25,8 @@ assert distribution.metadata["License-Expression"] == "MIT"
 assert distribution.metadata.get_all("License-File")
 assert distribution.metadata["Requires-Python"] == ">=3.10"
 assert Path(modello.__file__).with_name("py.typed").is_file()
+assert not any(str(path).startswith("examples/") for path in distribution.files or ())
+assert not any(name == "examples" or name.startswith("examples.") for name in sys.modules)
 if sys.argv[1]:
     assert distribution.version == sys.argv[1], distribution.version
 

@@ -11,9 +11,9 @@ from math import isfinite
 from pathlib import Path
 from typing import Protocol
 
-from examples.named_members import NamedMap
-from examples.portfolio import Equity
-from examples.series import Series, utc_time
+from examples.compute.named_map import NamedMap
+from examples.compute.series import Series, utc_time
+from examples.portfolio_models import Equity
 
 
 def timestamp(value: str) -> datetime:

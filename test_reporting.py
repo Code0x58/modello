@@ -12,12 +12,12 @@ from sympy import Rational, Symbol, diff, exp, log, simplify
 from examples.account import Account, AccountEngine
 from examples.account_demo import example_run, performance_comparison, research_report
 from examples.account_sources import CashFlow, CSVMarketSource, Fill, Income, TransactionLog, timestamp
-from examples.named_members import NamedMap
+from examples.compute.named_map import NamedMap
+from examples.compute.series import Series
 from examples.named_portfolio import EquityMembers, portfolio_model
-from examples.portfolio import AAPL, MSFT, ApplePosition, MicrosoftPosition, USDCash
+from examples.portfolio_models import AAPL, MSFT, ApplePosition, MicrosoftPosition, USDCash
 from examples.report_html import render_html, report_data
 from examples.reporting import AccountPnL, InstrumentPnL, OrderAttribution, report
-from examples.series import Series
 from examples.utility import CashUtility, cara, crra
 from modello import Modello
 
@@ -288,3 +288,14 @@ def test_report_html_and_json_preserve_values_and_escape_user_labels(reporting):
     )
     with pytest.raises(ValueError, match="unit-NAV path"):
         render_html(reporting, wrong)
+
+
+def test_utility_table_aligns_values_by_name(reporting):
+    reordered = replace(
+        reporting,
+        utilities=reporting.utilities.map(
+            lambda utility: replace(utility, values=NamedMap(reversed(tuple(utility.values.items()))))
+        ),
+    )
+    comparison = performance_comparison(reporting.path)
+    assert render_html(reordered, comparison) == render_html(reporting, comparison)

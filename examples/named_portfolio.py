@@ -11,21 +11,12 @@ from typing import Generic, Protocol, TypeVar
 
 from sympy import Expr, Symbol
 
-from examples.named_members import NamedMap, component_members
-from examples.portfolio import (
-    ApplePosition,
-    Equity,
-    EquityPosition,
-    EquityPrices,
-    MicrosoftPosition,
-    Series,
-    USDCash,
-    example_market_data,
-)
-from examples.portfolio_analytics import NamedAnalytics as NamedAnalytics
+from examples.compute.named_map import NamedMap
+from examples.compute.scalar_plan import ScalarPlan
+from examples.compute.series import Series
+from examples.named_members import component_members
 from examples.portfolio_analytics import NamedPortfolioPath, PositionPath
-from examples.portfolio_analytics import NamedRisk as NamedRisk
-from examples.scalar_plan import ScalarPlan
+from examples.portfolio_models import ApplePosition, Equity, EquityPosition, EquityPrices, MicrosoftPosition, USDCash
 from modello import InstanceDummy, Modello, component
 
 _Members = TypeVar("_Members", bound=Modello)
@@ -80,15 +71,15 @@ def portfolio_model(equity_members: type[_Members]) -> type[NamedPortfolio[_Memb
 class NamedMarketData:
     """An observation axis and price vectors identified by member name."""
 
-    dates: tuple[date, ...]
+    times: tuple[date, ...]
     prices: NamedMap[EquityPrices[Equity]]
 
     def __post_init__(self) -> None:
         """Keep a common axis, including when the equity domain is empty."""
-        object.__setattr__(self, "dates", tuple(self.dates))
-        if len(self.dates) < 2 or any(left >= right for left, right in zip(self.dates, self.dates[1:])):
+        object.__setattr__(self, "times", tuple(self.times))
+        if len(self.times) < 2 or any(left >= right for left, right in zip(self.times, self.times[1:])):
             raise ValueError("Portfolio paths need at least two strictly increasing observation dates")
-        if any(prices.close.dates != self.dates for prices in self.prices.values()):
+        if any(prices.close.times != self.times for prices in self.prices.values()):
             raise ValueError("Every price vector must match the observation dates")
 
 
@@ -135,27 +126,27 @@ class NamedPortfolioPricer:
             raise ValueError("Specify all position quantities and the cash balance before compiling")
         self._plan = ScalarPlan(prices, valuation_outputs(portfolio))
 
-    def __call__(self, data: NamedMarketData) -> NamedPortfolioPath:
+    def __call__(self, data: NamedMarketData) -> NamedPortfolioPath[date]:
         """Align data by name before constructing the numerical input layout."""
 
-        def checked_prices(instrument: type[Equity], prices: EquityPrices[Equity]) -> Series:
+        def checked_prices(instrument: type[Equity], prices: EquityPrices[Equity]) -> Series[date]:
             if instrument is not prices.equity:
                 raise ValueError(f"Price instrument must be {instrument.ticker}")
             return prices.close
 
         prices = self._instruments.combine(data.prices, checked_prices)
-        outputs = self._plan.over(data.dates, prices)
+        outputs = self._plan.over(data.times, prices)
 
         nav = outputs["nav"]
         if any(value <= 0 for value in nav.values):
             raise ValueError("Portfolio value must stay strictly positive")
 
-        def position(name: str) -> PositionPath:
+        def position(name: str) -> PositionPath[date]:
             value = outputs[f"value:{name}"]
-            weight = Series(data.dates, tuple(v / n for v, n in zip(value.values, nav.values, strict=True)))
+            weight = Series(data.times, tuple(v / n for v, n in zip(value.values, nav.values, strict=True)))
             returns = prices[name].simple_returns()
             contribution = Series(
-                returns.dates,
+                returns.times,
                 tuple(w * r for w, r in zip(weight.values[:-1], returns.values, strict=True)),
             )
             return PositionPath(value, weight, returns, contribution)
@@ -164,7 +155,7 @@ class NamedPortfolioPricer:
         return NamedPortfolioPath(
             NamedMap((name, position(name)) for name in prices),
             cash,
-            Series(data.dates, tuple(c / n for c, n in zip(cash.values, nav.values, strict=True))),
+            Series(data.times, tuple(c / n for c, n in zip(cash.values, nav.values, strict=True))),
             nav,
         )
 
@@ -203,14 +194,16 @@ def example_named_portfolio() -> NamedPortfolio[ThreeEquities]:
 
 def example_named_market_data() -> NamedMarketData:
     """Synthetic price vectors for all three declared members."""
+    from examples.portfolio import example_market_data
+
     data = example_market_data()
     return NamedMarketData(
-        data.aapl.close.dates,
+        data.aapl.close.times,
         NamedMap(
             {
                 "aapl": data.aapl,
                 "msft": data.msft,
-                "googl": EquityPrices(Alphabet, Series(data.aapl.close.dates, (1000, 1005, 990, 1010, 1020))),
+                "googl": EquityPrices(Alphabet, Series(data.aapl.close.times, (1000, 1005, 990, 1010, 1020))),
             }
         ),
     )

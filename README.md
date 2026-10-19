@@ -75,6 +75,8 @@ performance, and execution analysis.
 The [symbolic reporting walkthrough](https://modello.readthedocs.io/en/latest/reporting.html)
 shows signal P&L attribution and cash-utility derivatives in account and
 instrument tables with interactive timelines.
+The [research layer guide](https://modello.readthedocs.io/en/latest/research_layers.html)
+shows how the data helpers and financial examples fit above the core solver.
 
 ## Development
 

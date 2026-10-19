@@ -10,8 +10,8 @@ import pytest
 
 from examples.account_demo import example_run, main, performance_comparison
 from examples.account_sources import CSVIndexSource
+from examples.compute.series import Series
 from examples.performance import PerformanceIndex, compare, measure
-from examples.series import Series
 
 
 def quarterly(values):

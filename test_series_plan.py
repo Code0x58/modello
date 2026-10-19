@@ -6,9 +6,9 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 from sympy import Symbol
 
-from examples.named_members import NamedMap
-from examples.scalar_plan import ScalarPlan
-from examples.series import Series
+from examples.compute.named_map import NamedMap
+from examples.compute.scalar_plan import ScalarPlan
+from examples.compute.series import Series
 
 
 def test_series_alignment_lags_and_trailing_windows():
@@ -36,7 +36,6 @@ def test_empty_series_is_a_valid_event_projection():
     empty = Series((), ())
     assert empty.map(lambda value: value + 1).values == ()
     assert empty.drawdowns().values == ()
-    assert empty.as_vector().shape == (0, 1)
     with pytest.raises(ValueError, match="No observation"):
         empty.asof(date(2026, 1, 1))
 

@@ -7,7 +7,8 @@ and returns all use the same names. A projection changes the values while
 retaining that domain; a reduction turns those values into an aggregate such
 as NAV. Covariance has two member-name axes.
 
-The working experiment lives in ``examples/named_members.py`` and
+The named map lives in ``examples/compute/named_map.py``; the Modello adapter is
+in ``examples/named_members.py``. The portfolio application is in
 ``examples/named_portfolio.py``. Run it from a checkout:
 
 .. code-block:: console
@@ -21,7 +22,7 @@ Project and combine named values
 membership and preserves declaration order. A name identifies a member;
 distinct names can refer to equal values without being collapsed.
 
->>> from examples.named_members import NamedMap
+>>> from examples.compute.named_map import NamedMap
 >>> values = NamedMap({"aapl": 1000, "msft": 1000})
 >>> weights = values.map(lambda value: value / 2100)
 >>> tuple(weights)

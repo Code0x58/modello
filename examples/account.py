@@ -13,12 +13,12 @@ from typing import Generic, TypeVar
 from sympy import Symbol
 
 from examples.account_sources import CashFlow, Fill, Income, PriceHistory, TransactionLog, finite
-from examples.named_members import NamedMap
+from examples.compute.named_map import NamedMap
+from examples.compute.scalar_plan import ScalarPlan
+from examples.compute.series import Series, utc_time
 from examples.named_portfolio import NamedPortfolio, portfolio_model, valuation_outputs
-from examples.portfolio import Equity
 from examples.portfolio_analytics import NamedAnalytics, analyse
-from examples.scalar_plan import ScalarPlan
-from examples.series import Series, utc_time
+from examples.portfolio_models import Equity
 from modello import Modello
 
 _Members = TypeVar("_Members", bound=Modello)

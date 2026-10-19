@@ -18,11 +18,11 @@ from examples.account_sources import (
     TransactionLog,
     timestamp,
 )
+from examples.compute.named_map import NamedMap
+from examples.compute.series import Series
 from examples.execution import benchmark_executions
-from examples.named_members import NamedMap
 from examples.named_portfolio import EquityMembers, portfolio_model
-from examples.portfolio import AAPL, MSFT, ApplePosition, MicrosoftPosition, USDCash
-from examples.series import Series
+from examples.portfolio_models import AAPL, MSFT, ApplePosition, MicrosoftPosition, USDCash
 from examples.signals import MomentumSignals, TargetWeights, positive_signal_targets, rebalance_orders
 from modello import Modello
 

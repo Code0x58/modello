@@ -7,16 +7,9 @@ from statistics import median
 from time import perf_counter
 from typing import TypeVar
 
-from examples.portfolio import (
-    AAPL,
-    MSFT,
-    EquityPrices,
-    MarketData,
-    Portfolio,
-    PortfolioPricer,
-    Series,
-    example_portfolio,
-)
+from examples.compute.series import Series
+from examples.portfolio import MarketData, Portfolio, PortfolioPricer, example_portfolio
+from examples.portfolio_models import AAPL, MSFT, EquityPrices
 
 _Result = TypeVar("_Result")
 

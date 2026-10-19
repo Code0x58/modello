@@ -20,15 +20,15 @@ from examples.account_sources import (
     TransactionSource,
     timestamp,
 )
+from examples.compute.named_map import NamedMap
+from examples.compute.series import Series
 from examples.execution import ExecutionBenchmark, benchmark_executions
-from examples.named_members import NamedMap
 from examples.named_portfolio import EquityMembers, portfolio_model
 from examples.performance import Comparison, PerformanceIndex, compare
-from examples.portfolio import AAPL, MSFT, ApplePosition, Equity, MicrosoftPosition, USDCash
+from examples.portfolio_models import AAPL, MSFT, ApplePosition, Equity, MicrosoftPosition, USDCash
 from examples.report_html import render_html, report_data
 from examples.reporting import AccountReport, OrderAttribution
 from examples.reporting import report as build_report
-from examples.series import Series
 from examples.signals import MomentumSignals, OrderIntent, TargetWeights, positive_signal_targets, rebalance_orders
 from examples.utility import cara, crra
 

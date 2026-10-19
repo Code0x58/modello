@@ -58,6 +58,7 @@ cash-utility derivatives, and account/instrument tables and timeline charts.
    named_members
    accounts
    reporting
+   research_layers
    contributing
 
 * :ref:`genindex`

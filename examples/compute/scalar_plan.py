@@ -8,8 +8,8 @@ from typing import cast
 
 from sympy import Expr, Symbol, lambdify, sympify
 
-from examples.named_members import NamedMap
-from examples.series import Series, Time
+from examples.compute.named_map import NamedMap
+from examples.compute.series import Series, Time
 
 
 class ScalarPlan:

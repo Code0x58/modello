@@ -67,7 +67,7 @@ sleeves. An ``OrderAttribution`` instance links an existing typed order to
 nonnegative named signal weights summing to one:
 
 >>> from examples.account_demo import example_run, research_report
->>> from examples.named_members import NamedMap
+>>> from examples.compute.named_map import NamedMap
 >>> from examples.reporting import OrderAttribution
 >>> scenario = example_run()
 >>> order = scenario.orders["rebalance-1:aapl"]

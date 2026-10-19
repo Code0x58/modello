@@ -39,8 +39,7 @@ def write_research_report(app: Sphinx, exception: Exception | None) -> None:
             [sys.executable, "-m", "examples.account_demo", "--html", str(output)],
             cwd=Path(__file__).resolve().parents[1],
             check=True,
-            capture_output=True,
-            text=True,
+            stdout=subprocess.DEVNULL,
         )
 
 

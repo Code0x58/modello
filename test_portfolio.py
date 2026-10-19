@@ -6,21 +6,17 @@ from math import sqrt
 import pytest
 from sympy import ImmutableMatrix, Rational, Symbol, ones
 
-from examples.portfolio import (
+from examples.compute.series import Series
+from examples.portfolio import MarketData, Portfolio, PortfolioPricer, example_market_data, example_portfolio
+from examples.portfolio_models import (
     AAPL,
     MSFT,
     ApplePosition,
     Equity,
     EquityPosition,
     EquityPrices,
-    MarketData,
     MicrosoftPosition,
-    Portfolio,
-    PortfolioPricer,
-    Series,
     USDCash,
-    example_market_data,
-    example_portfolio,
 )
 from modello import BoundInstanceDummy, component
 
@@ -48,7 +44,6 @@ def test_valuation_vectors_and_drifting_weights():
     assert path.nav.values == (2100, 2100, 2040, 2180, 2210)
     assert path.positions["aapl"].value.values == (1000, 1020, 980, 1040, 1030)
     assert path.positions["msft"].value.values == (1000, 980, 960, 1040, 1080)
-    assert path.nav.as_vector().shape == (5, 1)
     assert path.positions["aapl"].weight.values[0] == pytest.approx(1000 / 2100)
     assert path.positions["aapl"].weight.values[-1] == pytest.approx(1030 / 2210)
     for apple, microsoft, cash in zip(
@@ -62,7 +57,7 @@ def test_return_attribution_uses_start_of_period_weights():
     data = example_market_data()
     path = PortfolioPricer(example_portfolio())(data)
     returns = path.nav.simple_returns()
-    assert returns.dates == data.aapl.close.dates[1:]
+    assert returns.times == data.aapl.close.times[1:]
     assert returns.values == pytest.approx((0, -1 / 35, 7 / 102, 3 / 218))
     for actual, apple, microsoft in zip(
         returns.values,
@@ -84,7 +79,7 @@ def test_sample_statistics_and_covariance_matrix():
     assert analytics.performance.annualized_volatility == pytest.approx(sqrt(252 * sample_variance))
     assert analytics.performance.maximum_drawdown == pytest.approx(1 / 35)
     observations = ImmutableMatrix.hstack(
-        path.positions["aapl"].returns.as_vector(), path.positions["msft"].returns.as_vector()
+        ImmutableMatrix(path.positions["aapl"].returns.values), ImmutableMatrix(path.positions["msft"].returns.values)
     )
     count = observations.rows
     centered = observations - ones(count, 1) * (ones(1, count) * observations / count)

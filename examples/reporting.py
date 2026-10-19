@@ -8,9 +8,9 @@ from math import isclose, isfinite
 
 from examples.account import AccountPath, PositionHistory
 from examples.account_sources import CashFlow, Fill, Income
-from examples.named_members import NamedMap
-from examples.scalar_plan import ScalarPlan
-from examples.series import Series
+from examples.compute.named_map import NamedMap
+from examples.compute.scalar_plan import ScalarPlan
+from examples.compute.series import Series
 from examples.signals import OrderIntent
 from examples.utility import CashUtility
 from modello import InstanceDummy, Modello

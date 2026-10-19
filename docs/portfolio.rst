@@ -20,7 +20,10 @@ From a source checkout, install the development environment and run:
    $ uv sync --locked --dev
    $ uv run --locked python -m examples.portfolio
 
-The example and its analytics helpers live in ``examples/portfolio.py``.
+The runner lives in ``examples/portfolio.py`` and imports its shared instrument
+and holding definitions from ``examples/portfolio_models.py``. The
+:doc:`research layer guide <research_layers>` maps the data, model, and analytics
+modules.
 
 Model instruments and holdings
 ------------------------------
@@ -67,7 +70,8 @@ This keeps instrument identity and time alignment available during calculation.
 >>> data = example_market_data()
 >>> data.aapl.close.values
 (100.0, 102.0, 98.0, 104.0, 103.0)
->>> data.aapl.close.as_vector().shape
+>>> from sympy import ImmutableMatrix
+>>> ImmutableMatrix(data.aapl.close.values).shape
 (5, 1)
 >>> pricer = PortfolioPricer(holdings)
 >>> path = pricer(data)

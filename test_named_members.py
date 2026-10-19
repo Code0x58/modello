@@ -3,9 +3,10 @@
 
 import pytest
 
-from examples.named_members import NamedMap, component_members
+from examples.compute.named_map import NamedMap
+from examples.named_members import component_members
 from examples.named_portfolio import EquityMembers, portfolio_model
-from examples.portfolio import ApplePosition, EquityPosition, MicrosoftPosition, USDCash
+from examples.portfolio_models import ApplePosition, EquityPosition, MicrosoftPosition, USDCash
 from modello import Modello, component
 
 

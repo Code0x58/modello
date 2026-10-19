@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from examples.account_sources import Fill, PriceHistory, TransactionLog
-from examples.named_members import NamedMap
-from examples.series import utc_time
+from examples.compute.named_map import NamedMap
+from examples.compute.series import utc_time
 from examples.signals import OrderIntent
 
 

@@ -10,8 +10,6 @@ from math import isfinite
 from statistics import mean
 from typing import Generic, TypeVar, cast
 
-from sympy import ImmutableMatrix
-
 Time = TypeVar("Time", date, datetime)
 
 
@@ -47,11 +45,6 @@ class Series(Generic[Time]):
             raise ValueError("Series values must be finite")
         object.__setattr__(self, "times", times)
         object.__setattr__(self, "values", values)
-
-    @property
-    def dates(self) -> tuple[Time, ...]:
-        """Expose the observation axis used by the date-based portfolio examples."""
-        return self.times
 
     def map(self, operation: Callable[[float], float]) -> Series[Time]:
         """Apply a pointwise calculation without changing its axis."""
@@ -95,10 +88,6 @@ class Series(Generic[Time]):
     def sample(self, times: tuple[Time, ...], *, max_age: timedelta | None = None) -> Series[Time]:
         """Explicitly sample a new axis using only earlier observations."""
         return Series(times, tuple(self.asof(at, max_age=max_age) for at in times))
-
-    def as_vector(self) -> ImmutableMatrix:
-        """Expose observations as an immutable column vector."""
-        return ImmutableMatrix(len(self.values), 1, self.values)
 
     def simple_returns(self) -> Series[Time]:
         """Label price ratios minus one with their interval's ending time."""

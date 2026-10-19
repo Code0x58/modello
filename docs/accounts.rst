@@ -223,7 +223,7 @@ index is measured against a quarterly cash index:
 
 >>> from datetime import date
 >>> from examples.performance import measure
->>> from examples.series import Series
+>>> from examples.compute.series import Series
 >>> times = (date(2024, 1, 1), date(2024, 4, 1), date(2024, 7, 1), date(2024, 10, 1), date(2025, 1, 1))
 >>> levels = Series(times, (100, 110, 104.5, 112.86, 115.1172))
 >>> cash = Series(times, (100, 101, 102.01, 103.0301, 104.060401))
@@ -302,6 +302,10 @@ execution metric is substituted for the account's independently reconciled P&L.
 
 Keep the computation layer small
 --------------------------------
+
+The :doc:`research layer guide <research_layers>` describes how the numeric data,
+symbolic executor, domain models, and presentation fit together. The generic
+helpers live in ``examples/compute/``.
 
 ``ScalarPlan`` compiles named Modello expressions once and evaluates either one
 point or aligned series. Both fixed-holding examples and account replay use it.

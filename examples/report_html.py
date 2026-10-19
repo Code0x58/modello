@@ -9,10 +9,10 @@ from itertools import accumulate
 
 from sympy import Symbol
 
-from examples.named_members import NamedMap
+from examples.compute.named_map import NamedMap
+from examples.compute.series import Series
 from examples.performance import Comparison
 from examples.reporting import AccountReport
-from examples.series import Series
 
 COLORS = ("#2563a6", "#db7927", "#7d58a3", "#238578", "#a44554", "#556578")
 METHOD = (
@@ -267,7 +267,19 @@ def render_html(report: AccountReport, comparison: Comparison[datetime]) -> str:
         table(
             ("Definition", "U(NAV)", "U′(NAV)", "U″(NAV)", "Absolute (1/USD)", "Relative"),
             (
-                (utility.definition.name, *(f"{series.values[-1]:.7g}" for series in utility.values.values()))
+                (
+                    utility.definition.name,
+                    *(
+                        f"{utility.values[field].values[-1]:.7g}"
+                        for field in (
+                            "utility",
+                            "marginal_utility",
+                            "curvature",
+                            "absolute_risk_aversion",
+                            "relative_risk_aversion",
+                        )
+                    ),
+                )
                 for utility in report.utilities.values()
             ),
             "Risk preferences evaluated at closing NAV; relative risk aversion is dimensionless.",

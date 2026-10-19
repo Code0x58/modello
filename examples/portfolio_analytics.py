@@ -7,9 +7,9 @@ from math import sqrt
 from statistics import covariance, variance
 from typing import Generic
 
-from examples.named_members import NamedMap
+from examples.compute.named_map import NamedMap
+from examples.compute.series import Series, Time
 from examples.performance import Performance, measure
-from examples.series import Series, Time
 
 
 @dataclass(frozen=True)

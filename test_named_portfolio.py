@@ -6,7 +6,7 @@ from math import sqrt
 import pytest
 from sympy import ImmutableMatrix, Rational, ones
 
-from examples.named_members import NamedMap
+from examples.compute.named_map import NamedMap
 from examples.named_portfolio import (
     Alphabet,
     AlphabetPosition,
@@ -18,18 +18,8 @@ from examples.named_portfolio import (
     example_named_portfolio,
     portfolio_model,
 )
-from examples.portfolio import (
-    AAPL,
-    MSFT,
-    ApplePosition,
-    Equity,
-    EquityPosition,
-    MicrosoftPosition,
-    PortfolioPricer,
-    USDCash,
-    example_market_data,
-    example_portfolio,
-)
+from examples.portfolio import PortfolioPricer, example_market_data, example_portfolio
+from examples.portfolio_models import AAPL, MSFT, ApplePosition, Equity, EquityPosition, MicrosoftPosition, USDCash
 from modello import BoundInstanceDummy, Modello, component
 
 
@@ -47,7 +37,7 @@ def test_named_calculation_reproduces_original_portfolio():
     data = example_market_data()
     reference = PortfolioPricer(example_portfolio())(data)
     actual = NamedPortfolioPricer(two_equities())(
-        NamedMarketData(data.aapl.close.dates, NamedMap({"msft": data.msft, "aapl": data.aapl}))
+        NamedMarketData(data.aapl.close.times, NamedMap({"msft": data.msft, "aapl": data.aapl}))
     )
     assert tuple(actual.positions) == ("aapl", "msft")
     assert actual.nav == reference.nav
@@ -55,7 +45,7 @@ def test_named_calculation_reproduces_original_portfolio():
         for field in ("value", "weight", "returns", "return_contribution"):
             observed = getattr(actual.positions[name], field)
             expected = getattr(expected_position, field)
-            assert observed.dates == expected.dates
+            assert observed.times == expected.times
             assert observed.values == pytest.approx(expected.values, abs=1e-15)
     assert actual.cash_value == reference.cash_value
     result = actual.analytics(periods_per_year=252)
@@ -93,7 +83,7 @@ def test_named_covariance_and_risk_agree_with_independent_matrix_calculation():
     path = NamedPortfolioPricer(example_named_portfolio())(example_named_market_data())
     result = path.analytics(periods_per_year=252)
     names = tuple(path.positions)
-    observations = ImmutableMatrix.hstack(*(path.positions[name].returns.as_vector() for name in names))
+    observations = ImmutableMatrix.hstack(*(ImmutableMatrix(path.positions[name].returns.values) for name in names))
     count = observations.rows
     centered = observations - ones(count, 1) * (ones(1, count) * observations / count)
     cov = centered.T * centered * 252 / (count - 1)
@@ -126,7 +116,7 @@ def test_empty_equity_domain_is_a_cash_portfolio():
         pass
 
     portfolio = portfolio_model(NoEquities)("cash", cash=USDCash("cash", amount=100))
-    dates = example_named_market_data().dates
+    dates = example_named_market_data().times
     path = NamedPortfolioPricer(portfolio)(NamedMarketData(dates, NamedMap({})))
     assert portfolio.positions == portfolio.values == portfolio.weights == {}
     assert path.positions == path.values == path.weights == {}
@@ -147,14 +137,14 @@ def test_price_domain_must_match_the_compiled_model(names):
     data = example_named_market_data()
     prices = NamedMap((name, data.prices[name] if name in data.prices else data.prices["aapl"]) for name in names)
     with pytest.raises(ValueError, match="Member names differ"):
-        NamedPortfolioPricer(example_named_portfolio())(NamedMarketData(data.dates, prices))
+        NamedPortfolioPricer(example_named_portfolio())(NamedMarketData(data.times, prices))
 
 
 def test_names_and_instrument_types_are_distinct_checks():
     data = example_named_market_data()
     prices = NamedMap({"aapl": data.prices["msft"], "msft": data.prices["aapl"], "googl": data.prices["googl"]})
     with pytest.raises(ValueError, match="Price instrument must be AAPL"):
-        NamedPortfolioPricer(example_named_portfolio())(NamedMarketData(data.dates, prices))
+        NamedPortfolioPricer(example_named_portfolio())(NamedMarketData(data.times, prices))
 
 
 def test_every_price_vector_uses_the_declared_date_axis():

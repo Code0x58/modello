@@ -8,9 +8,9 @@ from math import isfinite
 
 from sympy import Expr, Rational, Symbol, diff, exp, log, simplify, sympify
 
-from examples.named_members import NamedMap
-from examples.scalar_plan import ScalarPlan
-from examples.series import Series, Time
+from examples.compute.named_map import NamedMap
+from examples.compute.scalar_plan import ScalarPlan
+from examples.compute.series import Series, Time
 
 
 @dataclass(frozen=True)

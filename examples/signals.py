@@ -8,9 +8,9 @@ from typing import Protocol
 
 from examples.account import AccountSnapshot
 from examples.account_sources import finite
-from examples.named_members import NamedMap
-from examples.portfolio import Equity
-from examples.series import Series, utc_time
+from examples.compute.named_map import NamedMap
+from examples.compute.series import Series, utc_time
+from examples.portfolio_models import Equity
 
 
 class SignalSource(Protocol):
