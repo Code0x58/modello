@@ -11,11 +11,12 @@ and the generated `interactive report <report.html>`_ form a separate example
 section; portfolio policies and time-series operations are outside the core
 Modello API.
 
-Start with fixed holdings, then follow the named-member and account extensions:
+Start with model definitions and their views, then follow the domain walkthroughs:
 
 .. toctree::
    :maxdepth: 1
 
+   modelling
    holdings
    named_members
    providers

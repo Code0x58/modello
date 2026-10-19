@@ -87,6 +87,12 @@ The generic computation package imports neither Modello nor the financial
 examples. This keeps the data and execution code usable as a candidate for a
 later standalone package, while its interfaces are explored here.
 
+The small ``examples/symbolic.py`` adapter extends ``Modello`` with model-owned
+``compile()``, ``plan()``, and ``over()`` methods. A partially bound case can
+compile a different view of its remaining unknowns; the same class still solves
+exact constraints through its ordinary constructor. This adapter depends on
+Modello, while the numeric executor remains independent. See :doc:`modelling`.
+
 Connect domain models through an adapter
 ----------------------------------------
 
@@ -113,11 +119,12 @@ computation helpers; importing those helpers does not load the portfolio package
      - ``compute.scalar_plan``
      - SymPy compilation and numerical execution, independent of domain models.
    * - Model adapter
-     - ``named_members``
+     - ``named_members``, ``symbolic``
      - Project declared Modello components into a named domain.
    * - Financial models and calculations
      - ``portfolio.models``, ``portfolio.basket``, ``portfolio.named``, ``portfolio.account``,
-       ``portfolio.signals``, ``portfolio.performance``, ``portfolio.reporting``,
+       ``portfolio.signals``, ``portfolio.postings``, ``portfolio.pnl``,
+       ``portfolio.performance``, ``portfolio.reporting``,
        ``portfolio.utility``
      - Domain relationships, ledger transitions, and analytics.
    * - Sources and presentation

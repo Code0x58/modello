@@ -4,9 +4,9 @@ import pytest
 
 from examples.compute.providers import load_providers
 from examples.portfolio.account import Account, AccountEngine
-from examples.portfolio.demo import example_run, research_report
+from examples.portfolio.demo import ResearchScenario
 from examples.portfolio.models import EquityPosition, USDCash
-from examples.portfolio.named import EQUITY_PROVIDERS, Basket, EquityMembers, portfolio_model
+from examples.portfolio.named import EQUITY_PROVIDERS, Basket, EquityMembers, NamedPortfolio
 from examples.portfolio.sources import (
     CSVTransactionSource,
 )
@@ -26,7 +26,7 @@ def ledger():
 
 @pytest.fixture(scope="module")
 def engine(market):
-    opening = portfolio_model(Basket)(
+    opening = NamedPortfolio.define(Basket)(
         "opening",
         basket=Basket(
             "basket",
@@ -41,9 +41,9 @@ def engine(market):
 
 @pytest.fixture(scope="module")
 def scenario():
-    return example_run()
+    return ResearchScenario.example().run()
 
 
 @pytest.fixture(scope="module")
 def reporting(scenario):
-    return research_report(scenario)
+    return scenario.report()

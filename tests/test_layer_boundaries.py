@@ -43,6 +43,12 @@ assert 'examples.portfolio' not in sys.modules
 """,
         """
 import sys
+from examples.symbolic import SymbolicModel
+assert callable(SymbolicModel.plan)
+assert not any(name == 'examples.portfolio' or name.startswith('examples.portfolio.') for name in sys.modules)
+""",
+        """
+import sys
 from examples.named_members import component_members
 assert callable(component_members)
 assert not any(name == 'examples.portfolio' or name.startswith('examples.portfolio.') for name in sys.modules)
@@ -62,7 +68,15 @@ assert 'examples.portfolio.demo' not in sys.modules
 assert 'examples.portfolio.report_html' not in sys.modules
 """,
     ],
-    ids=("core", "numeric-data", "symbolic-execution", "named-models", "portfolio-namespace", "finance"),
+    ids=(
+        "core",
+        "numeric-data",
+        "symbolic-execution",
+        "symbolic-models",
+        "named-models",
+        "portfolio-namespace",
+        "finance",
+    ),
 )
 def test_layer_imports(program: str, pytestconfig: pytest.Config) -> None:
     result = subprocess.run(

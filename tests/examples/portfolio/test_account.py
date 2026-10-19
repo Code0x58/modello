@@ -4,10 +4,10 @@ import pytest
 
 from examples.compute.named_map import NamedMap
 from examples.portfolio.account import Account, AccountEngine
-from examples.portfolio.basket import basket_model
+from examples.portfolio.basket import EquityBasket
 from examples.portfolio.models import EquityPosition, Quote, USDCash
-from examples.portfolio.named import Basket, EquityMembers, portfolio_model
-from examples.portfolio.signals import TargetWeights, rebalance_orders
+from examples.portfolio.named import Basket, EquityMembers, NamedPortfolio
+from examples.portfolio.signals import TargetWeights
 from examples.portfolio.sources import (
     CashFlow,
     Fill,
@@ -58,7 +58,7 @@ def test_empty_equity_account_flows_are_not_investment_returns():
     class Empty(Modello):
         pass
 
-    opening = portfolio_model(basket_model(Empty, NamedMap({})))("cash", cash=USDCash("cash", amount=100))
+    opening = NamedPortfolio.define(EquityBasket.define(Empty, NamedMap({})))("cash", cash=USDCash("cash", amount=100))
     engine = AccountEngine(Account("cash", TIMES[0], opening), NamedMap({}), max_price_age=AGE)
     ledger = TransactionLog(
         (
@@ -84,9 +84,7 @@ def test_restatements_are_explicit_and_cannot_be_used_for_past_decisions(engine,
     assert live.quantities["aapl"] == 14
     assert restated.quantities["aapl"] == 15
     with pytest.raises(ValueError, match="knowledge at the decision"):
-        rebalance_orders(
-            restated, TargetWeights(before, NamedMap({"aapl": 0.5, "msft": 0.0})), batch="past", arrival_at=before
-        )
+        TargetWeights(before, NamedMap({"aapl": 0.5, "msft": 0.0})).orders(restated, batch="past", arrival_at=before)
 
 
 def test_other_accounts_and_opening_history_are_excluded(engine, ledger):
@@ -136,7 +134,7 @@ def test_price_identity_staleness_and_mark_grid_are_checked(engine, market):
 
 
 def test_account_does_not_drop_opening_valuation_constraints(market):
-    opening = portfolio_model(Basket)(
+    opening = NamedPortfolio.define(Basket)(
         "fixed quotes",
         basket=Basket(
             "basket",

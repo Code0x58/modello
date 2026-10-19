@@ -14,6 +14,7 @@ from examples.portfolio.providers import EquityProvider
 from modello import InstanceDummy, Modello, component
 
 _Members = TypeVar("_Members", bound=Modello)
+_Declared = TypeVar("_Declared", bound=Modello)
 
 
 @dataclass(frozen=True)
@@ -50,9 +51,9 @@ class EquityBasket(Modello, Generic[_Members]):
 
     members: _Members
     providers: NamedMap[EquityProvider]
-    capital: Expr
-    market_value: Expr
-    weight: Expr
+    capital = InstanceDummy("capital", positive=True)
+    market_value = InstanceDummy("market_value", nonnegative=True)
+    weight = market_value / capital
 
     @property
     def instruments(self) -> NamedMap[Equity]:
@@ -75,24 +76,27 @@ class EquityBasket(Modello, Generic[_Members]):
         """Member weights in the same capital base as the basket's weight."""
         return self.positions.map(lambda position: position.weight)
 
+    def __init_subclass__(cls) -> None:
+        super().__init_subclass__()
+        declared = component_members(cls.members, EquityPosition)
+        bindings = declared.combine(cls.providers, lambda position, provider: provider)
+        if any(not isinstance(provider, EquityProvider) for provider in bindings.values()):
+            raise TypeError("Basket providers must be EquityProvider instances")
+        cls.providers = bindings
 
-def basket_model(members: type[_Members], providers: NamedMap[EquityProvider]) -> type[EquityBasket[_Members]]:
-    """Bind explicitly declared positions once, then derive the basket's formulas."""
-    member_type = members
-    bindings = providers
-    # Validate before compiling, including when every holding is still symbolic.
-    declared = component_members(member_type, EquityPosition)
-    bindings = declared.combine(bindings, lambda position, provider: provider)
-    if any(not isinstance(provider, EquityProvider) for provider in bindings.values()):
-        raise TypeError("Basket providers must be EquityProvider instances")
+    @staticmethod
+    def total(members: Modello) -> Expr:
+        """Reduce declared positions into a symbolic value equation."""
+        return sum((position.market_value for position in component_members(members, EquityPosition).values()), S.Zero)
 
-    class Basket(EquityBasket[_Members]):
-        members = component(member_type)
-        providers = bindings
-        capital = InstanceDummy("capital", positive=True)
-        market_value = sum(
-            (position.market_value for position in component_members(members, EquityPosition).values()), S.Zero
-        )
-        weight = market_value / capital
+    @staticmethod
+    def define(members: type[_Declared], providers: NamedMap[EquityProvider]) -> type[EquityBasket[_Declared]]:
+        """Build the same declaration when the holding domain is supplied at runtime."""
+        member_type, bindings = members, providers
 
-    return Basket
+        class Basket(EquityBasket[_Declared]):
+            members = component(member_type)
+            providers = bindings
+            market_value = EquityBasket.total(members)
+
+        return Basket

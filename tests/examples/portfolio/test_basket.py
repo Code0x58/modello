@@ -6,10 +6,10 @@ import pytest
 from sympy import Rational, simplify
 
 from examples.compute.named_map import NamedMap
-from examples.portfolio.basket import basket_model
-from examples.portfolio.explicit import Portfolio, example_market_data
+from examples.portfolio.basket import EquityBasket
+from examples.portfolio.explicit import MarketData, Portfolio
 from examples.portfolio.models import AAPL, MSFT, Equity, EquityPosition, Quote, USDCash
-from examples.portfolio.named import Basket, EquityMembers, NamedMarketData, NamedPortfolioPricer, portfolio_model
+from examples.portfolio.named import Basket, EquityMembers, NamedMarketData, NamedPortfolio, NamedPortfolioPricer
 from examples.portfolio.providers import DummyEquityProvider
 from modello import BoundInstanceDummy, InstanceDummy, Modello, component
 
@@ -65,7 +65,7 @@ def test_symbolic_weights_share_the_portfolio_nav():
 
 
 def test_binding_order_follows_the_component_declaration():
-    ReorderedBasket = basket_model(
+    ReorderedBasket = EquityBasket.define(
         EquityMembers, NamedMap({"msft": DummyEquityProvider("MSFT"), "aapl": DummyEquityProvider("AAPL")})
     )
     basket = ReorderedBasket("basket")
@@ -85,7 +85,7 @@ def test_binding_requires_the_declared_position_domain_and_type():
         ),
     ):
         with pytest.raises(ValueError, match="Member names differ"):
-            basket_model(EquityMembers, bindings)
+            EquityBasket.define(EquityMembers, bindings)
 
     class Mixed(Modello):
         balance = component(USDCash)
@@ -94,11 +94,11 @@ def test_binding_requires_the_declared_position_domain_and_type():
         value = InstanceDummy("value")
 
     with pytest.raises(TypeError, match="EquityPosition component"):
-        basket_model(Mixed, NamedMap({"balance": DummyEquityProvider("AAPL")}))
+        EquityBasket.define(Mixed, NamedMap({"balance": DummyEquityProvider("AAPL")}))
     with pytest.raises(TypeError, match="only model components"):
-        basket_model(Scalars, NamedMap({}))
+        EquityBasket.define(Scalars, NamedMap({}))
     with pytest.raises(TypeError, match="EquityProvider instances"):
-        basket_model(EquityMembers, NamedMap({"aapl": AAPL, "msft": MSFT}))
+        EquityBasket.define(EquityMembers, NamedMap({"aapl": AAPL, "msft": MSFT}))
 
 
 def test_same_instrument_can_have_separate_holdings_and_weights():
@@ -106,10 +106,10 @@ def test_same_instrument_can_have_separate_holdings_and_weights():
         growth = component(EquityPosition)
         income = component(EquityPosition)
 
-    AppleBasket = basket_model(
+    AppleBasket = EquityBasket.define(
         Sleeves, NamedMap({"growth": DummyEquityProvider("AAPL"), "income": DummyEquityProvider("AAPL")})
     )
-    portfolio = portfolio_model(AppleBasket)(
+    portfolio = NamedPortfolio.define(AppleBasket)(
         "two sleeves",
         basket=AppleBasket(
             "basket",
@@ -119,8 +119,8 @@ def test_same_instrument_can_have_separate_holdings_and_weights():
         ),
         cash=USDCash("cash", amount=100),
     )
-    data = example_market_data().aapl
-    path = NamedPortfolioPricer(portfolio)(
+    data = MarketData.example().aapl
+    path = NamedPortfolioPricer(portfolio).over(
         NamedMarketData(data.close.times, NamedMap({"income": data, "growth": data}))
     )
     assert path.nav.values[0] == 500
@@ -130,7 +130,7 @@ def test_same_instrument_can_have_separate_holdings_and_weights():
 
 
 def test_provider_and_currency_are_part_of_valuation_identity():
-    data = example_market_data()
+    data = MarketData.example()
     portfolio = Portfolio(
         "holdings",
         basket=Basket(
@@ -143,7 +143,7 @@ def test_provider_and_currency_are_part_of_valuation_identity():
     )
     for identity in (replace(AAPL, provider="other"), replace(AAPL, currency="EUR")):
         with pytest.raises(ValueError, match="Price instrument"):
-            NamedPortfolioPricer(portfolio)(
+            NamedPortfolioPricer(portfolio).over(
                 NamedMarketData(
                     data.aapl.close.times, NamedMap({"aapl": replace(data.aapl, equity=identity), "msft": data.msft})
                 )

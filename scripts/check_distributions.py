@@ -116,6 +116,7 @@ def check_wheel(
     for path in (
         "tests/typing_checks.py",
         "tests/examples/test_named_members.py",
+        "tests/examples/test_symbolic.py",
         "tests/examples/compute/test_series.py",
         "tests/examples/compute/test_providers.py",
         "tests/examples/portfolio/test_named.py",

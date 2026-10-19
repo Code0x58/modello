@@ -65,24 +65,24 @@ class CashUtility:
             raise ValueError("Utility must be increasing on the wealth path")
         return result
 
+    @staticmethod
+    def _coefficient(value: float) -> Expr:
+        if not isfinite(value) or value < 0:
+            raise ValueError("Risk-aversion coefficients must be finite and nonnegative")
+        return Rational(str(value))
 
-def coefficient(value: float) -> Expr:
-    if not isfinite(value) or value < 0:
-        raise ValueError("Risk-aversion coefficients must be finite and nonnegative")
-    return Rational(str(value))
+    @classmethod
+    def cara(cls, absolute_risk_aversion: float) -> CashUtility:
+        """Constant absolute risk aversion, with a linear risk-neutral limit."""
+        alpha = cls._coefficient(absolute_risk_aversion)
+        wealth = Symbol("wealth", positive=True)
+        expression = (1 - exp(-alpha * wealth)) / alpha if alpha else wealth
+        return cls(f"CARA (alpha={absolute_risk_aversion:g} per USD)", wealth, expression)
 
-
-def cara(absolute_risk_aversion: float) -> CashUtility:
-    """Constant absolute risk aversion, with a linear risk-neutral limit."""
-    alpha = coefficient(absolute_risk_aversion)
-    wealth = Symbol("wealth", positive=True)
-    expression = (1 - exp(-alpha * wealth)) / alpha if alpha else wealth
-    return CashUtility(f"CARA (alpha={absolute_risk_aversion:g} per USD)", wealth, expression)
-
-
-def crra(relative_risk_aversion: float) -> CashUtility:
-    """Constant relative risk aversion, including logarithmic utility at gamma=1."""
-    gamma = coefficient(relative_risk_aversion)
-    wealth = Symbol("wealth", positive=True)
-    expression = log(wealth) if gamma == 1 else (wealth ** (1 - gamma) - 1) / (1 - gamma)
-    return CashUtility(f"CRRA (gamma={relative_risk_aversion:g})", wealth, expression)
+    @classmethod
+    def crra(cls, relative_risk_aversion: float) -> CashUtility:
+        """Constant relative risk aversion, including logarithmic utility at gamma=1."""
+        gamma = cls._coefficient(relative_risk_aversion)
+        wealth = Symbol("wealth", positive=True)
+        expression = log(wealth) if gamma == 1 else (wealth ** (1 - gamma) - 1) / (1 - gamma)
+        return cls(f"CRRA (gamma={relative_risk_aversion:g})", wealth, expression)

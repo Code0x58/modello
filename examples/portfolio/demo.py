@@ -10,26 +10,22 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Generic, TypeVar
 
 from examples.compute.named_map import NamedMap
-from examples.compute.providers import Provider, load_providers
+from examples.compute.providers import Provider
 from examples.compute.series import Series
-from examples.portfolio.account import Account, AccountEngine, AccountPath, AccountSnapshot
-from examples.portfolio.basket import basket_model
-from examples.portfolio.execution import ExecutionBenchmark, benchmark_executions
+from examples.portfolio.account import Account, AccountPath, AccountSnapshot
+from examples.portfolio.execution import ExecutionBenchmark
+from examples.portfolio.explicit import Portfolio
 from examples.portfolio.models import EquityPosition, USDCash
-from examples.portfolio.named import EQUITY_PROVIDERS, EquityMembers, portfolio_model
-from examples.portfolio.performance import Comparison, PerformanceIndex, compare
-from examples.portfolio.providers import EquityProvider
-from examples.portfolio.report_html import render_html, report_data
+from examples.portfolio.named import Basket, EquityMembers
+from examples.portfolio.performance import Comparison, PerformanceIndex
 from examples.portfolio.reporting import AccountReport, OrderAttribution
-from examples.portfolio.reporting import report as build_report
 from examples.portfolio.signals import (
     MomentumSignals,
     OrderIntent,
     TargetWeights,
-    positive_signal_targets,
-    rebalance_orders,
 )
 from examples.portfolio.sources import (
     CSVIndexSource,
@@ -37,7 +33,10 @@ from examples.portfolio.sources import (
     TransactionLog,
     timestamp,
 )
-from examples.portfolio.utility import cara, crra
+from examples.portfolio.utility import CashUtility
+from modello import Modello
+
+_Members = TypeVar("_Members", bound=Modello)
 
 CONTEXT = (
     "Synthetic observations demonstrate accounting and reporting mechanics; "
@@ -55,58 +54,95 @@ class ResearchRun:
     orders: NamedMap[OrderIntent]
     execution: NamedMap[ExecutionBenchmark]
 
+    attributions: NamedMap[OrderAttribution]
+    utilities: NamedMap[CashUtility]
+    comparison: Comparison[datetime]
 
-def run(providers: NamedMap[EquityProvider], transaction_source: Provider[TransactionLog]) -> ResearchRun:
-    """Bind replaceable sources to one deterministic research scenario."""
-    Basket = basket_model(EquityMembers, providers)
-    opening = portfolio_model(Basket)(
-        "opening",
-        basket=Basket(
-            "basket",
-            members=EquityMembers(
-                "equities", aapl=EquityPosition("apple", quantity=10), msft=EquityPosition("microsoft", quantity=10)
+    def report(self) -> AccountReport:
+        """Evaluate the reporting layer using the decision-time attribution declaration."""
+        return self.account.report(
+            self.attributions, signals=NamedMap({"momentum": self.signals}), utilities=self.utilities
+        )
+
+
+@dataclass(frozen=True)
+class ResearchScenario(Generic[_Members]):
+    """Declare data, timing, and policy separately from their evaluation."""
+
+    account: Account[_Members]
+    transactions: Provider[TransactionLog]
+    valuation_times: tuple[datetime, ...]
+    feature_times: tuple[datetime, ...]
+    decision_at: datetime
+    arrival_at: datetime
+    assessment_at: datetime
+    max_price_age: timedelta
+    benchmark: PerformanceIndex[datetime]
+    cash_reference: PerformanceIndex[datetime]
+    utilities: NamedMap[CashUtility]
+    lookback: int = 2
+    exposure: float = 0.8
+    periods_per_year: int = 252
+    batch: str = "rebalance-1"
+    performance_name: str = "Account, net of booked fees, including income"
+
+    def run(self) -> ResearchRun:
+        market = self.account.opening.load_market()
+        ledger = self.transactions.load()
+        decision = self.account.replay(
+            ledger,
+            (self.account.opened_at, self.decision_at),
+            market=market,
+            max_price_age=self.max_price_age,
+        ).snapshots[-1]
+        prices = market.map(lambda history: history.sample(self.feature_times, max_age=self.max_price_age))
+        signals = MomentumSignals(prices, lookback=self.lookback).load()
+        targets = TargetWeights.from_signals(signals, self.decision_at, exposure=self.exposure)
+        orders = decision.rebalance(targets, batch=self.batch, arrival_at=self.arrival_at)
+        attributions = orders.map(lambda order: OrderAttribution(order, NamedMap({"momentum": 1.0})))
+        execution = ExecutionBenchmark.assess(
+            orders, ledger, market, at=self.assessment_at, max_price_age=self.max_price_age
+        )
+        path = self.account.replay(ledger, self.valuation_times, market=market, max_price_age=self.max_price_age)
+        comparison = PerformanceIndex(self.performance_name, path.unit_nav).compare(
+            self.benchmark, risk_free=self.cash_reference, periods_per_year=self.periods_per_year
+        )
+        return ResearchRun(path, signals, targets, orders, execution, attributions, self.utilities, comparison)
+
+    @staticmethod
+    def example() -> ResearchScenario[EquityMembers]:
+        """A complete, offline declaration of the synthetic research case."""
+        directory = Path(__file__).with_name("data")
+        times = tuple(timestamp(f"2026-01-{day:02d}T16:01:00Z") for day in range(5, 9))
+        decision_at = timestamp("2026-01-07T09:00:00Z")
+        opening = Portfolio(
+            "opening",
+            basket=Basket(
+                "basket",
+                members=EquityMembers(
+                    "equities", aapl=EquityPosition("apple", quantity=10), msft=EquityPosition("microsoft", quantity=10)
+                ),
             ),
-        ),
-        cash=USDCash("cash", amount=1000),
-    )
-    times = tuple(timestamp(f"2026-01-{day:02d}T16:01:00Z") for day in range(5, 9))
-    account = Account("research", times[0], opening)
-    market = load_providers(opening.providers)
-    ledger = transaction_source.load()
-    age = timedelta(days=4)
-    engine = AccountEngine(account, market, max_price_age=age)
-    decision_at = timestamp("2026-01-07T09:00:00Z")
-    decision = engine.evaluate(ledger, (times[0], decision_at)).snapshots[-1]
-    feature_prices = market.map(lambda history: history.sample((*times[:2], decision_at), max_age=age))
-    signals = MomentumSignals(feature_prices, lookback=2).load()
-    targets = positive_signal_targets(signals, decision_at)
-    orders = rebalance_orders(decision, targets, batch="rebalance-1", arrival_at=timestamp("2026-01-07T09:05:00Z"))
-    execution = benchmark_executions(orders, ledger, market, at=timestamp("2026-01-07T09:15:00Z"), max_price_age=age)
-    return ResearchRun(engine.evaluate(ledger, times), signals, targets, orders, execution)
-
-
-def example_run() -> ResearchRun:
-    """Use synthetic, independent market and broker files shipped with the example."""
-    directory = Path(__file__).with_name("data")
-    return run(
-        EQUITY_PROVIDERS,
-        CSVTransactionSource(directory / "transactions.csv"),
-    )
-
-
-def performance_comparison(path: AccountPath) -> Comparison[datetime]:
-    """Compare the toy account with a separate synthetic total-return index."""
-    directory = Path(__file__).with_name("data")
-    return compare(
-        PerformanceIndex("Synthetic account, net of booked fees, including income", path.unit_nav),
-        PerformanceIndex(
-            "Synthetic broad-market total-return index", CSVIndexSource(directory / "benchmark.csv").load()
-        ),
-        risk_free=PerformanceIndex(
-            "Zero-return USD cash (illustrative assumption)", path.unit_nav.map(lambda _: 100.0)
-        ),
-        periods_per_year=252,
-    )
+            cash=USDCash("cash", amount=1000),
+        )
+        return ResearchScenario(
+            account=Account("research", times[0], opening),
+            transactions=CSVTransactionSource(directory / "transactions.csv"),
+            valuation_times=times,
+            feature_times=(*times[:2], decision_at),
+            decision_at=decision_at,
+            arrival_at=timestamp("2026-01-07T09:05:00Z"),
+            assessment_at=timestamp("2026-01-07T09:15:00Z"),
+            max_price_age=timedelta(days=4),
+            benchmark=PerformanceIndex(
+                "Synthetic broad-market total-return index", CSVIndexSource(directory / "benchmark.csv").load()
+            ),
+            cash_reference=PerformanceIndex(
+                "Zero-return USD cash (illustrative assumption)", Series(times, (100.0,) * len(times))
+            ),
+            utilities=NamedMap({"cara": CashUtility.cara(0.001), "crra": CashUtility.crra(2)}),
+            performance_name="Synthetic account, net of booked fees, including income",
+        )
 
 
 def main() -> None:
@@ -114,10 +150,10 @@ def main() -> None:
     parser.add_argument("--json", type=Path, help="Write the account and benchmark layers to a JSON report")
     parser.add_argument("--html", type=Path, help="Write account/instrument tables and interactive timeline charts")
     arguments = parser.parse_args()
-    result = example_run()
+    result = ResearchScenario.example().run()
     path = result.account
-    comparison = performance_comparison(path)
-    reporting = research_report(result)
+    comparison = result.comparison
+    reporting = result.report()
     print("Synthetic USD account; external market prints and transaction log")
     print("Time                             AAPL shares  MSFT shares      Cash        NAV   Unit NAV")
     for snapshot in path.snapshots:
@@ -152,7 +188,7 @@ def main() -> None:
         )
     if arguments.json:
         payload = {
-            "reporting": report_data(reporting),
+            "reporting": reporting.to_dict(),
             "performance": {
                 "portfolio_name": comparison.portfolio_name,
                 "benchmark_name": comparison.benchmark_name,
@@ -186,18 +222,8 @@ def main() -> None:
         arguments.json.write_text(json.dumps(payload, default=encode_value, indent=2) + "\n")
         print("Report:", arguments.json)
     if arguments.html:
-        arguments.html.write_text(render_html(reporting, comparison, context=CONTEXT), encoding="utf-8")
+        arguments.html.write_text(reporting.to_html(comparison, context=CONTEXT), encoding="utf-8")
         print("Dashboard:", arguments.html)
-
-
-def research_report(result: ResearchRun) -> AccountReport:
-    """Declare the scenario's attribution policy and illustrative wealth preferences."""
-    return build_report(
-        result.account,
-        result.orders.map(lambda order: OrderAttribution(order, NamedMap({"momentum": 1.0}))),
-        signals=NamedMap({"momentum": result.signals}),
-        utilities=NamedMap({"cara": cara(0.001), "crra": crra(2)}),
-    )
 
 
 def asdict_snapshot(snapshot: AccountSnapshot) -> dict[str, object]:

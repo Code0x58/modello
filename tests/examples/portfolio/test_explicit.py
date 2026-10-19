@@ -6,7 +6,7 @@ import pytest
 from sympy import Rational, Symbol
 
 from examples.compute.series import Series
-from examples.portfolio.explicit import MarketData, Portfolio, PortfolioPricer, example_market_data, example_portfolio
+from examples.portfolio.explicit import MarketData, Portfolio
 from examples.portfolio.models import (
     AAPL,
     MSFT,
@@ -44,7 +44,7 @@ def test_explicit_instrument_types_and_inverse_valuation():
 
 def test_valuation_vectors_and_drifting_weights():
     """A fixed-share portfolio values each aligned observation independently."""
-    path = PortfolioPricer(example_portfolio())(example_market_data())
+    path = Portfolio.example().pricer().over(MarketData.example().named())
     assert path.nav.values == (2100, 2100, 2040, 2180, 2210)
     assert path.positions["aapl"].value.values == (1000, 1020, 980, 1040, 1030)
     assert path.positions["msft"].value.values == (1000, 980, 960, 1040, 1080)
@@ -68,7 +68,7 @@ def test_cash_only_portfolio_and_zero_risk():
         ),
         cash=USDCash("cash", amount=100),
     )
-    path = PortfolioPricer(portfolio)(example_market_data())
+    path = portfolio.pricer().over(MarketData.example().named())
     result = path.analytics(periods_per_year=252)
     assert path.nav.values == (100,) * 5
     assert path.cash_weight.values == (1,) * 5
@@ -84,18 +84,18 @@ def test_cash_only_portfolio_and_zero_risk():
 
 def test_pricer_reuses_the_model_for_another_price_vector():
     """Holdings stay fixed while another observation grid can be evaluated."""
-    pricer = PortfolioPricer(example_portfolio())
+    pricer = Portfolio.example().pricer()
     dates = (date(2026, 2, 2), date(2026, 2, 3), date(2026, 2, 4))
     data = MarketData(
         EquityPrices(AAPL, Series(dates, (10, 20, 30))),
         EquityPrices(MSFT, Series(dates, (5, 10, 15))),
     )
-    assert pricer(data).nav.values == (300, 500, 700)
-    assert pricer(example_market_data()).nav.values[-1] == 2210
+    assert pricer.over(data.named()).nav.values == (300, 500, 700)
+    assert pricer.over(MarketData.example().named()).nav.values[-1] == 2210
 
 
 def test_prices_are_not_silently_aligned_or_relabelled():
-    data = example_market_data()
+    data = MarketData.example()
     shifted = Series(tuple(date(2026, 2, day) for day in range(2, 7)), data.msft.close.values)
     with pytest.raises(ValueError, match="same observation dates"):
         MarketData(data.aapl, EquityPrices(MSFT, shifted))
@@ -105,7 +105,7 @@ def test_prices_are_not_silently_aligned_or_relabelled():
 
 def test_compile_requires_fixed_holdings_and_independent_symbolic_prices():
     with pytest.raises(ValueError, match="position quantities"):
-        PortfolioPricer(Portfolio("unspecified"))
+        Portfolio("unspecified").pricer()
     for price in (100, Symbol("shared", positive=True)):
         portfolio = Portfolio(
             "known or linked quotes",
@@ -120,4 +120,4 @@ def test_compile_requires_fixed_holdings_and_independent_symbolic_prices():
             cash=USDCash("cash", amount=100),
         )
         with pytest.raises(ValueError, match="independent symbolic input"):
-            PortfolioPricer(portfolio)
+            portfolio.pricer()

@@ -37,21 +37,29 @@ the basket level:
 .. code-block:: python
 
    from examples.compute.named_map import NamedMap
-   from examples.portfolio.basket import basket_model
-   from examples.portfolio.models import EquityPosition
+   from examples.portfolio.basket import EquityBasket
+   from examples.portfolio.models import EquityPosition, USDCash
+   from examples.portfolio.named import NamedPortfolio
    from examples.portfolio.providers import DummyEquityProvider
-   from examples.portfolio.named import portfolio_model
    from modello import Modello, component
 
    class Holdings(Modello):
        aapl = component(EquityPosition)
        msft = component(EquityPosition)
 
-   Basket = basket_model(Holdings, NamedMap({
-       "aapl": DummyEquityProvider(symbol="AAPL"),
-       "msft": DummyEquityProvider(symbol="MSFT"),
-   }))
-   Portfolio = portfolio_model(Basket)
+   class Basket(EquityBasket[Holdings]):
+       members = component(Holdings)
+       providers = NamedMap({
+           "aapl": DummyEquityProvider(symbol="AAPL"),
+           "msft": DummyEquityProvider(symbol="MSFT"),
+       })
+       market_value = EquityBasket.total(members)
+
+   class Portfolio(NamedPortfolio[Holdings]):
+       basket = component(Basket)
+       cash = component(USDCash)
+       nav = basket.capital
+       nav = basket.market_value + cash.amount
 
 The portfolio contains a basket and cash. The basket contains its named holding
 group and derives total market value and allocation from that group:
@@ -81,8 +89,8 @@ numeric model with its provider, instrument record, and allocation base. It expo
 ``provider``, ``instrument.symbol``, ``quantity``, ``price``,
 ``market_value``, and ``weight``. For example:
 
->>> from examples.portfolio.explicit import example_portfolio
->>> apple = example_portfolio().basket.positions["aapl"]
+>>> from examples.portfolio.explicit import Portfolio
+>>> apple = Portfolio.example().basket.positions["aapl"]
 >>> apple.instrument.symbol, apple.instrument.provider, apple.quantity
 ('AAPL', 'synthetic', 10)
 >>> type(apple.provider).__name__
@@ -102,8 +110,8 @@ can also constrain an inverse solve.
 
 Create a portfolio with known quantities and cash, leaving prices symbolic:
 
->>> from examples.portfolio.explicit import PortfolioPricer, example_market_data, example_portfolio
->>> holdings = example_portfolio()
+>>> from examples.portfolio.explicit import Portfolio, MarketData
+>>> holdings = Portfolio.example()
 >>> holdings.instruments["aapl"].symbol, holdings.basket.members.aapl.quantity
 ('AAPL', 10)
 >>> holdings.instruments["msft"].symbol, holdings.basket.members.msft.quantity
@@ -123,14 +131,14 @@ Bind price vectors
 has named ``aapl`` and ``msft`` fields and requires their dates to match exactly.
 This keeps instrument identity and time alignment available during calculation.
 
->>> data = example_market_data()
+>>> data = MarketData.example()
 >>> data.aapl.close.values
 (100.0, 102.0, 98.0, 104.0, 103.0)
 >>> from sympy import ImmutableMatrix
 >>> ImmutableMatrix(data.aapl.close.values).shape
 (5, 1)
->>> pricer = PortfolioPricer(holdings)
->>> path = pricer(data)
+>>> pricer = holdings.pricer()
+>>> path = pricer.over(data.named())
 >>> path.nav.values
 (2100.0, 2100.0, 2040.0, 2180.0, 2210.0)
 >>> round(path.weights["aapl"].values[0], 4), round(path.weights["aapl"].values[-1], 4)
@@ -227,13 +235,13 @@ One exploratory run on Python 3.14.8 with SymPy 1.14.0 gave these rounded median
    * - Work
      - Time
    * - Construct the symbolic portfolio
-     - 143 ms
+     - 134 ms
    * - Compile its numerical calculation
-     - 2.4 ms
+     - 2.1 ms
    * - Evaluate complete paths for 10,000 observations
-     - 53 ms
+     - 54 ms
    * - Construct and solve a portfolio for each of 10 observations
-     - 1,352 ms
+     - 1,318 ms
 
 Data creation and risk analytics are outside these timings. The solve-per-row
 baseline reuses the component instances and performs one joint solve per row;
@@ -244,8 +252,10 @@ measurements motivate separating compilation from data execution.
 What this suggests for a compute framework
 ------------------------------------------
 
-The prototype separates three jobs: define symbolic relationships, bind aligned
-data, and execute numeric calculations and reductions. Finance provides a useful
+The :doc:`model views walkthrough <modelling>` shows forward, inverse, and
+calibrated cases of the same definitions. The prototype separates three jobs:
+define symbolic relationships, bind aligned data, and execute numeric
+calculations and reductions. Finance provides a useful
 test of that separation: value is a pointwise calculation, returns shift the
 time axis, covariance reduces it, and drawdown depends on a running peak.
 

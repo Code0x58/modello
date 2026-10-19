@@ -1,6 +1,9 @@
 Accounts, signals, and execution research
 =========================================
 
+The :doc:`model views guide <modelling>` starts with the equation definitions
+and explains how the same models support different knowns and unknowns.
+
 This worked system combines the :doc:`named-member portfolio <named_members>`
 with an external transaction log and time-aware market observations. It follows
 one USD account from opening holdings through signals, intended orders, partial
@@ -36,16 +39,16 @@ The example has explicit boundaries:
    flowchart TD
        market[Market source] --> prices[Published prices]
        prices --> grid[Sampled feature grid]
-       grid --> signals[Signals]
-       ledger[External transaction log] --> replay[Account replay]
+       grid --> signals[Momentum model]
+       ledger[External transaction log] --> replay[Account replay with balance models]
        prices --> replay
        replay --> snapshot[Decision-time snapshot]
        signals --> targets[Target weights]
        snapshot --> targets
-       targets --> orders[Order intentions]
+       targets --> orders[Rebalance model and order intentions]
        replay --> positions[Positions, cash, NAV]
-       positions --> analytics[P&L, returns, covariance]
-       orders --> execution[Execution benchmarks]
+       positions --> analytics[P&L models, returns, covariance]
+       orders --> execution[Execution cost model and benchmarks]
        ledger -->|Reported fills| execution
        market -->|Independent prints| execution
 
@@ -77,10 +80,10 @@ is available while defining a symbolic model; loading is an explicit step:
 
 .. code-block:: python
 
-   market = load_providers(opening.providers)
+   market = opening.load_market()
 
-``load_providers`` preserves holding names and shares equivalent requests in
-that batch. Different provider types or request parameters remain distinct,
+The portfolio's ``load_market()`` method preserves holding names and shares
+equivalent requests in that batch. Different provider types or request parameters remain distinct,
 even with equal symbol text. A later call reloads the data. The
 :doc:`provider guide <providers>` describes the generic return type, CSV schema,
 and how another equity provider can supply the same accounting layer.
@@ -107,7 +110,7 @@ produce momentum at the final timestamp of each window.
 Transactions similarly carry execution time and reporting time. Account replay
 uses postings known by the reporting horizon. A later report may restate past
 holdings after a delayed posting arrives. Snapshots record ``known_at``;
-``rebalance_orders`` requires a snapshot whose knowledge ends at the decision
+``snapshot.rebalance`` requires a snapshot whose knowledge ends at the decision
 time, preventing a restated historical snapshot from entering a past decision.
 
 Declare and value an account
@@ -118,7 +121,7 @@ the market source supplies the price variables.
 
 .. code-block:: python
 
-   Portfolio = portfolio_model(Basket)
+   # Portfolio is the declared basket-and-cash model from the holdings guide.
    opening = Portfolio(
        "opening",
        basket=Basket(
@@ -132,9 +135,9 @@ the market source supplies the price variables.
        cash=USDCash("cash", amount=1000),
    )
    account = Account("research", opened_at, opening)
-   market = load_providers(opening.providers)
-   engine = AccountEngine(account, market, max_price_age=timedelta(days=4))
-   path = engine.evaluate(transaction_log, valuation_times)
+   market = opening.load_market()
+   path = account.replay(transaction_log, valuation_times, market=market,
+                         max_price_age=timedelta(days=4))
 
 The account's opening balances already include history through ``opened_at``.
 Replay applies postings in ``(opened_at, mark]``, including events exactly at a
@@ -146,8 +149,8 @@ A fill changes shares by its signed quantity and cash by
 changes cash and investment return. Each mark produces named quantities,
 prices, values, and weights, together with cash and total NAV.
 
->>> from examples.portfolio.demo import example_run
->>> result = example_run()
+>>> from examples.portfolio.demo import ResearchScenario
+>>> result = ResearchScenario.example().run()
 >>> path = result.account
 >>> tuple(round(value, 2) for value in path.nav.values)
 (2500.0, 2510.0, 3041.4, 3066.9)
@@ -203,8 +206,7 @@ returns**. It demonstrates account mechanics, rather than evidence of an
 investment strategy. The command-line and JSON reports show this window
 alongside an independent synthetic index:
 
->>> from examples.portfolio.demo import performance_comparison
->>> comparison = performance_comparison(path)
+>>> comparison = result.comparison
 >>> round(comparison.portfolio.total_return * 100, 4)
 2.4518
 >>> round(comparison.benchmark.total_return * 100, 4)

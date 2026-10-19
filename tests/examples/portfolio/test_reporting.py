@@ -4,21 +4,20 @@ from dataclasses import replace
 from datetime import timedelta
 
 import pytest
-from sympy import Rational, diff, simplify
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
 from examples.portfolio.account import Account, AccountEngine
-from examples.portfolio.basket import basket_model
+from examples.portfolio.basket import EquityBasket
 from examples.portfolio.models import MSFT, USDCash
-from examples.portfolio.named import portfolio_model
-from examples.portfolio.reporting import AccountPnL, InstrumentPnL, OrderAttribution, report
+from examples.portfolio.named import NamedPortfolio
+from examples.portfolio.reporting import AccountReport, OrderAttribution
 from examples.portfolio.sources import CashFlow, Fill, Income, TransactionLog, timestamp
 from modello import Modello
 
 
 def attribute(scenario, *, path=None, weights=None, signals=None, orders=None):
-    return report(
+    return AccountReport.from_account(
         scenario.account if path is None else path,
         (scenario.orders if orders is None else orders).map(
             lambda order: OrderAttribution(order, NamedMap({"momentum": 1.0}) if weights is None else weights)
@@ -26,35 +25,6 @@ def attribute(scenario, *, path=None, weights=None, signals=None, orders=None):
         signals=NamedMap({"momentum": scenario.signals}) if signals is None else signals,
         utilities=NamedMap({}),
     )
-
-
-def test_reporting_models_support_symbolic_sensitivities_and_inverse_reconciliation():
-    instrument = InstrumentPnL("instrument")
-    assert (
-        simplify(
-            diff(instrument.net, instrument.opening_quantity) - (instrument.closing_price - instrument.opening_price)
-        )
-        == 0
-    )
-    assert (
-        simplify(
-            diff(instrument.net, instrument.closing_price) - instrument.opening_quantity - instrument.fill_quantity
-        )
-        == 0
-    )
-    assert diff(instrument.net, instrument.fees) == -1
-    account = AccountPnL(
-        "account",
-        opening_nav=2500,
-        external_flows=500,
-        holding=Rational(57),
-        trading=Rational(17, 5),
-        income=Rational(17, 2),
-        fees=2,
-        residual=0,
-    )
-    assert account.net == Rational(669, 10)
-    assert account.closing_nav == Rational(30669, 10)
 
 
 def test_attribution_reconciles_account_and_each_instrument(reporting):
@@ -125,13 +95,17 @@ def test_cash_only_reports_separate_income_and_external_capital():
     start = timestamp("2026-01-05T16:01:00Z")
     times = tuple(start + timedelta(days=i) for i in range(3))
     account = Account(
-        "cash", start, portfolio_model(basket_model(Empty, NamedMap({})))("opening", cash=USDCash("cash", amount=100))
+        "cash",
+        start,
+        NamedPortfolio.define(EquityBasket.define(Empty, NamedMap({})))("opening", cash=USDCash("cash", amount=100)),
     )
     engine = AccountEngine(account, NamedMap({}), max_price_age=timedelta(days=1))
     ledger = TransactionLog(
         (CashFlow("deposit", "cash", times[1], times[1], 500), Income("interest", "cash", times[2], times[2], 10))
     )
-    result = report(engine.evaluate(ledger, times), NamedMap({}), signals=NamedMap({}), utilities=NamedMap({}))
+    result = AccountReport.from_account(
+        engine.evaluate(ledger, times), NamedMap({}), signals=NamedMap({}), utilities=NamedMap({})
+    )
     assert not result.instruments
     assert result.account["net"].values == (0, 10)
     assert result.account["external_flows"].values == (500, 0)
@@ -162,7 +136,7 @@ def test_attribution_requires_correct_order_identity_side_and_available_signals(
 
 
 def test_different_signals_can_drive_different_instruments(scenario):
-    result = report(
+    result = AccountReport.from_account(
         scenario.account,
         scenario.orders.map(
             lambda order: OrderAttribution(order, NamedMap({"fast" if order.member == "aapl" else "slow": 1.0}))

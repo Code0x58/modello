@@ -21,10 +21,11 @@ Generate the same self-contained report locally:
 
 The HTML runs offline. Both outputs use the same typed ``AccountReport``;
 rendering introduces no further P&L calculations. The implementation lives in
-``examples/portfolio/reporting.py``, ``examples/portfolio/utility.py``, and ``examples/portfolio/report_html.py``.
+``examples/portfolio/pnl.py``, ``examples/portfolio/reporting.py``,
+``examples/portfolio/utility.py``, and ``examples/portfolio/report_html.py``.
 
 Reuse the renderer with your own account report and aligned benchmark
-comparison through ``render_html(report, comparison, context="...")``.
+comparison through ``report.to_html(comparison, context="...")``.
 Account, benchmark, and cash-reference names come from those typed inputs;
 the optional context supplies text about the source data or methodology.
 The demonstration passes its synthetic-data notice here. Observation counts,
@@ -51,7 +52,7 @@ These remain ordinary symbolic models, suitable for differentiation and inverse
 questions as well as numerical reporting:
 
 >>> from sympy import diff, simplify
->>> from examples.portfolio.reporting import InstrumentPnL, AccountPnL
+>>> from examples.portfolio.pnl import InstrumentPnL, AccountPnL
 >>> model = InstrumentPnL("instrument")
 >>> simplify(diff(model.net, model.opening_quantity) - (model.closing_price - model.opening_price))
 0
@@ -63,8 +64,9 @@ questions as well as numerical reporting:
 
 The first derivative above is P&L sensitivity to an additional opening share.
 It is distinct from allocating observed P&L to the signals responsible for
-trades. The report compiles resolved model expressions through ``ScalarPlan``
-and evaluates them on interval vectors. It retains the expressions for
+trades. Both account P&L and the report use these definitions. Each model declares
+its default ``inputs`` and ``outputs``; ``plan()`` compiles that view once
+through ``ScalarPlan`` for evaluation on interval vectors. The report retains the expressions for
 inspection under ``instrument_plan`` and ``account_plan``.
 
 Attribute executed decisions to named signals
@@ -75,10 +77,10 @@ uses an unchanged opening reference book plus signed incremental trading
 sleeves. An ``OrderAttribution`` instance links an existing typed order to
 nonnegative named signal weights summing to one:
 
->>> from examples.portfolio.demo import example_run, research_report
+>>> from examples.portfolio.demo import ResearchScenario
 >>> from examples.compute.named_map import NamedMap
 >>> from examples.portfolio.reporting import OrderAttribution
->>> scenario = example_run()
+>>> scenario = ResearchScenario.example().run()
 >>> order = scenario.orders["rebalance-1:aapl"]
 >>> attribution = OrderAttribution(order, NamedMap({"momentum": 1.0}))
 >>> attribution.weights["momentum"]
@@ -103,7 +105,7 @@ including after it reaches zero. This expresses the incremental P&L of the sell
 decision relative to continuing to hold. These are accounting sleeves; account
 funding and position constraints apply to the actual combined portfolio.
 
->>> reporting = research_report(scenario)
+>>> reporting = scenario.report()
 >>> {source: round(sum(columns["net"].values), 2) for source, columns in reporting.sources.items()}
 {'opening': 55.0, 'signal:momentum': 11.9, 'unattributed': 0.0}
 >>> {member: round(sum(instrument.profit["net"].values), 2) for member, instrument in reporting.instruments.items()}
@@ -161,16 +163,16 @@ for these definitions.
 ``CashUtility`` accepts a typed wealth symbol and a SymPy expression. The helper
 families use normalizations with convenient limits:
 
-* ``cara(alpha)`` defines ``(1 - exp(-alpha * W)) / alpha``, giving
+* ``CashUtility.cara(alpha)`` defines ``(1 - exp(-alpha * W)) / alpha``, giving
   ``A(W) = alpha`` and ``R(W) = alpha * W``. At zero it uses linear utility.
-* ``crra(gamma)`` defines ``(W**(1-gamma) - 1) / (1-gamma)``, giving
+* ``CashUtility.crra(gamma)`` defines ``(W**(1-gamma) - 1) / (1-gamma)``, giving
   ``A(W) = gamma / W`` and ``R(W) = gamma``. At one it uses ``log(W)``.
 
->>> from examples.portfolio.utility import cara, crra, CashUtility
->>> exponential = cara(0.001)
+>>> from examples.portfolio.utility import CashUtility
+>>> exponential = CashUtility.cara(0.001)
 >>> exponential.expressions["absolute_risk_aversion"]
 1/1000
->>> power = crra(2)
+>>> power = CashUtility.crra(2)
 >>> power.expressions["absolute_risk_aversion"] == 2 / power.wealth
 True
 >>> power.expressions["relative_risk_aversion"]

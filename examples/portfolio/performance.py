@@ -88,6 +88,36 @@ class PerformanceIndex(Generic[Time]):
         if not self.levels.values or any(value <= 0 for value in self.levels.values):
             raise ValueError("A performance index needs strictly positive levels")
 
+    def compare(
+        self,
+        benchmark: PerformanceIndex[Time],
+        *,
+        risk_free: PerformanceIndex[Time],
+        periods_per_year: int,
+    ) -> Comparison[Time]:
+        """Compare matching total-return observations without implicit filling or currency conversion."""
+        if self.currency != benchmark.currency or self.currency != risk_free.currency:
+            raise ValueError("Performance indices must use the same reporting currency")
+        if self.levels.times != benchmark.levels.times or self.levels.times != risk_free.levels.times:
+            raise ValueError("Performance indices must have the same observation times")
+        account = measure(self.levels, periods_per_year=periods_per_year, risk_free=risk_free.levels)
+        reference = measure(benchmark.levels, periods_per_year=periods_per_year, risk_free=risk_free.levels)
+        return Comparison(
+            self.name,
+            benchmark.name,
+            risk_free.name,
+            self.currency,
+            periods_per_year,
+            account,
+            reference,
+            NamedMap({"portfolio": self.levels, "benchmark": benchmark.levels}).map(
+                lambda series: series.map(lambda value: 100 * value / series.values[0])
+            ),
+            self.levels.simple_returns().combine(benchmark.levels.simple_returns(), lambda a, b: a - b),
+            account.total_return - reference.total_return,
+            (1 + account.total_return) / (1 + reference.total_return) - 1,
+        )
+
 
 @dataclass(frozen=True)
 class Comparison(Generic[Time]):
@@ -104,34 +134,3 @@ class Comparison(Generic[Time]):
     active_returns: Series[Time]
     return_difference: float
     relative_return: float
-
-
-def compare(
-    portfolio: PerformanceIndex[Time],
-    benchmark: PerformanceIndex[Time],
-    *,
-    risk_free: PerformanceIndex[Time],
-    periods_per_year: int,
-) -> Comparison[Time]:
-    """Compare matching total-return observations without implicit filling or currency conversion."""
-    if portfolio.currency != benchmark.currency or portfolio.currency != risk_free.currency:
-        raise ValueError("Performance indices must use the same reporting currency")
-    if portfolio.levels.times != benchmark.levels.times or portfolio.levels.times != risk_free.levels.times:
-        raise ValueError("Performance indices must have the same observation times")
-    account = measure(portfolio.levels, periods_per_year=periods_per_year, risk_free=risk_free.levels)
-    reference = measure(benchmark.levels, periods_per_year=periods_per_year, risk_free=risk_free.levels)
-    return Comparison(
-        portfolio.name,
-        benchmark.name,
-        risk_free.name,
-        portfolio.currency,
-        periods_per_year,
-        account,
-        reference,
-        NamedMap({"portfolio": portfolio.levels, "benchmark": benchmark.levels}).map(
-            lambda series: series.map(lambda value: 100 * value / series.values[0])
-        ),
-        portfolio.levels.simple_returns().combine(benchmark.levels.simple_returns(), lambda a, b: a - b),
-        account.total_return - reference.total_return,
-        (1 + account.total_return) / (1 + reference.total_return) - 1,
-    )

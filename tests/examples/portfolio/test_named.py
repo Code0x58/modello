@@ -8,19 +8,19 @@ import pytest
 from sympy import Rational
 
 from examples.compute.named_map import NamedMap
-from examples.portfolio.basket import EquityHolding, basket_model
-from examples.portfolio.explicit import PortfolioPricer, example_market_data, example_portfolio
+from examples.portfolio.basket import EquityBasket, EquityHolding
+from examples.portfolio.explicit import MarketData, Portfolio
 from examples.portfolio.models import Equity, EquityPosition, Quote, USDCash
 from examples.portfolio.named import (
     Basket,
     EquityMembers,
     NamedMarketData,
+    NamedPortfolio,
     NamedPortfolioPricer,
     ThreeEquities,
     ThreeEquityBasket,
     example_named_market_data,
     example_named_portfolio,
-    portfolio_model,
 )
 from examples.portfolio.providers import DummyEquityProvider, EquityProvider
 from examples.portfolio.sources import PriceHistory
@@ -28,7 +28,7 @@ from modello import BoundInstanceDummy, Modello, component
 
 
 def two_equities():
-    return portfolio_model(Basket)(
+    return NamedPortfolio.define(Basket)(
         "two",
         basket=Basket(
             "basket",
@@ -41,9 +41,9 @@ def two_equities():
 
 
 def test_named_calculation_reproduces_original_portfolio():
-    data = example_market_data()
-    reference = PortfolioPricer(example_portfolio())(data)
-    actual = NamedPortfolioPricer(two_equities())(
+    data = MarketData.example()
+    reference = Portfolio.example().pricer().over(data.named())
+    actual = NamedPortfolioPricer(two_equities()).over(
         NamedMarketData(data.aapl.close.times, NamedMap({"msft": data.msft, "aapl": data.aapl}))
     )
     assert tuple(actual.positions) == ("aapl", "msft")
@@ -68,7 +68,7 @@ def test_named_calculation_reproduces_original_portfolio():
 
 def test_new_member_flows_through_aggregates_and_all_projections():
     portfolio = example_named_portfolio()
-    path = NamedPortfolioPricer(portfolio)(example_named_market_data())
+    path = NamedPortfolioPricer(portfolio).over(example_named_market_data())
     assert path.nav.values == (3100, 3105, 3030, 3190, 3230)
     assert (
         tuple(portfolio.positions) == tuple(portfolio.values) == tuple(portfolio.weights) == ("aapl", "msft", "googl")
@@ -93,7 +93,7 @@ def test_map_reduction_keeps_inverse_valuation():
         msft=EquityPosition("microsoft", quantity=20, instrument=Quote("quote", price=50)),
         googl=EquityPosition("alphabet", quantity=1, instrument=Quote("quote", price=1000)),
     )
-    portfolio = portfolio_model(ThreeEquityBasket)(
+    portfolio = NamedPortfolio.define(ThreeEquityBasket)(
         "target", basket=ThreeEquityBasket("basket", members=source), cash=USDCash("cash", amount=100), nav=3100
     )
     assert portfolio.positions["aapl"].quantity == 10
@@ -105,9 +105,11 @@ def test_empty_equity_domain_is_a_cash_portfolio():
     class NoEquities(Modello):
         pass
 
-    portfolio = portfolio_model(basket_model(NoEquities, NamedMap({})))("cash", cash=USDCash("cash", amount=100))
+    portfolio = NamedPortfolio.define(EquityBasket.define(NoEquities, NamedMap({})))(
+        "cash", cash=USDCash("cash", amount=100)
+    )
     dates = example_named_market_data().times
-    path = NamedPortfolioPricer(portfolio)(NamedMarketData(dates, NamedMap({})))
+    path = NamedPortfolioPricer(portfolio).over(NamedMarketData(dates, NamedMap({})))
     assert portfolio.positions == portfolio.values == portfolio.weights == {}
     assert path.positions == path.values == path.weights == {}
     assert path.nav.values == (100,) * len(dates)
@@ -127,14 +129,14 @@ def test_price_domain_must_match_the_compiled_model(names):
     data = example_named_market_data()
     prices = NamedMap((name, data.prices[name] if name in data.prices else data.prices["aapl"]) for name in names)
     with pytest.raises(ValueError, match="Member names differ"):
-        NamedPortfolioPricer(example_named_portfolio())(NamedMarketData(data.times, prices))
+        NamedPortfolioPricer(example_named_portfolio()).over(NamedMarketData(data.times, prices))
 
 
 def test_names_and_instrument_types_are_distinct_checks():
     data = example_named_market_data()
     prices = NamedMap({"aapl": data.prices["msft"], "msft": data.prices["aapl"], "googl": data.prices["googl"]})
     with pytest.raises(ValueError, match="Price instrument must be AAPL"):
-        NamedPortfolioPricer(example_named_portfolio())(NamedMarketData(data.times, prices))
+        NamedPortfolioPricer(example_named_portfolio()).over(NamedMarketData(data.times, prices))
 
 
 def test_every_price_vector_uses_the_declared_date_axis():
@@ -149,8 +151,8 @@ def test_every_price_vector_uses_the_declared_date_axis():
 
 def test_invalid_compilation_inputs():
     with pytest.raises(ValueError, match="position quantities"):
-        NamedPortfolioPricer(portfolio_model(Basket)("missing"))
-    portfolio = portfolio_model(Basket)(
+        NamedPortfolioPricer(NamedPortfolio.define(Basket)("missing"))
+    portfolio = NamedPortfolio.define(Basket)(
         "known prices",
         basket=Basket(
             "basket",
@@ -170,8 +172,10 @@ def test_currency_needs_an_explicit_conversion_model():
     class EuroMembers(Modello):
         euro = component(EquityPosition)
 
-    EuroBasket = basket_model(EuroMembers, NamedMap({"euro": DummyEquityProvider(symbol="EXAMPLE", currency="EUR")}))
-    portfolio = portfolio_model(EuroBasket)(
+    EuroBasket = EquityBasket.define(
+        EuroMembers, NamedMap({"euro": DummyEquityProvider(symbol="EXAMPLE", currency="EUR")})
+    )
+    portfolio = NamedPortfolio.define(EuroBasket)(
         "mixed currencies",
         basket=EuroBasket("basket", members=EuroMembers("members", euro=EquityPosition("euro", quantity=1))),
         cash=USDCash("cash", amount=1),
@@ -181,7 +185,7 @@ def test_currency_needs_an_explicit_conversion_model():
 
 
 def _typing_contract() -> None:
-    portfolio = portfolio_model(Basket)("portfolio")
+    portfolio = NamedPortfolio.define(Basket)("portfolio")
     apple: EquityPosition = portfolio.basket.members.aapl
     assert apple.instrument.price.free_symbols
     equity: Equity = portfolio.basket.instruments["aapl"]

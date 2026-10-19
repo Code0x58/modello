@@ -77,13 +77,13 @@ def test_loading_validates_the_feed_schema_and_requested_symbol(tmp_path):
 
 
 def test_provider_construction_and_symbolic_use_do_not_fetch_data(tmp_path):
-    from examples.portfolio.basket import basket_model
-    from examples.portfolio.named import EquityMembers, portfolio_model
+    from examples.portfolio.basket import EquityBasket
+    from examples.portfolio.named import EquityMembers, NamedPortfolio
 
     provider = CSVEquityProvider(symbol="AAPL", path=tmp_path / "absent.csv", namespace="test")
     assert provider.instrument == Equity("AAPL", "test")
-    Basket = basket_model(EquityMembers, NamedMap({"aapl": provider, "msft": provider}))
-    portfolio = portfolio_model(Basket)("symbolic")
+    Basket = EquityBasket.define(EquityMembers, NamedMap({"aapl": provider, "msft": provider}))
+    portfolio = NamedPortfolio.define(Basket)("symbolic")
     assert portfolio.basket.positions["aapl"].provider is provider
     assert portfolio.nav.free_symbols
     with pytest.raises(FileNotFoundError):

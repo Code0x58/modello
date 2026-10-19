@@ -10,18 +10,39 @@ from datetime import date
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
-from examples.portfolio.analytics import NamedPortfolioPath
 from examples.portfolio.models import AAPL, MSFT, EquityPosition, EquityPrices, USDCash
 from examples.portfolio.named import (
     Basket,
     EquityMembers,
     NamedMarketData,
     NamedPortfolio,
-    NamedPortfolioPricer,
-    portfolio_model,
 )
+from modello import component
 
-Portfolio = portfolio_model(Basket)
+
+class Portfolio(NamedPortfolio[EquityMembers]):
+    """A basket and cash valued in one joint symbolic model."""
+
+    basket = component(Basket)
+    cash = component(USDCash)
+    nav = basket.capital
+    nav = basket.market_value + cash.amount
+
+    @classmethod
+    def example(cls) -> Portfolio:
+        """Ten AAPL shares, twenty MSFT shares, and USD 100 cash."""
+        return cls(
+            "holdings",
+            basket=Basket(
+                "basket",
+                members=EquityMembers(
+                    "equities",
+                    aapl=EquityPosition("apple", quantity=10),
+                    msft=EquityPosition("microsoft", quantity=20),
+                ),
+            ),
+            cash=USDCash("cash", amount=100),
+        )
 
 
 @dataclass(frozen=True)
@@ -38,47 +59,23 @@ class MarketData:
         if self.aapl.close.times != self.msft.close.times:
             raise ValueError("Price histories must use the same observation dates")
 
+    def named(self) -> NamedMarketData:
+        """Expose the same observations on the portfolio's declared named domain."""
+        return NamedMarketData(self.aapl.close.times, NamedMap({"aapl": self.aapl, "msft": self.msft}))
 
-class PortfolioPricer:
-    """Compile a scalar model once, then evaluate its formulas over price vectors."""
-
-    def __init__(self, portfolio: NamedPortfolio[EquityMembers]) -> None:
-        """Freeze known holdings and cash into a reusable numerical calculation."""
-        self._pricer = NamedPortfolioPricer(portfolio)
-
-    def __call__(self, data: MarketData) -> NamedPortfolioPath[date]:
-        """Adapt the explicit tutorial fields to the shared named calculation."""
-        return self._pricer(NamedMarketData(data.aapl.close.times, NamedMap({"aapl": data.aapl, "msft": data.msft})))
-
-
-def example_portfolio() -> NamedPortfolio[EquityMembers]:
-    """Ten AAPL shares, twenty MSFT shares, and USD 100 cash."""
-    return Portfolio(
-        "holdings",
-        basket=Basket(
-            "basket",
-            members=EquityMembers(
-                "equities",
-                aapl=EquityPosition("apple", quantity=10),
-                msft=EquityPosition("microsoft", quantity=20),
-            ),
-        ),
-        cash=USDCash("cash", amount=100),
-    )
-
-
-def example_market_data() -> MarketData:
-    """Five synthetic, synchronized business-day observations, not market quotes."""
-    dates = tuple(date(2026, 1, day) for day in range(5, 10))
-    return MarketData(
-        aapl=EquityPrices(AAPL, Series(dates, (100, 102, 98, 104, 103))),
-        msft=EquityPrices(MSFT, Series(dates, (50, 49, 48, 52, 54))),
-    )
+    @classmethod
+    def example(cls) -> MarketData:
+        """Five synthetic, synchronized business-day observations, not market quotes."""
+        dates = tuple(date(2026, 1, day) for day in range(5, 10))
+        return cls(
+            aapl=EquityPrices(AAPL, Series(dates, (100, 102, 98, 104, 103))),
+            msft=EquityPrices(MSFT, Series(dates, (50, 49, 48, 52, 54))),
+        )
 
 
 def main() -> None:
     """Show valuation, attribution, and risk for the fixed example portfolio."""
-    path = PortfolioPricer(example_portfolio())(example_market_data())
+    path = Portfolio.example().pricer().over(MarketData.example().named())
     analytics = path.analytics(periods_per_year=252)
     print("Synthetic AAPL / MSFT portfolio, fixed shares and USD cash")
     print("Date          AAPL value  MSFT value       Cash        NAV")

@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 
 from examples.compute.named_map import NamedMap
-from examples.portfolio.execution import benchmark_executions
+from examples.portfolio.execution import ExecutionBenchmark
 from examples.portfolio.models import MSFT
 from examples.portfolio.sources import (
     Fill,
@@ -48,7 +48,7 @@ def test_execution_improvement_has_a_negative_cost_for_both_sides(scenario, mark
             fill_price,
             order_id=order.id,
         )
-        result = benchmark_executions(
+        result = ExecutionBenchmark.assess(
             NamedMap({order.id: order}), TransactionLog((fill,)), market, at=ASSESSMENT, max_price_age=AGE
         )[order.id]
         assert result.model_slippage_cost == pytest.approx(-2)
@@ -67,7 +67,7 @@ def test_unfilled_orders_and_late_publication_are_explicit(scenario, market):
         105,
         order_id=order.id,
     )
-    report = benchmark_executions(
+    report = ExecutionBenchmark.assess(
         NamedMap({order.id: order}), TransactionLog((fill,)), market, at=ASSESSMENT, max_price_age=AGE
     )[order.id]
     assert report.filled_quantity == 0
@@ -92,7 +92,7 @@ def test_order_fill_linkage_is_validated(scenario, market, change):
         order_id=order.id,
     )
     with pytest.raises(ValueError):
-        benchmark_executions(
+        ExecutionBenchmark.assess(
             NamedMap({order.id: order}),
             TransactionLog((replace(fill, **change),)),
             market,
@@ -104,11 +104,35 @@ def test_order_fill_linkage_is_validated(scenario, market, change):
 def test_market_benchmarks_are_independent_of_the_accounts_fill_prices(scenario, market):
     order = scenario.orders["rebalance-1:aapl"]
     fill = Fill("expensive", "research", ARRIVAL, ARRIVAL, "aapl", 1, 999, order_id=order.id)
-    result = benchmark_executions(
+    result = ExecutionBenchmark.assess(
         NamedMap({order.id: order}), TransactionLog((fill,)), market, at=ASSESSMENT, max_price_age=AGE
     )[order.id]
     assert result.market_vwap == scenario.execution[order.id].market_vwap
     assert result.execution_vwap == 999
     wrong = NamedMap({"aapl": replace(market["aapl"], equity=MSFT), "msft": market["msft"]})
     with pytest.raises(ValueError, match="instrument must match"):
-        benchmark_executions(NamedMap({order.id: order}), TransactionLog(()), wrong, at=ASSESSMENT, max_price_age=AGE)
+        ExecutionBenchmark.assess(
+            NamedMap({order.id: order}), TransactionLog(()), wrong, at=ASSESSMENT, max_price_age=AGE
+        )
+
+
+def test_execution_model_can_infer_fees_from_an_observed_shortfall():
+    from sympy import Rational
+
+    from examples.portfolio.execution import ExecutionCosts
+
+    known = dict(
+        quantity=7,
+        remaining=3,
+        side=1,
+        notional=Rational("735.6"),
+        model_price=104,
+        decision_price=104,
+        arrival_price=Rational("104.5"),
+        terminal_price=Rational("104.8"),
+    )
+    forward = ExecutionCosts("cost", **known, fees=1)
+    fitted = ExecutionCosts("fit", **known, implementation_shortfall=11)
+    assert forward.implementation_shortfall == 11
+    assert fitted.fees == 1
+    assert fitted.model_slippage_cost == forward.model_slippage_cost

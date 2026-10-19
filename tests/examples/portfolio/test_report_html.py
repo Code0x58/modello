@@ -10,19 +10,18 @@ import pytest
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
 from examples.portfolio.account import Account, AccountEngine
-from examples.portfolio.basket import basket_model
-from examples.portfolio.demo import performance_comparison
+from examples.portfolio.basket import EquityBasket
 from examples.portfolio.models import USDCash
-from examples.portfolio.named import portfolio_model
-from examples.portfolio.performance import PerformanceIndex, compare
+from examples.portfolio.named import NamedPortfolio
+from examples.portfolio.performance import PerformanceIndex
 from examples.portfolio.report_html import render_html, report_data
-from examples.portfolio.reporting import report
+from examples.portfolio.reporting import AccountReport
 from examples.portfolio.sources import Income, TransactionLog, timestamp
 from modello import Modello
 
 
-def test_report_html_and_json_preserve_values_and_escape_user_labels(reporting):
-    comparison = performance_comparison(reporting.path)
+def test_report_html_and_json_preserve_values_and_escape_user_labels(reporting, scenario):
+    comparison = scenario.comparison
     document = render_html(reporting, comparison)
     parser = HTMLParser()
     parser.feed(document)
@@ -49,14 +48,14 @@ def test_report_html_and_json_preserve_values_and_escape_user_labels(reporting):
         render_html(reporting, wrong)
 
 
-def test_utility_table_aligns_values_by_name(reporting):
+def test_utility_table_aligns_values_by_name(reporting, scenario):
     reordered = replace(
         reporting,
         utilities=reporting.utilities.map(
             lambda utility: replace(utility, values=NamedMap(reversed(tuple(utility.values.items()))))
         ),
     )
-    comparison = performance_comparison(reporting.path)
+    comparison = scenario.comparison
     assert render_html(reordered, comparison) == render_html(reporting, comparison)
 
 
@@ -68,13 +67,14 @@ def test_report_supports_longer_histories_and_supplied_benchmark_context():
         timestamp("2025-01-01T16:00:00Z"),
     )
     name = "Long <account> & research"
-    opening = portfolio_model(basket_model(CashMembers, NamedMap({})))("opening", cash=USDCash("cash", amount=100))
+    opening = NamedPortfolio.define(EquityBasket.define(CashMembers, NamedMap({})))(
+        "opening", cash=USDCash("cash", amount=100)
+    )
     engine = AccountEngine(Account(name, times[0], opening), NamedMap({}), max_price_age=timedelta(0))
     ledger = TransactionLog(tuple(Income(str(i), name, at, at, 10) for i, at in enumerate(times[1:])))
     path = engine.evaluate(ledger, times)
-    reporting = report(path, NamedMap({}), signals=NamedMap({}), utilities=NamedMap({}))
-    comparison = compare(
-        PerformanceIndex("Account after costs", path.unit_nav),
+    reporting = AccountReport.from_account(path, NamedMap({}), signals=NamedMap({}), utilities=NamedMap({}))
+    comparison = PerformanceIndex("Account after costs", path.unit_nav).compare(
         PerformanceIndex("Reference <index> & income", Series(times, (100, 103, 106, 109, 112))),
         risk_free=PerformanceIndex("Cash <reference>", Series(times, (100,) * 5)),
         periods_per_year=4,

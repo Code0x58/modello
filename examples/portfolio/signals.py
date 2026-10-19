@@ -4,13 +4,38 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import ClassVar, Protocol
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series, utc_time
 from examples.portfolio.account import AccountSnapshot
 from examples.portfolio.models import Equity
 from examples.portfolio.sources import finite
+from examples.symbolic import SymbolicModel
+from modello import InstanceDummy
+
+
+class Momentum(SymbolicModel):
+    opening_price = InstanceDummy("opening_price", positive=True)
+    closing_price = InstanceDummy("closing_price", positive=True)
+    signal = closing_price / opening_price - 1
+
+    inputs: ClassVar[tuple[str, ...]] = ("opening_price", "closing_price")
+    outputs: ClassVar[tuple[str, ...]] = ("signal",)
+
+
+class Rebalance(SymbolicModel):
+    """A target allocation and its signed order are views of the same equation."""
+
+    nav = InstanceDummy("nav", positive=True)
+    price = InstanceDummy("price", positive=True)
+    opening_quantity = InstanceDummy("opening_quantity", nonnegative=True)
+    target_weight = InstanceDummy("target_weight", nonnegative=True)
+    target_quantity = target_weight * nav / price
+    order_quantity = target_quantity - opening_quantity
+
+    inputs: ClassVar[tuple[str, ...]] = ("nav", "price", "opening_quantity", "target_weight")
+    outputs: ClassVar[tuple[str, ...]] = ("target_quantity", "order_quantity")
 
 
 class SignalSource(Protocol):
@@ -30,7 +55,9 @@ class MomentumSignals:
         def momentum(prices: Series[datetime]) -> Series[datetime]:
             earlier = prices.lag(self.lookback)
             current = Series(earlier.times, prices.values[self.lookback :])
-            return current.combine(earlier, lambda end, start: end / start - 1)
+            return Momentum.over(earlier.times, NamedMap({"opening_price": earlier, "closing_price": current}))[
+                "signal"
+            ]
 
         return self.prices.map(momentum)
 
@@ -48,17 +75,51 @@ class TargetWeights:
         if any(weight < 0 for weight in self.weights.values()) or sum(self.weights.values()) > 1 + 1e-12:
             raise ValueError("Target weights must be nonnegative and sum to at most one")
 
+    @classmethod
+    def from_signals(cls, signals: NamedMap[Series[datetime]], at: datetime, *, exposure: float = 0.8) -> TargetWeights:
+        """An illustrative equal-weight policy, leaving a cash reserve."""
+        finite(exposure)
+        if not 0 <= exposure <= 1:
+            raise ValueError("Exposure must be between zero and one")
+        active = signals.map(lambda signal: signal.asof(utc_time(at)) > 0)
+        count = sum(active.values())
+        return cls(at, active.map(lambda selected: exposure / count if selected else 0.0))
 
-def positive_signal_targets(
-    signals: NamedMap[Series[datetime]], at: datetime, *, exposure: float = 0.8
-) -> TargetWeights:
-    """An illustrative equal-weight policy, leaving a cash reserve."""
-    finite(exposure)
-    if not 0 <= exposure <= 1:
-        raise ValueError("Exposure must be between zero and one")
-    active = signals.map(lambda signal: signal.asof(utc_time(at)) > 0)
-    count = sum(active.values())
-    return TargetWeights(at, active.map(lambda selected: exposure / count if selected else 0.0))
+    def orders(
+        self,
+        snapshot: AccountSnapshot,
+        *,
+        batch: str,
+        arrival_at: datetime,
+    ) -> NamedMap[OrderIntent]:
+        """Translate targets to fractional-share intentions; submit no actual orders."""
+        if snapshot.at != self.at or snapshot.known_at > self.at:
+            raise ValueError("Use an account snapshot evaluated with knowledge at the decision time")
+        quantities = self.weights.combine(snapshot.quantities, lambda weight, held: (weight, held))
+        orders = []
+        for name, (weight, held) in quantities.items():
+            price = snapshot.prices[name]
+            quantity = Rebalance.plan().evaluate(
+                NamedMap({"nav": snapshot.nav, "price": price, "opening_quantity": held, "target_weight": weight})
+            )["order_quantity"]
+            if abs(quantity) > 1e-12:
+                order_id = f"{batch}:{name}"
+                orders.append(
+                    (
+                        order_id,
+                        OrderIntent(
+                            order_id,
+                            snapshot.account,
+                            name,
+                            snapshot.instruments[name],
+                            self.at,
+                            arrival_at,
+                            quantity,
+                            price,
+                        ),
+                    )
+                )
+        return NamedMap(orders)
 
 
 @dataclass(frozen=True)
@@ -82,38 +143,3 @@ class OrderIntent:
             raise ValueError("Orders need identities, nonzero shares, and a positive model price")
         if self.arrival_at < self.decision_at:
             raise ValueError("Order arrival must follow its decision")
-
-
-def rebalance_orders(
-    snapshot: AccountSnapshot,
-    targets: TargetWeights,
-    *,
-    batch: str,
-    arrival_at: datetime,
-) -> NamedMap[OrderIntent]:
-    """Translate targets to fractional-share intentions; submit no actual orders."""
-    if snapshot.at != targets.at or snapshot.known_at > targets.at:
-        raise ValueError("Use an account snapshot evaluated with knowledge at the decision time")
-    quantities = targets.weights.combine(snapshot.quantities, lambda weight, held: (weight, held))
-    orders = []
-    for name, (weight, held) in quantities.items():
-        price = snapshot.prices[name]
-        quantity = weight * snapshot.nav / price - held
-        if abs(quantity) > 1e-12:
-            order_id = f"{batch}:{name}"
-            orders.append(
-                (
-                    order_id,
-                    OrderIntent(
-                        order_id,
-                        snapshot.account,
-                        name,
-                        snapshot.instruments[name],
-                        targets.at,
-                        arrival_at,
-                        quantity,
-                        price,
-                    ),
-                )
-            )
-    return NamedMap(orders)

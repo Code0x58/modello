@@ -8,7 +8,7 @@ from statistics import mean, stdev
 import pytest
 
 from examples.compute.series import Series
-from examples.portfolio.performance import PerformanceIndex, compare, measure
+from examples.portfolio.performance import PerformanceIndex, measure
 
 
 def quarterly(values):
@@ -73,7 +73,7 @@ def test_index_comparison_normalizes_levels_and_distinguishes_return_spread_from
     portfolio = PerformanceIndex("Account", quarterly((200, 220, 209, 230, 242)))
     benchmark = PerformanceIndex("Total-return index", quarterly((1000, 1050, 1100, 1150, 1250)))
     cash = PerformanceIndex("Cash", quarterly((100, 100, 100, 100, 100)))
-    result = compare(portfolio, benchmark, risk_free=cash, periods_per_year=4)
+    result = portfolio.compare(benchmark, risk_free=cash, periods_per_year=4)
     assert result.normalized["portfolio"].values == pytest.approx((100, 110, 104.5, 115, 121))
     assert result.normalized["benchmark"].values == (100, 105, 110, 115, 125)
     assert result.return_difference == pytest.approx(-0.04)
@@ -82,12 +82,12 @@ def test_index_comparison_normalizes_levels_and_distinguishes_return_spread_from
     assert result.portfolio.cagr is not None
     assert result.benchmark.sharpe_ratio is not None
     with pytest.raises(ValueError, match="currency"):
-        compare(portfolio, replace(benchmark, currency="EUR"), risk_free=cash, periods_per_year=4)
+        portfolio.compare(replace(benchmark, currency="EUR"), risk_free=cash, periods_per_year=4)
     shifted = replace(
         benchmark, levels=Series(tuple(t + timedelta(days=1) for t in benchmark.levels.times), benchmark.levels.values)
     )
     with pytest.raises(ValueError, match="observation times"):
-        compare(portfolio, shifted, risk_free=cash, periods_per_year=4)
+        portfolio.compare(shifted, risk_free=cash, periods_per_year=4)
 
 
 @pytest.mark.parametrize("frequency", [0, -1, True, 2.5])

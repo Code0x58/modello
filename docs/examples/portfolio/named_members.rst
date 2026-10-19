@@ -64,8 +64,10 @@ Members are still declared as named, typed model components:
 and populated models. The adapter checks that every component belongs to the
 supplied common type.
 
-``basket_model(EquityMembers, providers)`` binds one ``EquityProvider`` request
-to each holding name and builds the basket's ordinary scalar equations. Its total is:
+The declared ``Basket`` binds an ``EquityProvider`` request to each holding
+name. Its reduction is an ordinary scalar equation. For definitions assembled
+from runtime configuration, ``EquityBasket.define(EquityMembers, providers)``
+builds the same composition. Its total is:
 
 .. code-block:: python
 
@@ -74,7 +76,7 @@ to each holding name and builds the basket's ordinary scalar equations. Its tota
        for position in component_members(members, EquityPosition).values()
    )
 
-``portfolio_model(Basket)`` places that basket beside cash and relates its
+``NamedPortfolio.define(Basket)`` places that basket beside cash and relates its
 capital base to account NAV:
 
 .. code-block:: python
@@ -109,20 +111,21 @@ The worked example adds Alphabet by extending the declaration:
    class ThreeEquities(EquityMembers):
        googl = component(EquityPosition)
 
-   providers = NamedMap({**EQUITY_PROVIDERS, "googl": DummyEquityProvider(symbol="GOOGL")})
-   ThreeEquityBasket = basket_model(ThreeEquities, providers)
-   Portfolio = portfolio_model(ThreeEquityBasket)
+   class ThreeEquityBasket(EquityBasket[ThreeEquities]):
+       members = component(ThreeEquities)
+       providers = NamedMap({**EQUITY_PROVIDERS, "googl": DummyEquityProvider(symbol="GOOGL")})
+       market_value = EquityBasket.total(members)
 
 Supply its holding and price vector under ``googl``. The same aggregate,
 valuation, weight, attribution, and risk calculations handle all three members:
 
 >>> from examples.portfolio.named import (
-...     NamedPortfolioPricer, example_named_market_data, example_named_portfolio,
+...     example_named_market_data, example_named_portfolio,
 ... )
 >>> holdings = example_named_portfolio()
 >>> tuple(holdings.positions), tuple(holdings.weights)
 (('aapl', 'msft', 'googl'), ('aapl', 'msft', 'googl'))
->>> path = NamedPortfolioPricer(holdings)(example_named_market_data())
+>>> path = holdings.pricer().over(example_named_market_data())
 >>> path.nav.values
 (3100.0, 3105.0, 3030.0, 3190.0, 3230.0)
 >>> tuple(path.weights)
@@ -166,7 +169,7 @@ exact-domain combination, and reduction. The position domain and observation
 axis remain separate. Market value is pointwise on both axes; returns shift the
 observation axis; covariance reduces time and introduces a second member axis.
 
-The basket factory expands the member reduction into ordinary scalar equations
+The basket definition expands the member reduction into ordinary scalar equations
 once per definition. NAV still supports inverse valuation through the joint
 solver. A new member declaration produces a new model and pricing plan. Adding
 holdings and data is then a binding task, rather than a rewrite of the formulas.

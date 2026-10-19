@@ -8,18 +8,24 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import cached_property
 from math import isclose
-from typing import Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 from sympy import Symbol
 
 from examples.compute.named_map import NamedMap
-from examples.compute.scalar_plan import ScalarPlan
 from examples.compute.series import Series, utc_time
 from examples.portfolio.analytics import NamedAnalytics, analyse
 from examples.portfolio.models import Equity
-from examples.portfolio.named import NamedPortfolio, valuation_outputs
+from examples.portfolio.named import NamedPortfolio
+from examples.portfolio.pnl import AccountPnL, InstrumentPnL, Profit
+from examples.portfolio.postings import CapitalFlow, FillPosting
 from examples.portfolio.sources import CashFlow, Fill, Income, PriceHistory, TransactionLog, finite
 from modello import Modello
+
+if TYPE_CHECKING:
+    from examples.portfolio.reporting import AccountReport, OrderAttribution
+    from examples.portfolio.signals import OrderIntent, TargetWeights
+    from examples.portfolio.utility import CashUtility
 
 _Members = TypeVar("_Members", bound=Modello)
 
@@ -36,6 +42,17 @@ class Account(Generic[_Members]):
         object.__setattr__(self, "opened_at", utc_time(self.opened_at))
         if not self.name:
             raise ValueError("An account needs a name")
+
+    def replay(
+        self,
+        ledger: TransactionLog,
+        times: tuple[datetime, ...],
+        *,
+        market: NamedMap[PriceHistory],
+        max_price_age: timedelta,
+    ) -> AccountPath:
+        """Replay an explicitly supplied ledger and market snapshot through the models."""
+        return AccountEngine(self, market, max_price_age=max_price_age).evaluate(ledger, times)
 
 
 @dataclass(frozen=True)
@@ -61,6 +78,10 @@ class AccountSnapshot:
     def unit_nav(self) -> float:
         return self.nav / self.units
 
+    def rebalance(self, targets: TargetWeights, *, batch: str, arrival_at: datetime) -> NamedMap[OrderIntent]:
+        """Solve the target-allocation model using this decision-time account view."""
+        return targets.orders(self, batch=batch, arrival_at=arrival_at)
+
 
 @dataclass(frozen=True)
 class PositionHistory:
@@ -83,15 +104,30 @@ class PnL:
     external_flows: Series[datetime]
 
     @cached_property
-    def total(self) -> Series[datetime]:
-        values = tuple(
-            sum(series.values[i] for series in self.holding.values())
-            + sum(series.values[i] for series in self.trading.values())
-            + self.income.values[i]
-            - self.fees.values[i]
-            for i in range(len(self.income.values))
+    def totals(self) -> NamedMap[Series[datetime]]:
+        times = self.income.times
+        total = Profit.over(
+            times,
+            NamedMap(
+                {
+                    "holding": Series(
+                        times,
+                        tuple(sum(series.values[i] for series in self.holding.values()) for i in range(len(times))),
+                    ),
+                    "trading": Series(
+                        times,
+                        tuple(sum(series.values[i] for series in self.trading.values()) for i in range(len(times))),
+                    ),
+                    "income": self.income,
+                    "fees": self.fees,
+                }
+            ),
         )
-        return Series(self.income.times, values)
+        return total
+
+    @property
+    def total(self) -> Series[datetime]:
+        return self.totals["net"]
 
 
 @dataclass(frozen=True)
@@ -138,43 +174,65 @@ class AccountPath:
     def pnl(self) -> PnL:
         times = self.nav.times
         positions = self.positions
-        holding = positions.map(
-            lambda position: position.quantity.lag().combine(
-                position.price.differences(), lambda quantity, change: quantity * change
-            )
-        )
-        trading = {name: [0.0] * (len(times) - 1) for name in positions}
-        income = [0.0] * (len(times) - 1)
-        fees = [0.0] * (len(times) - 1)
-        flows = [0.0] * (len(times) - 1)
+        axis = times[1:]
+        fill_quantities = {name: [0.0] * len(axis) for name in positions}
+        notionals = {name: [0.0] * len(axis) for name in positions}
+        income, fees, flows = ([0.0] * len(axis) for _ in range(3))
         for event in self.ledger.events:
             index = bisect_left(times, event.at) - 1
             if isinstance(event, Fill):
-                trading[event.member][index] += event.quantity * (
-                    positions[event.member].price.values[index + 1] - event.price
-                )
+                fill_quantities[event.member][index] += event.quantity
+                notionals[event.member][index] += event.quantity * event.price
                 fees[index] += event.fee
             elif isinstance(event, CashFlow):
                 flows[index] += event.amount
             else:
                 income[index] += event.amount
+        zero = Series(axis, (0.0,) * len(axis))
+        reports = NamedMap(
+            (
+                name,
+                InstrumentPnL.over(
+                    axis,
+                    NamedMap(
+                        {
+                            "opening_quantity": position.quantity.lag(),
+                            "opening_price": position.price.lag(),
+                            "closing_price": Series(axis, position.price.values[1:]),
+                            "fill_quantity": Series(axis, tuple(fill_quantities[name])),
+                            "fill_notional": Series(axis, tuple(notionals[name])),
+                            "income": zero,
+                            "fees": zero,
+                        }
+                    ),
+                ),
+            )
+            for name, position in positions.items()
+        )
         return PnL(
-            holding,
-            NamedMap((name, Series(times[1:], tuple(values))) for name, values in trading.items()),
-            Series(times[1:], tuple(income)),
-            Series(times[1:], tuple(fees)),
-            Series(times[1:], tuple(flows)),
+            reports.map(lambda report: report["holding"]),
+            reports.map(lambda report: report["trading"]),
+            Series(axis, tuple(income)),
+            Series(axis, tuple(fees)),
+            Series(axis, tuple(flows)),
         )
 
     @cached_property
     def reconciliation(self) -> Series[datetime]:
         """NAV change minus investment P&L and external flows, ideally zero."""
         pnl = self.pnl
-        return (
-            self.nav.differences()
-            .combine(pnl.total, lambda change, profit: change - profit)
-            .combine(pnl.external_flows, lambda a, b: a - b)
-        )
+        times = self.nav.times[1:]
+        return AccountPnL.over(
+            times,
+            NamedMap(
+                {
+                    "opening_nav": self.nav.lag(),
+                    "closing_nav": Series(times, self.nav.values[1:]),
+                    **{name: pnl.totals[name] for name in ("holding", "trading", "income", "fees")},
+                    "external_flows": pnl.external_flows,
+                }
+            ),
+        )["residual"]
 
     def analytics(
         self, *, periods_per_year: int, risk_free: Series[datetime] | None = None
@@ -186,6 +244,18 @@ class AccountPath:
             periods_per_year=periods_per_year,
             risk_free=risk_free,
         )
+
+    def report(
+        self,
+        attributions: NamedMap[OrderAttribution],
+        *,
+        signals: NamedMap[NamedMap[Series[datetime]]],
+        utilities: NamedMap[CashUtility],
+    ) -> AccountReport:
+        """Add symbolic reporting and an explicit signal-attribution convention."""
+        from examples.portfolio.reporting import AccountReport
+
+        return AccountReport.from_account(self, attributions, signals=signals, utilities=utilities)
 
 
 class AccountEngine:
@@ -221,15 +291,7 @@ class AccountEngine:
             raise ValueError("Specify all opening quantities and cash") from error
         finite(*self._opening_quantities.values(), self._opening_cash)
         self._check_balances(dict(self._opening_quantities), self._opening_cash)
-        template = type(account.opening)("valuation")
-        inputs = NamedMap(
-            [
-                *((f"price:{name}", position.price) for name, position in template.positions.items()),
-                *((f"quantity:{name}", position.quantity) for name, position in template.positions.items()),
-                ("cash", template.cash.amount),
-            ]
-        )
-        self._plan = ScalarPlan(inputs, valuation_outputs(template))
+        self._plan = type(account.opening).plan()
 
     @staticmethod
     def _check_balances(quantities: dict[str, float], cash: float) -> None:
@@ -269,13 +331,32 @@ class AccountEngine:
                 event = events[cursor]
                 if isinstance(event, CashFlow):
                     _, before = self._value(event.at, NamedMap(quantities), cash)
-                    units += event.amount / (before["nav"] / units)
-                    cash += event.amount
+                    changed = CapitalFlow.plan().evaluate(
+                        NamedMap(
+                            {
+                                "opening_cash": cash,
+                                "opening_nav": before["nav"],
+                                "opening_units": units,
+                                "amount": event.amount,
+                            }
+                        )
+                    )
+                    cash, units = changed["closing_cash"], changed["closing_units"]
                 elif isinstance(event, Fill):
                     if event.member not in quantities:
                         raise ValueError(f"Unknown transaction member {event.member!r}")
-                    quantities[event.member] += event.quantity
-                    cash -= event.quantity * event.price + event.fee
+                    changed = FillPosting.plan().evaluate(
+                        NamedMap(
+                            {
+                                "opening_quantity": quantities[event.member],
+                                "opening_cash": cash,
+                                "quantity": event.quantity,
+                                "price": event.price,
+                                "fee": event.fee,
+                            }
+                        )
+                    )
+                    quantities[event.member], cash = changed["closing_quantity"], changed["closing_cash"]
                 elif isinstance(event, Income):
                     if event.member is not None and event.member not in quantities:
                         raise ValueError(f"Unknown income member {event.member!r}")
