@@ -79,10 +79,10 @@ def test_sample_statistics_and_covariance_matrix():
     returns = path.nav.simple_returns().values
     sample_mean = sum(returns) / len(returns)
     sample_variance = sum((value - sample_mean) ** 2 for value in returns) / (len(returns) - 1)
-    assert analytics.total_return == pytest.approx(11 / 210)
-    assert analytics.mean_period_return == pytest.approx(sample_mean)
-    assert analytics.annualized_volatility == pytest.approx(sqrt(252 * sample_variance))
-    assert analytics.maximum_drawdown == pytest.approx(1 / 35)
+    assert analytics.performance.total_return == pytest.approx(11 / 210)
+    assert analytics.performance.mean_period_return == pytest.approx(sample_mean)
+    assert analytics.performance.annualized_volatility == pytest.approx(sqrt(252 * sample_variance))
+    assert analytics.performance.maximum_drawdown == pytest.approx(1 / 35)
     observations = ImmutableMatrix.hstack(
         path.positions["aapl"].returns.as_vector(), path.positions["msft"].returns.as_vector()
     )
@@ -121,9 +121,11 @@ def test_euler_contributions_and_reference_weights_risk():
     )
     assert risk.cash_contribution == 0
     assert risk.contributions["aapl"] + risk.contributions["msft"] == pytest.approx(risk.volatility)
-    assert risk.volatility != pytest.approx(analytics.annualized_volatility)
+    assert risk.volatility != pytest.approx(analytics.performance.annualized_volatility)
     monthly = path.analytics(periods_per_year=12)
-    assert monthly.annualized_volatility == pytest.approx(analytics.annualized_volatility * sqrt(12 / 252))
+    assert monthly.performance.annualized_volatility == pytest.approx(
+        analytics.performance.annualized_volatility * sqrt(12 / 252)
+    )
 
 
 def test_cash_only_portfolio_and_zero_risk():
@@ -138,7 +140,12 @@ def test_cash_only_portfolio_and_zero_risk():
     result = path.analytics(periods_per_year=252)
     assert path.nav.values == (100,) * 5
     assert path.cash_weight.values == (1,) * 5
-    assert result.total_return == result.annualized_volatility == result.maximum_drawdown == 0
+    assert (
+        result.performance.total_return
+        == result.performance.annualized_volatility
+        == result.performance.maximum_drawdown
+        == 0
+    )
     assert result.latest_weights_risk.volatility == 0
     assert result.latest_weights_risk.contributions["aapl"] == result.latest_weights_risk.contributions["msft"] == 0
 
@@ -160,7 +167,7 @@ def test_opposite_asset_returns_diversify_reference_weights_risk():
     result = path.analytics(periods_per_year=252)
     assert result.annualized_covariance["aapl"]["msft"] < 0
     assert result.latest_weights_risk.volatility == pytest.approx(0, abs=1e-12)
-    assert result.annualized_volatility > 0
+    assert result.performance.annualized_volatility > 0
     assert path.nav.values == (200, 200, 198)
 
 

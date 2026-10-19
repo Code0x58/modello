@@ -165,9 +165,9 @@ def main() -> None:
             f"  {path.positions['msft'].value.values[index]:10.2f}"
             f"  {path.cash_value.values[index]:9.2f}  {path.nav.values[index]:9.2f}"
         )
-    print(f"Total price return: {analytics.total_return:.4%}")
-    print(f"Maximum drawdown: {analytics.maximum_drawdown:.4%}")
-    print(f"Observed-path annualized volatility: {analytics.annualized_volatility:.4%}")
+    print(f"Total price return: {analytics.performance.total_return:.4%}")
+    print(f"Maximum drawdown: {analytics.performance.maximum_drawdown:.4%}")
+    print(f"Observed-path annualized volatility: {analytics.performance.annualized_volatility:.4%}")
     print(f"Latest-weights annualized volatility: {analytics.latest_weights_risk.volatility:.4%}")
     print(
         "Latest-weights volatility contributions: "

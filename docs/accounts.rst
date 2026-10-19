@@ -13,9 +13,10 @@ Run the scenario from a checkout:
    $ uv run --locked python -m examples.account_demo
    $ uv run --locked python -m examples.account_demo --json /tmp/account-report.json
 
-All observations are synthetic. The two source files are independent:
+All observations are synthetic. The source files are independent:
 ``examples/data/portfolio/market.csv`` contains market trade prints, while
-``transactions.csv`` contains broker/account postings. Change the adapters to
+``transactions.csv`` contains broker/account postings, and ``benchmark.csv``
+contains an illustrative broad-market total-return index. Change the adapters to
 use another source; the computations consume typed observations and events.
 
 Follow the layers
@@ -145,7 +146,7 @@ in the `GIPS calculation methodology
 <https://www.gipsstandards.org/wp-content/uploads/2021/03/calculation_methodology_gs_2006.pdf>`_.
 Dividend and interest income remain part of investment return.
 
->>> round(path.analytics(periods_per_year=252).total_return * 100, 4)
+>>> round(path.analytics(periods_per_year=252).performance.total_return * 100, 4)
 2.4518
 
 The account gained USD 566.90 in total value, consisting of USD 500 external
@@ -153,11 +154,94 @@ capital and USD 66.90 investment P&L. Dividing the NAV change by opening NAV
 would include the deposit in performance. The unitized return instead links the
 return before the deposit with the return afterwards.
 
-Shared analytics use this index for return, volatility, and drawdown. The
-separate latest-weight risk estimate uses equity **price-return** covariance.
-Choose a regular valuation schedule and its periods per year when annualizing;
-an event grid's intervals need not have equal duration. The example does not
-infer a trading calendar from transaction timestamps.
+.. _account-performance:
+
+Compare performance on the same basis
+--------------------------------------
+
+The account covers **5–8 January 2026: three calendar days and three daily
+returns**. It demonstrates account mechanics, rather than evidence of an
+investment strategy. The command-line and JSON reports show this window
+alongside an independent synthetic index:
+
+>>> from examples.account_demo import performance_comparison
+>>> comparison = performance_comparison(path)
+>>> round(comparison.portfolio.total_return * 100, 4)
+2.4518
+>>> round(comparison.benchmark.total_return * 100, 4)
+3.0
+>>> round(comparison.return_difference * 100, 4)
+-0.5482
+>>> comparison.portfolio.cagr, comparison.portfolio.sharpe_ratio
+(None, None)
+
+The account trails this illustrative index by **0.5482 percentage points**.
+Both inputs are synthetic; the index is not a measured market return. Its
+levels are supplied separately from the account and are never signal inputs.
+The account includes booked fees and income; the index represents total return
+before investor trading costs. For a real comparison, supply a suitable
+total-return benchmark in the account's currency over the same period.
+
+``PerformanceIndex`` names a typed series and its reporting currency.
+``compare(account, benchmark, risk_free=cash, periods_per_year=252)`` requires
+matching currencies and observation times. It returns both paths rebased to
+100, period-by-period active returns, the difference in cumulative returns,
+and relative wealth return ``account_growth / benchmark_growth - 1``. The last
+two quantities have different denominators and are labelled separately.
+``CSVIndexSource`` loads ``at,level`` observations for a reporting schedule;
+choose any sampling or missing-data policy explicitly before comparison.
+
+``measure`` is the shared calculation for account and benchmark statistics:
+
+* **Total return** is ending index divided by starting index, minus one. Use
+  ``path.unit_nav`` to remove external capital from account performance.
+* **CAGR** is ``growth ** (365.25 / elapsed_calendar_days) - 1``. Its year basis
+  is elapsed calendar time (ACT/365.25), independent of the sampling frequency.
+* **Annualized Sharpe** is the mean interval excess return divided by its sample
+  standard deviation, multiplied by ``sqrt(periods_per_year)``. Excess returns
+  subtract the explicitly supplied risk-free index's interval returns. The
+  demo labels its zero-return USD cash assumption. Omitting cash or having zero
+  excess-return variance gives an unavailable Sharpe, rather than infinity.
+* **Volatility** uses sample return variance, scaled by the supplied annual
+  frequency. **Maximum drawdown** is the largest observed decline from a prior
+  index peak; declines between observations are not measured.
+
+For presentation, CAGR and annualized Sharpe are withheld until a full calendar
+year is available. Short-period returns are kept unannualized, consistent with
+the `GIPS guidance on periods below one year
+<https://www.gipsstandards.org/standards/gips-standards-for-firms/gips-standards-handbook-for-firms/>`_.
+Applying the same display threshold to Sharpe is this example's policy; one year
+alone does not establish a reliable estimate. A zero observed drawdown across
+three rising marks likewise says little about downside risk.
+
+Longer histories exercise the same calculation. Here a quarterly total-return
+index is measured against a quarterly cash index:
+
+>>> from datetime import date
+>>> from examples.performance import measure
+>>> from examples.series import Series
+>>> times = (date(2024, 1, 1), date(2024, 4, 1), date(2024, 7, 1), date(2024, 10, 1), date(2025, 1, 1))
+>>> levels = Series(times, (100, 110, 104.5, 112.86, 115.1172))
+>>> cash = Series(times, (100, 101, 102.01, 103.0301, 104.060401))
+>>> performance = measure(levels, periods_per_year=4, risk_free=cash)
+>>> round(performance.cagr * 100, 4)
+15.084
+>>> round(performance.sharpe_ratio, 4)
+0.8146
+
+Choose a regular valuation schedule and its periods per year for risk and
+Sharpe. An event grid's intervals need not have equal duration; the example
+does not infer a trading calendar from transaction timestamps. Square-root
+annualization assumes uncorrelated interval excess returns, as discussed in
+`William Sharpe's original explanation
+<https://web.stanford.edu/~wfsharpe/art/sr/sr.htm>`_. These estimates do not account
+for serial dependence, selection bias, or the uncertainty from a small sample.
+
+``path.analytics(...).performance`` uses the same ``measure`` function. Its
+separate latest-weight risk estimate uses equity **price-return** covariance;
+it describes current exposures, rather than historical strategy performance.
+Immutable account paths reuse their position, unit-NAV, and P&L projections
+when several reporting layers access them.
 
 Read executions as series and benchmark model slippage
 ------------------------------------------------------

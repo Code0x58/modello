@@ -61,7 +61,7 @@ def test_named_calculation_reproduces_original_portfolio():
     result = actual.analytics(periods_per_year=252)
     expected = reference.analytics(periods_per_year=252)
     for attr in ("total_return", "mean_period_return", "annualized_volatility", "maximum_drawdown"):
-        assert getattr(result, attr) == pytest.approx(getattr(expected, attr))
+        assert getattr(result.performance, attr) == pytest.approx(getattr(expected.performance, attr))
     cov = result.annualized_covariance
     assert cov["aapl"]["msft"] == pytest.approx(expected.annualized_covariance["aapl"]["msft"])
     risk = result.latest_weights_risk
@@ -134,7 +134,12 @@ def test_empty_equity_domain_is_a_cash_portfolio():
     assert path.cash_weight.values == (1,) * len(dates)
     result = path.analytics(periods_per_year=252)
     assert result.annualized_covariance == result.latest_weights_risk.contributions == {}
-    assert result.total_return == result.annualized_volatility == result.latest_weights_risk.volatility == 0
+    assert (
+        result.performance.total_return
+        == result.performance.annualized_volatility
+        == result.latest_weights_risk.volatility
+        == 0
+    )
 
 
 @pytest.mark.parametrize("names", [("aapl", "msft"), ("aapl", "msft", "googl", "extra")])

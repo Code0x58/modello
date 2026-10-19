@@ -109,7 +109,7 @@ valuation, weight, attribution, and risk calculations handle all three members:
 >>> tuple(path.weights)
 ('aapl', 'msft', 'googl')
 >>> result = path.analytics(periods_per_year=252)
->>> round(result.total_return * 100, 4)
+>>> round(result.performance.total_return * 100, 4)
 4.1935
 >>> round(result.latest_weights_risk.volatility * 100, 4)
 51.483

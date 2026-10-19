@@ -12,10 +12,18 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from examples.account import Account, AccountEngine, AccountPath, AccountSnapshot
-from examples.account_sources import CSVMarketSource, CSVTransactionSource, MarketSource, TransactionSource, timestamp
+from examples.account_sources import (
+    CSVIndexSource,
+    CSVMarketSource,
+    CSVTransactionSource,
+    MarketSource,
+    TransactionSource,
+    timestamp,
+)
 from examples.execution import ExecutionBenchmark, benchmark_executions
 from examples.named_members import NamedMap
 from examples.named_portfolio import EquityMembers, portfolio_model
+from examples.performance import Comparison, PerformanceIndex, compare
 from examples.portfolio import AAPL, MSFT, ApplePosition, Equity, MicrosoftPosition, USDCash
 from examples.series import Series
 from examples.signals import MomentumSignals, OrderIntent, TargetWeights, positive_signal_targets, rebalance_orders
@@ -66,12 +74,28 @@ def example_run() -> ResearchRun:
     )
 
 
+def performance_comparison(path: AccountPath) -> Comparison[datetime]:
+    """Compare the toy account with a separate synthetic total-return index."""
+    directory = Path(__file__).with_name("data") / "portfolio"
+    return compare(
+        PerformanceIndex("Synthetic account, net of booked fees, including income", path.unit_nav),
+        PerformanceIndex(
+            "Synthetic broad-market total-return index", CSVIndexSource(directory / "benchmark.csv").load()
+        ),
+        risk_free=PerformanceIndex(
+            "Zero-return USD cash (illustrative assumption)", path.unit_nav.map(lambda _: 100.0)
+        ),
+        periods_per_year=252,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", type=Path, help="Write the account and benchmark layers to a JSON report")
     arguments = parser.parse_args()
     result = example_run()
     path = result.account
+    comparison = performance_comparison(path)
     print("Synthetic USD account; external market prints and transaction log")
     print("Time                             AAPL shares  MSFT shares      Cash        NAV   Unit NAV")
     for snapshot in path.snapshots:
@@ -80,7 +104,22 @@ def main() -> None:
             f"  {snapshot.cash:8.2f}  {snapshot.nav:9.2f}  {snapshot.unit_nav:9.4f}"
         )
     print("Targets:", dict(result.targets.weights))
-    print("Time-weighted price-and-income return:", f"{path.analytics(periods_per_year=252).total_return:.4%}")
+    performance = comparison.portfolio
+    print(
+        f"Measurement: {performance.start.isoformat()} to {performance.end.isoformat()}; "
+        f"{performance.elapsed_days:g} calendar days, {performance.return_count} daily returns"
+    )
+    print("Time-weighted price-and-income return (net of booked fees):", f"{performance.total_return:.4%}")
+    print(f"{comparison.benchmark_name}: {comparison.benchmark.total_return:.4%}")
+    print(f"Account minus index: {comparison.return_difference * 100:+.4f} percentage points")
+    print(f"Relative wealth return: {comparison.relative_return:+.4%}")
+    print(
+        f"Observed maximum drawdown: account {performance.maximum_drawdown:.4%}, "
+        f"index {comparison.benchmark.maximum_drawdown:.4%}"
+    )
+    print("CAGR and annualized Sharpe: N/A — history shorter than one year")
+    print("Sharpe reference:", comparison.risk_free_name)
+    print("Three synthetic daily returns demonstrate the plumbing; they do not establish investment performance.")
     print("P&L:", path.pnl.total.values, "External capital:", path.pnl.external_flows.values)
     print("NAV reconciliation residuals:", path.reconciliation.values)
     for order_id, report in result.execution.items():
@@ -91,6 +130,23 @@ def main() -> None:
         )
     if arguments.json:
         payload = {
+            "performance": {
+                "portfolio_name": comparison.portfolio_name,
+                "benchmark_name": comparison.benchmark_name,
+                "risk_free_name": comparison.risk_free_name,
+                "currency": comparison.currency,
+                "periods_per_year": comparison.periods_per_year,
+                "portfolio": asdict(comparison.portfolio),
+                "benchmark": asdict(comparison.benchmark),
+                "return_difference": comparison.return_difference,
+                "relative_return": comparison.relative_return,
+                "normalized": {name: asdict(series) for name, series in comparison.normalized.items()},
+                "active_returns": asdict(comparison.active_returns),
+                "context": "Synthetic observations; three daily returns do not establish investment performance.",
+                "annualization_policy": "CAGR and annualized Sharpe require at least one full calendar year.",
+                "cagr_basis": "Elapsed calendar time, ACT/365.25",
+                "sharpe_basis": "Mean excess simple return / sample excess-return deviation * sqrt(periods_per_year)",
+            },
             "snapshots": [asdict_snapshot(snapshot) for snapshot in path.snapshots],
             "targets": dict(result.targets.weights),
             "signals": {

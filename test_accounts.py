@@ -79,7 +79,7 @@ def test_account_balances_pnl_and_time_weighted_returns(scenario):
     assert path.reconciliation.values == pytest.approx((0, 0, 0), abs=1e-10)
     # Independent geometric linking before and after the external deposit.
     expected_return = (2532.9 / 2500) * (3066.9 / 3032.9) - 1
-    assert path.analytics(periods_per_year=252).total_return == pytest.approx(expected_return)
+    assert path.analytics(periods_per_year=252).performance.total_return == pytest.approx(expected_return)
     assert path.unit_nav.values[-1] == pytest.approx((1 + expected_return) * 100)
     assert expected_return != pytest.approx(3066.9 / 2500 - 1)
     final = path.snapshots[-1]
@@ -110,7 +110,7 @@ def test_empty_equity_account_flows_are_not_investment_returns():
     path = engine.evaluate(ledger, TIMES)
     assert path.nav.values == (100, 300, 150, 150)
     assert path.unit_nav.values == (100,) * 4
-    assert path.analytics(periods_per_year=252).total_return == 0
+    assert path.analytics(periods_per_year=252).performance.total_return == 0
     assert path.positions == {}
 
 

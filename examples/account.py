@@ -6,6 +6,7 @@ from bisect import bisect_left
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import cached_property
 from math import isclose
 from typing import Generic, TypeVar
 
@@ -81,7 +82,7 @@ class PnL:
     fees: Series[datetime]
     external_flows: Series[datetime]
 
-    @property
+    @cached_property
     def total(self) -> Series[datetime]:
         values = tuple(
             sum(series.values[i] for series in self.holding.values())
@@ -105,20 +106,20 @@ class AccountPath:
             tuple(snapshot.at for snapshot in self.snapshots), tuple(project(snapshot) for snapshot in self.snapshots)
         )
 
-    @property
+    @cached_property
     def nav(self) -> Series[datetime]:
         return self.series(lambda snapshot: snapshot.nav)
 
-    @property
+    @cached_property
     def unit_nav(self) -> Series[datetime]:
         """A performance index that issues or redeems units for external flows."""
         return self.series(lambda snapshot: snapshot.unit_nav)
 
-    @property
+    @cached_property
     def cash(self) -> Series[datetime]:
         return self.series(lambda snapshot: snapshot.cash)
 
-    @property
+    @cached_property
     def positions(self) -> NamedMap[PositionHistory]:
         return NamedMap(
             (
@@ -133,7 +134,7 @@ class AccountPath:
             for name in self.snapshots[0].quantities
         )
 
-    @property
+    @cached_property
     def pnl(self) -> PnL:
         times = self.nav.times
         positions = self.positions
@@ -166,7 +167,7 @@ class AccountPath:
             Series(times[1:], tuple(flows)),
         )
 
-    @property
+    @cached_property
     def reconciliation(self) -> Series[datetime]:
         """NAV change minus investment P&L and external flows, ideally zero."""
         nav = self.nav
@@ -176,12 +177,15 @@ class AccountPath:
             pnl.external_flows, lambda a, b: a - b
         )
 
-    def analytics(self, *, periods_per_year: int) -> NamedAnalytics:
+    def analytics(
+        self, *, periods_per_year: int, risk_free: Series[datetime] | None = None
+    ) -> NamedAnalytics[datetime]:
         return analyse(
             self.unit_nav,
             self.positions.map(lambda position: position.price.simple_returns()),
             self.snapshots[-1].weights,
             periods_per_year=periods_per_year,
+            risk_free=risk_free,
         )
 
 

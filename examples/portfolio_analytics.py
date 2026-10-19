@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import sqrt
-from statistics import covariance, mean, variance
+from statistics import covariance, variance
 from typing import Generic
 
 from examples.named_members import NamedMap
+from examples.performance import Performance, measure
 from examples.series import Series, Time
 
 
@@ -31,13 +32,10 @@ class NamedRisk:
 
 
 @dataclass(frozen=True)
-class NamedAnalytics:
+class NamedAnalytics(Generic[Time]):
     """Path statistics and covariance indexed by two member-name axes."""
 
-    total_return: float
-    mean_period_return: float
-    annualized_volatility: float
-    maximum_drawdown: float
+    performance: Performance[Time]
     annualized_covariance: NamedMap[NamedMap[float]]
     latest_weights_risk: NamedRisk
 
@@ -61,13 +59,14 @@ class NamedPortfolioPath(Generic[Time]):
         """Expose weight vectors using the same position names."""
         return self.positions.map(lambda position: position.weight)
 
-    def analytics(self, *, periods_per_year: int) -> NamedAnalytics:
+    def analytics(self, *, periods_per_year: int, risk_free: Series[Time] | None = None) -> NamedAnalytics[Time]:
         """Use the shared path statistics and fixed-reference-weight risk estimate."""
         return analyse(
             self.nav,
             self.positions.map(lambda position: position.returns),
             self.weights.map(lambda series: series.values[-1]),
             periods_per_year=periods_per_year,
+            risk_free=risk_free,
         )
 
 
@@ -77,13 +76,11 @@ def analyse(
     latest_weights: NamedMap[float],
     *,
     periods_per_year: int,
-) -> NamedAnalytics:
+    risk_free: Series[Time] | None = None,
+) -> NamedAnalytics[Time]:
     """Measure index returns and separate reference-weight asset risk."""
-    if isinstance(periods_per_year, bool) or not isinstance(periods_per_year, int) or periods_per_year <= 0:
-        raise ValueError("periods_per_year must be a positive integer")
+    performance = measure(index, periods_per_year=periods_per_year, risk_free=risk_free)
     returns = index.simple_returns()
-    if len(returns.values) < 2:
-        raise ValueError("Sample risk estimates need at least three price observations")
     if any(series.times != returns.times for series in asset_returns.values()):
         raise ValueError("Asset returns must match the performance return axis")
     weighted = latest_weights.combine(asset_returns, lambda weight, series: series.map(lambda value: weight * value))
@@ -100,10 +97,7 @@ def analyse(
         ),
     )
     return NamedAnalytics(
-        index.values[-1] / index.values[0] - 1,
-        mean(returns.values),
-        sqrt(variance(returns.values) * periods_per_year),
-        -min(index.drawdowns().values),
+        performance,
         cov,
         NamedRisk(volatility, contributions),
     )

@@ -224,7 +224,7 @@ def main() -> None:
     print("NAV:", path.nav.values)
     print("Latest equity weights:", dict(path.weights.map(lambda series: series.values[-1])))
     print("Latest cash weight:", path.cash_weight.values[-1])
-    print("Total price return:", f"{result.total_return:.4%}")
+    print("Total price return:", f"{result.performance.total_return:.4%}")
     print("Latest-weights volatility:", f"{result.latest_weights_risk.volatility:.4%}")
     print("Volatility contributions:", dict(result.latest_weights_risk.contributions))
 

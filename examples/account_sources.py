@@ -225,6 +225,17 @@ def csv_rows(path: Path, fields: set[str]) -> list[dict[str, str]]:
 
 
 @dataclass(frozen=True)
+class CSVIndexSource:
+    """Load a total-return index already aligned to a reporting schedule."""
+
+    path: Path
+
+    def load(self) -> Series[datetime]:
+        rows = csv_rows(self.path, {"at", "level"})
+        return Series(tuple(timestamp(row["at"]) for row in rows), tuple(float(row["level"]) for row in rows))
+
+
+@dataclass(frozen=True)
 class CSVMarketSource:
     """Adapt trade-print CSV data to the declared instrument names."""
 

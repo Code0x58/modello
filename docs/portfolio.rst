@@ -106,20 +106,25 @@ the value path; using final weights throughout would describe a different
 allocation.
 
 >>> result = path.analytics(periods_per_year=252)
->>> round(result.total_return * 100, 4)
+>>> round(result.performance.total_return * 100, 4)
 5.2381
->>> round(result.maximum_drawdown * 100, 4)
+>>> round(result.performance.maximum_drawdown * 100, 4)
 2.8571
->>> round(result.annualized_volatility * 100, 4)
+>>> round(result.performance.annualized_volatility * 100, 4)
 64.7513
 
-``annualized_volatility`` measures the observed buy-and-hold return path.
+``performance.annualized_volatility`` measures the observed buy-and-hold return path.
 ``annualized_covariance`` is a named map of sample equity-return covariance rows,
 indexed as ``result.annualized_covariance["aapl"]["msft"]`` and using ``n - 1``
 degrees of freedom. Variance is multiplied by the
 caller-supplied observations per year. Observations should be evenly spaced in
 that trading calendar; irregular data needs resampling before annualizing. This
 scaling assumes comparable, uncorrelated periods.
+
+These five synthetic observations provide four daily returns. For CAGR, Sharpe,
+and a comparison with an independently supplied total-return index, see
+:ref:`the account performance example <account-performance>`. It uses the same
+statistics and makes the short measurement window visible in its report.
 
 ``latest_weights_risk`` asks a separate question: what volatility does that same
 sample covariance imply for the portfolio's latest weights held fixed? For
