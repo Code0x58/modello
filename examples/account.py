@@ -140,8 +140,7 @@ class AccountPath:
         positions = self.positions
         holding = positions.map(
             lambda position: position.quantity.lag().combine(
-                Series(times[1:], tuple(b - a for a, b in zip(position.price.values, position.price.values[1:]))),
-                lambda quantity, change: quantity * change,
+                position.price.differences(), lambda quantity, change: quantity * change
             )
         )
         trading = {name: [0.0] * (len(times) - 1) for name in positions}
@@ -170,11 +169,11 @@ class AccountPath:
     @cached_property
     def reconciliation(self) -> Series[datetime]:
         """NAV change minus investment P&L and external flows, ideally zero."""
-        nav = self.nav
-        changes = Series(nav.times[1:], tuple(b - a for a, b in zip(nav.values, nav.values[1:])))
         pnl = self.pnl
-        return changes.combine(pnl.total, lambda change, profit: change - profit).combine(
-            pnl.external_flows, lambda a, b: a - b
+        return (
+            self.nav.differences()
+            .combine(pnl.total, lambda change, profit: change - profit)
+            .combine(pnl.external_flows, lambda a, b: a - b)
         )
 
     def analytics(

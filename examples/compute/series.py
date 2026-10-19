@@ -6,6 +6,7 @@ from bisect import bisect_right
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from itertools import accumulate
 from math import isfinite
 from statistics import mean
 from typing import Generic, TypeVar, cast
@@ -60,6 +61,18 @@ class Series(Generic[Time]):
         """Put earlier values on later timestamps, omitting the warmup prefix."""
         self._window(periods)
         return Series(self.times[periods:], self.values[: max(0, len(self.values) - periods)])
+
+    def differences(self, periods: int = 1) -> Series[Time]:
+        """Subtract earlier observations, labelling changes with their ending time."""
+        self._window(periods)
+        return Series(
+            self.times[periods:],
+            tuple(end - start for start, end in zip(self.values, self.values[periods:])),
+        )
+
+    def cumulative_sum(self) -> Series[Time]:
+        """Accumulate observations from zero, preserving their times."""
+        return Series(self.times, tuple(accumulate(self.values)))
 
     def rolling_mean(self, window: int) -> Series[Time]:
         """Use trailing full windows, labelled with their final observation."""

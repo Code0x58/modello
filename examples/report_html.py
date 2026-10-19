@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime
 from html import escape
-from itertools import accumulate
 
 from sympy import Symbol
 
@@ -95,7 +94,7 @@ def chart(title: str, unit: str, lines: NamedMap[Series[datetime]]) -> str:
 
 
 def cumulative(series: Series[datetime], start: datetime) -> Series[datetime]:
-    return Series((start, *series.times), (0.0, *accumulate(series.values)))
+    return Series((start, *series.times), (0.0, *series.cumulative_sum().values))
 
 
 def profit_table(paths: NamedMap[NamedMap[Series[datetime]]], caption: str) -> str:
@@ -109,7 +108,7 @@ def profit_table(paths: NamedMap[NamedMap[Series[datetime]]], caption: str) -> s
     )
 
 
-def render_html(report: AccountReport, comparison: Comparison[datetime]) -> str:
+def render_html(report: AccountReport, comparison: Comparison[datetime], *, context: str = "") -> str:
     """Render existing measurements; presentation does not perform accounting or infer attribution."""
     path = report.path
     normalized = path.unit_nav.map(lambda value: 100 * value / path.unit_nav.values[0])
@@ -120,17 +119,17 @@ def render_html(report: AccountReport, comparison: Comparison[datetime]) -> str:
     parts = [
         '<header><p class="eyebrow">Modello / portfolio research</p><h1>Account, signals &amp; utility</h1>',
         f"<p>{escape(path.snapshots[0].account)} · USD · {start.date()} — {path.nav.times[-1].date()}</p>",
-        f'<p class="notice">Synthetic data · {performance.return_count} returns over '
-        f"{performance.elapsed_days:g} calendar days. "
-        "This example demonstrates accounting and reporting mechanics.</p>",
-        '</header><main><section class="metrics">',
+        f'<p class="notice">{performance.return_count} returns over {performance.elapsed_days:g} calendar days.</p>',
     ]
+    if context:
+        parts.append(f'<p class="notice">{escape(context)}</p>')
+    parts.append('</header><main><section class="metrics">')
     for label, value in (
         ("Closing NAV", f"USD {path.nav.values[-1]:,.2f}"),
         ("Investment P&L", f"USD {sum(report.account['net'].values):,.2f}"),
         ("Account total return", f"{performance.total_return:.4%}"),
-        ("Synthetic index return", f"{comparison.benchmark.total_return:.4%}"),
-        ("Account minus index", f"{comparison.return_difference * 100:+.4f} pp"),
+        ("Benchmark return", f"{comparison.benchmark.total_return:.4%}"),
+        ("Account minus benchmark", f"{comparison.return_difference * 100:+.4f} pp"),
     ):
         parts.append(f'<div class="metric"><span>{escape(label)}</span><strong>{escape(value)}</strong></div>')
     parts.append("</section><h2>Account overview</h2>")
@@ -139,7 +138,7 @@ def render_html(report: AccountReport, comparison: Comparison[datetime]) -> str:
             ("Mark (UTC)", "NAV", "Cash", "Unit NAV", "Interval P&L", "External capital", "Residual"),
             (
                 (
-                    snapshot.at.strftime("%d %b %H:%M"),
+                    snapshot.at.strftime("%Y-%m-%d %H:%M"),
                     f"{snapshot.nav:,.2f}",
                     f"{snapshot.cash:,.2f}",
                     f"{snapshot.unit_nav:.4f}",
@@ -155,7 +154,7 @@ def render_html(report: AccountReport, comparison: Comparison[datetime]) -> str:
         )
     )
     parts.append('<div class="charts">')
-    parts.append(chart("Account and index", "Rebased total-return index (100 at opening)", comparison.normalized))
+    parts.append(chart("Account and benchmark", "Rebased total-return index (100 at opening)", comparison.normalized))
     parts.append(chart("Account balances", "USD", NamedMap({"NAV": path.nav, "Cash": path.cash})))
     parts.append("</div>")
     if not performance.annualization_eligible:
@@ -167,7 +166,7 @@ def render_html(report: AccountReport, comparison: Comparison[datetime]) -> str:
 
         parts.append(
             table(
-                ("Metric", "Account", "Index"),
+                ("Metric", "Account", "Benchmark"),
                 (
                     ("CAGR", display(performance.cagr, ".4%"), display(comparison.benchmark.cagr, ".4%")),
                     (
@@ -180,8 +179,10 @@ def render_html(report: AccountReport, comparison: Comparison[datetime]) -> str:
             )
         )
     parts.append(
-        f'<p class="note">Sharpe reference: {escape(comparison.risk_free_name)}. '
-        "Account returns include income and booked fees; the index is before investor trading costs.</p>"
+        f'<p class="note">Account index: {escape(comparison.portfolio_name)}. '
+        f"Benchmark: {escape(comparison.benchmark_name)}. "
+        f"Sharpe reference: {escape(comparison.risk_free_name)}. "
+        "Account returns include income and booked fees; benchmark costs follow the supplied index definition.</p>"
     )
     parts.append("<h2>P&amp;L by signal sleeve</h2>")
     parts.append(f'<p class="measure">{escape(METHOD)}</p>')
@@ -192,7 +193,7 @@ def render_html(report: AccountReport, comparison: Comparison[datetime]) -> str:
             (
                 (
                     order_id,
-                    attribution.order.decision_at.strftime("%d %b %H:%M"),
+                    attribution.order.decision_at.strftime("%Y-%m-%d %H:%M"),
                     attribution.order.member,
                     signal,
                     f"{report.signals[signal][attribution.order.member].asof(attribution.order.decision_at):.6g}",

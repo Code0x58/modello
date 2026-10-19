@@ -22,6 +22,14 @@ The HTML runs offline. Both outputs use the same typed ``AccountReport``;
 rendering introduces no further P&L calculations. The implementation lives in
 ``examples/reporting.py``, ``examples/utility.py``, and ``examples/report_html.py``.
 
+Reuse the renderer with your own account report and aligned benchmark
+comparison through ``render_html(report, comparison, context="...")``.
+Account, benchmark, and cash-reference names come from those typed inputs;
+the optional context supplies text about the source data or methodology.
+The demonstration passes its synthetic-data notice here. Observation counts,
+measurement dates, and availability of annualized metrics follow the actual
+sample, so the same renderer works for longer research histories.
+
 Define reporting relationships as models
 ----------------------------------------
 

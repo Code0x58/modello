@@ -27,7 +27,7 @@ def test_series_alignment_lags_and_trailing_windows():
 @pytest.mark.parametrize("window", [0, -1, True, 1.5])
 def test_invalid_series_windows(window):
     series = Series((date(2026, 1, 1),), (1,))
-    for operation in (series.lag, series.rolling_mean):
+    for operation in (series.lag, series.differences, series.rolling_mean):
         with pytest.raises(ValueError, match="positive integer"):
             operation(window)
 
@@ -36,8 +36,30 @@ def test_empty_series_is_a_valid_event_projection():
     empty = Series((), ())
     assert empty.map(lambda value: value + 1).values == ()
     assert empty.drawdowns().values == ()
+    assert empty.differences() == empty.cumulative_sum() == empty
     with pytest.raises(ValueError, match="No observation"):
         empty.asof(date(2026, 1, 1))
+
+
+@pytest.mark.parametrize("timestamps", [False, True], ids=("dates", "timestamps"))
+def test_changes_and_accumulation_preserve_interval_and_observation_axes(timestamps):
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc) if timestamps else date(2026, 1, 1)
+    times = tuple(start + timedelta(days=day) for day in (0, 1, 4, 8))
+    series = Series(times, (100, 110, 95, 120))
+    changes = series.differences()
+    assert changes == Series(times[1:], (10, -15, 25))
+    assert series.differences(2) == Series(times[2:], (-5, 10))
+    assert series.differences(4) == series.differences(10) == Series((), ())
+    # Accumulating changes reconstructs levels after the opening observation,
+    # without inserting observations between dates or inventing an opening time.
+    assert changes.cumulative_sum().map(lambda value: value + 100) == Series(times[1:], (110, 95, 120))
+    assert Series(times[:1], (100,)).differences() == Series((), ())
+
+
+def test_accumulation_rejects_nonfinite_results():
+    series = Series((date(2026, 1, 1), date(2026, 1, 2)), (1e308, 1e308))
+    with pytest.raises(ValueError, match="finite"):
+        series.cumulative_sum()
 
 
 def test_sampling_is_backward_only_and_freshness_is_explicit():

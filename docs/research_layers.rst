@@ -40,6 +40,23 @@ rolling means, and explicit backward sampling. Array or matrix conversion
 belongs at the consumer boundary; for example, SymPy accepts a series' values
 through ``ImmutableMatrix(series.values)``.
 
+Interval changes and cumulative totals also belong to this numeric layer.
+``differences(periods=1)`` labels each change with its ending observation and
+omits the warmup prefix, just like ``lag``. Periods count observations, including
+on an irregular axis; these operations do not insert intermediate timestamps.
+``cumulative_sum()`` starts from zero and preserves the input times:
+
+>>> levels = Series(times, (100, 112))
+>>> change = levels.differences()
+>>> change.times, change.values
+((datetime.date(2026, 1, 6),), (12.0,))
+>>> change.cumulative_sum().map(lambda value: value + levels.values[0]).values
+(112.0,)
+
+Account P&L uses these interval changes; cumulative report charts use the same
+accumulation operation. Adding an opening balance or a chart's zero point is
+an explicit choice at the consumer boundary.
+
 Compile expressions separately
 -------------------------------
 

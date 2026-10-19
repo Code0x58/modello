@@ -123,7 +123,8 @@ def test_demo_reports_short_history_and_independent_synthetic_benchmark(tmp_path
     assert comparison.portfolio.cagr is comparison.portfolio.sharpe_ratio is None
     assert comparison.benchmark.cagr is comparison.benchmark.sharpe_ratio is None
     report = tmp_path / "report.json"
-    monkeypatch.setattr("sys.argv", ["account-demo", "--json", str(report)])
+    html = tmp_path / "report.html"
+    monkeypatch.setattr("sys.argv", ["account-demo", "--json", str(report), "--html", str(html)])
     main()
     output = capsys.readouterr().out
     assert "3 calendar days, 3 daily returns" in output
@@ -134,6 +135,7 @@ def test_demo_reports_short_history_and_independent_synthetic_benchmark(tmp_path
     assert payload["periods_per_year"] == 252
     assert payload["normalized"]["benchmark"]["values"] == [100, 100.5, 102, 103]
     assert "Synthetic" in payload["context"]
+    assert payload["context"] in html.read_text()
 
 
 def test_csv_index_source_preserves_schedule_and_validates_schema(tmp_path):

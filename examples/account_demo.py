@@ -32,6 +32,11 @@ from examples.reporting import report as build_report
 from examples.signals import MomentumSignals, OrderIntent, TargetWeights, positive_signal_targets, rebalance_orders
 from examples.utility import cara, crra
 
+CONTEXT = (
+    "Synthetic observations demonstrate accounting and reporting mechanics; "
+    "they do not establish investment performance."
+)
+
 
 @dataclass(frozen=True)
 class ResearchRun:
@@ -125,7 +130,7 @@ def main() -> None:
     )
     print("CAGR and annualized Sharpe: N/A — history shorter than one year")
     print("Sharpe reference:", comparison.risk_free_name)
-    print("Three synthetic daily returns demonstrate the plumbing; they do not establish investment performance.")
+    print(CONTEXT)
     print("P&L:", path.pnl.total.values, "External capital:", path.pnl.external_flows.values)
     print("NAV reconciliation residuals:", path.reconciliation.values)
     for order_id, report in result.execution.items():
@@ -149,7 +154,7 @@ def main() -> None:
                 "relative_return": comparison.relative_return,
                 "normalized": {name: asdict(series) for name, series in comparison.normalized.items()},
                 "active_returns": asdict(comparison.active_returns),
-                "context": "Synthetic observations; three daily returns do not establish investment performance.",
+                "context": CONTEXT,
                 "annualization_policy": "CAGR and annualized Sharpe require at least one full calendar year.",
                 "cagr_basis": "Elapsed calendar time, ACT/365.25",
                 "sharpe_basis": "Mean excess simple return / sample excess-return deviation * sqrt(periods_per_year)",
@@ -170,7 +175,7 @@ def main() -> None:
         arguments.json.write_text(json.dumps(payload, default=encode_value, indent=2) + "\n")
         print("Report:", arguments.json)
     if arguments.html:
-        arguments.html.write_text(render_html(reporting, comparison), encoding="utf-8")
+        arguments.html.write_text(render_html(reporting, comparison, context=CONTEXT), encoding="utf-8")
         print("Dashboard:", arguments.html)
 
 
