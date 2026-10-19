@@ -6,13 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from math import isclose, isfinite
 
-from examples.account import AccountPath, PositionHistory
-from examples.account_sources import CashFlow, Fill, Income
 from examples.compute.named_map import NamedMap
 from examples.compute.scalar_plan import ScalarPlan
 from examples.compute.series import Series
-from examples.signals import OrderIntent
-from examples.utility import CashUtility
+from examples.portfolio.account import AccountPath, PositionHistory
+from examples.portfolio.signals import OrderIntent
+from examples.portfolio.sources import CashFlow, Fill, Income
+from examples.portfolio.utility import CashUtility
 from modello import InstanceDummy, Modello
 
 

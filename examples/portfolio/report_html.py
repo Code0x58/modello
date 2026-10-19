@@ -10,8 +10,8 @@ from sympy import Symbol
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
-from examples.performance import Comparison
-from examples.reporting import AccountReport
+from examples.portfolio.performance import Comparison
+from examples.portfolio.reporting import AccountReport
 
 COLORS = ("#2563a6", "#db7927", "#7d58a3", "#238578", "#a44554", "#556578")
 METHOD = (

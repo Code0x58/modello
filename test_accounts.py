@@ -6,9 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from examples.account import Account, AccountEngine
-from examples.account_demo import example_run
-from examples.account_sources import (
+from examples.compute.named_map import NamedMap
+from examples.compute.series import Series
+from examples.portfolio.account import Account, AccountEngine
+from examples.portfolio.demo import example_run
+from examples.portfolio.execution import benchmark_executions
+from examples.portfolio.models import AAPL, MSFT, ApplePosition, MicrosoftPosition, USDCash
+from examples.portfolio.named import EquityMembers, portfolio_model
+from examples.portfolio.signals import MomentumSignals, TargetWeights, positive_signal_targets, rebalance_orders
+from examples.portfolio.sources import (
     CashFlow,
     CSVMarketSource,
     CSVTransactionSource,
@@ -18,15 +24,9 @@ from examples.account_sources import (
     TransactionLog,
     timestamp,
 )
-from examples.compute.named_map import NamedMap
-from examples.compute.series import Series
-from examples.execution import benchmark_executions
-from examples.named_portfolio import EquityMembers, portfolio_model
-from examples.portfolio_models import AAPL, MSFT, ApplePosition, MicrosoftPosition, USDCash
-from examples.signals import MomentumSignals, TargetWeights, positive_signal_targets, rebalance_orders
 from modello import Modello
 
-DATA = Path(__file__).parent / "examples" / "data" / "portfolio"
+DATA = Path(__file__).parent / "examples" / "portfolio" / "data"
 AGE = timedelta(days=4)
 TIMES = tuple(timestamp(f"2026-01-{day:02d}T16:01:00Z") for day in range(5, 9))
 DECISION = timestamp("2026-01-07T09:00:00Z")

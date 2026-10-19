@@ -1,3 +1,4 @@
+# mypy: warn-unused-ignores
 """Check named portfolio computation against the original model and matrix math."""
 
 from datetime import date
@@ -7,7 +8,9 @@ import pytest
 from sympy import ImmutableMatrix, Rational, ones
 
 from examples.compute.named_map import NamedMap
-from examples.named_portfolio import (
+from examples.portfolio.explicit import PortfolioPricer, example_market_data, example_portfolio
+from examples.portfolio.models import AAPL, MSFT, ApplePosition, Equity, EquityPosition, MicrosoftPosition, USDCash
+from examples.portfolio.named import (
     Alphabet,
     AlphabetPosition,
     EquityMembers,
@@ -18,8 +21,6 @@ from examples.named_portfolio import (
     example_named_portfolio,
     portfolio_model,
 )
-from examples.portfolio import PortfolioPricer, example_market_data, example_portfolio
-from examples.portfolio_models import AAPL, MSFT, ApplePosition, Equity, EquityPosition, MicrosoftPosition, USDCash
 from modello import BoundInstanceDummy, Modello, component
 
 
@@ -191,3 +192,10 @@ def test_currency_needs_an_explicit_conversion_model():
     )
     with pytest.raises(ValueError, match="requires USD"):
         NamedPortfolioPricer(portfolio)
+
+
+def _typing_contract() -> None:
+    portfolio = portfolio_model(EquityMembers)("portfolio")
+    apple: ApplePosition = portfolio.equities.aapl
+    assert apple.instrument.ticker == "AAPL"
+    portfolio.equities.aapl = USDCash("cash")  # type: ignore[assignment]

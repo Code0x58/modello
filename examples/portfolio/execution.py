@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from examples.account_sources import Fill, PriceHistory, TransactionLog
 from examples.compute.named_map import NamedMap
 from examples.compute.series import utc_time
-from examples.signals import OrderIntent
+from examples.portfolio.signals import OrderIntent
+from examples.portfolio.sources import Fill, PriceHistory, TransactionLog
 
 
 @dataclass(frozen=True)

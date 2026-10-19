@@ -6,7 +6,7 @@ adds another model layer over those observations: it expresses P&L, reconciles
 it to account value, and attributes it to named signal sleeves. SymPy also
 derives local risk preferences from a supplied cash utility function.
 
-`Explore the interactive account report <_static/account-research.html>`_.
+`Explore the interactive account report <report.html>`_.
 It contains account and instrument tables, signal-to-order lineage, and timeline
 charts. Select an instrument, toggle chart legends, or hover observations to
 inspect their timestamps and values. The source data remains the three-day
@@ -16,11 +16,11 @@ Generate the same self-contained report locally:
 
 .. code-block:: console
 
-   $ uv run --locked python -m examples.account_demo --html /tmp/account.html --json /tmp/account.json
+   $ uv run --locked python -m examples.portfolio.demo --html /tmp/account.html --json /tmp/account.json
 
 The HTML runs offline. Both outputs use the same typed ``AccountReport``;
 rendering introduces no further P&L calculations. The implementation lives in
-``examples/reporting.py``, ``examples/utility.py``, and ``examples/report_html.py``.
+``examples/portfolio/reporting.py``, ``examples/portfolio/utility.py``, and ``examples/portfolio/report_html.py``.
 
 Reuse the renderer with your own account report and aligned benchmark
 comparison through ``render_html(report, comparison, context="...")``.
@@ -50,7 +50,7 @@ These remain ordinary symbolic models, suitable for differentiation and inverse
 questions as well as numerical reporting:
 
 >>> from sympy import diff, simplify
->>> from examples.reporting import InstrumentPnL, AccountPnL
+>>> from examples.portfolio.reporting import InstrumentPnL, AccountPnL
 >>> model = InstrumentPnL("instrument")
 >>> simplify(diff(model.net, model.opening_quantity) - (model.closing_price - model.opening_price))
 0
@@ -74,9 +74,9 @@ uses an unchanged opening reference book plus signed incremental trading
 sleeves. An ``OrderAttribution`` instance links an existing typed order to
 nonnegative named signal weights summing to one:
 
->>> from examples.account_demo import example_run, research_report
+>>> from examples.portfolio.demo import example_run, research_report
 >>> from examples.compute.named_map import NamedMap
->>> from examples.reporting import OrderAttribution
+>>> from examples.portfolio.reporting import OrderAttribution
 >>> scenario = example_run()
 >>> order = scenario.orders["rebalance-1:aapl"]
 >>> attribution = OrderAttribution(order, NamedMap({"momentum": 1.0}))
@@ -165,7 +165,7 @@ families use normalizations with convenient limits:
 * ``crra(gamma)`` defines ``(W**(1-gamma) - 1) / (1-gamma)``, giving
   ``A(W) = gamma / W`` and ``R(W) = gamma``. At one it uses ``log(W)``.
 
->>> from examples.utility import cara, crra, CashUtility
+>>> from examples.portfolio.utility import cara, crra, CashUtility
 >>> exponential = cara(0.001)
 >>> exponential.expressions["absolute_risk_aversion"]
 1/1000

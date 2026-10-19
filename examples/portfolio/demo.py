@@ -1,6 +1,6 @@
 """Run an account, signal, and execution-analysis system over external CSV fixtures.
 
-Run ``python -m examples.account_demo --json /tmp/account-report.json``.
+Run ``python -m examples.portfolio.demo --json /tmp/account-report.json``.
 """
 
 from __future__ import annotations
@@ -11,8 +11,24 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from examples.account import Account, AccountEngine, AccountPath, AccountSnapshot
-from examples.account_sources import (
+from examples.compute.named_map import NamedMap
+from examples.compute.series import Series
+from examples.portfolio.account import Account, AccountEngine, AccountPath, AccountSnapshot
+from examples.portfolio.execution import ExecutionBenchmark, benchmark_executions
+from examples.portfolio.models import AAPL, MSFT, ApplePosition, Equity, MicrosoftPosition, USDCash
+from examples.portfolio.named import EquityMembers, portfolio_model
+from examples.portfolio.performance import Comparison, PerformanceIndex, compare
+from examples.portfolio.report_html import render_html, report_data
+from examples.portfolio.reporting import AccountReport, OrderAttribution
+from examples.portfolio.reporting import report as build_report
+from examples.portfolio.signals import (
+    MomentumSignals,
+    OrderIntent,
+    TargetWeights,
+    positive_signal_targets,
+    rebalance_orders,
+)
+from examples.portfolio.sources import (
     CSVIndexSource,
     CSVMarketSource,
     CSVTransactionSource,
@@ -20,17 +36,7 @@ from examples.account_sources import (
     TransactionSource,
     timestamp,
 )
-from examples.compute.named_map import NamedMap
-from examples.compute.series import Series
-from examples.execution import ExecutionBenchmark, benchmark_executions
-from examples.named_portfolio import EquityMembers, portfolio_model
-from examples.performance import Comparison, PerformanceIndex, compare
-from examples.portfolio_models import AAPL, MSFT, ApplePosition, Equity, MicrosoftPosition, USDCash
-from examples.report_html import render_html, report_data
-from examples.reporting import AccountReport, OrderAttribution
-from examples.reporting import report as build_report
-from examples.signals import MomentumSignals, OrderIntent, TargetWeights, positive_signal_targets, rebalance_orders
-from examples.utility import cara, crra
+from examples.portfolio.utility import cara, crra
 
 CONTEXT = (
     "Synthetic observations demonstrate accounting and reporting mechanics; "
@@ -76,7 +82,7 @@ def run(market_source: MarketSource, transaction_source: TransactionSource) -> R
 
 def example_run() -> ResearchRun:
     """Use synthetic, independent market and broker files shipped with the example."""
-    directory = Path(__file__).with_name("data") / "portfolio"
+    directory = Path(__file__).with_name("data")
     return run(
         CSVMarketSource(directory / "market.csv", NamedMap({"aapl": AAPL, "msft": MSFT})),
         CSVTransactionSource(directory / "transactions.csv"),
@@ -85,7 +91,7 @@ def example_run() -> ResearchRun:
 
 def performance_comparison(path: AccountPath) -> Comparison[datetime]:
     """Compare the toy account with a separate synthetic total-return index."""
-    directory = Path(__file__).with_name("data") / "portfolio"
+    directory = Path(__file__).with_name("data")
     return compare(
         PerformanceIndex("Synthetic account, net of booked fees, including income", path.unit_nav),
         PerformanceIndex(

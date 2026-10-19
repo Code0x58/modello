@@ -24,6 +24,7 @@ series = Series((date(2026, 1, 1), date(2026, 1, 2)), (100, 110))
 assert series.lag().values == (100,)
 assert NamedMap({'price': series}).map(lambda item: item.values[-1]) == {'price': 110}
 assert not any(name.split('.')[0] in {'modello', 'sympy'} for name in sys.modules)
+assert 'examples.portfolio' not in sys.modules
 """,
         """
 import sys
@@ -34,17 +35,30 @@ price = Symbol('price')
 plan = ScalarPlan(NamedMap({'price': price}), NamedMap({'value': 2 * price}))
 assert plan.evaluate(NamedMap({'price': 3})) == {'value': 6}
 assert not any(name == 'modello' or name.startswith('modello.') for name in sys.modules)
+assert 'examples.portfolio' not in sys.modules
 """,
         """
 import sys
-import examples.account
-import examples.reporting
-assert 'examples.portfolio' not in sys.modules
-assert 'examples.account_demo' not in sys.modules
-assert 'examples.report_html' not in sys.modules
+from examples.named_members import component_members
+assert callable(component_members)
+assert not any(name == 'examples.portfolio' or name.startswith('examples.portfolio.') for name in sys.modules)
+""",
+        """
+import sys
+import examples.portfolio
+assert not any(name.split('.')[0] in {'modello', 'sympy'} for name in sys.modules)
+assert not any(name.startswith('examples.portfolio.') for name in sys.modules)
+""",
+        """
+import sys
+import examples.portfolio.account
+import examples.portfolio.reporting
+assert 'examples.portfolio.explicit' not in sys.modules
+assert 'examples.portfolio.demo' not in sys.modules
+assert 'examples.portfolio.report_html' not in sys.modules
 """,
     ],
-    ids=("core", "numeric-data", "symbolic-execution", "finance"),
+    ids=("core", "numeric-data", "symbolic-execution", "named-models", "portfolio-namespace", "finance"),
 )
 def test_layer_imports(program: str) -> None:
     result = subprocess.run(

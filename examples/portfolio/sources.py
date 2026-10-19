@@ -13,7 +13,7 @@ from typing import Protocol
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series, utc_time
-from examples.portfolio_models import Equity
+from examples.portfolio.models import Equity
 
 
 def timestamp(value: str) -> datetime:

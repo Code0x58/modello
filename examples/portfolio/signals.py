@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from examples.account import AccountSnapshot
-from examples.account_sources import finite
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series, utc_time
-from examples.portfolio_models import Equity
+from examples.portfolio.account import AccountSnapshot
+from examples.portfolio.models import Equity
+from examples.portfolio.sources import finite
 
 
 class SignalSource(Protocol):

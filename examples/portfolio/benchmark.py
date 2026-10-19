@@ -1,4 +1,4 @@
-"""Run ``python -m examples.benchmark_portfolio`` for exploratory local timings."""
+"""Run ``python -m examples.portfolio.benchmark`` for exploratory local timings."""
 
 from collections.abc import Callable
 from datetime import date, timedelta
@@ -8,8 +8,8 @@ from time import perf_counter
 from typing import TypeVar
 
 from examples.compute.series import Series
-from examples.portfolio import MarketData, Portfolio, PortfolioPricer, example_portfolio
-from examples.portfolio_models import AAPL, MSFT, EquityPrices
+from examples.portfolio.explicit import MarketData, Portfolio, PortfolioPricer, example_portfolio
+from examples.portfolio.models import AAPL, MSFT, EquityPrices
 
 _Result = TypeVar("_Result")
 

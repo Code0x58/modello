@@ -12,9 +12,8 @@ from sympy import Expr
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
-from examples.named_portfolio import NamedMarketData, NamedPortfolioPricer
-from examples.portfolio_analytics import NamedPortfolioPath
-from examples.portfolio_models import (
+from examples.portfolio.analytics import NamedPortfolioPath
+from examples.portfolio.models import (
     AAPL,
     MSFT,
     ApplePosition,
@@ -23,6 +22,7 @@ from examples.portfolio_models import (
     MicrosoftPosition,
     USDCash,
 )
+from examples.portfolio.named import NamedMarketData, NamedPortfolioPricer
 from modello import InstanceDummy, Modello, component
 
 

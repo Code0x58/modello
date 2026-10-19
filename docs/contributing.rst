@@ -54,6 +54,18 @@ The existing ``modello`` project on Read the Docs tracks ``master`` for its
 they include the documentation configuration. Project connections and version
 activation are managed in Read the Docs service settings.
 
+Example guides live under ``docs/examples/<example>/`` and have their own
+navigation beneath the Examples section. Portfolio modules and fixtures are
+grouped in ``examples/portfolio/``; ``examples/compute/`` holds experimental
+data and expression-execution helpers. Keep example-specific behavior in those
+layers. The :doc:`named-solving design note <design/named_solving>` records the
+candidate general modeling feature.
+
+Diagrams use the ``.. mermaid::`` directive from
+`sphinxcontrib-mermaid <https://sphinxcontrib-mermaid-demo.readthedocs.io/en/stable/>`_
+in reStructuredText pages. The documentation dependency group enables the
+extension for local, CI, and Read the Docs HTML builds.
+
 Publishing
 ----------
 

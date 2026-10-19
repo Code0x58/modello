@@ -9,7 +9,7 @@ from typing import Generic
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series, Time
-from examples.performance import Performance, measure
+from examples.portfolio.performance import Performance, measure
 
 
 @dataclass(frozen=True)

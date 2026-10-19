@@ -69,14 +69,12 @@ for more examples of composition and symbolic inputs. The
 tax models. The [API reference](https://modello.readthedocs.io/en/latest/api.html)
 describes the available classes and functions.
 
-The [account research guide](https://modello.readthedocs.io/en/latest/accounts.html)
-follows market data and a transaction log through positions, signals, portfolio
-performance, and execution analysis.
-The [symbolic reporting walkthrough](https://modello.readthedocs.io/en/latest/reporting.html)
-shows signal P&L attribution and cash-utility derivatives in account and
-instrument tables with interactive timelines.
-The [research layer guide](https://modello.readthedocs.io/en/latest/research_layers.html)
-shows how the data helpers and financial examples fit above the core solver.
+The [portfolio research example](https://modello.readthedocs.io/en/latest/examples/portfolio/index.html)
+explores named holdings, market data, account replay, signals, analytics, and
+symbolic reports. Its code and fixtures live in [examples/portfolio](examples/portfolio/),
+with a separate documentation section. The
+[named-solving design note](https://modello.readthedocs.io/en/latest/design/named_solving.html)
+describes the general modeling feature being explored.
 
 ## Development
 

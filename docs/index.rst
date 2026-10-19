@@ -40,25 +40,29 @@ The `examples directory <https://github.com/Code0x58/modello/tree/master/example
 contains geometry, flow-scaling, and historical tax-model examples. Tax examples
 illustrate symbolic modeling with fixed historical rates.
 
-The :doc:`portfolio analytics experiment <portfolio>` combines named equity
-positions with price vectors, return attribution, and sample risk estimates.
-Its :doc:`named-member extension <named_members>` explores projection and
-reduction over maps of typed positions and their weights.
-The :doc:`account and execution walkthrough <accounts>` adds external market and
-transaction sources, time-aware signals, ledger replay, and execution costs.
-Its :doc:`symbolic reporting layer <reporting>` adds signal P&L attribution,
-cash-utility derivatives, and account/instrument tables and timeline charts.
+The :doc:`examples <examples/index>` include a separate portfolio research
+walkthrough. It explores possible application and computation layers above the
+core model API. The :doc:`named-solving design note <design/named_solving>`
+describes the general modeling feature being explored there.
 
 .. toctree::
+   :caption: Library
    :maxdepth: 2
 
    api
    nesting
-   portfolio
-   named_members
-   accounts
-   reporting
-   research_layers
+
+.. toctree::
+   :caption: Examples
+   :maxdepth: 3
+
+   examples/index
+
+.. toctree::
+   :caption: Development
+   :maxdepth: 1
+
+   design/named_solving
    contributing
 
 * :ref:`genindex`

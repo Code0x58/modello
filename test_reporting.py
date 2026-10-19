@@ -9,17 +9,17 @@ from pathlib import Path
 import pytest
 from sympy import Rational, Symbol, diff, exp, log, simplify
 
-from examples.account import Account, AccountEngine
-from examples.account_demo import example_run, performance_comparison, research_report
-from examples.account_sources import CashFlow, CSVMarketSource, Fill, Income, TransactionLog, timestamp
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
-from examples.named_portfolio import EquityMembers, portfolio_model
-from examples.performance import PerformanceIndex, compare
-from examples.portfolio_models import AAPL, MSFT, ApplePosition, MicrosoftPosition, USDCash
-from examples.report_html import render_html, report_data
-from examples.reporting import AccountPnL, InstrumentPnL, OrderAttribution, report
-from examples.utility import CashUtility, cara, crra
+from examples.portfolio.account import Account, AccountEngine
+from examples.portfolio.demo import example_run, performance_comparison, research_report
+from examples.portfolio.models import AAPL, MSFT, ApplePosition, MicrosoftPosition, USDCash
+from examples.portfolio.named import EquityMembers, portfolio_model
+from examples.portfolio.performance import PerformanceIndex, compare
+from examples.portfolio.report_html import render_html, report_data
+from examples.portfolio.reporting import AccountPnL, InstrumentPnL, OrderAttribution, report
+from examples.portfolio.sources import CashFlow, CSVMarketSource, Fill, Income, TransactionLog, timestamp
+from examples.portfolio.utility import CashUtility, cara, crra
 from modello import Modello
 
 
@@ -43,7 +43,7 @@ def engine(scenario):
         cash=USDCash("cash", amount=1000),
     )
     market = CSVMarketSource(
-        Path(__file__).parent / "examples/data/portfolio/market.csv", NamedMap({"aapl": AAPL, "msft": MSFT})
+        Path(__file__).parent / "examples/portfolio/data/market.csv", NamedMap({"aapl": AAPL, "msft": MSFT})
     ).load()
     return AccountEngine(
         Account("research", scenario.account.nav.times[0], opening), market, max_price_age=timedelta(days=4)

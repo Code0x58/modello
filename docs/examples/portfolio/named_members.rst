@@ -1,7 +1,7 @@
 Named members and portfolio computation
 =======================================
 
-The :doc:`portfolio experiment <portfolio>` can be extended by treating members
+The :doc:`portfolio experiment <holdings>` can be extended by treating members
 as a finite map from names to typed values. Positions, market values, weights,
 and returns all use the same names. A projection changes the values while
 retaining that domain; a reduction turns those values into an aggregate such
@@ -9,11 +9,11 @@ as NAV. Covariance has two member-name axes.
 
 The named map lives in ``examples/compute/named_map.py``; the Modello adapter is
 in ``examples/named_members.py``. The portfolio application is in
-``examples/named_portfolio.py``. Run it from a checkout:
+``examples/portfolio/named.py``. Run it from a checkout:
 
 .. code-block:: console
 
-   $ uv run --locked python -m examples.named_portfolio
+   $ uv run --locked python -m examples.portfolio.named
 
 Project and combine named values
 --------------------------------
@@ -98,7 +98,7 @@ The worked example adds Alphabet by extending the declaration:
 Supply its holding and price vector under ``googl``. The same aggregate,
 valuation, weight, attribution, and risk calculations handle all three members:
 
->>> from examples.named_portfolio import (
+>>> from examples.portfolio.named import (
 ...     NamedPortfolioPricer, example_named_market_data, example_named_portfolio,
 ... )
 >>> holdings = example_named_portfolio()

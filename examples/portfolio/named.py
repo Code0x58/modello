@@ -1,6 +1,6 @@
 """Portfolio computation over named members, using synthetic observations.
 
-Run ``python -m examples.named_portfolio`` from a checkout.
+Run ``python -m examples.portfolio.named`` from a checkout.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ from examples.compute.named_map import NamedMap
 from examples.compute.scalar_plan import ScalarPlan
 from examples.compute.series import Series
 from examples.named_members import component_members
-from examples.portfolio_analytics import NamedPortfolioPath, PositionPath
-from examples.portfolio_models import ApplePosition, Equity, EquityPosition, EquityPrices, MicrosoftPosition, USDCash
+from examples.portfolio.analytics import NamedPortfolioPath, PositionPath
+from examples.portfolio.models import ApplePosition, Equity, EquityPosition, EquityPrices, MicrosoftPosition, USDCash
 from modello import InstanceDummy, Modello, component
 
 _Members = TypeVar("_Members", bound=Modello)
@@ -194,7 +194,7 @@ def example_named_portfolio() -> NamedPortfolio[ThreeEquities]:
 
 def example_named_market_data() -> NamedMarketData:
     """Synthetic price vectors for all three declared members."""
-    from examples.portfolio import example_market_data
+    from examples.portfolio.explicit import example_market_data
 
     data = example_market_data()
     return NamedMarketData(

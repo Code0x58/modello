@@ -10,15 +10,15 @@ Run the scenario from a checkout:
 
 .. code-block:: console
 
-   $ uv run --locked python -m examples.account_demo
-   $ uv run --locked python -m examples.account_demo --json /tmp/account-report.json
-   $ uv run --locked python -m examples.account_demo --html /tmp/account-report.html
+   $ uv run --locked python -m examples.portfolio.demo
+   $ uv run --locked python -m examples.portfolio.demo --json /tmp/account-report.json
+   $ uv run --locked python -m examples.portfolio.demo --html /tmp/account-report.html
 
 The :doc:`symbolic reporting walkthrough <reporting>` adds account and instrument
 tables, signal P&L attribution, utility derivatives, and interactive timelines.
 
 All observations are synthetic. The source files are independent:
-``examples/data/portfolio/market.csv`` contains market trade prints, while
+``examples/portfolio/data/market.csv`` contains market trade prints, while
 ``transactions.csv`` contains broker/account postings, and ``benchmark.csv``
 contains an illustrative broad-market total-return index. Change the adapters to
 use another source; the computations consume typed observations and events.
@@ -28,18 +28,25 @@ Follow the layers
 
 The example has explicit boundaries:
 
-.. code-block:: text
+.. mermaid::
+   :caption: Sources, decisions, accounting, and execution analysis
+   :alt: Published market observations feed signals and account valuation. The external ledger feeds account replay and execution analysis; intended orders do not create fills.
 
-   market source -> published prices -> sampled feature grid -> signals
-                           |                                      |
-                           v                                      v
-   transaction source -> account replay -> snapshot -> target weights -> order intentions
-                           |                                              |
-                           v                                              v
-                 positions, cash, NAV             reported fills + independent market prints
-                           |                                              |
-                           v                                              v
-                P&L, returns, covariance                       execution benchmarks
+   flowchart TD
+       market[Market source] --> prices[Published prices]
+       prices --> grid[Sampled feature grid]
+       grid --> signals[Signals]
+       ledger[External transaction log] --> replay[Account replay]
+       prices --> replay
+       replay --> snapshot[Decision-time snapshot]
+       signals --> targets[Target weights]
+       snapshot --> targets
+       targets --> orders[Order intentions]
+       replay --> positions[Positions, cash, NAV]
+       positions --> analytics[P&L, returns, covariance]
+       orders --> execution[Execution benchmarks]
+       ledger -->|Reported fills| execution
+       market -->|Independent prints| execution
 
 ``MarketSource`` and ``TransactionSource`` are small protocols implemented by
 CSV adapters. ``SignalSource`` supplies named signal vectors; the example uses
@@ -111,7 +118,7 @@ A fill changes shares by its signed quantity and cash by
 changes cash and investment return. Each mark produces named quantities,
 prices, values, and weights, together with cash and total NAV.
 
->>> from examples.account_demo import example_run
+>>> from examples.portfolio.demo import example_run
 >>> result = example_run()
 >>> path = result.account
 >>> tuple(round(value, 2) for value in path.nav.values)
@@ -168,7 +175,7 @@ returns**. It demonstrates account mechanics, rather than evidence of an
 investment strategy. The command-line and JSON reports show this window
 alongside an independent synthetic index:
 
->>> from examples.account_demo import performance_comparison
+>>> from examples.portfolio.demo import performance_comparison
 >>> comparison = performance_comparison(path)
 >>> round(comparison.portfolio.total_return * 100, 4)
 2.4518
@@ -222,7 +229,7 @@ Longer histories exercise the same calculation. Here a quarterly total-return
 index is measured against a quarterly cash index:
 
 >>> from datetime import date
->>> from examples.performance import measure
+>>> from examples.portfolio.performance import measure
 >>> from examples.compute.series import Series
 >>> times = (date(2024, 1, 1), date(2024, 4, 1), date(2024, 7, 1), date(2024, 10, 1), date(2025, 1, 1))
 >>> levels = Series(times, (100, 110, 104.5, 112.86, 115.1172))
@@ -303,7 +310,7 @@ execution metric is substituted for the account's independently reconciled P&L.
 Keep the computation layer small
 --------------------------------
 
-The :doc:`research layer guide <research_layers>` describes how the numeric data,
+The :doc:`research layer guide <layers>` describes how the numeric data,
 symbolic executor, domain models, and presentation fit together. The generic
 helpers live in ``examples/compute/``.
 

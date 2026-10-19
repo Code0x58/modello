@@ -20,9 +20,9 @@ From a source checkout, install the development environment and run:
    $ uv sync --locked --dev
    $ uv run --locked python -m examples.portfolio
 
-The runner lives in ``examples/portfolio.py`` and imports its shared instrument
-and holding definitions from ``examples/portfolio_models.py``. The
-:doc:`research layer guide <research_layers>` maps the data, model, and analytics
+The runner lives in ``examples/portfolio/explicit.py`` and imports its shared instrument
+and holding definitions from ``examples/portfolio/models.py``. The
+:doc:`research layer guide <layers>` maps the data, model, and analytics
 modules.
 
 Model instruments and holdings
@@ -46,7 +46,7 @@ is quantity times price. The portfolio declares its members directly:
 
 Create a portfolio with known quantities and cash, leaving prices symbolic:
 
->>> from examples.portfolio import PortfolioPricer, example_market_data, example_portfolio
+>>> from examples.portfolio.explicit import PortfolioPricer, example_market_data, example_portfolio
 >>> holdings = example_portfolio()
 >>> holdings.aapl.instrument.ticker, holdings.aapl.quantity
 ('AAPL', 10)
@@ -161,7 +161,7 @@ To separate symbolic setup from repeated numeric execution, run:
 
 .. code-block:: console
 
-   $ uv run --locked python -m examples.benchmark_portfolio
+   $ uv run --locked python -m examples.portfolio.benchmark
 
 One exploratory run on Python 3.14.8 with SymPy 1.14.0 gave these rounded medians:
 

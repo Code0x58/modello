@@ -7,8 +7,8 @@ import pytest
 from sympy import ImmutableMatrix, Rational, Symbol, ones
 
 from examples.compute.series import Series
-from examples.portfolio import MarketData, Portfolio, PortfolioPricer, example_market_data, example_portfolio
-from examples.portfolio_models import (
+from examples.portfolio.explicit import MarketData, Portfolio, PortfolioPricer, example_market_data, example_portfolio
+from examples.portfolio.models import (
     AAPL,
     MSFT,
     ApplePosition,

@@ -8,10 +8,10 @@ from statistics import mean, stdev
 
 import pytest
 
-from examples.account_demo import example_run, main, performance_comparison
-from examples.account_sources import CSVIndexSource
 from examples.compute.series import Series
-from examples.performance import PerformanceIndex, compare, measure
+from examples.portfolio.demo import example_run, main, performance_comparison
+from examples.portfolio.performance import PerformanceIndex, compare, measure
+from examples.portfolio.sources import CSVIndexSource
 
 
 def quarterly(values):

@@ -18,7 +18,7 @@ copyright = "2018, Oliver Bristow"
 release = metadata.version("modello")
 version = release
 
-extensions = ["sphinx.ext.autodoc", "sphinx.ext.intersphinx"]
+extensions = ["sphinx.ext.autodoc", "sphinx.ext.intersphinx", "sphinxcontrib.mermaid"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 html_theme = "sphinx_rtd_theme"
@@ -33,10 +33,10 @@ intersphinx_mapping = {"python": ("https://docs.python.org/3", None)}
 def write_research_report(app: Sphinx, exception: Exception | None) -> None:
     """Publish the runnable example with each successful HTML documentation build."""
     if exception is None and app.builder is not None and app.builder.format == "html":
-        output = Path(app.outdir) / "_static" / "account-research.html"
+        output = Path(app.outdir) / "examples" / "portfolio" / "report.html"
         output.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(
-            [sys.executable, "-m", "examples.account_demo", "--html", str(output)],
+            [sys.executable, "-m", "examples.portfolio.demo", "--html", str(output)],
             cwd=Path(__file__).resolve().parents[1],
             check=True,
             stdout=subprocess.DEVNULL,

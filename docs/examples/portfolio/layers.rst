@@ -1,4 +1,4 @@
-Using the research layers
+Portfolio research layers
 ==========================
 
 The portfolio examples build on the symbolic modeling API in :mod:`modello`.
@@ -12,8 +12,8 @@ extracted source distribution:
 
    $ uv sync --locked --dev
    $ uv run --locked python -m examples.portfolio
-   $ uv run --locked python -m examples.named_portfolio
-   $ uv run --locked python -m examples.account_demo --html /tmp/account.html --json /tmp/account.json
+   $ uv run --locked python -m examples.portfolio.named
+   $ uv run --locked python -m examples.portfolio.demo --html /tmp/account.html --json /tmp/account.json
 
 The installed wheel contains the ``modello`` package. Research modules and CSV
 fixtures are included in the source distribution for readers to run and adapt.
@@ -72,10 +72,11 @@ later standalone package, while its interfaces are explored here.
 Connect domain models through an adapter
 ----------------------------------------
 
-``examples/portfolio_models.py`` holds shared equity, position, and cash models.
-Source adapters, account replay, signals, performance, and reporting depend on
-these definitions and the computation helpers. Tutorial runners assemble the
-sources and policies and present their results.
+``examples/portfolio/models.py`` holds shared equity, position, and cash models.
+Source adapters, account replay, signals, performance, and reporting live
+alongside them in ``examples/portfolio/``. Tutorial runners assemble the sources
+and policies and present their results. This example package imports the generic
+computation helpers; importing those helpers does not load the portfolio package.
 
 .. list-table::
    :header-rows: 1
@@ -94,11 +95,13 @@ sources and policies and present their results.
      - ``named_members``
      - Project declared Modello components into a named domain.
    * - Financial models and calculations
-     - ``portfolio_models``, ``named_portfolio``, ``account``, ``signals``,
-       ``performance``, ``reporting``, ``utility``
+     - ``portfolio.models``, ``portfolio.named``, ``portfolio.account``,
+       ``portfolio.signals``, ``portfolio.performance``, ``portfolio.reporting``,
+       ``portfolio.utility``
      - Domain relationships, ledger transitions, and analytics.
    * - Sources and presentation
-     - ``account_sources``, ``portfolio``, ``account_demo``, ``report_html``
+     - ``portfolio.sources``, ``portfolio.explicit``, ``portfolio.demo``,
+       ``portfolio.report_html``
      - External observations, scenario assembly, and report rendering.
 
 The ``component_members`` adapter is the research layer's single access point
@@ -112,3 +115,6 @@ execution, accounting, or report generation to the model solver. The
 :doc:`named-member guide <named_members>` explains the remaining questions about
 named domains, and the :doc:`account guide <accounts>` describes the financial
 assumptions used in the scenario.
+
+The :doc:`named-solving design note </design/named_solving>` describes the
+candidate general Modello feature separately from this application.
