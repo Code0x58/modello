@@ -1,14 +1,27 @@
 # mypy: warn-unused-ignores
-"""Axis semantics and the reusable expression plan, independent of finance."""
+"""Numeric observation axes, time operations, and validation."""
 
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
-from sympy import Symbol
 
-from examples.compute.named_map import NamedMap
-from examples.compute.scalar_plan import ScalarPlan
 from examples.compute.series import Series
+
+
+@pytest.mark.parametrize(
+    "dates, values",
+    [
+        ((date(2026, 1, 1),), (1, 2)),
+        ((date(2026, 1, 1), date(2026, 1, 1)), (1, 2)),
+        ((date(2026, 1, 2), date(2026, 1, 1)), (1, 2)),
+        ((date(2026, 1, 1),), (float("nan"),)),
+        ((date(2026, 1, 1),), (float("inf"),)),
+    ],
+)
+def test_invalid_vectors(dates, values):
+    """Malformed observation axes and nonfinite data are rejected before calculation."""
+    with pytest.raises(ValueError):
+        Series(dates, values)
 
 
 def test_series_alignment_lags_and_trailing_windows():
@@ -85,33 +98,6 @@ def test_timestamp_axes_normalize_offsets_and_reject_naive_or_mixed_times():
         series.asof(at.replace(tzinfo=None))
     with pytest.raises(ValueError, match="either dates or timestamps"):
         Series((date(2026, 1, 1), at), (1, 2))
-
-
-def test_named_plan_agrees_between_points_and_vectors():
-    p, q = Symbol("p"), Symbol("q")
-    plan = ScalarPlan(NamedMap({"price": p, "quantity": q}), NamedMap({"value": p * q, "ratio": p / q}))
-    assert plan.evaluate(NamedMap({"quantity": 2, "price": 10})) == {"value": 20, "ratio": 5}
-    times = (date(2026, 1, 1), date(2026, 1, 2))
-    result = plan.over(times, NamedMap({"quantity": Series(times, (2, 4)), "price": Series(times, (10, 12))}))
-    assert result["value"].values == (20, 48)
-    assert result["ratio"].values == (5, 3)
-    with pytest.raises(ValueError, match="same observation times"):
-        plan.over(times, NamedMap({"quantity": Series(times, (2, 4)), "price": Series(times[:1], (10,))}))
-    with pytest.raises(ValueError, match="Member names differ"):
-        plan.evaluate(NamedMap({"price": 10}))
-    with pytest.raises(ValueError, match="finite"):
-        plan.evaluate(NamedMap({"price": float("nan"), "quantity": 2}))
-
-
-def test_plan_handles_constants_and_rejects_unbound_or_aliased_inputs():
-    p, q = Symbol("p"), Symbol("q")
-    plan = ScalarPlan(NamedMap({}), NamedMap({"cash": 100}))
-    assert plan.evaluate(NamedMap({})) == {"cash": 100}
-    assert plan.over((date(2026, 1, 1),), NamedMap({}))["cash"].values == (100,)
-    with pytest.raises(ValueError, match="independent symbols"):
-        ScalarPlan(NamedMap({"p": p, "q": p}), NamedMap({"value": p}))
-    with pytest.raises(ValueError, match="unspecified inputs"):
-        ScalarPlan(NamedMap({"p": p}), NamedMap({"value": p + q}))
 
 
 def _typing_contract(timestamps: Series[datetime], dates: Series[date]) -> None:

@@ -24,6 +24,28 @@ defines it. Format code with ``uv run --dev ruff format .``. Refresh dependencie
 with ``uv lock --upgrade`` and commit ``uv.lock``. Dependabot proposes grouped
 weekly dependency and GitHub Actions updates. Workflows do not schedule rebuilds.
 
+Tests follow the source layers. Core model tests and public typing contracts
+live in ``tests/test_modello.py`` and ``tests/typing_checks.py``. Example tests
+live under ``tests/examples/``: generic data and expression helpers have a
+``compute/`` subtree, and financial modules have a ``portfolio/`` subtree.
+Portfolio tests are split by the corresponding account, source, signal,
+execution, analytics, utility, and reporting modules. Their ``conftest.py``
+shares the synthetic scenario; ``_data.py`` locates fixtures through the example
+package, independently of the tests' location. Cross-layer import checks live
+in ``tests/test_layer_boundaries.py``.
+
+Jobs and streaming tests also live under ``tests/examples/``. Example source
+modules retain their executable doctests; explicit test functions are collected
+from the test tree.
+
+Run a subtree while working on one layer:
+
+.. code-block:: console
+
+   $ uv run --locked --dev pytest tests/examples/portfolio
+   $ uv run --locked --dev pytest tests/examples/compute
+   $ uv run --locked --dev pytest tests/test_modello.py
+
 Build and validate both distribution formats:
 
 .. code-block:: console

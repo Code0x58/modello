@@ -1,53 +1,19 @@
-"""Symbolic reporting identities, explicit attribution economics, and render boundaries."""
+"""Symbolic P&L relationships and signal-sleeve attribution."""
 
-import json
 from dataclasses import replace
-from datetime import date, timedelta
-from html.parser import HTMLParser
-from pathlib import Path
+from datetime import timedelta
 
 import pytest
-from sympy import Rational, Symbol, diff, exp, log, simplify
+from sympy import Rational, diff, simplify
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
 from examples.portfolio.account import Account, AccountEngine
-from examples.portfolio.demo import example_run, performance_comparison, research_report
-from examples.portfolio.models import AAPL, MSFT, ApplePosition, MicrosoftPosition, USDCash
-from examples.portfolio.named import EquityMembers, portfolio_model
-from examples.portfolio.performance import PerformanceIndex, compare
-from examples.portfolio.report_html import render_html, report_data
+from examples.portfolio.models import MSFT, USDCash
+from examples.portfolio.named import portfolio_model
 from examples.portfolio.reporting import AccountPnL, InstrumentPnL, OrderAttribution, report
-from examples.portfolio.sources import CashFlow, CSVMarketSource, Fill, Income, TransactionLog, timestamp
-from examples.portfolio.utility import CashUtility, cara, crra
+from examples.portfolio.sources import CashFlow, Fill, Income, TransactionLog, timestamp
 from modello import Modello
-
-
-@pytest.fixture(scope="module")
-def scenario():
-    return example_run()
-
-
-@pytest.fixture(scope="module")
-def reporting(scenario):
-    return research_report(scenario)
-
-
-@pytest.fixture(scope="module")
-def engine(scenario):
-    opening = portfolio_model(EquityMembers)(
-        "opening",
-        equities=EquityMembers(
-            "equities", aapl=ApplePosition("apple", quantity=10), msft=MicrosoftPosition("msft", quantity=10)
-        ),
-        cash=USDCash("cash", amount=1000),
-    )
-    market = CSVMarketSource(
-        Path(__file__).parent / "examples/portfolio/data/market.csv", NamedMap({"aapl": AAPL, "msft": MSFT})
-    ).load()
-    return AccountEngine(
-        Account("research", scenario.account.nav.times[0], opening), market, max_price_age=timedelta(days=4)
-    )
 
 
 def attribute(scenario, *, path=None, weights=None, signals=None, orders=None):
@@ -192,24 +158,6 @@ def test_attribution_requires_correct_order_identity_side_and_available_signals(
         attribute(scenario, signals=NamedMap({"momentum": future}))
 
 
-def test_utility_derivatives_and_affine_invariance():
-    exponential = cara(0.001)
-    wealth = exponential.wealth
-    assert exponential.expressions["marginal_utility"] == exp(-wealth / 1000)
-    assert exponential.expressions["absolute_risk_aversion"] == Rational(1, 1000)
-    power = crra(2)
-    assert power.expressions["absolute_risk_aversion"] == 2 / power.wealth
-    assert power.expressions["relative_risk_aversion"] == 2
-    logarithmic = crra(1)
-    assert logarithmic.expression == log(logarithmic.wealth)
-    transformed = CashUtility("Scaled log", logarithmic.wealth, 5 * logarithmic.expression + 7)
-    for field in ("absolute_risk_aversion", "relative_risk_aversion"):
-        assert transformed.expressions[field] == logarithmic.expressions[field]
-    for utility in (cara(0), crra(0)):
-        assert utility.expressions["absolute_risk_aversion"] == 0
-        assert utility.expressions["relative_risk_aversion"] == 0
-
-
 def test_different_signals_can_drive_different_instruments(scenario):
     result = report(
         scenario.account,
@@ -231,107 +179,3 @@ def test_reporting_requires_the_account_ledger_known_by_the_horizon(scenario):
     ):
         with pytest.raises(ValueError, match="in-window ledger"):
             attribute(scenario, path=replace(scenario.account, ledger=TransactionLog((event, *rest))))
-
-
-def test_utility_reports_wealth_preferences_including_the_deposit(reporting):
-    assert reporting.utilities["cara"].values["absolute_risk_aversion"].values == (0.001,) * 4
-    assert reporting.utilities["crra"].values["relative_risk_aversion"].values == (2,) * 4
-    assert reporting.utilities["crra"].values["absolute_risk_aversion"].values == pytest.approx(
-        tuple(2 / value for value in reporting.path.nav.values)
-    )
-
-
-@pytest.mark.parametrize("coefficient", [-1, float("inf"), float("nan")])
-def test_invalid_risk_aversion_coefficients(coefficient):
-    for constructor in (cara, crra):
-        with pytest.raises(ValueError, match="finite and nonnegative"):
-            constructor(coefficient)
-
-
-def test_utility_domains_and_undefined_ratios():
-    times = (date(2025, 1, 1), date(2026, 1, 1))
-    with pytest.raises(ValueError, match="positive wealth"):
-        crra(2).over(Series(times, (0, 100)))
-    w = Symbol("wealth", positive=True)
-    with pytest.raises(ValueError, match="only free symbol"):
-        CashUtility("Unbound", w, w * Symbol("alpha"))
-    with pytest.raises(ValueError, match="vary with wealth"):
-        CashUtility("Constant", w, Rational(1))
-    with pytest.raises(ValueError, match="increasing"):
-        CashUtility("Decreasing", w, -w).over(Series(times, (100, 200)))
-    with pytest.raises(ValueError, match="finite"):
-        CashUtility("Singular", w, log(w - 100)).over(Series(times, (100, 200)))
-
-
-def test_report_html_and_json_preserve_values_and_escape_user_labels(reporting):
-    comparison = performance_comparison(reporting.path)
-    document = render_html(reporting, comparison)
-    parser = HTMLParser()
-    parser.feed(document)
-    assert "55.00" in document and "11.90" in document
-    assert "90.90" in document and "-24.00" in document
-    assert "3 returns over 3 calendar days" in document
-    assert "Absolute (1/USD)" in document
-    assert 'data-instrument="1" hidden' in document
-    assert "unavailable below one full calendar year" in document
-    assert "cdn" not in document and "<script src=" not in document
-    bad = replace(reporting.utilities["cara"].definition, name='<script>alert("x")</script>')
-    changed = replace(reporting, utilities=NamedMap({"bad": replace(reporting.utilities["cara"], definition=bad)}))
-    escaped = render_html(changed, comparison)
-    assert '<script>alert("x")</script>' not in escaped
-    assert "&lt;script&gt;" in escaped
-    payload = json.loads(json.dumps(report_data(reporting)))
-    assert payload["sources"]["signal:momentum"]["net"]["values"] == pytest.approx([0, 11.4, 0.5])
-    assert payload["orders"]["rebalance-1:aapl"]["signal_weights"] == {"momentum": 1.0}
-    wrong = replace(
-        comparison,
-        normalized=NamedMap({"portfolio": reporting.path.nav, "benchmark": comparison.normalized["benchmark"]}),
-    )
-    with pytest.raises(ValueError, match="unit-NAV path"):
-        render_html(reporting, wrong)
-
-
-def test_utility_table_aligns_values_by_name(reporting):
-    reordered = replace(
-        reporting,
-        utilities=reporting.utilities.map(
-            lambda utility: replace(utility, values=NamedMap(reversed(tuple(utility.values.items()))))
-        ),
-    )
-    comparison = performance_comparison(reporting.path)
-    assert render_html(reordered, comparison) == render_html(reporting, comparison)
-
-
-def test_report_supports_longer_histories_and_supplied_benchmark_context():
-    class CashMembers(Modello):
-        pass
-
-    times = tuple(timestamp(f"2024-{month:02d}-01T16:00:00Z") for month in (1, 4, 7, 10)) + (
-        timestamp("2025-01-01T16:00:00Z"),
-    )
-    name = "Long <account> & research"
-    opening = portfolio_model(CashMembers)("opening", cash=USDCash("cash", amount=100))
-    engine = AccountEngine(Account(name, times[0], opening), NamedMap({}), max_price_age=timedelta(0))
-    ledger = TransactionLog(tuple(Income(str(i), name, at, at, 10) for i, at in enumerate(times[1:])))
-    path = engine.evaluate(ledger, times)
-    reporting = report(path, NamedMap({}), signals=NamedMap({}), utilities=NamedMap({}))
-    comparison = compare(
-        PerformanceIndex("Account after costs", path.unit_nav),
-        PerformanceIndex("Reference <index> & income", Series(times, (100, 103, 106, 109, 112))),
-        risk_free=PerformanceIndex("Cash <reference>", Series(times, (100,) * 5)),
-        periods_per_year=4,
-    )
-    document = render_html(reporting, comparison, context="External data <reviewed> & fees")
-    assert "4 returns over 366 calendar days" in document
-    assert "2024-01-01 16:00" in document and "2025-01-01 16:00" in document
-    assert "Long &lt;account&gt; &amp; research" in document
-    assert "Account index: Account after costs" in document
-    assert "Benchmark: Reference &lt;index&gt; &amp; income" in document
-    assert "Sharpe reference: Cash &lt;reference&gt;" in document
-    assert "External data &lt;reviewed&gt; &amp; fees" in document
-    assert "Synthetic" not in document and "unavailable below" not in document
-    assert "Annualized performance" in document
-    assert f"{1.4 ** (365.25 / 366) - 1:.4%}" in document
-    assert comparison.portfolio.sharpe_ratio is not None
-    assert f"{comparison.portfolio.sharpe_ratio:.4f}" in document
-    assert "External data" not in render_html(reporting, comparison)

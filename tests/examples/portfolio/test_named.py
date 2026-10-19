@@ -1,11 +1,10 @@
 # mypy: warn-unused-ignores
-"""Check named portfolio computation against the original model and matrix math."""
+"""Named holdings and their shared valuation plans."""
 
 from datetime import date
-from math import sqrt
 
 import pytest
-from sympy import ImmutableMatrix, Rational, ones
+from sympy import Rational
 
 from examples.compute.named_map import NamedMap
 from examples.portfolio.explicit import PortfolioPricer, example_market_data, example_portfolio
@@ -78,25 +77,6 @@ def test_new_member_flows_through_aggregates_and_all_projections():
         assert sum(position.return_contribution.values[index] for position in path.positions.values()) == pytest.approx(
             actual, abs=1e-15
         )
-
-
-def test_named_covariance_and_risk_agree_with_independent_matrix_calculation():
-    path = NamedPortfolioPricer(example_named_portfolio())(example_named_market_data())
-    result = path.analytics(periods_per_year=252)
-    names = tuple(path.positions)
-    observations = ImmutableMatrix.hstack(*(ImmutableMatrix(path.positions[name].returns.values) for name in names))
-    count = observations.rows
-    centered = observations - ones(count, 1) * (ones(1, count) * observations / count)
-    cov = centered.T * centered * 252 / (count - 1)
-    weights = ImmutableMatrix([path.weights[name].values[-1] for name in names])
-    volatility = sqrt(float((weights.T * cov * weights)[0]))
-    assert result.latest_weights_risk.volatility == pytest.approx(volatility)
-    for i, left in enumerate(names):
-        for j, right in enumerate(names):
-            assert result.annualized_covariance[left][right] == pytest.approx(float(cov[i, j]))
-        contribution = float(weights[i] * (cov * weights)[i]) / volatility
-        assert result.latest_weights_risk.contributions[left] == pytest.approx(contribution)
-    assert sum(result.latest_weights_risk.contributions.values()) == pytest.approx(volatility)
 
 
 def test_map_reduction_keeps_inverse_valuation():

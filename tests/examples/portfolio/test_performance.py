@@ -1,6 +1,5 @@
-"""Independent performance formula checks and comparable reporting boundaries."""
+"""Performance indices, calendar statistics, and benchmark comparisons."""
 
-import json
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from math import prod, sqrt
@@ -9,9 +8,7 @@ from statistics import mean, stdev
 import pytest
 
 from examples.compute.series import Series
-from examples.portfolio.demo import example_run, main, performance_comparison
 from examples.portfolio.performance import PerformanceIndex, compare, measure
-from examples.portfolio.sources import CSVIndexSource
 
 
 def quarterly(values):
@@ -111,39 +108,3 @@ def test_performance_requires_positive_levels_sufficient_returns_and_exact_cash_
     cash = Series((date(2023, 12, 31), *path.times[1:]), path.values)
     with pytest.raises(ValueError, match="observation times"):
         measure(path, periods_per_year=4, risk_free=cash)
-
-
-def test_demo_reports_short_history_and_independent_synthetic_benchmark(tmp_path, monkeypatch, capsys):
-    comparison = performance_comparison(example_run().account)
-    assert comparison.portfolio.return_count == 3
-    assert comparison.portfolio.elapsed_days == 3
-    assert comparison.portfolio.total_return == pytest.approx((2532.9 / 2500) * (3066.9 / 3032.9) - 1)
-    assert comparison.benchmark.total_return == pytest.approx(0.03)
-    assert comparison.return_difference == pytest.approx((2532.9 / 2500) * (3066.9 / 3032.9) - 1 - 0.03)
-    assert comparison.portfolio.cagr is comparison.portfolio.sharpe_ratio is None
-    assert comparison.benchmark.cagr is comparison.benchmark.sharpe_ratio is None
-    report = tmp_path / "report.json"
-    html = tmp_path / "report.html"
-    monkeypatch.setattr("sys.argv", ["account-demo", "--json", str(report), "--html", str(html)])
-    main()
-    output = capsys.readouterr().out
-    assert "3 calendar days, 3 daily returns" in output
-    assert "Synthetic broad-market total-return index: 3.0000%" in output
-    assert "CAGR and annualized Sharpe: N/A" in output
-    payload = json.loads(report.read_text())["performance"]
-    assert payload["portfolio"]["cagr"] is payload["portfolio"]["sharpe_ratio"] is None
-    assert payload["periods_per_year"] == 252
-    assert payload["normalized"]["benchmark"]["values"] == [100, 100.5, 102, 103]
-    assert "Synthetic" in payload["context"]
-    assert payload["context"] in html.read_text()
-
-
-def test_csv_index_source_preserves_schedule_and_validates_schema(tmp_path):
-    source = tmp_path / "index.csv"
-    source.write_text("at,level\n2025-01-01T12:00:00Z,100\n2025-01-02T12:00:00Z,101\n")
-    index = CSVIndexSource(source).load()
-    assert index.values == (100, 101)
-    assert index.times[0].utcoffset() == timedelta(0)
-    source.write_text("at,price\n2025-01-01T12:00:00Z,100\n")
-    with pytest.raises(ValueError, match="level"):
-        CSVIndexSource(source).load()

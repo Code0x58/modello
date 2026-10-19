@@ -27,6 +27,7 @@ assert distribution.metadata.get_all("License-File")
 assert distribution.metadata["Requires-Python"] == ">=3.10"
 assert Path(modello.__file__).with_name("py.typed").is_file()
 assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
+assert not any(str(path).startswith("tests/") for path in distribution.files or ())
 assert not any(name == "examples" or name.startswith("examples.") for name in sys.modules)
 if sys.argv[1]:
     assert distribution.version == sys.argv[1], distribution.version
@@ -112,9 +113,14 @@ def check_wheel(
     assert (directory / "report.html").read_text().startswith("<!doctype html>")
     print(f"Validated all installed portfolio runners from {wheel.name}", flush=True)
     typing_checks = []
-    for name in ("typing_checks.py", "test_named_members.py", "test_series_plan.py"):
-        target = directory / name
-        target.write_text((Path(__file__).resolve().parents[1] / name).read_text())
+    for path in (
+        "tests/typing_checks.py",
+        "tests/examples/test_named_members.py",
+        "tests/examples/compute/test_series.py",
+    ):
+        source = Path(__file__).resolve().parents[1] / path
+        target = directory / source.name
+        target.write_text(source.read_text())
         typing_checks.append(str(target))
     mypy_config = directory / "mypy.ini"
     mypy_config.write_text("[mypy]\nignore_missing_imports = true\n")

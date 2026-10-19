@@ -2,7 +2,6 @@
 
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -60,10 +59,10 @@ assert 'examples.portfolio.report_html' not in sys.modules
     ],
     ids=("core", "numeric-data", "symbolic-execution", "named-models", "portfolio-namespace", "finance"),
 )
-def test_layer_imports(program: str) -> None:
+def test_layer_imports(program: str, pytestconfig: pytest.Config) -> None:
     result = subprocess.run(
         [sys.executable, "-c", program],
-        cwd=Path(__file__).parent,
+        cwd=pytestconfig.rootpath,
         capture_output=True,
         text=True,
         timeout=30,
