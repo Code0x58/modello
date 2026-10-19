@@ -42,10 +42,18 @@ def test_loading_reuses_equivalent_requests_and_preserves_member_names():
 
 def test_provider_type_is_part_of_request_equality():
     class OtherProvider(TextProvider):
+        # Even permissive custom equality cannot conflate provider types.
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, TextProvider) and self.text == other.text
+
+        __hash__ = TextProvider.__hash__
+
         def load(self) -> str:
             return "other: " + self.text
 
-    requests = NamedMap({"one": TextProvider("id"), "two": OtherProvider("id")})
+    one, two = TextProvider("id"), OtherProvider("id")
+    assert one == two
+    requests = NamedMap({"one": one, "two": two})
     assert load_providers(requests) == {"one": "id", "two": "other: id"}
 
 

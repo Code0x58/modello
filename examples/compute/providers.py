@@ -22,16 +22,17 @@ class Provider(ABC, Generic[_Value]):
 
 
 def load_providers(providers: NamedMap[Provider[_Value]]) -> NamedMap[_Value]:
-    """Load equivalent requests once per batch while preserving holding names.
+    """Load each provider type and request once per batch, preserving member names.
 
     The cache is local to this call: a later load can observe updated sources.
     Errors propagate to the caller without substituting missing observations.
     """
-    loaded: dict[Provider[_Value], _Value] = {}
+    loaded: dict[tuple[type[Provider[_Value]], Provider[_Value]], _Value] = {}
 
     def load(provider: Provider[_Value]) -> _Value:
-        if provider not in loaded:
-            loaded[provider] = provider.load()
-        return loaded[provider]
+        key = (type(provider), provider)
+        if key not in loaded:
+            loaded[key] = provider.load()
+        return loaded[key]
 
     return providers.map(load)

@@ -66,7 +66,7 @@ Using symbols as member keys would still require a map, while tying the holding
 name to a provider's naming rules. Symbols may also differ between feeds or
 contain punctuation that is inconvenient in a Python component attribute.
 
-The loader caches by the provider request itself during that call. The supplied
+The loader caches by concrete provider class and request during that call. The supplied
 providers are frozen dataclasses whose equality includes their concrete type
 and every parameter. Equivalent requests share data; different paths, symbols,
 currencies, namespaces, or provider classes remain separate. A later call starts
