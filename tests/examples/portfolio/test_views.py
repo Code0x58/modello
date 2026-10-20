@@ -8,10 +8,12 @@ import pytest
 
 from examples.compute.named_map import NamedMap
 from examples.named_members import MemberValues
+from examples.portfolio.account import AccountStep
 from examples.portfolio.demo import ResearchRun, ResearchScenario
 from examples.portfolio.execution import ExecutionBenchmark, ExecutionCosts
 from examples.portfolio.explicit import EquityMembers
 from examples.portfolio.models import EquityPosition, USDCash
+from examples.portfolio.postings import AccountFill, AccountPosting, AccountState, FillPosting
 from examples.portfolio.reporting import AccountReport
 from examples.portfolio.signals import OrderIntent, TargetWeights
 
@@ -71,6 +73,14 @@ if TYPE_CHECKING:
 
     def typed_research_views() -> None:
         result: ResearchRun[EquityMembers] = ResearchScenario.example().run()
+        step: AccountStep[EquityMembers] = result.account.transitions[0]
+        posting: AccountPosting = step.posting
+        state: AccountState = posting
+        holding: EquityPosition = step.after.portfolio.basket.members.aapl
+        if isinstance(posting, AccountFill):
+            settlement: FillPosting = posting.settlement
+            assert settlement
+        assert state and holding
         members: EquityMembers = result.decision.portfolio.basket.members
         position: EquityPosition = members.aapl
         orders: MemberValues[EquityPosition, OrderIntent] = result.orders

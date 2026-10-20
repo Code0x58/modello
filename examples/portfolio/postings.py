@@ -1,6 +1,6 @@
-"""Typed state transitions for externally supplied fills and capital movements."""
+"""Typed state transitions for externally supplied account events."""
 
-from examples.portfolio.models import AccountValue, Trade
+from examples.portfolio.models import AccountValue, Quote, Trade
 from examples.symbolic import SymbolicModel
 from modello import InstanceDummy, Modello, component
 
@@ -44,22 +44,54 @@ class AccountState(AccountValue):
 
 
 class CashMovement(Modello):
-    """Signed external capital: positive deposits and negative withdrawals."""
+    """Signed cash received or paid by an account."""
 
     amount = InstanceDummy("amount", real=True)
 
 
-class CapitalFlow(AccountState, SymbolicModel):
-    """An account state after issuing or redeeming units at the pre-flow price."""
+class AccountTransition(AccountState, SymbolicModel):
+    """A resulting account state, with both event boundaries retained."""
 
     before = component(AccountState)
-    flow = component(CashMovement)
     after = component(AccountState)
 
-    issued_units = flow.amount / before.unit_price
     cash = after.cash
-    cash = before.cash + flow.amount
     nav = after.nav
-    nav = before.nav + flow.amount
     units = after.units
-    units = before.units + issued_units
+
+
+class CapitalFlow(AccountTransition):
+    """Issue or redeem participation units at the pre-flow unit price."""
+
+    flow = component(CashMovement)
+
+    issued_units = flow.amount / AccountTransition.before.unit_price
+    cash = AccountTransition.before.cash + flow.amount
+    nav = AccountTransition.before.nav + flow.amount
+    units = AccountTransition.before.units + issued_units
+
+
+class AccountFill(AccountTransition):
+    """Settle a fill and mark its shares without issuing participation units."""
+
+    settlement = component(FillPosting)
+    mark = component(Quote)
+
+    opening_cash = AccountTransition.before.cash
+    opening_cash = settlement.before.cash
+    cash = settlement.cash
+    nav = AccountTransition.before.nav + settlement.fill.quantity * mark.price + cash - AccountTransition.before.cash
+    units = AccountTransition.before.units
+
+
+class IncomePosting(AccountTransition):
+    """Book investment income or an expense without changing account units."""
+
+    income = component(CashMovement)
+
+    cash = AccountTransition.before.cash + income.amount
+    nav = AccountTransition.before.nav + income.amount
+    units = AccountTransition.before.units
+
+
+AccountPosting = CapitalFlow | AccountFill | IncomePosting

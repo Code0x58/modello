@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from bisect import bisect_left
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import cached_property
@@ -19,8 +19,8 @@ from examples.portfolio.analytics import NamedAnalytics, analyse
 from examples.portfolio.basket import EquityHoldings
 from examples.portfolio.models import Equity
 from examples.portfolio.pnl import AccountPnL, InstrumentPnL, Profit
-from examples.portfolio.postings import CapitalFlow, FillPosting
-from examples.portfolio.sources import CashFlow, Fill, Income, PriceHistory, TransactionLog, finite
+from examples.portfolio.postings import AccountFill, AccountPosting, AccountState, CapitalFlow, IncomePosting
+from examples.portfolio.sources import CashFlow, Fill, Income, LedgerEvent, PriceHistory, TransactionLog, finite
 from examples.portfolio.valuation import MarketSnapshot, NamedPortfolio
 
 if TYPE_CHECKING:
@@ -100,11 +100,25 @@ class AccountSnapshot(Generic[_Members]):
     def unit_nav(self) -> float:
         return self.nav / self.units
 
+    def knowns(self, model: AccountState) -> tuple[Known[float], ...]:
+        """Supply the account balances to a transition's state component."""
+        return (Known(model.cash, self.cash), Known(model.nav, self.nav), Known(model.units, self.units))
+
     def rebalance(
         self, targets: TargetWeights, *, batch: str, arrival_at: datetime
     ) -> MemberValues[EquityPosition, OrderIntent]:
         """Solve the target-allocation model using this decision-time account view."""
         return targets.orders(self, batch=batch, arrival_at=arrival_at)
+
+
+@dataclass(frozen=True)
+class AccountStep(Generic[_Members]):
+    """One observed event and its evaluated before/event/after model."""
+
+    before: AccountSnapshot[_Members]
+    event: LedgerEvent
+    posting: AccountPosting
+    after: AccountSnapshot[_Members]
 
 
 @dataclass(frozen=True)
@@ -162,6 +176,7 @@ class AccountPath(Generic[_Members]):
 
     snapshots: tuple[AccountSnapshot[_Members], ...]
     ledger: TransactionLog
+    transitions: tuple[AccountStep[_Members], ...] = ()
 
     def series(self, project: Callable[[AccountSnapshot[_Members]], float]) -> Series[datetime]:
         return Series(
@@ -285,7 +300,7 @@ class AccountPath(Generic[_Members]):
 
 
 class AccountEngine(Generic[_Members]):
-    """Use one compiled valuation and an ordinary ledger state transition."""
+    """Advance typed account states through compiled event models and market marks."""
 
     def __init__(
         self,
@@ -308,13 +323,14 @@ class AccountEngine(Generic[_Members]):
         except (TypeError, ValueError) as error:
             raise ValueError("Specify all opening quantities and cash") from error
         finite(*self._opening_quantities.values(), self._opening_cash)
-        self._check_balances(dict(self._opening_quantities), self._opening_cash)
+        self._check_balances(self._opening_quantities, self._opening_cash)
         self._plan = type(account.opening).plan()
-        self._fill_plan = FillPosting.plan()
+        self._fill_plan = AccountFill.plan()
         self._capital_plan = CapitalFlow.plan()
+        self._income_plan = IncomePosting.plan()
 
     @staticmethod
-    def _check_balances(quantities: dict[str, float], cash: float) -> None:
+    def _check_balances(quantities: Mapping[str, float], cash: float) -> None:
         if cash < -1e-8 or any(quantity < -1e-10 for quantity in quantities.values()):
             raise ValueError("This account requires funded cash and nonnegative positions")
 
@@ -324,6 +340,58 @@ class AccountEngine(Generic[_Members]):
         quantity_inputs = model.positions.combine(quantities, lambda position, value: Known(position.quantity, value))
         return self._plan.evaluate(snapshot, *quantity_inputs.values(), Known(model.cash.amount, cash))
 
+    def _mark(self, state: AccountSnapshot[_Members], at: datetime) -> AccountSnapshot[_Members]:
+        """Change market observations while carrying the same account balances."""
+        if state.at == at:
+            return state
+        return AccountSnapshot(
+            at, state.known_at, state.account, self._value(at, state.quantities, state.cash), state.units
+        )
+
+    def _advance(self, state: AccountSnapshot[_Members], event: LedgerEvent) -> AccountStep[_Members]:
+        """Bind a ledger variant to its model, retaining the resulting state."""
+        before = self._mark(state, event.at)
+        quantities = before.quantities
+        changed: AccountPosting
+        if isinstance(event, CashFlow):
+            capital = self._capital_plan.source
+            changed = self._capital_plan.evaluate(
+                *before.knowns(capital.before), Known(capital.flow.amount, event.amount)
+            )
+        elif isinstance(event, Fill):
+            if event.member not in quantities:
+                raise ValueError(f"Unknown transaction member {event.member!r}")
+            fill = self._fill_plan.source
+            posted = self._fill_plan.evaluate(
+                *before.knowns(fill.before),
+                Known(fill.settlement.before.quantity, quantities[event.member]),
+                Known(fill.settlement.fill.quantity, event.quantity),
+                Known(fill.settlement.fill.price, event.price),
+                Known(fill.settlement.fill.fee, event.fee),
+                Known(fill.mark.price, before.prices[event.member]),
+            )
+            quantities = NamedMap(
+                (name, float(posted.settlement.quantity) if name == event.member else value)
+                for name, value in quantities.items()
+            )
+            changed = posted
+        elif isinstance(event, Income):
+            if event.member is not None and event.member not in quantities:
+                raise ValueError(f"Unknown income member {event.member!r}")
+            income = self._income_plan.source
+            changed = self._income_plan.evaluate(
+                *before.knowns(income.before), Known(income.income.amount, event.amount)
+            )
+        else:
+            raise TypeError("Unsupported ledger event")
+        cash = float(changed.cash)
+        self._check_balances(quantities, cash)
+        values = self._value(event.at, quantities.map(lambda quantity: max(0.0, quantity)), max(0.0, cash))
+        if not isclose(float(values.nav), float(changed.nav), rel_tol=0, abs_tol=1e-8):
+            raise ArithmeticError("Posting NAV does not reconcile to the resulting portfolio")
+        after = AccountSnapshot(event.at, before.known_at, before.account, values, float(changed.units))
+        return AccountStep(before, event, changed, after)
+
     def evaluate(self, ledger: TransactionLog, times: tuple[datetime, ...]) -> AccountPath[_Members]:
         """Report using knowledge at the final mark; balances include (opening, mark]."""
         times = tuple(utc_time(at) for at in times)
@@ -332,58 +400,20 @@ class AccountEngine(Generic[_Members]):
         events = tuple(
             event for event in ledger.known(self.account.name, times[-1]).events if times[0] < event.at <= times[-1]
         )
-        quantities = dict(self._opening_quantities)
-        cash = self._opening_cash
-        opening = self._value(times[0], NamedMap(quantities), cash)
-        units = float(opening.nav) / 100
+        opening = self._value(times[0], self._opening_quantities, self._opening_cash)
+        state = AccountSnapshot(times[0], times[-1], self.account.name, opening, float(opening.nav) / 100)
         snapshots = []
+        transitions = []
         cursor = 0
         for at in times:
             while cursor < len(events) and events[cursor].at <= at:
-                event = events[cursor]
-                if isinstance(event, CashFlow):
-                    before = self._value(event.at, NamedMap(quantities), cash)
-                    capital = self._capital_plan.source
-                    changed = self._capital_plan.evaluate(
-                        Known(capital.before.cash, cash),
-                        Known(capital.before.nav, float(before.nav)),
-                        Known(capital.before.units, units),
-                        Known(capital.flow.amount, event.amount),
-                    )
-                    cash, units = float(changed.after.cash), float(changed.after.units)
-                elif isinstance(event, Fill):
-                    if event.member not in quantities:
-                        raise ValueError(f"Unknown transaction member {event.member!r}")
-                    fill = self._fill_plan.source
-                    posted = self._fill_plan.evaluate(
-                        Known(fill.before.quantity, quantities[event.member]),
-                        Known(fill.before.cash, cash),
-                        Known(fill.fill.quantity, event.quantity),
-                        Known(fill.fill.price, event.price),
-                        Known(fill.fill.fee, event.fee),
-                    )
-                    quantities[event.member], cash = float(posted.after.quantity), float(posted.after.cash)
-                elif isinstance(event, Income):
-                    if event.member is not None and event.member not in quantities:
-                        raise ValueError(f"Unknown income member {event.member!r}")
-                    cash += event.amount
-                self._check_balances(quantities, cash)
-                quantities = {name: max(0.0, value) for name, value in quantities.items()}
-                cash = max(0.0, cash)
-                if units <= 0:
-                    raise ValueError("External flows must leave positive account units")
+                step = self._advance(state, events[cursor])
+                transitions.append(step)
+                state = step.after
                 cursor += 1
-            values = self._value(at, NamedMap(quantities), cash)
-            snapshots.append(
-                AccountSnapshot(
-                    at=at,
-                    known_at=times[-1],
-                    account=self.account.name,
-                    portfolio=values,
-                    units=units,
-                )
-            )
-        path = AccountPath(tuple(snapshots), TransactionLog(events))
+            state = self._mark(state, at)
+            snapshots.append(state)
+        path = AccountPath(tuple(snapshots), TransactionLog(events), tuple(transitions))
         if not all(isclose(value, 0, abs_tol=1e-8) for value in path.reconciliation.values):
             raise ArithmeticError("Account NAV does not reconcile to postings and position P&L")
         return path

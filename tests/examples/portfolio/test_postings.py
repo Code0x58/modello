@@ -10,7 +10,16 @@ from sympy import Symbol, diff, simplify
 from examples.compute.series import Series
 from examples.model_plan import Known, ModelPath, ModelPlan
 from examples.portfolio.models import Quote
-from examples.portfolio.postings import AccountState, CapitalFlow, CashMovement, Execution, FillPosting, HoldingState
+from examples.portfolio.postings import (
+    AccountFill,
+    AccountState,
+    CapitalFlow,
+    CashMovement,
+    Execution,
+    FillPosting,
+    HoldingState,
+    IncomePosting,
+)
 from modello import component
 
 
@@ -99,6 +108,66 @@ class Reinvestment(FillPosting):
 
 class FollowingCapitalFlow(CapitalFlow):
     before = component(CapitalFlow)
+
+
+class FillAfterCapital(AccountFill):
+    before = component(CapitalFlow)
+
+
+class IncomeAfterFill(IncomePosting):
+    before = component(FillAfterCapital)
+
+
+def test_mixed_account_events_nest_and_infer_an_upstream_execution_price():
+    observed_cash = Symbol("observed_cash", real=True)
+    source = IncomeAfterFill(
+        "deposit_buy_income",
+        before=FillAfterCapital(
+            "buy",
+            before=CapitalFlow(
+                "deposit",
+                before=AccountState("start", cash=1000, nav=2500, units=25),
+                flow=CashMovement("capital", amount=500),
+            ),
+            settlement=FillPosting(
+                "settlement",
+                before=HoldingState("holding", quantity=3),
+                fill=Execution("execution", quantity=2, fee=1),
+            ),
+            mark=Quote("market", price=110),
+        ),
+        income=CashMovement("dividend", amount=10),
+        cash=observed_cash,
+    )
+    result = source.compile().evaluate(Known(source.cash, 1319))
+    assert type(result) is IncomeAfterFill
+    assert type(result.before) is FillAfterCapital
+    assert type(result.before.before) is CapitalFlow
+    assert float(result.before.settlement.fill.price) == 95
+    assert float(result.before.settlement.quantity) == 5
+    assert float(result.before.before.cash) == 1500
+    assert float(result.before.cash) == 1309
+    assert float(result.nav) == 3039
+    assert float(result.units) == 30
+    income = IncomePosting("sensitivity")
+    assert simplify(diff(income.nav, income.income.amount) - 1) == 0
+    assert source.cash == observed_cash
+
+
+@pytest.mark.parametrize("amount", [10.0, -10.0])
+def test_income_and_expenses_change_investment_wealth_without_issuing_units(amount):
+    view = IncomePosting.plan()
+    model = view.source
+    result = view.evaluate(
+        Known(model.before.cash, 1000),
+        Known(model.before.nav, 2500),
+        Known(model.before.units, 25),
+        Known(model.income.amount, amount),
+    )
+    assert float(result.cash) == 1000 + amount
+    assert float(result.nav) == 2500 + amount
+    assert float(result.units) == 25
+    assert float(result.unit_price) == pytest.approx((2500 + amount) / 25)
 
 
 def test_connected_states_support_joint_inference_and_compiled_observation_paths():
@@ -204,6 +273,14 @@ def test_invalid_closing_states_are_rejected_at_points_and_on_paths(amount):
 
 
 if TYPE_CHECKING:
+
+    def typed_mixed_account_states(result: IncomeAfterFill) -> None:
+        state: AccountState = result
+        fill: FillAfterCapital = result.before
+        capital: CapitalFlow = fill.before
+        execution: Execution = fill.settlement.fill
+        assert state and capital and execution
+        _wrong: HoldingState = result.before  # type: ignore[assignment]
 
     def typed_transitions(source: FillPosting, times: tuple[date, ...], values: Series[date]) -> None:
         view: ModelPlan[FillPosting] = source.compile()

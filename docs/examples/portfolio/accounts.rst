@@ -104,7 +104,14 @@ price. Define a valued account state and a signed cash movement:
    :pyobject: CashMovement
    :language: python
 
-The transition relates cash, NAV, and units on both sides of the flow. A
+All account events will share the same before/after state and expose their
+closing balances as the result. Define that common boundary first:
+
+.. literalinclude:: ../../../examples/portfolio/postings.py
+   :pyobject: AccountTransition
+   :language: python
+
+The capital transition supplies the equations connecting these states. A
 withdrawal redeems units through the same equations:
 
 .. literalinclude:: ../../../examples/portfolio/postings.py
@@ -130,6 +137,48 @@ SymPy can establish the preserved unit price before we supply any numbers:
 
 Future unit-price changes measure investment return while account NAV also
 reflects the supplied capital.
+
+Give fills and income the same account boundary
+-----------------------------------------------
+
+An account-level fill contains the ``FillPosting`` we already built. Connect its
+opening settlement cash to the account's opening cash. The change in NAV is the
+new shares valued at the current market quote, plus the settlement cash change.
+Participation units stay fixed, so execution costs affect investment return:
+
+.. literalinclude:: ../../../examples/portfolio/postings.py
+   :pyobject: AccountFill
+   :language: python
+
+>>> from examples.portfolio.models import Quote
+>>> from examples.portfolio.postings import AccountFill, IncomePosting
+>>> bought = AccountFill(
+...     "account_buy", before=account_before,
+...     settlement=FillPosting(
+...         "settlement", before=HoldingState("shares", quantity=3),
+...         fill=Execution("buy", quantity=2, price=100, fee=1),
+...     ),
+...     mark=Quote("market", price=110),
+... )
+>>> bought.settlement.quantity, bought.cash, bought.nav, bought.units
+(5, 799, 2519, 25)
+
+Income also changes both cash and NAV while preserving units. A negative amount
+books an expense through the same definition:
+
+.. literalinclude:: ../../../examples/portfolio/postings.py
+   :pyobject: IncomePosting
+   :language: python
+
+>>> earned = IncomePosting(
+...     "income", before=bought.after, income=CashMovement("dividend", amount=10)
+... )
+>>> earned.cash, earned.nav, earned.units
+(809, 2529, 25)
+
+The concrete account postings form the typed union
+``AccountPosting = CapitalFlow | AccountFill | IncomePosting``. Each has the
+same account-state boundary and retains its own event components and equations.
 
 Connect transitions into a progression
 --------------------------------------
@@ -178,6 +227,17 @@ tree. ``CapitalFlow`` similarly returns an ``AccountState``. The declared
 component type determines which upstream model structure is retained: use
 ``component(FillPosting)`` here to keep the first fill available for traversal
 and joint inference. Supplying only ``posted.after`` provides its state view.
+
+The account-level variants compose across event types in the same way:
+
+>>> class FillAfterCapital(AccountFill):
+...     before = component(CapitalFlow)
+
+Its ``before`` retains the capital movement's equations; the fill inherits the
+connection to that movement's resulting cash, NAV, and units. Specialising an
+``IncomePosting`` with this type as its ``before`` extends the progression
+again. The full nested case can infer an earlier execution price from a closing
+cash observation, as well as evaluate known events forward.
 
 These states identify event boundaries. The account adapter below supplies
 event order, economic timestamps, and knowledge horizons. An observation axis
@@ -299,18 +359,62 @@ its full component schema:
 
 At a mark, the replay adapter obtains causal prices and supplies the current
 state to that plan. Its constructor validates the opening portfolio, records
-its known quantities and cash, stores the market/age policy, and compiles this
-one unbound view:
+its known quantities and cash, stores the market/age policy, and prepares the
+valuation and three event plans:
 
 .. literalinclude:: ../../../examples/portfolio/account.py
    :pyobject: AccountEngine._value
    :dedent: 4
    :language: python
 
-Replay orders postings through each mark. It uses ``FillPosting`` and
-``CapitalFlow`` for state changes, adds income to cash, and records a valued
-snapshot. Its complete loop is shown here now that the inputs, models, and
-valuation step have been introduced:
+An ``AccountSnapshot`` supplies the scalar account-state observations directly
+to a transition's ``before`` component:
+
+.. literalinclude:: ../../../examples/portfolio/account.py
+   :pyobject: AccountSnapshot.knowns
+   :dedent: 4
+   :language: python
+
+Market repricing carries quantities, cash, and units forward while obtaining
+new quotes. Replay marks the portfolio at every event and reporting timestamp;
+the price histories must cover both under the supplied age policy. At an event,
+both sides use the same quotes, so its NAV change measures the posting's effect:
+
+.. literalinclude:: ../../../examples/portfolio/account.py
+   :pyobject: AccountEngine._mark
+   :dedent: 4
+   :language: python
+
+Each observed event becomes an ``AccountStep``. It retains the valued states
+and the actual evaluated symbolic model, including its settlement or movement
+components:
+
+.. literalinclude:: ../../../examples/portfolio/account.py
+   :pyobject: AccountStep
+   :language: python
+
+The ledger boundary selects the appropriate model for the
+``Fill | CashFlow | Income`` record and binds its observations. It checks the
+resulting funded-account policy and reconciles model NAV to portfolio value.
+
+.. raw:: html
+
+   <details><summary>Inspect how a ledger observation becomes a typed step</summary>
+
+.. literalinclude:: ../../../examples/portfolio/account.py
+   :pyobject: AccountEngine._advance
+   :dedent: 4
+   :language: python
+
+.. raw:: html
+
+   </details>
+
+Replay now supplies chronology: apply an event to the current state, retain its
+transition, and carry ``step.after`` into the next event. Requested reporting
+marks add valuations along this progression. Replay reuses the compiled plans
+for each event; explicit nested cases support joint inverse questions across
+several events:
 
 .. literalinclude:: ../../../examples/portfolio/account.py
    :pyobject: AccountEngine.evaluate
@@ -360,6 +464,19 @@ account, start with ten shares of each equity and USD 1,000 cash:
 (2500.0, 2510.0, 3041.4, 3066.9)
 >>> path.positions["aapl"].quantity.values, path.positions["msft"].quantity.values
 ((10.0, 10.0, 17.0, 17.0), (10.0, 10.0, 0.0, 0.0))
+
+Inspect the first event through its typed state and model rather than
+reconstructing it from report columns:
+
+>>> first = path.transitions[0]
+>>> type(first.posting).__name__
+'AccountFill'
+>>> first.before.portfolio.basket.members.aapl.quantity
+10.0000000000000
+>>> first.after.portfolio.basket.members.aapl.quantity
+14.0000000000000
+>>> first.before.cash, first.after.cash, first.after.units
+(1000.0, 579.5, 25.0)
 
 The transaction source implements ``Provider[TransactionLog]``. Its fixture has
 three fills on January 7, a USD 500 deposit that day, and USD 8.50 income on
