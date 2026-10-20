@@ -1,190 +1,163 @@
-Models, cases, and reporting views
-==================================
+3. Evaluate symbolic models over time
+=====================================
 
-The portfolio experiment starts with equations. A case chooses which quantities
-are known; solving or compiling that case supplies the desired view. Reporting
-then applies the same definitions to observed intervals and named attribution
-sleeves. Data providers and the event log supply observations at explicit times.
+A scalar position answers a question at one point. To value fixed holdings on
+several dates, we need an observation axis and a numerical evaluator. These are
+separate requirements: the axis describes data, while the evaluator consumes
+the equations already resolved by Modello.
 
-The financial definitions are ordinary ``Modello`` subclasses. The small
-``SymbolicModel`` adapter in ``examples/symbolic.py`` adds expression compilation
-for this experiment; the core model constructor and joint solver are unchanged.
+Put observations on an explicit axis
+------------------------------------
 
-Declare composition and relationships
---------------------------------------
-
-The :doc:`holdings guide <holdings>` declares a basket and portfolio as classes:
-
-.. code-block:: python
-
-   class Holdings(EquityHoldings):
-       aapl = equity.component(DummyEquityProvider(symbol="AAPL"))
-       msft = equity.component(DummyEquityProvider(symbol="MSFT"))
-
-   class Basket(EquityBasket[Holdings]):
-       members = component(Holdings)
-       market_value = EquityBasket.total(members)
-
-   class Portfolio(NamedPortfolio[Holdings]):
-       basket = component(Basket)
-       cash = component(USDCash)
-       nav = basket.capital
-       nav = basket.market_value + cash.amount
-
-Each holding and its provider are declared together. The basket projects
-those requests under the component names, keeping acquisition and the symbolic
-domain aligned. The reduction builds one symbolic value expression;
-the basket's inherited weight equation uses the portfolio's capital base.
-``EquityBasket.define(...)`` and ``NamedPortfolio.define(...)`` build equivalent
-classes when the composition is selected from runtime configuration. Repeating
-the same composition reuses its class and compiled plan; its model instances
-still have independent unknown symbols.
-
-Construct models with a reusable factory
-----------------------------------------
-
-``equity`` is a ``ModelFactory[EquityPosition, EquityProvider]`` configured
-with the model class and the expected binding type. Calling it creates a fresh
-model using the ordinary Modello constructor:
-
->>> from examples.portfolio.basket import equity
->>> position = equity("opening", quantity=10)
->>> position.quantity
-10
-
-``equity.component(request)`` uses that same model type to declare a holding
-and its provider in a class body. Instantiation and declaration have distinct
-roles; both retain the concrete model's static type.
-
-This pattern works with any Modello model and binding type. For example, a
-sensor model can use a source name as its binding:
-
->>> from modello import Modello, InstanceDummy
->>> from examples.named_members import ModelFactory, BoundMembers, member_bindings
->>> class Reading(Modello):
-...     value = InstanceDummy("value", real=True)
->>> reading = ModelFactory(Reading, str)
->>> class Sensors(BoundMembers[str]):
-...     temperature = reading.component("weather:temperature")
->>> measured = Sensors("observations", temperature=reading("sample", value=18))
->>> measured.temperature.value
-18
->>> member_bindings(measured)["temperature"]
-'weather:temperature'
-
-The factory passes known scalars and typed component instances to the model's
-constructor. Every call has independent unknown symbols, even when display
-names match. Bindings describe acquisition; providers load data when explicitly
-called. The factory adds no data acquisition or alternate solving rules.
-
-Change knowns, not the equation
---------------------------------
-
-``Rebalance`` relates account NAV, price, opening quantity, target weight, and
-signed order quantity. A target and an observed order are two cases of that
-same model:
-
->>> from sympy import Rational, Symbol
->>> from examples.portfolio.signals import Rebalance
->>> target = Rebalance("target", nav=1000, price=100, opening_quantity=3, target_weight=Rational(1, 2))
->>> target.target_quantity, target.order_quantity
-(5, 2)
->>> fitted = Rebalance("observed", nav=1000, price=100, opening_quantity=3, order_quantity=2)
->>> fitted.target_weight
-1/2
-
-The second construction fits the implied allocation to an exact observation.
-It uses the existing joint solver. Statistical estimation from noisy samples
-is a separate layer; these examples impose exact symbolic constraints.
-
-A case is a new model instance with explicitly chosen knowns. This leaves the
-other case's inputs, outputs, and independent instance symbols intact.
-
-Compile a forward or inverse view
-----------------------------------
-
-A partially bound case can retain symbolic observations as runtime inputs.
-``compile()`` selects those inputs and the outputs needed by a consumer:
-
->>> observed = Symbol("observed_order", real=True)
->>> inverse = Rebalance("inverse", nav=1000, price=100, opening_quantity=3, order_quantity=observed)
->>> view = inverse.compile(inputs=("order_quantity",), outputs=("target_weight",))
->>> from examples.compute.named_map import NamedMap
->>> dict(view.evaluate(NamedMap({"order_quantity": 2})))
-{'target_weight': 0.5}
-
-The output field becomes an observation by supplying a symbol for it when
-constructing the case. Modello resolves the other fields in terms of that
-symbol. The compiled view can then evaluate many such observations:
+``Series`` pairs finite numeric values with strictly increasing dates or
+UTC-normalised timestamps. Here are five synthetic daily observations:
 
 >>> from datetime import date
 >>> from examples.compute.series import Series
->>> times = (date(2026, 1, 5), date(2026, 1, 6))
->>> orders = Series(times, (2, 4))
->>> tuple(round(value, 4) for value in view.over(times, NamedMap({"order_quantity": orders}))["target_weight"].values)
-(0.5, 0.7)
+>>> times = tuple(date(2026, 1, day) for day in range(5, 10))
+>>> prices = Series(times, (100, 102, 98, 104, 103))
+>>> prices.values
+(100.0, 102.0, 98.0, 104.0, 103.0)
 
-Each scalar model also declares its usual forward ``inputs`` and ``outputs``.
-``Rebalance.plan()`` caches that compiled view, and ``Rebalance.over(...)``
-applies it on a supplied observation axis. A different case can compile another
-view while keeping the same equation definition.
+A lag labels the earlier values with the later observation dates. That makes
+an interval's opening value align with its closing value:
 
-Share definitions across layers
---------------------------------
+.. literalinclude:: ../../../examples/compute/series.py
+   :pyobject: Series.lag
+   :dedent: 4
+   :language: python
 
-The application uses these model relationships throughout:
+>>> prices.lag().times == times[1:]
+True
+>>> prices.lag().values
+(100.0, 102.0, 98.0, 104.0)
+>>> tuple(round(value, 4) for value in prices.simple_returns().values)
+(0.02, -0.0392, 0.0612, -0.0096)
 
-.. list-table::
-   :header-rows: 1
+``differences`` and ``simple_returns`` omit the warmup observation. Periods
+count observations, including on an irregular axis; they do not insert missing
+timestamps. ``combine`` requires exact axis agreement. ``cumulative_sum``
+accumulates from zero, so adding an opening balance remains a visible choice:
 
-   * - Model
-     - Relationship and views
-   * - ``FillPosting``
-     - Signed fills change quantity and cash; an observed cash change can determine execution price.
-   * - ``CapitalFlow``
-     - Deposits issue units at the pre-flow unit price; observed units can determine the capital flow.
-   * - ``Momentum`` and ``Rebalance``
-     - Sampled prices produce a signal; targets and observed order quantities select different allocation views.
-   * - ``ExecutionCosts`` and ``Shortfall``
-     - Execution terms produce shortfall; a cost observation can determine an unknown fee or notional.
-   * - ``InstrumentPnL``, ``Profit``, and ``AccountPnL``
-     - The same interval-profit equations value actual positions, signal sleeves, and account reconciliation.
+>>> change = prices.differences()
+>>> change.cumulative_sum().map(lambda value: value + prices.values[0]).values
+(102.0, 98.0, 104.0, 103.0)
 
-The shared P&L definitions live in ``examples/portfolio/pnl.py``. Their compiled
-views evaluate actual account data and reporting sleeves; there is one
-arithmetic definition for each relationship. Cash utility definitions keep
-their expressions and symbolic derivative ratios available through
-``CashUtility.cara(...)``, ``CashUtility.crra(...)``, or a custom expression.
+Compile one resolved position
+-----------------------------
 
-Declare a scenario, then evaluate its views
--------------------------------------------
+A fixed position has known shares and one remaining price symbol. We can name
+that input and the value output using the maps from the preceding chapter:
 
-``ResearchScenario`` declares the opening account, transaction provider,
-valuation and feature schedules, decision/arrival/assessment times, benchmark,
-cash reference, utility definitions, and policy parameters. The worked offline
-case is available as a class-owned example:
+>>> from examples.portfolio.models import EquityPosition
+>>> from examples.compute.named_map import NamedMap
+>>> from examples.compute.scalar_plan import ScalarPlan
+>>> position = EquityPosition("fixed", quantity=10)
+>>> plan = ScalarPlan(
+...     NamedMap({"price": position.instrument.price}),
+...     NamedMap({"value": position.market_value}),
+... )
+>>> dict(plan.evaluate(NamedMap({"price": 100})))
+{'value': 1000.0}
+>>> plan.over(times, NamedMap({"price": prices}))["value"].values
+(1000.0, 1020.0, 980.0, 1040.0, 1030.0)
 
->>> from examples.portfolio.demo import ResearchScenario
->>> scenario = ResearchScenario.example()
->>> result = scenario.run()
->>> tuple(round(value, 2) for value in result.account.nav.values)
-(2500.0, 2510.0, 3041.4, 3066.9)
->>> reporting = result.report()
->>> round(sum(reporting.account["net"].values), 2)
-66.9
+Here is the compilation step. The plan requires independent input symbols and
+checks that every output's remaining symbols are supplied. ``lambdify`` turns
+the resolved expressions into one callable using the standard-library math
+backend and common-subexpression elimination:
 
-The operations belong to the objects whose views they produce:
+.. literalinclude:: ../../../examples/compute/scalar_plan.py
+   :pyobject: ScalarPlan.__init__
+   :dedent: 4
+   :language: python
+
+The vector operation aligns names and axes, then calls that calculation on
+each row. It does no symbolic solving per observation:
+
+.. literalinclude:: ../../../examples/compute/scalar_plan.py
+   :pyobject: ScalarPlan.over
+   :dedent: 4
+   :language: python
+
+``ScalarPlan`` works with ordinary SymPy expressions too. It has no knowledge
+of portfolios, prices, or Modello classes. Its numerical outputs are floats;
+the original symbolic case still supports exact arithmetic.
+
+Give a model its evaluation methods
+-----------------------------------
+
+Repeatedly spelling out inputs and outputs would distract from the model.
+The small ``SymbolicModel`` subclass packages those view-building operations.
+It declares default ``inputs`` and ``outputs`` as tuples of field names:
 
 .. code-block:: python
 
-   market = opening.load_market()
-   path = account.replay(ledger, valuation_times, market=market, max_price_age=age)
-   orders = decision_snapshot.rebalance(targets, batch="rebalance", arrival_at=arrival)
-   reporting = path.report(attributions, signals=signal_histories, utilities=utilities)
-   html = reporting.to_html(comparison, context="Research assumptions and data source")
+   from functools import cache
+   from typing import ClassVar, TypeAlias, cast
+   from sympy import Expr
+   from modello import Modello
+   from examples.compute.named_map import NamedMap
+   from examples.compute.scalar_plan import ScalarPlan
+   from examples.compute.series import Series, Time
 
-Chronology remains an explicit adapter concern. Providers acquire observations;
-replay orders postings, honours publication times, and supplies successive
-known states to the balance models. Sampling and aggregation build interval
-inputs. Symbolic equations define the arithmetic within those states and
-intervals; they do not choose the information horizon or invent missing fills.
+   ViewFields: TypeAlias = tuple[str, ...] | NamedMap[Expr]
+
+``Time`` is the series module's axis type variable. ``ViewFields`` selects
+either model fields by name or arbitrary named expressions:
+
+.. literalinclude:: ../../../examples/symbolic.py
+   :pyobject: SymbolicModel
+   :language: python
+
+``compile`` uses the current case, ``plan`` caches the class's usual unbound
+view, and ``over`` applies that default view to aligned columns.
+
+Build a position-valuing model on top of the component we already defined:
+
+>>> from typing import ClassVar
+>>> from modello import component
+>>> from examples.symbolic import SymbolicModel
+>>> class PositionValue(SymbolicModel):
+...     position = component(EquityPosition)
+...     quantity = position.quantity
+...     price = position.instrument.price
+...     value = position.market_value
+...     inputs: ClassVar[tuple[str, ...]] = ("quantity", "price")
+...     outputs: ClassVar[tuple[str, ...]] = ("value",)
+>>> fixed = PositionValue("fixed", position=EquityPosition("holding", quantity=10))
+>>> view = fixed.compile(inputs=("price",))
+>>> view.over(times, NamedMap({"price": prices}))["value"].values
+(1000.0, 1020.0, 980.0, 1040.0, 1030.0)
+
+No additional valuation formula was introduced: the model aliases the existing
+position's fields. The default unbound plan can instead vary both quantities
+and prices, which will be useful when the account trades.
+
+Select another solving direction
+--------------------------------
+
+Suppose market value is observed and quantity is the desired output. The same
+model can solve the exact constraint:
+
+>>> inverse = PositionValue("quantity", price=100, value=1500)
+>>> inverse.quantity
+15
+
+To repeat that inverse question numerically, supply a symbolic observation when
+constructing the case, then choose its input and output fields:
+
+>>> from sympy import Symbol
+>>> observed = Symbol("observed_value", positive=True)
+>>> fitted = PositionValue("observed", price=100, value=observed)
+>>> inverse_view = fitted.compile(inputs=("value",), outputs=("quantity",))
+>>> dict(inverse_view.evaluate(NamedMap({"value": 1500})))
+{'quantity': 15.0}
+
+This is exact calibration to an observation. Statistical estimation from noisy
+samples requires its own model and estimation layer. Providers and calendars
+also remain outside this numerical executor.
+
+We can now evaluate a model on data, but we have entered those prices by hand.
+The :doc:`next chapter <providers>` defines the data contract, acquires prices,
+and couples each request to its holding declaration.

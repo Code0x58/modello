@@ -1,212 +1,421 @@
-Symbolic reporting, signal attribution, and utility
-===================================================
+8. Build attribution, utility, and report views
+===============================================
 
-The :doc:`account example <accounts>` supplies positions and postings. Reporting
-adds another model layer over those observations: it expresses P&L, reconciles
-it to account value, and attributes it to named signal sleeves. SymPy also
-derives local risk preferences from a supplied cash utility function.
+The account already produces interval profit using the models from chapter 5.
+Reporting adds named explanations of that profit, then presents those same
+observations as tables and timelines. We will declare the attribution rule,
+build its inputs, derive utility views, and only then assemble a full report.
 
-`Explore the interactive account report <report.html>`_.
-It contains account and instrument tables, signal-to-order lineage, and timeline
-charts. Select an instrument, toggle chart legends, or hover observations to
-inspect their timestamps and values. The source data remains the three-day
-synthetic example described in :ref:`account-performance`.
+Continue with the account and decision inputs from chapters 5 and 6. This setup
+recreates them for an independent run of this page:
 
-Generate the same self-contained report locally:
+.. raw:: html
 
-.. code-block:: console
+   <details><summary>Recreate the account and decision inputs</summary>
 
-   $ pip install "modello[examples]"
-   $ python -m examples.portfolio.demo --html /tmp/account.html --json /tmp/account.json
-
-The HTML runs offline. Both outputs use the same typed ``AccountReport``;
-rendering introduces no further P&L calculations. The implementation lives in
-``examples/portfolio/pnl.py``, ``examples/portfolio/reporting.py``,
-``examples/portfolio/utility.py``, and ``examples/portfolio/report_html.py``.
-
-Reuse the renderer with your own account report and aligned benchmark
-comparison through ``report.to_html(comparison, context="...")``.
-Account, benchmark, and cash-reference names come from those typed inputs;
-the optional context supplies text about the source data or methodology.
-The demonstration passes its synthetic-data notice here. Observation counts,
-measurement dates, and availability of annualized metrics follow the actual
-sample, so the same renderer works for longer research histories.
-
-Define reporting relationships as models
-----------------------------------------
-
-``InstrumentPnL`` and ``AccountPnL`` derive from a shared ``Profit`` model.
-Holding, trading, income, and fees produce gross and net investment profit.
-For each interval:
-
-.. math::
-
-   P\&L = q_0(P_1-P_0) + \Delta q\,P_1
-          - \mathrm{signed\ fill\ notional} + income - fees.
-
-Here signed fill notional is ``sum(fill.quantity * fill.price)``. Buys add
-positive quantities and notionals; sells subtract them. The account model adds
-external capital and relates the result to its opening and closing NAV.
-
-These remain ordinary symbolic models, suitable for differentiation and inverse
-questions as well as numerical reporting:
-
->>> from sympy import diff, simplify
->>> from examples.portfolio.pnl import InstrumentPnL, AccountPnL
->>> model = InstrumentPnL("instrument")
->>> simplify(diff(model.net, model.opening_quantity) - (model.closing_price - model.opening_price))
-0
->>> diff(model.net, model.fees)
--1
->>> account = AccountPnL("account", opening_nav=1000, holding=10, trading=2, income=3, fees=1, external_flows=100, residual=0)
->>> account.net, account.closing_nav
-(14, 1114)
-
-The first derivative above is P&L sensitivity to an additional opening share.
-It is distinct from allocating observed P&L to the signals responsible for
-trades. Both account P&L and the report use these definitions. Each model declares
-its default ``inputs`` and ``outputs``; ``plan()`` compiles that view once
-through ``ScalarPlan`` for evaluation on interval vectors. The report retains the expressions for
-inspection under ``instrument_plan`` and ``account_plan``.
-
-Attribute executed decisions to named signals
----------------------------------------------
-
-A reporting convention determines which P&L belongs to a signal. The example
-uses an unchanged opening reference book plus signed incremental trading
-sleeves. An ``OrderAttribution`` instance links an existing typed order to
-nonnegative named signal weights summing to one:
-
->>> from examples.portfolio.demo import ResearchScenario
+>>> from datetime import timedelta
+>>> from pathlib import Path
+>>> import examples.portfolio as portfolio_examples
+>>> from examples.portfolio.explicit import Portfolio, Basket, EquityMembers
+>>> from examples.portfolio.basket import equity
+>>> from examples.portfolio.models import USDCash
+>>> from examples.portfolio.account import Account
+>>> from examples.portfolio.sources import CSVTransactionSource, timestamp
+>>> times = tuple(timestamp(f"2026-01-{day:02d}T16:01:00Z") for day in range(5, 9))
+>>> opening = Portfolio(
+...     "opening",
+...     basket=Basket(
+...         "basket",
+...         members=EquityMembers(
+...             "equities",
+...             aapl=equity("apple", quantity=10),
+...             msft=equity("microsoft", quantity=10),
+...         ),
+...     ),
+...     cash=USDCash("cash", amount=1000),
+... )
+>>> account = Account("research", times[0], opening)
+>>> age = timedelta(days=4)
+>>> market = opening.load_market()
+>>> data_dir = Path(portfolio_examples.__file__).with_name("data")
+>>> ledger = CSVTransactionSource(data_dir / "transactions.csv").load()
 >>> from examples.compute.named_map import NamedMap
+>>> from examples.portfolio.signals import MomentumSignals, TargetWeights
+>>> path = account.replay(ledger, times, market=market, max_price_age=age)
+>>> decision_at = timestamp("2026-01-07T09:00:00Z")
+>>> arrival_at = timestamp("2026-01-07T09:05:00Z")
+>>> decision = account.replay(
+...     ledger, (times[0], decision_at), market=market, max_price_age=age
+... ).snapshots[-1]
+>>> prices = market.map(
+...     lambda history: history.sample((*times[:2], decision_at), max_age=age)
+... )
+>>> signals = MomentumSignals(prices, lookback=2).load()
+>>> targets = TargetWeights.from_signals(signals, decision_at, exposure=0.8)
+>>> orders = decision.rebalance(targets, batch="rebalance-1", arrival_at=arrival_at)
+
+.. raw:: html
+
+   </details>
+
+Declare the attribution convention
+----------------------------------
+
+A signal's P&L is not identified uniquely by a transaction log. Choose an
+explicit convention: keep the opening book unchanged as a reference, and track
+signed incremental shares from signal-linked fills in separate sleeves.
+
+An order records which decision a fill belongs to. ``OrderAttribution`` adds
+nonnegative signal-credit weights that sum to one:
+
+.. literalinclude:: ../../../examples/portfolio/reporting.py
+   :pyobject: OrderAttribution
+   :language: python
+
+Declare those weights alongside the decision, before using its execution
+outcome. For our one-signal policy:
+
 >>> from examples.portfolio.reporting import OrderAttribution
->>> scenario = ResearchScenario.example().run()
->>> order = scenario.orders["rebalance-1:aapl"]
->>> attribution = OrderAttribution(order, NamedMap({"momentum": 1.0}))
->>> attribution.weights["momentum"]
+>>> attributions = orders.map(
+...     lambda order: OrderAttribution(order, NamedMap({"momentum": 1.0}))
+... )
+>>> attributions["rebalance-1:aapl"].weights["momentum"]
 1.0
 
-For a policy combining two signals, an order could carry
-``NamedMap({"value": 0.4, "momentum": 0.6})``. Declare that allocation when
-constructing the decision, alongside each signal's timestamped observations.
-The reporting adapter checks that the signal was available at the decision and
-that linked fills match the account, instrument, side, and order timing.
+A multi-signal decision could use ``NamedMap({"value": 0.4, "momentum": 0.6})``.
+The reporting adapter checks the named histories were available at the decision
+and that linked fills match the account, instrument, timing, side, and quantity.
 
-Only executed shares enter a sleeve. Its shares persist into later intervals;
-fees follow the order allocation. Instrument income is split according to the
-signed sleeve shares held at the income event. Trades without a declared signal
-link and account-level cash income remain in an explicit ``unattributed`` row.
-Income paid after a position is fully closed also goes there, since the current
-holding supplies no allocation basis.
+Evaluate an executed sleeve with the existing model
+---------------------------------------------------
 
-Selling an opening holding creates a negative signal sleeve against the
-unchanged positive reference holding. Their shares add to the actual position,
-including after it reaches zero. This expresses the incremental P&L of the sell
-decision relative to continuing to hold. These are accounting sleeves; account
-funding and position constraints apply to the actual combined portfolio.
+Only executed shares enter the sleeve. Its shares persist into later intervals,
+fees follow the declared credit weights, and instrument income follows the
+signed shares held at the income event. Unlinked trades and account cash income
+remain ``unattributed``; income after a position has closed has no current-share
+allocation basis and also enters that row.
 
->>> reporting = scenario.report()
->>> {source: round(sum(columns["net"].values), 2) for source, columns in reporting.sources.items()}
+For example, Apple's momentum sleeve starts empty, acquires seven executed
+shares for USD 735.60, receives USD 3.50 of the income, and pays USD 1 fees.
+The same ``InstrumentPnL`` definition used by actual account positions gives:
+
+>>> from sympy import Rational
+>>> from examples.portfolio.pnl import InstrumentPnL
+>>> sleeve = InstrumentPnL(
+...     "momentum",
+...     opening_quantity=0,
+...     opening_price=100,
+...     closing_price=107,
+...     fill_quantity=7,
+...     fill_notional=Rational("735.6"),
+...     income=Rational("3.5"),
+...     fees=1,
+... )
+>>> sleeve.net
+159/10
+
+Selling ten opening MSFT shares creates a negative signal sleeve against the
+unchanged positive reference book. Their quantities add to the actual holding,
+even after it reaches zero. The signal sleeve measures the incremental P&L of
+selling rather than continuing to hold; funding and position constraints apply
+to the combined actual account.
+
+Supply interval columns to the reporting layer
+----------------------------------------------
+
+An instrument report keeps the actual position path, profit columns, per-source
+profit columns, and per-source quantities:
+
+.. literalinclude:: ../../../examples/portfolio/reporting.py
+   :pyobject: InstrumentReport
+   :language: python
+
+``AccountReport`` collects the instrument views and account/source columns.
+It retains the plans' symbolic expressions for inspection. Utility views are
+optional at this stage; we will populate them below:
+
+.. literalinclude:: ../../../examples/portfolio/reporting.py
+   :pyobject: AccountReport
+   :end-before:     def to_dict
+   :language: python
+
+The ledger adapter maintains ``(member, source)`` quantities. For each interval
+it records opening quantities/prices, signed fill quantities/notionals, closing
+prices, income, and fees. Those are precisely ``InstrumentPnL``'s inputs from
+chapter 5. The compiled model supplies each source's profit columns.
+
+To add instrument and account columns, use an axis-checked reduction:
+
+.. literalinclude:: ../../../examples/portfolio/pnl.py
+   :pyobject: Profit.sum
+   :dedent: 4
+   :language: python
+
+Source totals feed ``AccountPnL`` together with opening NAV, closing NAV, and
+external capital. A nonzero reconciliation residual indicates a mismatch.
+The complete adapter adds validation and the explicit income-allocation cases:
+
+.. raw:: html
+
+   <details><summary>Inspect the complete ledger-to-sleeves adapter</summary>
+
+.. literalinclude:: ../../../examples/portfolio/reporting.py
+   :pyobject: AccountReport.from_account
+   :dedent: 4
+   :language: python
+
+.. raw:: html
+
+   </details>
+
+Apply that layer with no utility definitions yet:
+
+>>> report = path.report(
+...     attributions, signals=NamedMap({"momentum": signals}), utilities=NamedMap({})
+... )
+>>> {
+...     source: round(sum(columns["net"].values), 2)
+...     for source, columns in report.sources.items()
+... }
 {'opening': 55.0, 'signal:momentum': 11.9, 'unattributed': 0.0}
->>> {member: round(sum(instrument.profit["net"].values), 2) for member, instrument in reporting.instruments.items()}
+>>> {
+...     member: round(sum(item.profit["net"].values), 2)
+...     for member, item in report.instruments.items()
+... }
 {'aapl': 90.9, 'msft': -24.0}
->>> tuple(round(x, 10) for x in reporting.account["residual"].values)
+>>> tuple(round(value, 10) for value in report.account["residual"].values)
 (0.0, 0.0, 0.0)
 
-The momentum sleeve earns USD 15.90 on AAPL and loses USD 4.00 on MSFT, for
-USD 11.90 in total. Its MSFT result includes the effect of selling ten shares
-and the subsequent price change relative to the reference holding. The opening
-reference book earns USD 55.00; together they reconcile to USD 66.90 investment
-P&L. The USD 500 deposit is external capital and enters neither contribution.
+Opening holdings contribute USD 55.00 and momentum contributes USD 11.90,
+reconciling to USD 66.90. Momentum's instrument contributions are USD 15.90 for
+AAPL and USD -4.00 for MSFT. The USD 500 deposit contributes to neither profit
+row. This is an additive decomposition under the chosen rule; interacting
+signals may require another credit rule or counterfactual portfolios.
 
-For a fixed executed P&L stream, the reporting model can retain a symbolic
-allocation coefficient too. Using AAPL's seven executed shares, total signed
-notional of USD 735.60, allocated income of USD 3.50, and USD 1 fees:
+Retain symbolic attribution sensitivity
+---------------------------------------
 
->>> from sympy import Rational, Symbol
+Because the report uses the same symbolic definitions, an allocation coefficient
+can remain unknown or symbolic while the executed stream stays fixed:
+
+>>> from sympy import Symbol, diff
 >>> weight = Symbol("signal_weight", nonnegative=True)
->>> allocated = InstrumentPnL("allocated", opening_quantity=0, opening_price=100, closing_price=107,
-...     fill_quantity=7*weight, fill_notional=Rational("735.6")*weight,
-...     income=Rational("3.5")*weight, fees=weight)
+>>> allocated = InstrumentPnL(
+...     "allocated",
+...     opening_quantity=0,
+...     opening_price=100,
+...     closing_price=107,
+...     fill_quantity=7 * weight,
+...     fill_notional=Rational("735.6") * weight,
+...     income=Rational("3.5") * weight,
+...     fees=weight,
+... )
 >>> allocated.net == Rational("15.9") * weight
 True
 >>> diff(allocated.net, weight)
 159/10
 
-That derivative measures sensitivity to the declared credit allocation while
-the executed stream stays fixed. Changing the underlying signal or allocation
-policy could instead change orders and fills, requiring a new scenario.
+This derivative changes the declared credit allocation, holding execution fixed.
+Changing the trading signal could change orders and executions instead, requiring
+another scenario. The symbolic identity does not establish a unique causal effect.
 
-This is an additive decomposition under the declared allocation rule. A policy
-with interacting signals needs its own choice of allocation, such as explicit
-decision weights or separate counterfactual portfolios. The symbolic identities
-make the chosen calculation inspectable; they do not identify a unique causal
-effect from a transaction log.
+Derive a cash-utility view
+--------------------------
 
-Derive risk preferences from cash utility
------------------------------------------
-
-For increasing utility :math:`U(W)` of cash wealth :math:`W`, the Arrow–Pratt
-measures are:
+A preference model supplies an increasing cash-wealth utility ``U(W)``. Define
+its local absolute and relative Arrow–Pratt risk aversion from derivatives:
 
 .. math::
 
-   A(W)=-\frac{U''(W)}{U'(W)}, \qquad
-   R(W)=-W\frac{U''(W)}{U'(W)}.
+   A(W)=-U''(W)/U'(W), \qquad R(W)=-W U''(W)/U'(W).
 
-Absolute risk aversion has units of inverse currency; relative risk aversion is
-dimensionless. CARA means constant **absolute** risk aversion, while CRRA means
-constant **relative** risk aversion. See `MIT's risk-preference lecture
-<https://ocw.mit.edu/courses/14-123-microeconomic-theory-iii-spring-2015/81e86df52f7911ba22af879e1dfd8ec0_MIT14_123S15_attitudes.pdf>`_
-for these definitions.
+Start with an expression and its wealth symbol. ``CashUtility`` stores those
+inputs and derives the view as follows:
 
-``CashUtility`` accepts a typed wealth symbol and a SymPy expression. The helper
-families use normalizations with convenient limits:
+.. literalinclude:: ../../../examples/portfolio/utility.py
+   :pyobject: CashUtility
+   :end-before:     def __post_init__
+   :language: python
 
-* ``CashUtility.cara(alpha)`` defines ``(1 - exp(-alpha * W)) / alpha``, giving
-  ``A(W) = alpha`` and ``R(W) = alpha * W``. At zero it uses linear utility.
-* ``CashUtility.crra(gamma)`` defines ``(W**(1-gamma) - 1) / (1-gamma)``, giving
-  ``A(W) = gamma / W`` and ``R(W) = gamma``. At one it uses ``log(W)``.
+.. literalinclude:: ../../../examples/portfolio/utility.py
+   :pyobject: CashUtility.expressions
+   :dedent: 4
+   :language: python
 
+Its two family constructors define normalised CARA and CRRA utilities. The
+coefficient helper converts a finite nonnegative coefficient to an exact SymPy
+rational:
+
+.. literalinclude:: ../../../examples/portfolio/utility.py
+   :pyobject: CashUtility.cara
+   :dedent: 4
+   :language: python
+
+.. literalinclude:: ../../../examples/portfolio/utility.py
+   :pyobject: CashUtility.crra
+   :dedent: 4
+   :language: python
+
+CARA has constant absolute risk aversion; its zero-coefficient limit is linear
+utility. CRRA has constant relative risk aversion; its coefficient-one case is
+logarithmic utility. Absolute aversion has units of inverse currency, while
+relative aversion is dimensionless.
+
+>>> from sympy import log
 >>> from examples.portfolio.utility import CashUtility
 >>> exponential = CashUtility.cara(0.001)
->>> exponential.expressions["absolute_risk_aversion"]
-1/1000
 >>> power = CashUtility.crra(2)
->>> power.expressions["absolute_risk_aversion"] == 2 / power.wealth
-True
->>> power.expressions["relative_risk_aversion"]
-2
-
-The expressions include utility, marginal utility, curvature, and both ratios.
-They are derived using `SymPy differentiation
-<https://docs.sympy.org/latest/tutorials/intro-tutorial/calculus.html>`_ before
-numerical execution. A custom expression follows the same route:
-
->>> from sympy import Symbol, log
+>>> (
+...     exponential.expressions["absolute_risk_aversion"],
+...     power.expressions["relative_risk_aversion"],
+... )
+(1/1000, 2)
 >>> wealth = Symbol("wealth", positive=True)
 >>> custom = CashUtility("Log wealth", wealth, log(wealth))
 >>> custom.expressions["relative_risk_aversion"]
 1
 
-The report evaluates preferences at account NAV, **including deposits and
-withdrawals**. Its illustrative CARA parameter is 0.001 per USD and its CRRA
-parameter is 2. Thus CARA absolute risk aversion stays at 0.001 while relative
-risk aversion changes with wealth; CRRA relative risk aversion stays at 2 while
-absolute risk aversion changes with wealth.
+The numerical plan takes wealth as its sole input and evaluates these derived
+expressions using the same ``ScalarPlan`` introduced in chapter 3:
 
->>> reporting.utilities["cara"].values["absolute_risk_aversion"].values
+.. literalinclude:: ../../../examples/portfolio/utility.py
+   :pyobject: CashUtility.plan
+   :dedent: 4
+   :language: python
+
+``over`` checks positive wealth, finite outputs, and positive marginal utility.
+Add the definitions to the report; it evaluates them on actual account NAV,
+including deposits and withdrawals:
+
+>>> utilities = NamedMap({"cara": exponential, "crra": power})
+>>> report = path.report(
+...     attributions, signals=NamedMap({"momentum": signals}), utilities=utilities
+... )
+>>> report.utilities["cara"].values["absolute_risk_aversion"].values
 (0.001, 0.001, 0.001, 0.001)
->>> reporting.utilities["crra"].values["relative_risk_aversion"].values
+>>> report.utilities["crra"].values["relative_risk_aversion"].values
 (2.0, 2.0, 2.0, 2.0)
 
-These parameters express supplied preferences. They are not estimates inferred
-from the account's returns, and the utility chart is not a performance index.
-Utility levels depend on normalization across families; positive affine changes
-to a given utility preserve both derivative ratios. Evaluation requires positive
-wealth and finite outputs with positive numerical marginal utility.
+These coefficients are supplied preferences, not estimates from account returns.
+Utility levels depend on the family's normalisation; positive affine changes
+within a utility preserve both derivative ratios. Utility is a view of wealth,
+not a performance index.
 
-The account and instrument tables, per-source timelines, and utility timelines
-are views over these same observations. The reporting layer supplies inputs
-which a later optimisation layer could consume without coupling accounting to
-an optimiser.
+Project tables and timelines
+----------------------------
+
+The report is typed data. A simple instrument-level table is already a projection
+of its named model outputs:
+
+>>> instrument_rows = tuple(
+...     (name, round(sum(item.profit["net"].values), 2))
+...     for name, item in report.instruments.items()
+... )
+>>> instrument_rows
+(('aapl', 90.9), ('msft', -24.0))
+>>> profit_timeline = report.account["net"].cumulative_sum()
+>>> tuple(round(value, 2) for value in profit_timeline.values)
+(10.0, 41.4, 66.9)
+
+The account table uses the same interval columns with ending timestamps;
+instrument tables add quantities, weights, and source contributions:
+
+>>> account_rows = tuple(
+...     (
+...         at.date().isoformat(),
+...         round(report.account["net"].values[i], 2),
+...         report.account["external_flows"].values[i],
+...     )
+...     for i, at in enumerate(report.account["net"].times)
+... )
+>>> for row in account_rows:
+...     print(row)
+('2026-01-06', 10.0, 0.0)
+('2026-01-07', 31.4, 500.0)
+('2026-01-08', 25.5, 0.0)
+
+A chart can prepend the explicit opening zero to cumulative profit and plot it beside
+NAV, capital flows, source P&L, signals, or utility observations. Rendering
+introduces no additional financial calculation.
+
+``to_dict`` projects these records for JSON. ``to_html(comparison, context=...)``
+adds the named benchmark comparison built in chapter 7 and a data/methodology
+caption. The shipped renderer produces account and instrument tables, signal
+lineage, timeline charts, and utility curves; it runs offline.
+
+With the reference indices from chapter 7, the completed view is now a final
+projection rather than another calculation layer. Recreate the comparison here
+when running this chapter independently:
+
+>>> from examples.compute.series import Series
+>>> from examples.portfolio.performance import PerformanceIndex
+>>> from examples.portfolio.sources import CSVIndexSource
+>>> benchmark = PerformanceIndex(
+...     "Synthetic broad-market total-return index",
+...     CSVIndexSource(data_dir / "benchmark.csv").load(),
+... )
+>>> cash_reference = PerformanceIndex(
+...     "Zero-return USD cash", Series(times, (100,) * len(times))
+... )
+>>> comparison = PerformanceIndex(
+...     "Account, net of booked fees and including income", path.unit_nav
+... ).compare(
+...     benchmark,
+...     risk_free=cash_reference,
+...     periods_per_year=252,
+... )
+>>> html = report.to_html(comparison, context="Synthetic observations; three daily returns")
+>>> html.startswith("<!doctype html>")
+True
+
+Assemble the application after the layers
+-----------------------------------------
+
+We have now built the parts of the research run. ``ResearchScenario`` simply
+declares their inputs: account and transaction provider, observation schedules,
+decision/arrival/assessment horizons, reference indices, utilities, and policy
+parameters. Its orchestration method performs the steps from these chapters:
+
+.. literalinclude:: ../../../examples/portfolio/demo.py
+   :pyobject: ResearchScenario
+   :end-before:     def run
+   :language: python
+
+.. literalinclude:: ../../../examples/portfolio/demo.py
+   :pyobject: ResearchScenario.run
+   :dedent: 4
+   :language: python
+
+The class's ``example()`` constructor fills those fields with the same offline
+fixtures and assumptions we have been using. This is a convenience for the
+completed application:
+
+.. raw:: html
+
+   <details><summary>Inspect the completed scenario's fixture configuration</summary>
+
+.. literalinclude:: ../../../examples/portfolio/demo.py
+   :pyobject: ResearchScenario.example
+   :dedent: 4
+   :language: python
+
+.. raw:: html
+
+   </details>
+
+>>> from examples.portfolio.demo import ResearchScenario
+>>> result = ResearchScenario.example().run()
+>>> finished = result.report()
+>>> round(sum(finished.account["net"].values), 2)
+66.9
+
+Generate both views of the completed run:
+
+.. code-block:: console
+
+   $ python -m examples.portfolio.demo --html account.html --json account.json
+
+`Open the generated interactive example <report.html>`_. It retains measurement
+dates, three observed daily returns, the independent index comparison, and the
+unavailable short-history CAGR/Sharpe values. The :doc:`implementation map <layers>`
+locates the modules behind each layer and records the remaining scope boundaries.

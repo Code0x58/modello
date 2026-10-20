@@ -1,28 +1,43 @@
-Portfolio research
-==================
+Build a portfolio research system
+=================================
 
-This exploratory application follows declared equity holdings through price
-observations, portfolio valuation, account replay, signal decisions, execution
-analysis, and symbolic reporting. Its synthetic data demonstrates the
-calculation layers and their accounting relationships.
+Start with the value of one holding, then add the tools needed to follow an
+account through time. The walkthrough builds model definitions, named
+projections, numerical evaluation, data acquisition, ledger replay, decisions,
+and reporting in that order. Each chapter explains a new requirement before
+introducing its helper.
 
-Code and fixtures live together in ``examples/portfolio/``. These walkthroughs
-and the generated `interactive report <report.html>`_ form a separate example
-section; portfolio policies and time-series operations are outside the core
-Modello API.
+Install the runnable examples with Python 3.10 or newer:
 
-Start with model definitions and their views, then follow the domain walkthroughs:
+.. code-block:: console
+
+   $ pip install "modello[examples]"
+
+The first chapter uses only the core :doc:`model API </api>` and
+:doc:`typed components </nesting>`. Later chapters develop the experimental
+helpers shipped under ``examples/``. The data is synthetic, denominated in USD,
+and intended to demonstrate calculations and accounting relationships.
+
+Follow the chapters in order when building your own version. Each page's
+executable examples also include the imports and setup needed to run it on its
+own. Code included directly from a module is the implementation of the helper
+being developed at that step.
 
 .. toctree::
    :maxdepth: 1
 
-   modelling
    holdings
    named_members
+   modelling
    providers
    accounts
+   signals
+   performance
    reporting
    layers
 
-The :doc:`named-solving design note </design/named_solving>` isolates the
-general modeling question from the financial application.
+By the end, the same component definitions support scalar inverse questions,
+account and instrument tables, and timeline charts. The reporting chapter assembles
+the complete scenario and links to the `interactive report <report.html>`_.
+The :doc:`implementation map <layers>` is an optional reference for finding the
+completed code, numerical timings, and the boundaries of the experiment.

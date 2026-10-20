@@ -1,175 +1,236 @@
-Accounts, signals, and execution research
-=========================================
+5. Replay an account from external transactions
+===============================================
 
-The :doc:`model views guide <modelling>` starts with the equation definitions
-and explains how the same models support different knowns and unknowns.
+So far, quantities and cash have stayed fixed while prices varied. An account
+adds an opening state and an external transaction log. We will first define the
+postings and their balance equations, then supply them to a chronological
+adapter using the portfolio valuation we already built.
 
-This worked system combines the :doc:`named-member portfolio <named_members>`
-with an external transaction log and time-aware market observations. It follows
-one USD account from opening holdings through signals, intended orders, partial
-executions, a deposit, and dividend income.
+Describe events separately from their effects
+---------------------------------------------
 
-Install the examples and run the scenario:
+Each posting needs an identity, account, economic time, and reporting time.
+These are the shared record fields:
 
-.. code-block:: console
+.. literalinclude:: ../../../examples/portfolio/sources.py
+   :pyobject: Posting
+   :end-before:     def __post_init__
+   :language: python
 
-   $ pip install "modello[examples]"
-   $ python -m examples.portfolio.demo
-   $ python -m examples.portfolio.demo --json /tmp/account-report.json
-   $ python -m examples.portfolio.demo --html /tmp/account-report.html
+A fill adds the instrument's holding name, signed shares, price, fee, and an
+optional link to an intended order:
 
-The :doc:`symbolic reporting walkthrough <reporting>` adds account and instrument
-tables, signal P&L attribution, utility derivatives, and interactive timelines.
+.. literalinclude:: ../../../examples/portfolio/sources.py
+   :pyobject: Fill
+   :end-before:     def __post_init__
+   :language: python
 
-All observations are synthetic. The source files are independent:
-``examples/portfolio/data/market.csv`` contains market trade prints, while
-``transactions.csv`` contains broker/account postings, and ``benchmark.csv``
-contains an illustrative broad-market total-return index. Change the adapters to
-use another source; the computations consume typed observations and events.
+``CashFlow`` adds an ``amount`` for an external deposit or withdrawal.
+``Income`` adds an ``amount`` and optional ``member`` for investment income.
+The record constructors validate identities, timestamps, and finite amounts.
+They describe observations; the following models define their arithmetic.
 
-Follow the layers
------------------
+Model a fill and a capital movement
+-----------------------------------
 
-The example has explicit boundaries:
+A signed fill changes held shares and pays its notional plus fees:
 
-.. mermaid::
-   :caption: Sources, decisions, accounting, and execution analysis
-   :alt: Published market observations feed signals and account valuation. The external ledger feeds account replay and execution analysis; intended orders do not create fills.
+.. literalinclude:: ../../../examples/portfolio/postings.py
+   :pyobject: FillPosting
+   :language: python
 
-   flowchart TD
-       market[Market source] --> prices[Published prices]
-       prices --> grid[Sampled feature grid]
-       grid --> signals[Momentum model]
-       ledger[External transaction log] --> replay[Account replay with balance models]
-       prices --> replay
-       replay --> snapshot[Decision-time snapshot]
-       signals --> targets[Target weights]
-       snapshot --> targets
-       targets --> orders[Rebalance model and order intentions]
-       replay --> positions[Positions, cash, NAV]
-       positions --> analytics[P&L models, returns, covariance]
-       orders --> execution[Execution cost model and benchmarks]
-       ledger -->|Reported fills| execution
-       market -->|Independent prints| execution
+>>> from examples.portfolio.postings import FillPosting, CapitalFlow
+>>> posted = FillPosting(
+...     "fill", opening_quantity=3, opening_cash=1000, quantity=2, price=100, fee=1
+... )
+>>> posted.closing_quantity, posted.closing_cash
+(5, 799)
 
-``EquityProvider`` is an abstract ``Provider[PriceHistory]``. The transaction
-adapter implements ``Provider[TransactionLog]``. ``SignalSource`` supplies named signal vectors; the example uses
-trailing momentum. ``TargetWeights`` is the allocation boundary: the example
-equally weights positive signals with 80% equity exposure and leaves the rest
-in cash. An optimiser could consume forecasts, risk estimates, and constraints
-and return the same type. Accounting and expression execution need no knowledge
-of that policy's objective or solver.
+The same definition can infer an execution price from an observed cash change:
 
-An ``OrderIntent`` records the account, named position, equity identity, decision
-time, arrival time, signed intended shares, and model execution price. Fills
-come from the separate transaction log and join to intentions through
-``order_id``. Manual fills without a model order still affect the account.
+>>> inferred = FillPosting(
+...     "observed",
+...     opening_quantity=3,
+...     opening_cash=1000,
+...     quantity=2,
+...     closing_cash=799,
+...     fee=1,
+... )
+>>> inferred.price
+100
 
-Bind instruments to providers
------------------------------
+A capital deposit changes cash, but it should not count as investment return.
+Keep an account's number of units and issue new units at its pre-flow unit
+price. A withdrawal redeems units using the same relationship:
 
-The :doc:`basket definition <holdings>` binds each named holding to a configured
-``EquityProvider``. For example, ``DummyEquityProvider(symbol="AAPL")`` identifies
-and loads the supplied synthetic Apple prints. ``CSVEquityProvider`` accepts a
-symbol, path, provider namespace, and quote currency for an external CSV.
+.. literalinclude:: ../../../examples/portfolio/postings.py
+   :pyobject: CapitalFlow
+   :language: python
 
-Each ``equity.component(provider)`` member declaration owns its acquisition request.
-The basket projects its ``providers`` map from those declarations. Its
-``instruments`` map derives serializable quote identities, while ``positions[name]`` exposes the provider,
-identity, quantity, value, and contextual weight together. Instrument metadata
-is available while defining a symbolic model; loading is an explicit step:
+>>> deposit = CapitalFlow(
+...     "deposit", opening_cash=1000, opening_nav=2500, opening_units=25, amount=500
+... )
+>>> deposit.unit_price, deposit.issued_units, deposit.closing_cash
+(100, 5, 1500)
+>>> deposit.closing_units
+30
 
-.. code-block:: python
+The unit price remains 100 at that deposit. Future unit-price changes measure
+investment return while account NAV also reflects the supplied capital.
 
-   market = opening.load_market()
+Separate profit from external capital
+-------------------------------------
 
-The portfolio's ``load_market()`` method preserves holding names and shares
-equivalent requests in that batch. Different provider types or request parameters remain distinct,
-even with equal symbol text. A later call reloads the data. The
-:doc:`provider guide <providers>` describes the generic return type, CSV schema,
-and how another equity provider can supply the same accounting layer.
+We also need a reconciliation identity. First define gross and net profit:
 
-Observe time and availability
------------------------------
+.. literalinclude:: ../../../examples/portfolio/pnl.py
+   :pyobject: Profit
+   :end-before:     @classmethod
+   :language: python
 
-``Series[T]`` represents a numeric vector on an ordered date or timestamp axis.
-It supports pointwise projection, exact-axis combination, lag, trailing means,
-returns, drawdown, and explicit backward sampling. Timestamp axes require an
-offset and are normalized to UTC. Empty vectors represent empty event
-projections and feature warmup periods.
+``PROFIT_FIELDS`` names ``holding``, ``trading``, ``income``, ``fees``, ``gross``,
+and ``net``. An instrument supplies the holding and trading terms from interval
+inputs:
 
-``PriceHistory`` retains both the economic time of each print and the time it
-became available. ``mark`` and ``sample`` select the latest published print and
-enforce a caller-supplied age limit measured from its economic time. They never
-select a later price to fill a missing earlier observation.
+.. literalinclude:: ../../../examples/portfolio/pnl.py
+   :pyobject: InstrumentPnL
+   :language: python
 
-The signal example samples a deliberate feature grid: two prior closing
-observations and the decision observation. Its lookback counts observations on
-that grid, rather than arbitrary numbers of market updates. Lagged ratios then
-produce momentum at the final timestamp of each window.
+Holding profit marks opening shares from opening to closing price. Trading
+profit marks signed fills from their execution prices to that closing price.
+The interval adapter supplies ``sum(quantity * price)`` as signed fill notional.
+Income and fees remain separate columns.
 
-Transactions similarly carry execution time and reporting time. Account replay
-uses postings known by the reporting horizon. A later report may restate past
-holdings after a delayed posting arrives. Snapshots record ``known_at``;
-``snapshot.rebalance`` requires a snapshot whose knowledge ends at the decision
-time, preventing a restated historical snapshot from entering a past decision.
+At account level, the identity is closing NAV minus opening NAV, less net profit
+and external capital. A zero residual reconciles the layers:
 
-Declare and value an account
-----------------------------
+.. literalinclude:: ../../../examples/portfolio/pnl.py
+   :pyobject: AccountPnL
+   :language: python
 
-Use a typed member group to specify the opening quantities and cash:
-the market source supplies the price variables.
+These definitions will be reused for signal attribution later. Reporting will
+supply different interval inputs to the same equations.
 
-.. code-block:: python
+Supply state to the portfolio's valuation
+-----------------------------------------
 
-   # Portfolio is the declared basket-and-cash model from the holdings guide.
-   opening = Portfolio(
-       "opening",
-       basket=Basket(
-           "basket",
-           members=EquityMembers(
-               "equities",
-               aapl=EquityPosition("apple", quantity=10),
-               msft=EquityPosition("microsoft", quantity=10),
-           ),
-       ),
-       cash=USDCash("cash", amount=1000),
-   )
-   account = Account("research", opened_at, opening)
-   market = opening.load_market()
-   path = account.replay(transaction_log, valuation_times, market=market,
-                         max_price_age=timedelta(days=4))
+``Account`` is a name, opening time, and typed opening portfolio. ``AccountSnapshot``
+records a mark's quantities, prices, values, cash, NAV, and units, together with
+its knowledge horizon. ``AccountPath`` holds the snapshots and the in-window
+ledger used to produce them.
 
-The account's opening balances already include history through ``opened_at``.
-Replay applies postings in ``(opened_at, mark]``, including events exactly at a
-mark. Simultaneous events retain source order: a deposit can fund a subsequent
-buy at that timestamp. Account names isolate postings from other accounts.
+.. literalinclude:: ../../../examples/portfolio/account.py
+   :pyobject: Account
+   :end-before:     def __post_init__
+   :language: python
 
-A fill changes shares by its signed quantity and cash by
-``-quantity * price - fee``. Deposits and withdrawals change capital. Income
-changes cash and investment return. Each mark produces named quantities,
-prices, values, and weights, together with cash and total NAV.
+.. literalinclude:: ../../../examples/portfolio/account.py
+   :pyobject: AccountSnapshot
+   :end-before:     @property
+   :language: python
 
->>> from examples.portfolio.demo import ResearchScenario
->>> result = ResearchScenario.example().run()
->>> path = result.account
+The account needs to vary prices, quantities, and cash. This compiled view of
+``NamedPortfolio`` selects exactly those inputs from an unbound instance:
+
+.. literalinclude:: ../../../examples/portfolio/valuation.py
+   :pyobject: NamedPortfolio.plan
+   :dedent: 4
+   :language: python
+
+At a mark, the replay adapter obtains causal prices and supplies the current
+state to that plan. Its constructor validates the opening portfolio, records
+its known quantities and cash, stores the market/age policy, and compiles this
+one unbound view:
+
+.. literalinclude:: ../../../examples/portfolio/account.py
+   :pyobject: AccountEngine._value
+   :dedent: 4
+   :language: python
+
+Replay orders postings through each mark. It uses ``FillPosting`` and
+``CapitalFlow`` for state changes, adds income to cash, and records a valued
+snapshot. Its complete loop is shown here now that the inputs, models, and
+valuation step have been introduced:
+
+.. literalinclude:: ../../../examples/portfolio/account.py
+   :pyobject: AccountEngine.evaluate
+   :dedent: 4
+   :language: python
+
+The adapter starts account units at an arbitrary index level of 100. It requires
+funded cash, nonnegative actual positions, positive NAV, and positive remaining
+units. Events are applied in ``(opened_at, mark]``; the opening balances already
+include earlier history. The final reconciliation checks the profit equations
+above against the replayed balances.
+
+Assemble the worked account
+---------------------------
+
+Reuse the two-equity classes developed in the previous chapter. For this
+account, start with ten shares of each equity and USD 1,000 cash:
+
+>>> from datetime import timedelta
+>>> from pathlib import Path
+>>> import examples.portfolio as portfolio_examples
+>>> from examples.portfolio.explicit import Portfolio, Basket, EquityMembers
+>>> from examples.portfolio.basket import equity
+>>> from examples.portfolio.models import USDCash
+>>> from examples.portfolio.account import Account
+>>> from examples.portfolio.sources import CSVTransactionSource, timestamp
+>>> times = tuple(timestamp(f"2026-01-{day:02d}T16:01:00Z") for day in range(5, 9))
+>>> opening = Portfolio(
+...     "opening",
+...     basket=Basket(
+...         "basket",
+...         members=EquityMembers(
+...             "equities",
+...             aapl=equity("apple", quantity=10),
+...             msft=equity("microsoft", quantity=10),
+...         ),
+...     ),
+...     cash=USDCash("cash", amount=1000),
+... )
+>>> account = Account("research", times[0], opening)
+>>> age = timedelta(days=4)
+>>> market = opening.load_market()
+>>> data_dir = Path(portfolio_examples.__file__).with_name("data")
+>>> ledger = CSVTransactionSource(data_dir / "transactions.csv").load()
+>>> path = account.replay(ledger, times, market=market, max_price_age=age)
 >>> tuple(round(value, 2) for value in path.nav.values)
 (2500.0, 2510.0, 3041.4, 3066.9)
->>> path.positions["aapl"].quantity.values
-(10.0, 10.0, 17.0, 17.0)
->>> path.positions["msft"].quantity.values
-(10.0, 10.0, 0.0, 0.0)
+>>> path.positions["aapl"].quantity.values, path.positions["msft"].quantity.values
+((10.0, 10.0, 17.0, 17.0), (10.0, 10.0, 0.0, 0.0))
 
-Reconcile P&L and remove external capital from returns
-------------------------------------------------------
+The transaction source implements ``Provider[TransactionLog]``. Its fixture has
+three fills on January 7, a USD 500 deposit that day, and USD 8.50 income on
+January 8. It remains independent of the model's future order intentions.
+The public ``replay`` method simply constructs the adapter we just inspected:
 
-For an interval ending at mark :math:`P_1`, an equity's P&L is its initial
-shares times the mark change, plus each signed fill's shares times
-:math:`P_1 - P_{fill}`. Income is added and booked fees are deducted. Thus:
+.. literalinclude:: ../../../examples/portfolio/account.py
+   :pyobject: Account.replay
+   :dedent: 4
+   :language: python
 
-.. math::
+Check the accounting relationships
+----------------------------------
 
-   \Delta NAV = P\&L_{holding} + P\&L_{trading} + income - fees + external\ flows.
+``path.positions`` projects each holding's quantity, price, value, and weight
+across snapshots. For profit, the path groups fills and other postings into
+``(previous mark, current mark]`` intervals, then supplies their columns to
+``InstrumentPnL`` and ``AccountPnL``:
+
+.. raw:: html
+
+   <details><summary>Inspect how postings become interval-model inputs</summary>
+
+.. literalinclude:: ../../../examples/portfolio/account.py
+   :pyobject: AccountPath.pnl
+   :dedent: 4
+   :language: python
+
+.. raw:: html
+
+   </details>
 
 >>> tuple(round(value, 2) for value in path.pnl.total.values)
 (10.0, 31.4, 25.5)
@@ -177,209 +238,20 @@ shares times the mark change, plus each signed fill's shares times
 (0.0, 500.0, 0.0)
 >>> tuple(round(value, 10) for value in path.reconciliation.values)
 (0.0, 0.0, 0.0)
+>>> round(path.unit_nav.values[-1] / path.unit_nav.values[0] - 1, 6)
+0.024518
 
-The performance index starts at 100. At each external cash flow, the engine
-values the account immediately before the flow and issues or redeems units at
-that unit price. Investment P&L changes unit NAV; external capital changes the
-number of units. Internal valuation at flow times makes the result independent
-of whether those times appear on the requested output grid.
+Total investment profit is USD 66.90. NAV also includes USD 500 of supplied
+capital; its raw percentage change answers a different question from the
+unitized investment return.
 
-This follows the cash-flow separation and geometric subperiod linking described
-in the `GIPS calculation methodology
-<https://www.gipsstandards.org/wp-content/uploads/2021/03/calculation_methodology_gs_2006.pdf>`_.
-Dividend and interest income remain part of investment return.
+Keep decision knowledge separate from later reports
+---------------------------------------------------
 
->>> round(path.analytics(periods_per_year=252).performance.total_return * 100, 4)
-2.4518
+A transaction's execution time and reporting time can differ. Replay uses
+postings known by the final reporting horizon, so a later report can restate an
+earlier balance. Snapshots carry ``known_at`` to make that choice visible.
 
-The account gained USD 566.90 in total value, consisting of USD 500 external
-capital and USD 66.90 investment P&L. Dividing the NAV change by opening NAV
-would include the deposit in performance. The unitized return instead links the
-return before the deposit with the return afterwards.
-
-.. _account-performance:
-
-Compare performance on the same basis
---------------------------------------
-
-The account covers **5–8 January 2026: three calendar days and three daily
-returns**. It demonstrates account mechanics, rather than evidence of an
-investment strategy. The command-line and JSON reports show this window
-alongside an independent synthetic index:
-
->>> comparison = result.comparison
->>> round(comparison.portfolio.total_return * 100, 4)
-2.4518
->>> round(comparison.benchmark.total_return * 100, 4)
-3.0
->>> round(comparison.return_difference * 100, 4)
--0.5482
->>> comparison.portfolio.cagr, comparison.portfolio.sharpe_ratio
-(None, None)
-
-The account trails this illustrative index by **0.5482 percentage points**.
-Both inputs are synthetic; the index is not a measured market return. Its
-levels are supplied separately from the account and are never signal inputs.
-The account includes booked fees and income; the index represents total return
-before investor trading costs. For a real comparison, supply a suitable
-total-return benchmark in the account's currency over the same period.
-
-``PerformanceIndex`` names a typed series and its reporting currency.
-``compare(account, benchmark, risk_free=cash, periods_per_year=252)`` requires
-matching currencies and observation times. It returns both paths rebased to
-100, period-by-period active returns, the difference in cumulative returns,
-and relative wealth return ``account_growth / benchmark_growth - 1``. The last
-two quantities have different denominators and are labelled separately.
-``CSVIndexSource`` loads ``at,level`` observations for a reporting schedule;
-choose any sampling or missing-data policy explicitly before comparison.
-
-``measure`` is the shared calculation for account and benchmark statistics:
-
-* **Total return** is ending index divided by starting index, minus one. Use
-  ``path.unit_nav`` to remove external capital from account performance.
-* **CAGR** is ``growth ** (365.25 / elapsed_calendar_days) - 1``. Its year basis
-  is elapsed calendar time (ACT/365.25), independent of the sampling frequency.
-* **Annualized Sharpe** is the mean interval excess return divided by its sample
-  standard deviation, multiplied by ``sqrt(periods_per_year)``. Excess returns
-  subtract the explicitly supplied risk-free index's interval returns. The
-  demo labels its zero-return USD cash assumption. Omitting cash or having zero
-  excess-return variance gives an unavailable Sharpe, rather than infinity.
-* **Volatility** uses sample return variance, scaled by the supplied annual
-  frequency. **Maximum drawdown** is the largest observed decline from a prior
-  index peak; declines between observations are not measured.
-
-For presentation, CAGR and annualized Sharpe are withheld until a full calendar
-year is available. Short-period returns are kept unannualized, consistent with
-the `GIPS guidance on periods below one year
-<https://www.gipsstandards.org/standards/gips-standards-for-firms/gips-standards-handbook-for-firms/>`_.
-Applying the same display threshold to Sharpe is this example's policy; one year
-alone does not establish a reliable estimate. A zero observed drawdown across
-three rising marks likewise says little about downside risk.
-
-Longer histories exercise the same calculation. Here a quarterly total-return
-index is measured against a quarterly cash index:
-
->>> from datetime import date
->>> from examples.portfolio.performance import measure
->>> from examples.compute.series import Series
->>> times = (date(2024, 1, 1), date(2024, 4, 1), date(2024, 7, 1), date(2024, 10, 1), date(2025, 1, 1))
->>> levels = Series(times, (100, 110, 104.5, 112.86, 115.1172))
->>> cash = Series(times, (100, 101, 102.01, 103.0301, 104.060401))
->>> performance = measure(levels, periods_per_year=4, risk_free=cash)
->>> round(performance.cagr * 100, 4)
-15.084
->>> round(performance.sharpe_ratio, 4)
-0.8146
-
-Choose a regular valuation schedule and its periods per year for risk and
-Sharpe. An event grid's intervals need not have equal duration; the example
-does not infer a trading calendar from transaction timestamps. Square-root
-annualization assumes uncorrelated interval excess returns, as discussed in
-`William Sharpe's original explanation
-<https://web.stanford.edu/~wfsharpe/art/sr/sr.htm>`_. These estimates do not account
-for serial dependence, selection bias, or the uncertainty from a small sample.
-
-``path.analytics(...).performance`` uses the same ``measure`` function. Its
-separate latest-weight risk estimate uses equity **price-return** covariance;
-it describes current exposures, rather than historical strategy performance.
-Immutable account paths reuse their position, unit-NAV, and P&L projections
-when several reporting layers access them.
-
-Read executions as series and benchmark model slippage
-------------------------------------------------------
-
-The transaction log exposes ``executions(member)`` as signed quantity, gross
-volume, notional, fees, and execution-VWAP series. Fills at the same timestamp
-are aggregated for these vectors while their individual IDs remain in the log.
-
->>> executions = path.ledger.executions("aapl")
->>> executions.quantity.values, executions.vwap.values
-((4.0, 3.0), (105.0, 105.2))
-
-Execution analysis uses an explicit assessment time. For each order it reports
-filled and unfilled shares, execution VWAP, an independent market-print VWAP over
-``[arrival, assessment]``, and model and arrival slippage. Market VWAP uses
-``sum(price * volume) / sum(volume)`` on the external prints; it is independent
-of this account's fill prices. Missing prints in that window give an absent
-VWAP benchmark.
-
-Model slippage includes fees on executed shares. Its basis-point denominator is
-executed quantity times model price. Arrival and market-VWAP basis points measure
-price differences before fees. A positive cost is adverse for either side;
-buying cheaper or selling dearer gives a negative price cost.
-
-Full implementation shortfall also includes the unfilled shares' opportunity
-cost. Write :math:`s=+1` for a buy and :math:`s=-1` for a sell, intended absolute
-quantity :math:`Q`, filled quantity :math:`q`, decision price :math:`P_d`, arrival
-price :math:`P_a`, terminal mark :math:`P_t`, and gross executed notional :math:`N`:
-
-.. math::
-
-   delay &= q s (P_a - P_d), \\
-   trading &= s (N - q P_a), \\
-   opportunity &= (Q-q)s(P_t-P_d), \\
-   IS &= delay + trading + fees + opportunity.
-
-The decomposition compares actual execution with a paper transaction at the
-decision price, following the categories in `CFA Institute's trade strategy and
-execution reading
-<https://www.cfainstitute.org/insights/professional-learning/refresher-readings/2026/trade-strategy-execution>`_.
-The opportunity-cost horizon is the assessment time supplied by the caller.
-
->>> apple = result.execution["rebalance-1:aapl"]
->>> apple.filled_quantity, round(apple.remaining_quantity, 4)
-(7.0, 2.3846)
->>> round(apple.model_slippage_cost, 4), round(apple.implementation_shortfall, 4)
-(8.6, 10.5077)
->>> round(result.execution["rebalance-1:msft"].implementation_shortfall, 4)
-4.0
-
-The AAPL order was only partly filled, so its full shortfall also contains the
-unfilled portion's opportunity cost. The MSFT sell was filled completely. Neither
-execution metric is substituted for the account's independently reconciled P&L.
-
-Keep the computation layer small
---------------------------------
-
-The :doc:`research layer guide <layers>` describes how the numeric data,
-symbolic executor, domain models, and presentation fit together. The generic
-helpers live in ``examples/compute/``.
-
-``ScalarPlan`` compiles named Modello expressions once and evaluates either one
-point or aligned series. Both fixed-holding examples and account replay use it.
-The examples share one set of path and risk statistics. ``Series`` implements
-time operations; event replay, source adaptation, feature construction,
-allocation policy, and benchmark definitions live in their own modules.
-
-The scenario models funded, long-only, fractional USD holdings with immediate
-trade cash movements. Its market prints are unadjusted; dividends are separate
-income postings. Settlement balances, FX, corporate-action position changes,
-tax lots, and market calendars would need explicit domain layers. Source
-adapters must normalize corrections and provide unique, increasing market-print
-and publication axes; transaction timestamps may repeat.
-
-The numerical paths use floats. This makes the experiment useful for analytics
-and numerical reconciliation; a production cash ledger would also need a
-specified currency rounding policy. Allocation policies and broker submission
-belong at the application boundary.
-
-Other useful composition boundaries
------------------------------------
-
-The current symbolic composition is account portfolio → equity basket → named
-holdings → quotes, with cash alongside the basket. The account owns the ledger
-and valuation schedule; an instrument owns quote identity, while quantities
-belong to holdings. This keeps shared market data independent of account state.
-
-Further natural groupings are strategy sleeves or asset-class baskets, cash
-balances by currency, and executions grouped by order. A multi-basket account
-would need explicit capital bases and qualified holding names so the same
-instrument can occur in several sleeves. Currency baskets also need FX
-valuation before their totals can be added. These are extension points rather
-than additional machinery in the current funded, USD-only example.
-
-Signal attribution already has a separate source → instrument view. This is
-useful because two signals can contribute to the same holding; forcing signals
-into the ownership tree would lose that relationship. Similarly, market prints
-and transactions retain their own observation/publication axes and are sampled
-onto an account's timeline at the calculation boundary.
+A decision must instead use a path ending at its own information horizon.
+The :doc:`next chapter <signals>` constructs such a snapshot, builds a trailing
+signal, and derives order intentions without replacing the external fill log.

@@ -1,158 +1,200 @@
-Portfolio research layers
-==========================
+Implementation map and further reading
+======================================
 
-The portfolio examples build on the symbolic modeling API in :mod:`modello`.
-The core package defines models, typed components, independent instance symbols,
-and joint equation solving. Its runtime dependency is SymPy.
+This page is a reference for the completed walkthrough. The chapters begin with
+:doc:`scalar holdings <holdings>`; use this map when looking up a definition or
+considering which parts to reuse elsewhere.
 
-The research code lives under ``examples/`` and is included in the installed
-wheel. Install the examples extra and run the walkthroughs:
+Where each layer lives
+----------------------
 
-.. code-block:: console
+.. mermaid::
+   :caption: Definitions, data, evaluation, and reporting
+   :alt: Core models and named declarations supply expressions to the numerical plan. Providers and the ledger supply observed data. Replay uses both to produce account paths, which support decisions, performance, and reports.
 
-   $ pip install "modello[examples]"
-   $ python -m examples.portfolio
-   $ python -m examples.portfolio.named
-   $ python -m examples.portfolio.demo --html /tmp/account.html --json /tmp/account.json
-
-The wheel includes both the ``modello`` and ``examples`` packages, including
-the portfolio's CSV fixtures. Example modules load when explicitly imported.
-The current examples need only the standard library and the core SymPy
-dependency; the ``examples`` extra groups any future additional requirements.
-Readers can also use a checkout or source distribution to adapt the examples.
-
-Start with numeric data
------------------------
-
-``examples/compute/named_map.py`` and ``examples/compute/series.py`` use the
-Python standard library. They can represent and transform data independently
-of symbolic modeling or a financial application:
-
->>> from datetime import date
->>> from examples.compute.named_map import NamedMap
->>> from examples.compute.series import Series
->>> times = (date(2026, 1, 5), date(2026, 1, 6))
->>> data = NamedMap({"sensor": Series(times, (10, 12))})
->>> dict(data.map(lambda series: series.lag().values))
-{'sensor': (10.0,)}
-
-``NamedMap`` preserves names through projection and aligns combinations by
-name. ``Series`` owns finite numeric values and an ordered ``times`` axis,
-using dates or timezone-aware timestamps. It provides exact alignment, lag,
-rolling means, and explicit backward sampling. Array or matrix conversion
-belongs at the consumer boundary; for example, SymPy accepts a series' values
-through ``ImmutableMatrix(series.values)``.
-
-Interval changes and cumulative totals also belong to this numeric layer.
-``differences(periods=1)`` labels each change with its ending observation and
-omits the warmup prefix, just like ``lag``. Periods count observations, including
-on an irregular axis; these operations do not insert intermediate timestamps.
-``cumulative_sum()`` starts from zero and preserves the input times:
-
->>> levels = Series(times, (100, 112))
->>> change = levels.differences()
->>> change.times, change.values
-((datetime.date(2026, 1, 6),), (12.0,))
->>> change.cumulative_sum().map(lambda value: value + levels.values[0]).values
-(112.0,)
-
-Account P&L uses these interval changes; cumulative report charts use the same
-accumulation operation. Adding an opening balance or a chart's zero point is
-an explicit choice at the consumer boundary.
-
-Acquire typed inputs explicitly
---------------------------------
-
-``examples/compute/providers.py`` defines the abstract ``Provider[T]`` contract:
-a configured request whose ``load()`` returns ``T``. Its generic batch loader
-preserves names and reuses equivalent requests within one call. A later call
-acquires fresh inputs. This module uses only the standard library and the
-numeric named map; it imports neither Modello nor the portfolio package.
-
-Financial implementations live in ``examples/portfolio/providers.py``.
-``EquityProvider`` returns ``PriceHistory`` and exposes its quote identity before
-loading. CSV transaction and index sources implement the same generic contract
-with ``TransactionLog`` and ``Series[datetime]`` results. The
-:doc:`provider walkthrough <providers>` shows configuration and acquisition.
-
-Compile expressions separately
--------------------------------
-
-``examples/compute/scalar_plan.py`` adds SymPy expression compilation.
-``ScalarPlan`` accepts named independent symbols and named expressions, then
-evaluates either one numeric point or aligned series. It works with ordinary
-SymPy expressions as well as expressions resolved from Modello models.
-
-The generic computation package imports neither Modello nor the financial
-examples. This keeps the data and execution code usable as a candidate for a
-later standalone package, while its interfaces are explored here.
-
-The small ``examples/symbolic.py`` adapter extends ``Modello`` with model-owned
-``compile()``, ``plan()``, and ``over()`` methods. A partially bound case can
-compile a different view of its remaining unknowns; the same class still solves
-exact constraints through its ordinary constructor. This adapter depends on
-Modello, while the numeric executor remains independent. See :doc:`modelling`.
-
-Connect domain models through an adapter
-----------------------------------------
-
-``examples/portfolio/models.py`` holds shared equity, position, and cash models.
-``examples/portfolio/valuation.py`` compiles portfolios and aligned observations
-without importing the concrete tutorial portfolios. ``explicit.py`` declares
-the two-equity case; ``named.py`` extends its member domain with a third equity.
-Source adapters, account replay, signals, performance, and reporting live
-alongside them in ``examples/portfolio/``. Tutorial runners assemble the sources
-and policies and present their results. This example package imports the generic
-computation helpers; importing those helpers does not load the portfolio package.
+   flowchart TD
+       core[Modello scalar models] --> declarations[Named components and bindings]
+       declarations --> plan[Compiled scalar views]
+       providers[Typed providers] --> observations[Observed series and external ledger]
+       observations --> replay[Chronological account replay]
+       plan --> replay
+       replay --> decisions[Signals and execution assessment]
+       replay --> performance[Performance comparison]
+       replay --> reports[Attribution and utility reports]
+       performance --> reports
+       decisions --> reports
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 38 38
+   :widths: 23 40 37
 
-   * - Layer
+   * - Responsibility
      - Modules
-     - Role
-   * - Numeric data
-     - ``compute.named_map``, ``compute.series``
-     - Named domains and explicit observation axes; standard library only.
-   * - Data acquisition
-     - ``compute.providers``
-     - Generic typed requests and per-load reuse; standard library only.
-   * - Symbolic execution
-     - ``compute.scalar_plan``
-     - SymPy compilation and numerical execution, independent of domain models.
-   * - Model adapter
-     - ``named_members``, ``symbolic``
-     - Project declared components and their bindings; compile model views.
-   * - Financial models and calculations
-     - ``portfolio.models``, ``portfolio.basket``, ``portfolio.valuation``, ``portfolio.account``,
-       ``portfolio.signals``, ``portfolio.postings``, ``portfolio.pnl``,
-       ``portfolio.performance``, ``portfolio.reporting``,
-       ``portfolio.utility``
-     - Domain relationships, ledger transitions, and analytics.
-   * - Sources and presentation
-     - ``portfolio.providers``, ``portfolio.sources``, ``portfolio.explicit``, ``portfolio.named``, ``portfolio.demo``,
-       ``portfolio.report_html``
-     - External observations, scenario assembly, and report rendering.
+     - Built in the walkthrough
+   * - Scalar equations and joint solving
+     - ``modello``
+     - Positions, cash, basket value, and inverse questions.
+   * - Named numeric data
+     - ``examples.compute.named_map``, ``series``
+     - Name-preserving projections, aligned axes, lagged inputs, and reductions.
+   * - Generic acquisition
+     - ``examples.compute.providers``
+     - ``Provider[T]`` and per-batch equivalent-request reuse.
+   * - Numerical execution
+     - ``examples.compute.scalar_plan``
+     - Compile resolved expressions and evaluate points or aligned columns.
+   * - Model integration
+     - ``examples.named_members``, ``examples.symbolic``
+     - Reflect components, pair bindings, construct typed cases, and select views.
+   * - Portfolio composition and valuation
+     - ``examples.portfolio.models``, ``basket``, ``valuation``
+     - Shared definitions, contextual holding queries, and portfolio plans.
+   * - Temporal accounting
+     - ``examples.portfolio.sources``, ``postings``, ``account``, ``pnl``
+     - External records, posting equations, unitized accounts, and reconciliation.
+   * - Decisions and execution
+     - ``examples.portfolio.signals``, ``execution``
+     - Trailing features, allocation policy, orders, slippage, and shortfall.
+   * - Statistics and reporting
+     - ``examples.portfolio.performance``, ``analytics``, ``reporting``, ``utility``
+     - Index comparison, risk, signal attribution, and utility-derived preferences.
+   * - Concrete cases and presentation
+     - ``examples.portfolio.explicit``, ``named``, ``demo``, ``report_html``
+     - Synthetic fixtures, completed scenario assembly, JSON, and interactive HTML.
 
-The ``examples/named_members.py`` adapter contains the research layer's access
-to Modello's component metadata and class namespace. ``BoundMembers`` and
-``bound_component`` pair a typed component with external metadata in one
-declaration. ``ModelFactory`` provides typed instance construction and bound
-component declarations; ``equity`` specialises it for ``EquityPosition`` and
-``EquityProvider``. ``EquityHoldings`` validates the financial member domain.
-The adapter records bindings while
-delegating component scoping and equation construction to Modello. A future
-extracted model integration would need to preserve that boundary or establish
-a public declaration/reflection interface. The numeric data types and
-expression executor do not depend on it.
+The wheel includes typed example modules and CSV fixtures. The ``examples``
+extra currently uses only the standard library and core SymPy. These application
+and computation interfaces are experimental; they remain separate from the core
+Modello package and can be extracted or reorganised independently.
 
-The core API and the research interfaces have separate scopes: the experiments
-exercise possible higher layers without adding collection fields, time-series
-execution, accounting, or report generation to the model solver. The
-:doc:`named-member guide <named_members>` explains the remaining questions about
-named domains, and the :doc:`account guide <accounts>` describes the financial
-assumptions used in the scenario.
+The three completed entry points are:
 
-The :doc:`named-solving design note </design/named_solving>` describes the
-candidate general Modello feature separately from this application.
+.. code-block:: console
+
+   $ python -m examples.portfolio
+   $ python -m examples.portfolio.named
+   $ python -m examples.portfolio.demo --html account.html --json account.json
+
+The named runner extends the fixed-share date-vector example with GOOGL. Its
+daily vectors are entered explicitly; the account's bundled intraday CSV serves
+AAPL and MSFT. A new externally loaded instrument needs a matching provider
+implementation or source data as well as its holding declaration.
+
+Inspect the declaration adapter
+-------------------------------
+
+``examples/named_members.py`` contains the example layer's access to Modello's
+component metadata and class namespace. The namespace unpacks bound declarations
+before delegating symbol scoping and equations to the core. It also follows the
+core's inheritance precedence so an overridden component carries its new binding:
+
+.. raw:: html
+
+   <details><summary>Inspect inheritance and class construction</summary>
+
+.. literalinclude:: ../../../examples/named_members.py
+   :pyobject: _BindingNamespace
+   :language: python
+
+.. literalinclude:: ../../../examples/named_members.py
+   :pyobject: _BoundMembersMeta
+   :language: python
+
+.. literalinclude:: ../../../examples/named_members.py
+   :pyobject: BoundMembers
+   :language: python
+
+.. literalinclude:: ../../../examples/named_members.py
+   :pyobject: member_bindings
+   :language: python
+
+.. raw:: html
+
+   </details>
+
+``EquityBasket.define`` and ``NamedPortfolio.define`` retain the declared member
+type through runtime composition. They reuse a class definition for the same
+composition; each instance still has independent symbols. The small cache
+adapter preserves the callable's generic signature:
+
+.. literalinclude:: ../../../examples/named_members.py
+   :pyobject: cached_definition
+   :language: python
+
+A future public declaration/reflection interface could replace the private
+integration. The :doc:`named-solving design note </design/named_solving>`
+separates that general modeling question from dates, financial conventions,
+providers, statistics, and report formatting.
+
+Use the factory pattern outside finance
+---------------------------------------
+
+``ModelFactory`` needs a model class and a binding type, rather than a portfolio.
+A source name can be enough configuration for another application:
+
+>>> from modello import Modello, InstanceDummy
+>>> from examples.named_members import ModelFactory, BoundMembers, member_bindings
+>>> class Reading(Modello):
+...     value = InstanceDummy("value", real=True)
+>>> reading = ModelFactory(Reading, str)
+>>> class Sensors(BoundMembers[str]):
+...     temperature = reading.component("weather:temperature")
+>>> measured = Sensors("observations", temperature=reading("sample", value=18))
+>>> measured.temperature.value, member_bindings(measured)["temperature"]
+(18, 'weather:temperature')
+
+Calling the factory passes known scalars and typed component instances to the
+ordinary model constructor. ``component(binding)`` instead declares a child and
+its metadata. Neither operation acquires external data. This is an example-layer
+construction pattern; it adds no new solving rules to Modello.
+
+Separate setup cost from numerical execution
+--------------------------------------------
+
+The implementation keeps symbolic construction and compilation outside repeated
+observation evaluation. Run the local benchmark to measure those separately:
+
+.. code-block:: console
+
+   $ uv run --locked python -m examples.portfolio.benchmark
+
+One exploratory run on Python 3.14.8 with SymPy 1.14.0 gave rounded medians:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Work
+     - Time
+   * - Construct the symbolic portfolio
+     - 134 ms
+   * - Compile its numerical calculation
+     - 2.1 ms
+   * - Evaluate complete paths for 10,000 observations
+     - 54 ms
+   * - Construct and solve a portfolio for each of 10 observations
+     - 1,318 ms
+
+Data creation and risk analytics are outside these timings. The benchmark warms
+up first, then measures five batches, or three for the slower baseline. Its
+solve-per-row baseline reuses component instances, performs one joint solve per
+row, and checks NAV against the compiled calculation. These are local exploratory
+timings, not throughput guarantees.
+
+Boundaries left explicit
+------------------------
+
+Named domains and observation axes solve different problems. Market value is
+pointwise on both; returns shift time; covariance reduces time and adds a second
+member axis. The current solver still receives scalar model fields rather than
+list-, set-, map-, or time-series-valued solver inputs.
+
+The numeric maps, series, providers, and expression executor can operate without
+importing Modello or finance. Model integration sits above them. Chronology,
+publication horizons, missing-data policies, currency conversion, corporate
+actions, precision choices, and optimisation require explicit policies in their
+respective layers. The walkthrough supplies USD quotes, funded nonnegative
+actual positions, and a deliberately simple allocation rule.
+
+The reporting models expose the chosen decomposition and sensitivities. They
+provide useful inputs for further research without making accounting depend on
+an optimiser or treating a short synthetic example as investment evidence.

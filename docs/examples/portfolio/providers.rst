@@ -1,95 +1,283 @@
-Typed data providers
-====================
+4. Acquire data and bind it to holdings
+=======================================
 
-A provider is a configured request with a declared result type.
-``Provider[T]`` is an abstract class in ``examples/compute/providers.py``;
-its ``load()`` method returns ``T``. Provider configuration is available while
-constructing models, and data acquisition happens when the caller loads it.
-This keeps symbolic solving separate from external I/O.
+We have scalar models, named projections, and an evaluator. Now we need to say
+which instrument supplies each price, how to acquire its history, and which
+observations were available at a particular time.
 
-Configure an equity request
-----------------------------
+Identify the data being supplied
+--------------------------------
 
-``EquityProvider`` specialises the contract as ``Provider[PriceHistory]``.
-Its ``instrument`` property describes the requested equity before loading:
+A holding name identifies a position in our account. A feed symbol identifies
+an instrument in a provider's namespace. Keep those concepts separate: two
+strategy sleeves may hold the same instrument, and two providers may use
+different symbols for it.
+
+Define a serializable identity record:
+
+.. literalinclude:: ../../../examples/portfolio/models.py
+   :pyobject: Equity
+   :language: python
+
+For timestamped market prints we also need price, publication time, and volume.
+These are the fields of ``PriceHistory``:
+
+.. literalinclude:: ../../../examples/portfolio/sources.py
+   :pyobject: PriceHistory
+   :end-before:     def __post_init__
+   :language: python
+
+Its constructor checks matching column lengths, positive prices and volumes,
+and increasing observation/publication times. A print cannot become available
+before its economic time.
+
+Define a typed acquisition contract
+-----------------------------------
+
+A provider is a configured request returning one type when explicitly loaded.
+This generic contract is enough for prices, transactions, or an index:
+
+.. literalinclude:: ../../../examples/compute/providers.py
+   :pyobject: Provider
+   :language: python
+
+For equities, add an identity that is available before acquisition:
+
+.. literalinclude:: ../../../examples/portfolio/providers.py
+   :pyobject: EquityProvider
+   :language: python
+
+We can implement that interface with a tiny offline provider before considering
+files or services. It describes one instrument and creates one published print
+when loaded:
+
+>>> from dataclasses import dataclass
+>>> from examples.compute.series import Series
+>>> from examples.portfolio.models import Equity
+>>> from examples.portfolio.providers import EquityProvider
+>>> from examples.portfolio.sources import PriceHistory, timestamp
+>>> at = timestamp("2026-01-05T16:00:00Z")
+>>> @dataclass(frozen=True)
+... class FlatPrice(EquityProvider):
+...     symbol: str
+...     price: float
+...
+...     @property
+...     def instrument(self) -> Equity:
+...         return Equity(self.symbol, "local")
+...
+...     def load(self) -> PriceHistory:
+...         return PriceHistory(self.instrument, Series((at,), (self.price,)), (at,), (1,))
+>>> request = FlatPrice("AAPL", 100)
+>>> request.instrument.symbol, request.load().prices.values
+('AAPL', (100.0,))
+
+Replace the acquisition implementation
+--------------------------------------
+
+For an external CSV, keep the same contract and change only ``load``. The real
+adapter selects a namespace and symbol, validates the currency, and constructs
+that same history record:
+
+.. raw:: html
+
+   <details><summary>Inspect the CSV adapter and bundled fixture provider</summary>
+
+.. literalinclude:: ../../../examples/portfolio/providers.py
+   :pyobject: CSVEquityProvider
+   :language: python
+
+Rows use ``provider,symbol,currency,at,available_at,price,volume``. A service-backed
+adapter could implement these two operations with its own query parameters.
+For the walkthrough, the dummy provider supplies the bundled synthetic CSV:
+
+.. literalinclude:: ../../../examples/portfolio/providers.py
+   :pyobject: DummyEquityProvider
+   :language: python
+
+.. raw:: html
+
+   </details>
 
 >>> from examples.portfolio.providers import DummyEquityProvider
->>> request = DummyEquityProvider(symbol="AAPL")
->>> request.instrument.symbol, request.instrument.currency
-('AAPL', 'USD')
->>> history = request.load()
->>> type(history).__name__, history.prices.values[0]
-('PriceHistory', 100.0)
+>>> apple_request = DummyEquityProvider(symbol="AAPL")
+>>> history = apple_request.load()
+>>> history.equity.symbol, history.prices.values[0]
+('AAPL', 100.0)
 
-The dummy implementation serves the bundled synthetic AAPL/MSFT print fixtures.
-``CSVEquityProvider`` reads the same format from a supplied path:
+Sample knowledge, not future data
+---------------------------------
+
+A consumer asks for the latest print published by its decision time. The age
+limit is measured from the print's economic time. Here is that selection:
+
+.. literalinclude:: ../../../examples/portfolio/sources.py
+   :pyobject: PriceHistory.mark
+   :dedent: 4
+   :language: python
+
+>>> from datetime import timedelta
+>>> mark = timestamp("2026-01-05T16:01:00Z")
+>>> history.mark(mark, max_age=timedelta(days=4))
+100.0
+
+``sample(times, max_age=...)`` applies this operation on a deliberate feature or
+valuation grid. Publication time and economic time remain separate; a later
+quote never fills an earlier decision.
+
+Declare the component and request together
+------------------------------------------
+
+A second provider dictionary would repeat every holding name. Instead, pair a
+model type with its binding in a declaration. ``ModelFactory`` provides the
+two operations we need: create a model case, or declare a bound child:
 
 .. code-block:: python
 
-   from pathlib import Path
-   from examples.portfolio.providers import CSVEquityProvider
+   from dataclasses import dataclass
+   from typing import Generic, TypeVar, cast
+   from modello import Modello, ScalarValue
+   _Model = TypeVar("_Model", bound=Modello)
+   _Binding = TypeVar("_Binding")
 
-   request = CSVEquityProvider(
-       symbol="AAPL",
-       path=Path("market.csv"),
-       namespace="my-feed",
-       currency="USD",
-   )
-   history = request.load()
+.. literalinclude:: ../../../examples/named_members.py
+   :pyobject: ModelFactory
+   :language: python
 
-Rows use ``provider,symbol,currency,at,available_at,price,volume``. The CSV
-provider selects the namespace and symbol, checks currency, and preserves the
-observation/publication times and independent trade volumes. The ``provider``
-text in an ``Equity`` record or CSV is a serializable symbol namespace; the
-configured object supplies the acquisition behaviour and request parameters.
+.. raw:: html
 
-Keep holding names and source identifiers separate
---------------------------------------------------
+   <details><summary>Inspect how a bound declaration becomes a model component</summary>
 
-A holding name identifies an account position. A provider symbol identifies
-an instrument in a particular feed. For example, separate growth and income
-holdings can request the same equity:
+Its declaration operation uses this record and helper:
 
->>> from examples.portfolio.basket import EquityBasket, EquityHoldings, equity
+.. literalinclude:: ../../../examples/named_members.py
+   :pyobject: _BoundComponent
+   :language: python
+
+.. literalinclude:: ../../../examples/named_members.py
+   :pyobject: bound_component
+   :language: python
+
+While defining a ``BoundMembers`` class, its namespace records the binding and
+passes the model type to Modello's normal component machinery:
+
+.. literalinclude:: ../../../examples/named_members.py
+   :pyobject: _BindingNamespace.__setitem__
+   :dedent: 4
+   :language: python
+
+.. raw:: html
+
+   </details>
+
+The adapter carries those bindings through inheritance and checks that their
+names exactly match the component domain. ``EquityHoldings`` adds the financial
+type checks:
+
+.. literalinclude:: ../../../examples/portfolio/basket.py
+   :pyobject: EquityHoldings
+   :language: python
+
+The configured factory ``equity`` specialises ``ModelFactory`` for
+``EquityPosition`` and ``EquityProvider``. We can now declare our holdings once:
+
+>>> from modello import component
+>>> from examples.portfolio.basket import EquityHoldings, EquityBasket, equity
+>>> class Holdings(EquityHoldings):
+...     aapl = equity.component(DummyEquityProvider(symbol="AAPL"))
+...     msft = equity.component(DummyEquityProvider(symbol="MSFT"))
+>>> class Basket(EquityBasket[Holdings]):
+...     members = component(Holdings)
+...     market_value = EquityBasket.total(members)
+
+The basket extends the reductions from chapter 2 with an ``EquityHolding``
+view: a symbolic position, its provider, and its capital base:
+
+.. literalinclude:: ../../../examples/portfolio/basket.py
+   :pyobject: EquityHolding
+   :language: python
+
+The provider map and contextual positions are projections of the declaration:
+
+.. literalinclude:: ../../../examples/portfolio/basket.py
+   :pyobject: EquityBasket.providers
+   :dedent: 4
+   :language: python
+
+.. literalinclude:: ../../../examples/portfolio/basket.py
+   :pyobject: EquityBasket.positions
+   :dedent: 4
+   :language: python
+
+``instruments`` projects provider identities, while ``values`` and ``weights``
+project these holding views. Adding or replacing a declared member carries its
+request with it; each model instance still receives independent symbols.
+
+Assemble and evaluate the portfolio
+-----------------------------------
+
+``NamedPortfolio`` adds named output selection to the basket-and-cash equations.
+It inherits the compilation methods developed in chapter 3; its default view is:
+
+.. literalinclude:: ../../../examples/portfolio/valuation.py
+   :pyobject: NamedPortfolio.valuation
+   :dedent: 4
+   :language: python
+
+.. literalinclude:: ../../../examples/portfolio/valuation.py
+   :pyobject: NamedPortfolio.compile
+   :dedent: 4
+   :language: python
+
+Declare the complete portfolio and give it known quantities and cash:
+
+>>> from examples.portfolio.models import USDCash
 >>> from examples.portfolio.valuation import NamedPortfolio
->>> class Sleeves(EquityHoldings):
-...     growth = equity.component(request)
-...     income = equity.component(request)
->>> Basket = EquityBasket.define(Sleeves)
->>> portfolio = NamedPortfolio.define(Basket)("sleeves")
->>> market = portfolio.load_market()
->>> tuple(market), market["growth"] is market["income"]
-(('growth', 'income'), True)
+>>> class Portfolio(NamedPortfolio[Holdings]):
+...     basket = component(Basket)
+...     cash = component(USDCash)
+...     nav = basket.capital
+...     nav = basket.market_value + cash.amount
+>>> book = Portfolio(
+...     "book",
+...     basket=Basket(
+...         "basket",
+...         members=Holdings(
+...             "equities",
+...             aapl=equity("apple", quantity=10),
+...             msft=equity("microsoft", quantity=20),
+...         ),
+...     ),
+...     cash=USDCash("cash", amount=100),
+... )
+>>> market = book.load_market()
+>>> inputs = book.positions.map(lambda position: position.price)
+>>> view = book.compile(inputs=inputs)
+>>> prices = market.map(lambda history: history.mark(mark, max_age=timedelta(days=4)))
+>>> outputs = view.evaluate(prices)
+>>> outputs["nav"], round(outputs["weight:aapl"], 4)
+(2100.0, 0.4762)
 
-Each ``equity.component(request)`` declaration couples the symbolic position and its
-provider under one holding name. The basket projects ``providers`` and
-``instruments`` from those declarations; inheritance carries both parts
-together. Quantities and weights stay independent for each holding. Symbols
-may differ between feeds or contain punctuation that is inconvenient in a
-Python component attribute.
+Loading remains an explicit operation. The portfolio's ``load_market`` method
+uses this batch loader to preserve holding names and reuse equivalent requests:
 
-The loader caches by concrete provider class and request during that call. The supplied
-providers are frozen dataclasses whose equality includes their concrete type
-and every parameter. Equivalent requests share data; different paths, symbols,
-currencies, namespaces, or provider classes remain separate. A later call starts
-a fresh cache, and loading errors propagate to the caller.
+.. literalinclude:: ../../../examples/compute/providers.py
+   :pyobject: load_providers
+   :language: python
 
-Extend the contract
---------------------
+The supplied frozen requests compare all parameters. Cache keys include the
+concrete provider class; a different path, symbol, namespace, currency, or
+provider type remains a different request. A later load starts a fresh cache.
+For example, separate named sleeves can share an acquired history while keeping
+independent quantities and weights:
 
-An equity adapter for another data service implements ``EquityProvider``:
-``instrument`` returns the quote identity, and ``load()`` returns a matching
-``PriceHistory``. A Yahoo-backed adapter could accept its symbol and query
-parameters through its constructor and implement these same two operations.
-This example ships local fixture and CSV implementations.
+>>> from examples.compute.named_map import NamedMap
+>>> from examples.compute.providers import load_providers
+>>> requests = NamedMap({"growth": apple_request, "income": apple_request})
+>>> shared = load_providers(requests)
+>>> shared["growth"] is shared["income"]
+True
 
-The generic ``Provider[T]`` contract also serves other data types. The CSV
-transaction source returns ``TransactionLog``; the CSV index source returns
-``Series[datetime]``. New providers choose their own result type and parameters.
-Custom providers must be hashable, with equality stable during a batch load;
-immutable request records make equivalent-query reuse straightforward.
-
-Shared symbol text alone is insufficient to combine instruments or requests.
-Other instrument kinds can have their own typed provider specialisations.
-Cross-provider security identification, currency conversion, and corporate
-changes need explicit data and models at their respective boundaries.
+The finished two-equity declarations above are in
+``examples/portfolio/explicit.py``. We will reuse them to add an external
+transaction log and a changing account state in :doc:`accounts`.
