@@ -4,11 +4,12 @@ import pytest
 
 from examples.portfolio.account import Account, AccountEngine
 from examples.portfolio.demo import ResearchScenario
+from examples.portfolio.explicit import Basket, EquityMembers
 from examples.portfolio.models import EquityPosition, USDCash
-from examples.portfolio.named import Basket, EquityMembers, NamedPortfolio
 from examples.portfolio.sources import (
     CSVTransactionSource,
 )
+from examples.portfolio.valuation import NamedPortfolio
 
 from ._data import AGE, DATA, TIMES
 

@@ -8,10 +8,10 @@ from sympy import Rational, simplify
 from examples.compute.named_map import NamedMap
 from examples.named_members import bound_component
 from examples.portfolio.basket import EquityBasket, EquityHoldings, equity
-from examples.portfolio.explicit import MarketData, Portfolio
+from examples.portfolio.explicit import Basket, EquityMembers, MarketData, Portfolio
 from examples.portfolio.models import AAPL, MSFT, Equity, EquityPosition, Quote, USDCash
-from examples.portfolio.named import Basket, EquityMembers, NamedMarketData, NamedPortfolio, NamedPortfolioPricer
 from examples.portfolio.providers import DummyEquityProvider
+from examples.portfolio.valuation import NamedMarketData, NamedPortfolio, NamedPortfolioPricer
 from modello import BoundInstanceDummy, InstanceDummy, component
 
 
@@ -67,8 +67,8 @@ def test_symbolic_weights_share_the_portfolio_nav():
 
 def test_binding_order_follows_the_component_declaration():
     class Reordered(EquityHoldings):
-        msft = equity(DummyEquityProvider("MSFT"))
-        aapl = equity(DummyEquityProvider("AAPL"))
+        msft = equity.component(DummyEquityProvider("MSFT"))
+        aapl = equity.component(DummyEquityProvider("AAPL"))
 
     ReorderedBasket = EquityBasket.define(Reordered)
     basket = ReorderedBasket("basket")
@@ -88,7 +88,7 @@ def test_binding_requires_the_declared_position_domain_and_type():
             value = InstanceDummy("value")
 
     with pytest.raises(TypeError, match="EquityProvider"):
-        equity(AAPL)
+        equity.component(AAPL)
     with pytest.raises(TypeError, match="EquityProvider bindings"):
 
         class WrongBinding(EquityHoldings):
@@ -109,8 +109,8 @@ def test_binding_requires_the_declared_position_domain_and_type():
 
 def test_inherited_holding_changes_its_provider_and_component_together():
     class Extended(EquityMembers):
-        msft = equity(DummyEquityProvider("AAPL"))
-        extra = equity(DummyEquityProvider("AAPL"))
+        msft = equity.component(DummyEquityProvider("AAPL"))
+        extra = equity.component(DummyEquityProvider("AAPL"))
 
     basket = EquityBasket.define(Extended)("basket")
     assert tuple(basket.positions) == tuple(basket.providers) == ("aapl", "msft", "extra")
@@ -123,8 +123,8 @@ def test_inherited_holding_changes_its_provider_and_component_together():
 
 def test_same_instrument_can_have_separate_holdings_and_weights():
     class Sleeves(EquityHoldings):
-        growth = equity(DummyEquityProvider("AAPL"))
-        income = equity(DummyEquityProvider("AAPL"))
+        growth = equity.component(DummyEquityProvider("AAPL"))
+        income = equity.component(DummyEquityProvider("AAPL"))
 
     AppleBasket = EquityBasket.define(Sleeves)
     portfolio = NamedPortfolio.define(AppleBasket)(

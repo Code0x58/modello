@@ -16,11 +16,10 @@ from examples.compute.named_map import NamedMap
 from examples.compute.providers import Provider
 from examples.compute.series import Series
 from examples.portfolio.account import Account, AccountPath, AccountSnapshot
-from examples.portfolio.basket import EquityHoldings
+from examples.portfolio.basket import EquityHoldings, equity
 from examples.portfolio.execution import ExecutionBenchmark
-from examples.portfolio.explicit import Portfolio
-from examples.portfolio.models import EquityPosition, USDCash
-from examples.portfolio.named import Basket, EquityMembers
+from examples.portfolio.explicit import Basket, EquityMembers, Portfolio
+from examples.portfolio.models import USDCash
 from examples.portfolio.performance import Comparison, PerformanceIndex
 from examples.portfolio.reporting import AccountReport, OrderAttribution
 from examples.portfolio.signals import (
@@ -120,7 +119,7 @@ class ResearchScenario(Generic[_Members]):
             basket=Basket(
                 "basket",
                 members=EquityMembers(
-                    "equities", aapl=EquityPosition("apple", quantity=10), msft=EquityPosition("microsoft", quantity=10)
+                    "equities", aapl=equity("apple", quantity=10), msft=equity("microsoft", quantity=10)
                 ),
             ),
             cash=USDCash("cash", amount=1000),

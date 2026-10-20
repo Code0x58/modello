@@ -64,6 +64,7 @@ import sys
 import examples.portfolio.account
 import examples.portfolio.reporting
 assert 'examples.portfolio.explicit' not in sys.modules
+assert 'examples.portfolio.named' not in sys.modules
 assert 'examples.portfolio.demo' not in sys.modules
 assert 'examples.portfolio.report_html' not in sys.modules
 """,

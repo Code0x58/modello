@@ -119,7 +119,7 @@ def check_wheel(
         "tests/examples/test_symbolic.py",
         "tests/examples/compute/test_series.py",
         "tests/examples/compute/test_providers.py",
-        "tests/examples/portfolio/test_named.py",
+        "tests/examples/portfolio/test_valuation.py",
     ):
         source = Path(__file__).resolve().parents[1] / path
         target = directory / source.name

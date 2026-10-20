@@ -4,7 +4,7 @@
 import pytest
 
 from examples.compute.named_map import NamedMap
-from examples.named_members import BoundMembers, bound_component, component_members, member_bindings
+from examples.named_members import BoundMembers, ModelFactory, bound_component, component_members, member_bindings
 from modello import BoundInstanceDummy, InstanceDummy, Modello, component
 
 
@@ -70,6 +70,60 @@ def test_named_reduction_keeps_joint_inverse_solving_outside_finance():
 class BoundReadings(BoundMembers[str]):
     inlet = bound_component(Reading, "source:in")
     outlet = bound_component(Reading, "source:out")
+
+
+reading_factory = ModelFactory(Reading, str)
+
+
+def test_model_factory_constructs_fresh_instances_with_the_original_model_type():
+    first, second = reading_factory("same"), reading_factory("same")
+    assert type(first) is type(second) is Reading
+    assert first.value != second.value
+    assert reading_factory("known", value=3).value == 3
+    assert first.value.free_symbols
+
+
+def test_model_factory_uses_the_same_equations_for_forward_inverse_and_fitted_cases():
+    class Calibrated(Modello):
+        raw = InstanceDummy("raw", real=True)
+        gain = InstanceDummy("gain", positive=True)
+        result = raw * gain
+
+    calibrated = ModelFactory(Calibrated, str)
+    assert calibrated("forward", raw=3, gain=2).result == 6
+    assert calibrated("inverse", gain=2, result=6).raw == 3
+    assert calibrated("fitted", raw=3, result=6).gain == 2
+
+
+def test_model_factory_declarations_keep_bindings_and_typed_nested_construction():
+    class Sensors(BoundMembers[str]):
+        inlet = reading_factory.component("source:in")
+        outlet = reading_factory.component("source:out")
+
+    sensors = ModelFactory(Sensors, str)
+    result = sensors("measured", inlet=reading_factory("in", value=3))
+    assert type(result.inlet) is Reading and result.inlet.value == 3
+    assert member_bindings(result) == {"inlet": "source:in", "outlet": "source:out"}
+    with pytest.raises(TypeError, match="Reading needs a str binding"):
+        reading_factory.component(3)
+    with pytest.raises(TypeError, match="inlet must be a Reading instance"):
+        sensors("invalid", inlet={"value": 3})
+
+
+def test_model_factory_never_acquires_external_data_implicitly():
+    class Request:
+        def load(self) -> int:
+            raise AssertionError("Explicit loading only")
+
+    sensor = ModelFactory(Reading, Request)
+    request = Request()
+
+    class Sensors(BoundMembers[Request]):
+        inlet = sensor.component(request)
+
+    measured = Sensors("measured", inlet=sensor("in", value=3))
+    assert member_bindings(measured)["inlet"] is request
+    assert measured.inlet.value == 3
 
 
 def test_bound_members_keep_bindings_with_classes_references_and_solved_instances():
@@ -153,3 +207,9 @@ def _typing_contract(reading: Reading) -> None:
     bindings: NamedMap[str] = member_bindings(BoundReadings)
     assert declared.value.free_symbols and bindings["inlet"]
     _wrong_binding: int = bindings["inlet"]  # type: ignore[assignment]
+    instance: Reading = reading_factory("reading", value=3)
+    declaration: Reading = reading_factory.component("source:in")
+    assert instance.value == 3 and declaration
+    _wrong_factory_result: str = reading_factory("reading")  # type: ignore[assignment]
+    reading_factory.component(3)  # type: ignore[arg-type]
+    reading_factory("reading", value={"amount": 3})  # type: ignore[arg-type]

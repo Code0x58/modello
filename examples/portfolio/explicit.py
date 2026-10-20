@@ -10,14 +10,25 @@ from datetime import date
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
-from examples.portfolio.models import AAPL, MSFT, EquityPosition, EquityPrices, USDCash
-from examples.portfolio.named import (
-    Basket,
-    EquityMembers,
-    NamedMarketData,
-    NamedPortfolio,
-)
+from examples.portfolio.basket import EquityBasket, EquityHoldings, equity
+from examples.portfolio.models import AAPL, MSFT, EquityPrices, USDCash
+from examples.portfolio.providers import DummyEquityProvider
+from examples.portfolio.valuation import NamedMarketData, NamedPortfolio
 from modello import component
+
+
+class EquityMembers(EquityHoldings):
+    """A declared domain of two named equity positions."""
+
+    aapl = equity.component(DummyEquityProvider(symbol="AAPL"))
+    msft = equity.component(DummyEquityProvider(symbol="MSFT"))
+
+
+class Basket(EquityBasket[EquityMembers]):
+    """A declared equity basket with provider bindings and an explicit reduction."""
+
+    members = component(EquityMembers)
+    market_value = EquityBasket.total(members)
 
 
 class Portfolio(NamedPortfolio[EquityMembers]):
@@ -37,8 +48,8 @@ class Portfolio(NamedPortfolio[EquityMembers]):
                 "basket",
                 members=EquityMembers(
                     "equities",
-                    aapl=EquityPosition("apple", quantity=10),
-                    msft=EquityPosition("microsoft", quantity=20),
+                    aapl=equity("apple", quantity=10),
+                    msft=equity("microsoft", quantity=20),
                 ),
             ),
             cash=USDCash("cash", amount=100),

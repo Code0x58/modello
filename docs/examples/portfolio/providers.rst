@@ -51,17 +51,17 @@ an instrument in a particular feed. For example, separate growth and income
 holdings can request the same equity:
 
 >>> from examples.portfolio.basket import EquityBasket, EquityHoldings, equity
->>> from examples.portfolio.named import NamedPortfolio
+>>> from examples.portfolio.valuation import NamedPortfolio
 >>> class Sleeves(EquityHoldings):
-...     growth = equity(request)
-...     income = equity(request)
+...     growth = equity.component(request)
+...     income = equity.component(request)
 >>> Basket = EquityBasket.define(Sleeves)
 >>> portfolio = NamedPortfolio.define(Basket)("sleeves")
 >>> market = portfolio.load_market()
 >>> tuple(market), market["growth"] is market["income"]
 (('growth', 'income'), True)
 
-Each ``equity(request)`` declaration couples the symbolic position and its
+Each ``equity.component(request)`` declaration couples the symbolic position and its
 provider under one holding name. The basket projects ``providers`` and
 ``instruments`` from those declarations; inheritance carries both parts
 together. Quantities and weights stay independent for each holding. Symbols

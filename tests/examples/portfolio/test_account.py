@@ -5,8 +5,8 @@ import pytest
 from examples.compute.named_map import NamedMap
 from examples.portfolio.account import Account, AccountEngine
 from examples.portfolio.basket import EquityBasket, EquityHoldings
+from examples.portfolio.explicit import Basket, EquityMembers
 from examples.portfolio.models import EquityPosition, Quote, USDCash
-from examples.portfolio.named import Basket, EquityMembers, NamedPortfolio
 from examples.portfolio.signals import TargetWeights
 from examples.portfolio.sources import (
     CashFlow,
@@ -15,6 +15,7 @@ from examples.portfolio.sources import (
     TransactionLog,
     timestamp,
 )
+from examples.portfolio.valuation import NamedPortfolio
 
 from ._data import AGE, DECISION, TIMES
 

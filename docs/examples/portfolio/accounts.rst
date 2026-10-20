@@ -73,7 +73,7 @@ The :doc:`basket definition <holdings>` binds each named holding to a configured
 and loads the supplied synthetic Apple prints. ``CSVEquityProvider`` accepts a
 symbol, path, provider namespace, and quote currency for an external CSV.
 
-Each ``equity(provider)`` member declaration owns its acquisition request.
+Each ``equity.component(provider)`` member declaration owns its acquisition request.
 The basket projects its ``providers`` map from those declarations. Its
 ``instruments`` map derives serializable quote identities, while ``positions[name]`` exposes the provider,
 identity, quantity, value, and contextual weight together. Instrument metadata

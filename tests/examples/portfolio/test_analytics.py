@@ -7,7 +7,7 @@ import pytest
 from sympy import ImmutableMatrix, ones
 
 from examples.compute.series import Series
-from examples.portfolio.explicit import MarketData, Portfolio
+from examples.portfolio.explicit import Basket, EquityMembers, MarketData, Portfolio
 from examples.portfolio.models import (
     AAPL,
     MSFT,
@@ -15,13 +15,8 @@ from examples.portfolio.models import (
     EquityPrices,
     USDCash,
 )
-from examples.portfolio.named import (
-    Basket,
-    EquityMembers,
-    NamedPortfolioPricer,
-    example_named_market_data,
-    example_named_portfolio,
-)
+from examples.portfolio.named import ThreeEquityPortfolio
+from examples.portfolio.valuation import NamedPortfolioPricer
 
 
 def test_return_attribution_uses_start_of_period_weights():
@@ -138,7 +133,7 @@ def test_insufficient_observations():
 
 
 def test_named_covariance_and_risk_agree_with_independent_matrix_calculation():
-    path = NamedPortfolioPricer(example_named_portfolio()).over(example_named_market_data())
+    path = NamedPortfolioPricer(ThreeEquityPortfolio.example()).over(ThreeEquityPortfolio.example_data())
     result = path.analytics(periods_per_year=252)
     names = tuple(path.positions)
     observations = ImmutableMatrix.hstack(*(ImmutableMatrix(path.positions[name].returns.values) for name in names))

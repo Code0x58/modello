@@ -97,6 +97,9 @@ Connect domain models through an adapter
 ----------------------------------------
 
 ``examples/portfolio/models.py`` holds shared equity, position, and cash models.
+``examples/portfolio/valuation.py`` compiles portfolios and aligned observations
+without importing the concrete tutorial portfolios. ``explicit.py`` declares
+the two-equity case; ``named.py`` extends its member domain with a third equity.
 Source adapters, account replay, signals, performance, and reporting live
 alongside them in ``examples/portfolio/``. Tutorial runners assemble the sources
 and policies and present their results. This example package imports the generic
@@ -122,21 +125,23 @@ computation helpers; importing those helpers does not load the portfolio package
      - ``named_members``, ``symbolic``
      - Project declared components and their bindings; compile model views.
    * - Financial models and calculations
-     - ``portfolio.models``, ``portfolio.basket``, ``portfolio.named``, ``portfolio.account``,
+     - ``portfolio.models``, ``portfolio.basket``, ``portfolio.valuation``, ``portfolio.account``,
        ``portfolio.signals``, ``portfolio.postings``, ``portfolio.pnl``,
        ``portfolio.performance``, ``portfolio.reporting``,
        ``portfolio.utility``
      - Domain relationships, ledger transitions, and analytics.
    * - Sources and presentation
-     - ``portfolio.providers``, ``portfolio.sources``, ``portfolio.explicit``, ``portfolio.demo``,
+     - ``portfolio.providers``, ``portfolio.sources``, ``portfolio.explicit``, ``portfolio.named``, ``portfolio.demo``,
        ``portfolio.report_html``
      - External observations, scenario assembly, and report rendering.
 
 The ``examples/named_members.py`` adapter contains the research layer's access
 to Modello's component metadata and class namespace. ``BoundMembers`` and
 ``bound_component`` pair a typed component with external metadata in one
-declaration; the financial ``EquityHoldings`` and ``equity(provider)`` helpers
-specialise that pairing for price requests. The adapter records bindings while
+declaration. ``ModelFactory`` provides typed instance construction and bound
+component declarations; ``equity`` specialises it for ``EquityPosition`` and
+``EquityProvider``. ``EquityHoldings`` validates the financial member domain.
+The adapter records bindings while
 delegating component scoping and equation construction to Modello. A future
 extracted model integration would need to preserve that boundary or establish
 a public declaration/reflection interface. The numeric data types and

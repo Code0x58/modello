@@ -1,13 +1,20 @@
 """The research layer's adapter from Modello components to named numeric domains."""
 
 from dataclasses import dataclass
-from typing import Any, ClassVar, Generic, TypeVar, cast
+from functools import cache
+from typing import Any, Callable, ClassVar, Generic, TypeVar, cast
 
 from examples.compute.named_map import NamedMap
-from modello import Modello, ModelloMeta, ModelloMetaNamespace, _ModelReference
+from modello import Modello, ModelloMeta, ModelloMetaNamespace, ScalarValue, _ModelReference
 
 _Model = TypeVar("_Model", bound=Modello)
 _Binding = TypeVar("_Binding")
+_Definition = TypeVar("_Definition", bound=Callable[..., type[Modello]])
+
+
+def cached_definition(factory: _Definition) -> _Definition:
+    """Reuse a model class while retaining its constructor's generic signature."""
+    return cast(_Definition, cache(factory))
 
 
 def _model_type(group: Modello | type[Modello]) -> type[Modello]:
@@ -47,6 +54,28 @@ class _BoundComponent(Generic[_Model, _Binding]):
 def bound_component(model: type[_Model], binding: _Binding) -> _Model:
     """Declare a typed model component and its external binding together."""
     return cast(_Model, _BoundComponent(model, binding))
+
+
+@dataclass(frozen=True)
+class ModelFactory(Generic[_Model, _Binding]):
+    """Construct fresh models or declare their typed external bindings.
+
+    Calling the factory uses the model's ordinary knowns and joint solver.
+    ``component(binding)`` instead declares a child in a ``BoundMembers`` class.
+    Neither operation loads the binding's external data.
+    """
+
+    model: type[_Model]
+    binding_type: type[_Binding]
+
+    def __call__(self, name: str, **knowns: ScalarValue | Modello) -> _Model:
+        return self.model(name, **knowns)
+
+    def component(self, binding: _Binding) -> _Model:
+        """Couple a component declaration with a binding of the configured type."""
+        if not isinstance(binding, self.binding_type):
+            raise TypeError(f"{self.model.__name__} needs a {self.binding_type.__name__} binding")
+        return bound_component(self.model, binding)
 
 
 class _BindingNamespace(ModelloMetaNamespace):

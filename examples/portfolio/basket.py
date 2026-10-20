@@ -8,17 +8,13 @@ from typing import Generic, TypeVar
 from sympy import Expr, S
 
 from examples.compute.named_map import NamedMap
-from examples.named_members import BoundMembers, bound_component, component_members, member_bindings
+from examples.named_members import BoundMembers, ModelFactory, cached_definition, component_members, member_bindings
 from examples.portfolio.models import Equity, EquityPosition
 from examples.portfolio.providers import EquityProvider
 from modello import InstanceDummy, Modello, component
 
-
-def equity(provider: EquityProvider) -> EquityPosition:
-    """Declare a generic equity position with its configured price provider."""
-    if not isinstance(provider, EquityProvider):
-        raise TypeError("An equity holding needs an EquityProvider")
-    return bound_component(EquityPosition, provider)
+# Binding interfaces are checked with isinstance, never instantiated.
+equity = ModelFactory(EquityPosition, EquityProvider)  # type: ignore[type-abstract]
 
 
 class EquityHoldings(BoundMembers[EquityProvider]):
@@ -111,8 +107,9 @@ class EquityBasket(Modello, Generic[_Members]):
         return sum((position.market_value for position in component_members(members, EquityPosition).values()), S.Zero)
 
     @staticmethod
+    @cached_definition
     def define(members: type[_Declared]) -> type[EquityBasket[_Declared]]:
-        """Build the same declaration when the holding domain is supplied at runtime."""
+        """Reuse the basket definition for a runtime-supplied holding domain."""
         member_type = members
 
         class Basket(EquityBasket[_Declared]):

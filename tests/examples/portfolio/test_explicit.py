@@ -6,7 +6,7 @@ import pytest
 from sympy import Rational, Symbol
 
 from examples.compute.series import Series
-from examples.portfolio.explicit import MarketData, Portfolio
+from examples.portfolio.explicit import Basket, EquityMembers, MarketData, Portfolio
 from examples.portfolio.models import (
     AAPL,
     MSFT,
@@ -15,7 +15,6 @@ from examples.portfolio.models import (
     Quote,
     USDCash,
 )
-from examples.portfolio.named import Basket, EquityMembers
 from modello import BoundInstanceDummy
 
 

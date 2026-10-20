@@ -38,13 +38,13 @@ provider:
 
    from examples.portfolio.basket import EquityBasket, EquityHoldings, equity
    from examples.portfolio.models import USDCash
-   from examples.portfolio.named import NamedPortfolio
+   from examples.portfolio.valuation import NamedPortfolio
    from examples.portfolio.providers import DummyEquityProvider
    from modello import component
 
    class Holdings(EquityHoldings):
-       aapl = equity(DummyEquityProvider(symbol="AAPL"))
-       msft = equity(DummyEquityProvider(symbol="MSFT"))
+       aapl = equity.component(DummyEquityProvider(symbol="AAPL"))
+       msft = equity.component(DummyEquityProvider(symbol="MSFT"))
 
    class Basket(EquityBasket[Holdings]):
        members = component(Holdings)
@@ -56,10 +56,15 @@ provider:
        nav = basket.capital
        nav = basket.market_value + cash.amount
 
-``equity(provider)`` declares an ordinary typed ``EquityPosition`` component and
+``equity.component(provider)`` declares an ordinary typed ``EquityPosition`` component and
 attaches its acquisition request to the same member name. ``EquityHoldings``
 keeps this binding through inheritance and solving. The basket derives its
 providers, instruments, values, and weights from that one declaration.
+
+The ``equity`` object is a reusable model factory. ``equity("opening", quantity=10)``
+constructs an ordinary position instance; ``equity.component(request)`` declares
+its place in a holding group. The :doc:`model views guide <modelling>` demonstrates
+the same factory pattern for a non-financial model.
 
 The portfolio contains a basket and cash. The basket contains its named holding
 group and derives total market value and allocation from that group:

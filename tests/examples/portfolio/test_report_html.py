@@ -12,11 +12,11 @@ from examples.compute.series import Series
 from examples.portfolio.account import Account, AccountEngine
 from examples.portfolio.basket import EquityBasket, EquityHoldings
 from examples.portfolio.models import USDCash
-from examples.portfolio.named import NamedPortfolio
 from examples.portfolio.performance import PerformanceIndex
 from examples.portfolio.report_html import render_html, report_data
 from examples.portfolio.reporting import AccountReport
 from examples.portfolio.sources import Income, TransactionLog, timestamp
+from examples.portfolio.valuation import NamedPortfolio
 
 
 def test_report_html_and_json_preserve_values_and_escape_user_labels(reporting, scenario):

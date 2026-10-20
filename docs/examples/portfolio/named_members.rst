@@ -8,8 +8,9 @@ retaining that domain; a reduction turns those values into an aggregate such
 as NAV. Covariance has two member-name axes.
 
 The named map lives in ``examples/compute/named_map.py``; the Modello adapter is
-in ``examples/named_members.py``. The portfolio application is in
-``examples/portfolio/named.py``. Install the examples and run it:
+in ``examples/named_members.py``. Reusable portfolio valuation lives in
+``examples/portfolio/valuation.py``; ``examples/portfolio/named.py`` declares
+the three-equity extension. Install the examples and run it:
 
 .. code-block:: console
 
@@ -56,8 +57,8 @@ Members are still declared as named, typed model components:
 .. code-block:: python
 
    class EquityMembers(EquityHoldings):
-       aapl = equity(DummyEquityProvider(symbol="AAPL"))
-       msft = equity(DummyEquityProvider(symbol="MSFT"))
+       aapl = equity.component(DummyEquityProvider(symbol="AAPL"))
+       msft = equity.component(DummyEquityProvider(symbol="MSFT"))
 
 Each line declares a typed ``EquityPosition`` and its provider together.
 The holding name is written once; provider and instrument maps are derived
@@ -113,26 +114,25 @@ The worked example adds Alphabet by extending the declaration:
 .. code-block:: python
 
    class ThreeEquities(EquityMembers):
-       googl = equity(DummyEquityProvider(symbol="GOOGL"))
+       googl = equity.component(DummyEquityProvider(symbol="GOOGL"))
 
    class ThreeEquityBasket(EquityBasket[ThreeEquities]):
        members = component(ThreeEquities)
        market_value = EquityBasket.total(members)
 
 The existing components and their requests are inherited together. Replacing a
-member's ``equity(...)`` declaration replaces its provider too. Supply its
+member's ``equity.component(...)`` declaration replaces its provider too. Supply its
 quantity and price vector under ``googl``. The same aggregate,
 valuation, weight, attribution, and risk calculations handle all three members:
 
->>> from examples.portfolio.named import (
-...     example_named_market_data, example_named_portfolio,
-... )
->>> holdings = example_named_portfolio()
+>>> from examples.portfolio.named import ThreeEquityPortfolio
+>>> holdings = ThreeEquityPortfolio.example()
 >>> tuple(holdings.positions), tuple(holdings.weights)
 (('aapl', 'msft', 'googl'), ('aapl', 'msft', 'googl'))
->>> path = holdings.pricer().over(example_named_market_data())
+>>> path = holdings.pricer().over(ThreeEquityPortfolio.example_data())
 >>> path.nav.values
 (3100.0, 3105.0, 3030.0, 3190.0, 3230.0)
+
 >>> tuple(path.weights)
 ('aapl', 'msft', 'googl')
 >>> result = path.analytics(periods_per_year=252)
@@ -142,6 +142,10 @@ valuation, weight, attribution, and risk calculations handle all three members:
 51.483
 >>> round(sum(result.latest_weights_risk.contributions.values()) * 100, 4)
 51.483
+
+``ThreeEquityPortfolio`` is an ordinary declared class. Repeated example runs
+reuse that definition and its cached account-valuation plan; creating another
+instance gives it independent unknown symbols.
 
 Covariance is indexed as ``result.annualized_covariance["aapl"]["googl"]``.
 Cash retains its own value and weight paths and has zero return and risk

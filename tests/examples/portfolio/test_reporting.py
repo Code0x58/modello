@@ -10,9 +10,9 @@ from examples.compute.series import Series
 from examples.portfolio.account import Account, AccountEngine
 from examples.portfolio.basket import EquityBasket, EquityHoldings
 from examples.portfolio.models import MSFT, USDCash
-from examples.portfolio.named import NamedPortfolio
 from examples.portfolio.reporting import AccountReport, OrderAttribution
 from examples.portfolio.sources import CashFlow, Fill, Income, TransactionLog, timestamp
+from examples.portfolio.valuation import NamedPortfolio
 
 
 def attribute(scenario, *, path=None, weights=None, signals=None, orders=None):

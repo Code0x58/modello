@@ -18,8 +18,8 @@ The :doc:`holdings guide <holdings>` declares a basket and portfolio as classes:
 .. code-block:: python
 
    class Holdings(EquityHoldings):
-       aapl = equity(DummyEquityProvider(symbol="AAPL"))
-       msft = equity(DummyEquityProvider(symbol="MSFT"))
+       aapl = equity.component(DummyEquityProvider(symbol="AAPL"))
+       msft = equity.component(DummyEquityProvider(symbol="MSFT"))
 
    class Basket(EquityBasket[Holdings]):
        members = component(Holdings)
@@ -36,7 +36,46 @@ those requests under the component names, keeping acquisition and the symbolic
 domain aligned. The reduction builds one symbolic value expression;
 the basket's inherited weight equation uses the portfolio's capital base.
 ``EquityBasket.define(...)`` and ``NamedPortfolio.define(...)`` build equivalent
-classes when the composition is selected from runtime configuration.
+classes when the composition is selected from runtime configuration. Repeating
+the same composition reuses its class and compiled plan; its model instances
+still have independent unknown symbols.
+
+Construct models with a reusable factory
+----------------------------------------
+
+``equity`` is a ``ModelFactory[EquityPosition, EquityProvider]`` configured
+with the model class and the expected binding type. Calling it creates a fresh
+model using the ordinary Modello constructor:
+
+>>> from examples.portfolio.basket import equity
+>>> position = equity("opening", quantity=10)
+>>> position.quantity
+10
+
+``equity.component(request)`` uses that same model type to declare a holding
+and its provider in a class body. Instantiation and declaration have distinct
+roles; both retain the concrete model's static type.
+
+This pattern works with any Modello model and binding type. For example, a
+sensor model can use a source name as its binding:
+
+>>> from modello import Modello, InstanceDummy
+>>> from examples.named_members import ModelFactory, BoundMembers, member_bindings
+>>> class Reading(Modello):
+...     value = InstanceDummy("value", real=True)
+>>> reading = ModelFactory(Reading, str)
+>>> class Sensors(BoundMembers[str]):
+...     temperature = reading.component("weather:temperature")
+>>> measured = Sensors("observations", temperature=reading("sample", value=18))
+>>> measured.temperature.value
+18
+>>> member_bindings(measured)["temperature"]
+'weather:temperature'
+
+The factory passes known scalars and typed component instances to the model's
+constructor. Every call has independent unknown symbols, even when display
+names match. Bindings describe acquisition; providers load data when explicitly
+called. The factory adds no data acquisition or alternate solving rules.
 
 Change knowns, not the equation
 --------------------------------

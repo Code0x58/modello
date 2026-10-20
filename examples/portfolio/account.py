@@ -17,10 +17,10 @@ from examples.compute.series import Series, utc_time
 from examples.portfolio.analytics import NamedAnalytics, analyse
 from examples.portfolio.basket import EquityHoldings
 from examples.portfolio.models import Equity
-from examples.portfolio.named import NamedPortfolio
 from examples.portfolio.pnl import AccountPnL, InstrumentPnL, Profit
 from examples.portfolio.postings import CapitalFlow, FillPosting
 from examples.portfolio.sources import CashFlow, Fill, Income, PriceHistory, TransactionLog, finite
+from examples.portfolio.valuation import NamedPortfolio
 
 if TYPE_CHECKING:
     from examples.portfolio.reporting import AccountReport, OrderAttribution
