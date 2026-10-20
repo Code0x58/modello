@@ -85,6 +85,13 @@ class EquityBasket(Modello, Generic[_Members]):
             self.providers, lambda model, provider: EquityHolding(model, provider, self.capital)
         )
 
+    def holding(self, member: EquityPosition) -> EquityHolding:
+        """Select a contextual holding by its declared, typed component instance."""
+        for holding in self.positions.values():
+            if holding.model is member:
+                return holding
+        raise ValueError("Select a member of this basket's model case")
+
     @property
     def values(self) -> NamedMap[Expr]:
         return self.positions.map(lambda position: position.market_value)

@@ -14,6 +14,7 @@ from sympy import Symbol
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series, utc_time
+from examples.model_plan import Known
 from examples.portfolio.analytics import NamedAnalytics, analyse
 from examples.portfolio.basket import EquityHoldings
 from examples.portfolio.models import Equity
@@ -258,7 +259,7 @@ class AccountPath:
         return AccountReport.from_account(self, attributions, signals=signals, utilities=utilities)
 
 
-class AccountEngine:
+class AccountEngine(Generic[_Members]):
     """Use one compiled valuation and an ordinary ledger state transition."""
 
     def __init__(
@@ -298,17 +299,15 @@ class AccountEngine:
         if cash < -1e-8 or any(quantity < -1e-10 for quantity in quantities.values()):
             raise ValueError("This account requires funded cash and nonnegative positions")
 
-    def _value(self, at: datetime, quantities: NamedMap[float], cash: float) -> tuple[NamedMap[float], NamedMap[float]]:
+    def _value(
+        self, at: datetime, quantities: NamedMap[float], cash: float
+    ) -> tuple[NamedMap[float], NamedPortfolio[_Members]]:
         prices = self.market.map(lambda history: history.mark(at, max_age=self.max_price_age))
-        inputs = NamedMap(
-            [
-                *((f"price:{name}", value) for name, value in prices.items()),
-                *((f"quantity:{name}", value) for name, value in quantities.items()),
-                ("cash", cash),
-            ]
-        )
-        values = self._plan.evaluate(inputs)
-        if values["nav"] <= 0:
+        model = self._plan.source
+        price_inputs = model.positions.combine(prices, lambda position, value: Known(position.price, value))
+        quantity_inputs = model.positions.combine(quantities, lambda position, value: Known(position.quantity, value))
+        values = self._plan.evaluate(*price_inputs.values(), *quantity_inputs.values(), Known(model.cash.amount, cash))
+        if float(values.nav) <= 0:
             raise ValueError("Account value must remain positive")
         return prices, values
 
@@ -323,7 +322,7 @@ class AccountEngine:
         quantities = dict(self._opening_quantities)
         cash = self._opening_cash
         _, opening = self._value(times[0], NamedMap(quantities), cash)
-        units = opening["nav"] / 100
+        units = float(opening.nav) / 100
         snapshots = []
         cursor = 0
         for at in times:
@@ -335,7 +334,7 @@ class AccountEngine:
                         NamedMap(
                             {
                                 "opening_cash": cash,
-                                "opening_nav": before["nav"],
+                                "opening_nav": float(before.nav),
                                 "opening_units": units,
                                 "amount": event.amount,
                             }
@@ -376,9 +375,9 @@ class AccountEngine:
                     self.instruments,
                     NamedMap(quantities),
                     prices,
-                    NamedMap((name, values[f"value:{name}"]) for name in quantities),
+                    values.values.map(float),
                     cash,
-                    values["nav"],
+                    float(values.nav),
                     units,
                 )
             )

@@ -44,8 +44,8 @@ Where each layer lives
      - ``examples.compute.scalar_plan``
      - Compile resolved expressions and evaluate points or aligned columns.
    * - Model integration
-     - ``examples.named_members``, ``examples.symbolic``
-     - Reflect components, pair bindings, construct typed cases, and select views.
+     - ``examples.named_members``, ``model_plan``, ``symbolic``
+     - Reflect components, pair bindings, evaluate typed model trees, and select views.
    * - Portfolio composition and valuation
      - ``examples.portfolio.models``, ``basket``, ``valuation``
      - Shared definitions, contextual holding queries, and portfolio plans.
@@ -171,19 +171,23 @@ One exploratory run on Python 3.14.8 with SymPy 1.14.0 gave rounded medians:
    * - Work
      - Time
    * - Construct the symbolic portfolio
-     - 134 ms
+     - 141 ms
    * - Compile its numerical calculation
-     - 2.1 ms
+     - 2.7 ms
    * - Evaluate complete paths for 10,000 observations
-     - 54 ms
+     - 75 ms
    * - Construct and solve a portfolio for each of 10 observations
-     - 1,318 ms
+     - 1,329 ms
 
 Data creation and risk analytics are outside these timings. The benchmark warms
 up first, then measures five batches, or three for the slower baseline. Its
 solve-per-row baseline reuses component instances, performs one joint solve per
 row, and checks NAV against the compiled calculation. These are local exploratory
 timings, not throughput guarantees.
+
+Vector evaluation retains the model schema and columns without creating a
+model instance at every observation. A typed numeric case is materialized only
+when requested with ``ModelPath.at``.
 
 Boundaries left explicit
 ------------------------
@@ -199,6 +203,12 @@ publication horizons, missing-data policies, currency conversion, corporate
 actions, precision choices, and optimisation require explicit policies in their
 respective layers. The walkthrough supplies USD quotes, funded nonnegative
 actual positions, and a deliberately simple allocation rule.
+
+``examples/model_plan.py`` keeps field traversal and numeric case materialisation
+beside the example's other integration adapters. A compiled result uses the
+existing model classes and properties; ``ModelPath`` keeps the observation axis
+separate from that scalar schema. Field paths and source expressions remain
+available for tables, debugging, and other renderers.
 
 The reporting models expose the chosen decomposition and sensitivities. They
 provide useful inputs for further research without making accounting depend on

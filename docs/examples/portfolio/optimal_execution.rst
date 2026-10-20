@@ -72,13 +72,13 @@ Reuse the cash utility from chapter 8 to supply the preference parameter:
 >>> from sympy import Function, Rational, Symbol, diff, simplify, solve
 >>> from examples.portfolio.optimal_execution import ExecutionDensity
 >>> from examples.portfolio.utility import CashUtility
->>> from examples.compute.named_map import NamedMap
+>>> from examples.model_plan import Known, ModelPlan
 >>> utility = CashUtility.cara(0.001)
 >>> gamma = utility.expressions["absolute_risk_aversion"]
 >>> model = ExecutionDensity("execution", eta=2, volume=100, sigma=3, gamma=gamma)
->>> rates = model.compile(inputs=("inventory", "speed"))
->>> point = rates.evaluate(NamedMap({"inventory": 10, "speed": 4}))
->>> round(point["impact"], 4), round(point["risk"], 4)
+>>> rates = ModelPlan(model)
+>>> point = rates.evaluate(Known(model.inventory, 10), Known(model.speed, 4))
+>>> round(float(point.impact), 4), round(float(point.risk), 4)
 (0.32, 0.45)
 
 Expected impact is cash cost. ``risk`` is a preference penalty, not an additional

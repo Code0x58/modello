@@ -216,13 +216,10 @@ request with it; each model instance still receives independent symbols.
 Assemble and evaluate the portfolio
 -----------------------------------
 
-``NamedPortfolio`` adds named output selection to the basket-and-cash equations.
-It inherits the compilation methods developed in chapter 3; its default view is:
-
-.. literalinclude:: ../../../examples/portfolio/valuation.py
-   :pyobject: NamedPortfolio.valuation
-   :dedent: 4
-   :language: python
+``NamedPortfolio`` uses the structured ``ModelPlan`` developed in chapter 3.
+The remaining independent symbolic fields supply its inputs. Evaluation returns
+another instance of the same portfolio class, with the same typed component
+tree and numeric scalar fields:
 
 .. literalinclude:: ../../../examples/portfolio/valuation.py
    :pyobject: NamedPortfolio.compile
@@ -251,12 +248,61 @@ Declare the complete portfolio and give it known quantities and cash:
 ...     cash=USDCash("cash", amount=100),
 ... )
 >>> market = book.load_market()
->>> inputs = book.positions.map(lambda position: position.price)
->>> view = book.compile(inputs=inputs)
->>> prices = market.map(lambda history: history.mark(mark, max_age=timedelta(days=4)))
->>> outputs = view.evaluate(prices)
->>> outputs["nav"], round(outputs["weight:aapl"], 4)
+>>> pricer = book.pricer()
+
+The market boundary carries identified quotes. Define a scalar quote and a
+timestamped group of them before using it:
+
+.. literalinclude:: ../../../examples/portfolio/models.py
+   :pyobject: EquityPrice
+   :language: python
+
+.. literalinclude:: ../../../examples/portfolio/valuation.py
+   :pyobject: MarketSnapshot
+   :language: python
+
+``snapshot`` samples the causal histories and preserves their instrument identity.
+``evaluate`` checks the declared domain and identities, then supplies field-bound
+knowns to the compiled model:
+
+.. literalinclude:: ../../../examples/portfolio/valuation.py
+   :pyobject: NamedPortfolioPricer.evaluate
+   :dedent: 4
+   :language: python
+
+>>> snapshot = pricer.snapshot(market, at=mark, max_price_age=timedelta(days=4))
+>>> valued = pricer.evaluate(snapshot)
+>>> float(valued.nav), float(valued.basket.members.aapl.market_value)
+(2100.0, 1000.0)
+
+This is a ``Portfolio`` containing a ``Basket``, ``Holdings``, and ordinary
+``EquityPosition`` children. The contextual holding still supplies its weight
+and provider. Select it with the typed member reference:
+
+.. literalinclude:: ../../../examples/portfolio/basket.py
+   :pyobject: EquityBasket.holding
+   :dedent: 4
+   :language: python
+
+>>> apple = valued.basket.holding(valued.basket.members.aapl)
+>>> float(valued.nav), round(float(apple.weight), 4)
 (2100.0, 0.4762)
+>>> apple.instrument == apple.provider.instrument
+True
+
+The same declaration supplies symbolic expressions, evaluated values, and
+traversable field paths. For example, a debugger or table renderer can inspect
+the evaluated inputs together with their source expressions:
+
+>>> observed = tuple(field for field in pricer.view.walk(valued) if field.role == "input")
+>>> for field in observed:
+...     print(".".join(field.path), field.value)
+basket.members.aapl.instrument.price 100.0
+basket.members.msft.instrument.price 50.0
+
+``pricer.at(market, at=..., max_price_age=...)`` combines sampling and evaluation.
+The original ``book`` stays symbolic; repeated evaluation uses the compiled
+calculation without another joint solve.
 
 Loading remains an explicit operation. The portfolio's ``load_market`` method
 uses this batch loader to preserve holding names and reuse equivalent requests:

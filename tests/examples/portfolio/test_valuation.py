@@ -2,7 +2,7 @@
 
 """Reusable valuation, exact domains, and typed portfolio views."""
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -12,8 +12,66 @@ from examples.portfolio.explicit import Basket, EquityMembers, MarketData, Portf
 from examples.portfolio.models import Equity, EquityPosition, Quote, USDCash
 from examples.portfolio.named import ThreeEquityPortfolio
 from examples.portfolio.providers import DummyEquityProvider, EquityProvider
-from examples.portfolio.sources import PriceHistory
-from examples.portfolio.valuation import NamedMarketData, NamedPortfolio, NamedPortfolioPricer
+from examples.portfolio.sources import PriceHistory, timestamp
+from examples.portfolio.valuation import MarketSnapshot, NamedMarketData, NamedPortfolio, NamedPortfolioPricer
+
+
+def test_identified_quotes_evaluate_to_the_original_typed_portfolio():
+    book = Portfolio.example()
+    pricer = book.pricer()
+    at = timestamp("2026-01-05T16:01:00Z")
+    snapshot = pricer.snapshot(book.load_market(), at=at, max_price_age=timedelta(days=4))
+    assert snapshot.at == at and snapshot.prices["aapl"].equity == book.instruments["aapl"]
+    value = pricer.evaluate(snapshot)
+    assert type(value) is Portfolio
+    assert type(value.basket) is Basket and type(value.basket.members) is EquityMembers
+    assert float(value.nav) == 2100
+    assert float(value.basket.members.aapl.market_value) == 1000
+    assert float(value.basket.positions["aapl"].weight) == pytest.approx(10 / 21)
+    assert float(value.basket.holding(value.basket.members.aapl).weight) == pytest.approx(10 / 21)
+    with pytest.raises(ValueError, match="this basket"):
+        value.basket.holding(book.basket.members.aapl)
+    assert value.providers == book.providers
+    assert book.basket.members.aapl.instrument.price.free_symbols
+    book.basket.members.aapl.instrument.price = 999
+    assert float(pricer.evaluate(snapshot).nav) == 2100
+    with pytest.raises(ValueError, match="Member names differ"):
+        pricer.evaluate(MarketSnapshot(at, NamedMap({})))
+    with pytest.raises(ValueError, match="instrument must"):
+        pricer.evaluate(
+            MarketSnapshot(at, NamedMap({"aapl": snapshot.prices["msft"], "msft": snapshot.prices["aapl"]}))
+        )
+
+
+def test_vector_evaluation_keeps_the_model_schema_for_points_and_columns():
+    book = ThreeEquityPortfolio.example()
+    path = book.pricer().evaluate_over(ThreeEquityPortfolio.example_data())
+    assert path.column(book.nav).values == (3100, 3105, 3030, 3190, 3230)
+    point = path.at(4)
+    assert type(point) is ThreeEquityPortfolio
+    assert float(point.basket.members.googl.market_value) == 1020
+    assert float(point.basket.positions["googl"].weight) == pytest.approx(1020 / 3230)
+
+
+def test_member_names_share_no_namespace_with_portfolio_totals():
+    class Members(EquityHoldings):
+        nav = equity.component(DummyEquityProvider(symbol="AAPL"))
+        cash = equity.component(DummyEquityProvider(symbol="MSFT"))
+
+    basket = EquityBasket.define(Members)
+    portfolio = NamedPortfolio.define(basket)(
+        "names",
+        basket=basket(
+            "basket",
+            members=Members("members", nav=equity("apple", quantity=10), cash=equity("microsoft", quantity=20)),
+        ),
+        cash=USDCash("cash", amount=100),
+    )
+    value = portfolio.pricer().at(
+        portfolio.load_market(), at=timestamp("2026-01-05T16:01:00Z"), max_price_age=timedelta(days=4)
+    )
+    assert float(value.nav) == 2100
+    assert float(value.basket.members.nav.market_value) == float(value.basket.members.cash.market_value) == 1000
 
 
 def two_equities():
@@ -169,3 +227,16 @@ def _typing_contract() -> None:
     assert declared
     _wrong_holding: USDCash = equity.component(provider)  # type: ignore[assignment]
     equity.component(equity)  # type: ignore[arg-type]
+    pricer = Portfolio.example().pricer()
+    evaluated: Portfolio = pricer.evaluate(MarketSnapshot(timestamp("2026-01-05T16:01:00Z"), NamedMap({})))
+    member: EquityPosition = evaluated.basket.members.aapl
+    assert member
+    extended: ThreeEquityPortfolio = (
+        ThreeEquityPortfolio.example().pricer().evaluate_over(ThreeEquityPortfolio.example_data()).at(0)
+    )
+    assert extended.basket.members.googl
+    pricer.evaluate(NamedMap({}))  # type: ignore[arg-type]
+    evaluated.basket.holding(USDCash("cash"))  # type: ignore[arg-type]
+    _wrong_model: EquityPosition = pricer.evaluate(  # type: ignore[assignment]
+        MarketSnapshot(timestamp("2026-01-05T16:01:00Z"), NamedMap({}))
+    )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from math import isfinite
 from typing import ClassVar
 
 from examples.compute.series import Series
@@ -49,6 +50,18 @@ class USDCash(Modello):
 
     currency: ClassVar[str] = "USD"
     amount = InstanceDummy("amount", nonnegative=True)
+
+
+@dataclass(frozen=True)
+class EquityPrice:
+    """An identified positive scalar quote, ready for portfolio evaluation."""
+
+    equity: Equity
+    price: float
+
+    def __post_init__(self) -> None:
+        if not isfinite(self.price) or self.price <= 0:
+            raise ValueError("An equity quote must be finite and strictly positive")
 
 
 @dataclass(frozen=True)

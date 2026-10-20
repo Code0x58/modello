@@ -43,120 +43,184 @@ accumulates from zero, so adding an opening balance remains a visible choice:
 >>> change.cumulative_sum().map(lambda value: value + prices.values[0]).values
 (102.0, 98.0, 104.0, 103.0)
 
-Compile one resolved position
------------------------------
+Compile a model-shaped view
+---------------------------
 
-A fixed position has known shares and one remaining price symbol. We can name
-that input and the value output using the maps from the preceding chapter:
+The position already declares its quote, quantity, and valuation equation.
+A compiled view should retain that structure. First define a known value as
+an association with an actual model field:
 
->>> from examples.portfolio.models import EquityPosition
->>> from examples.compute.named_map import NamedMap
->>> from examples.compute.scalar_plan import ScalarPlan
+.. code-block:: python
+
+   from dataclasses import dataclass
+   from typing import Generic, TypeVar
+   from modello import SymbolicScalar
+
+   Value = TypeVar("Value", covariant=True)
+
+.. literalinclude:: ../../../examples/model_plan.py
+   :pyobject: Known
+   :language: python
+
+``ModelPlan[Model]`` reads the resolved scalar fields and component paths from
+an existing case. Independent symbolic fields become inputs; every declared
+field remains in the result. Bind the fixed quantity as usual, leaving the
+price unknown:
+
+>>> from examples.portfolio.models import EquityPosition, Quote
+>>> from examples.model_plan import Known, ModelPlan
 >>> position = EquityPosition("fixed", quantity=10)
->>> plan = ScalarPlan(
-...     NamedMap({"price": position.instrument.price}),
-...     NamedMap({"value": position.market_value}),
-... )
->>> dict(plan.evaluate(NamedMap({"price": 100})))
-{'value': 1000.0}
->>> plan.over(times, NamedMap({"price": prices}))["value"].values
-(1000.0, 1020.0, 980.0, 1040.0, 1030.0)
+>>> view = ModelPlan(position)
+>>> valued = view.evaluate(Known(position.instrument.price, 100))
+>>> type(valued) is EquityPosition, type(valued.instrument) is Quote
+(True, True)
+>>> float(valued.instrument.price), float(valued.market_value)
+(100.0, 1000.0)
+>>> bool(position.instrument.price.free_symbols)
+True
 
-Here is the compilation step. The plan requires independent input symbols and
-checks that every output's remaining symbols are supplied. ``lambdify`` turns
-the resolved expressions into one callable using the standard-library math
-backend and common-subexpression elimination:
+The result is another ``EquityPosition``, with its ordinary ``Quote`` child.
+Numeric scalar fields remain SymPy numbers, as in any solved Modello case.
+The calculation uses floating-point arithmetic; the source case retains its
+exact expressions. A field reference identifies an input through
+its model scope, so a similarly named field from another case cannot silently
+supply its value.
+
+Evaluate the same structure on an observation axis
+--------------------------------------------------
+
+Pair that field with the price series we built above. The vector operation
+runs the compiled calculation once on aligned columns:
+
+>>> path = view.over(times, Known(position.instrument.price, prices))
+>>> path.column(position.market_value).values
+(1000.0, 1020.0, 980.0, 1040.0, 1030.0)
+>>> observed = path.at(2)
+>>> float(observed.quantity), float(observed.instrument.price), float(observed.market_value)
+(10.0, 98.0, 980.0)
+
+``ModelPath`` keeps the model schema and observation axis. ``column`` selects a
+scalar through a model reference; ``at`` materializes a typed numeric case when
+needed. No joint solve is performed per observation. Properties derived from
+model fields can also be selected as expressions.
+
+Expose the declared fields for inspection
+-----------------------------------------
+
+A view can describe each field's real component path, its source expression,
+and its role as an input, a known constant, or a derived value:
+
+.. literalinclude:: ../../../examples/model_plan.py
+   :pyobject: ModelField
+   :language: python
+
+>>> fields = tuple(view.walk(valued))
+>>> tuple((".".join(field.path), field.value) for field in fields if field.role == "input")
+(('instrument.price', 100.0),)
+>>> derived = next(field for field in fields if field.path == ("market_value",))
+>>> derived.expression == position.market_value, derived.value
+(True, 1000.0)
+
+A table or debugger can traverse these records while retaining the mathematical
+expression that produced each value. The evaluated object itself keeps its
+methods, aliases, concrete component types, and declaration metadata.
+
+Select another solving direction
+--------------------------------
+
+Compilation consumes the equations resolved by Modello. To ask an inverse
+question, change the case's knowns first, then compile that case. Build a small
+view model from the position we already defined:
+
+>>> from modello import Modello, component
+>>> class PositionValue(Modello):
+...     position = component(EquityPosition)
+...     quantity = position.quantity
+...     price = position.instrument.price
+...     value = position.market_value
+>>> inverse = PositionValue("quantity", price=100, value=1500)
+>>> inverse.quantity
+15
+
+For a repeated numerical inverse, leave the observed value symbolic. The
+resolved quantity becomes an expression of that observation, and the same
+``ModelPlan`` finds the remaining input:
+
+>>> from sympy import Symbol
+>>> observed_value = Symbol("observed_value", positive=True)
+>>> fitted = PositionValue("observed", price=100, value=observed_value)
+>>> inverse_view = ModelPlan(fitted)
+>>> result = inverse_view.evaluate(Known(fitted.value, 1500))
+>>> float(result.quantity), float(result.position.quantity)
+(15.0, 15.0)
+
+No second valuation formula was introduced. Exact calibration to a supplied
+observation is different from statistical estimation on noisy samples, which
+needs its own model and estimation layer.
+
+Build the adapter beneath these views
+-------------------------------------
+
+Here is how the view obtains its schema and selects independent symbolic fields:
+
+.. literalinclude:: ../../../examples/model_plan.py
+   :pyobject: ModelPlan.__init__
+   :dedent: 4
+   :language: python
+
+The example layer isolates access to Modello's current component metadata.
+``ScalarPlan`` compiles the resolved expressions with SymPy's ``lambdify``;
+``ModelPlan`` restores the declared model shape after evaluation:
+
+.. literalinclude:: ../../../examples/model_plan.py
+   :pyobject: ModelPlan.evaluate
+   :dedent: 4
+   :language: python
+
+.. raw:: html
+
+   <details><summary>Inspect field traversal, copying, and the scalar compiler</summary>
+
+.. literalinclude:: ../../../examples/model_plan.py
+   :pyobject: _get_field
+   :language: python
+
+.. literalinclude:: ../../../examples/model_plan.py
+   :pyobject: _copy_model
+   :language: python
+
+The copy operation reuses model classes and symbol scopes, replaces scalar
+values, and recomputes cached properties. It invokes no symbolic solver.
 
 .. literalinclude:: ../../../examples/compute/scalar_plan.py
    :pyobject: ScalarPlan.__init__
    :dedent: 4
    :language: python
 
-The vector operation aligns names and axes, then calls that calculation on
-each row. It does no symbolic solving per observation:
-
 .. literalinclude:: ../../../examples/compute/scalar_plan.py
    :pyobject: ScalarPlan.over
    :dedent: 4
    :language: python
 
-``ScalarPlan`` works with ordinary SymPy expressions too. It has no knowledge
-of portfolios, prices, or Modello classes. Its numerical outputs are floats;
-the original symbolic case still supports exact arithmetic.
+.. raw:: html
 
-Give a model its evaluation methods
------------------------------------
+   </details>
 
-Repeatedly spelling out inputs and outputs would distract from the model.
-The small ``SymbolicModel`` subclass packages those view-building operations.
-It declares default ``inputs`` and ``outputs`` as tuples of field names:
+Some interval-report adapters need selected numeric columns rather than a
+complete numeric model. ``examples/symbolic.py`` supplies a small
+``SymbolicModel`` helper for those named scalar views. Its default ``inputs``
+and ``outputs`` are tuples of model field names:
 
-.. code-block:: python
+.. raw:: html
 
-   from functools import cache
-   from typing import ClassVar, TypeAlias, cast
-   from sympy import Expr
-   from modello import Modello
-   from examples.compute.named_map import NamedMap
-   from examples.compute.scalar_plan import ScalarPlan
-   from examples.compute.series import Series, Time
-
-   ViewFields: TypeAlias = tuple[str, ...] | NamedMap[Expr]
-
-``Time`` is the series module's axis type variable. ``ViewFields`` selects
-either model fields by name or arbitrary named expressions:
+   <details><summary>Inspect the selected-scalar-view helper used by later reports</summary>
 
 .. literalinclude:: ../../../examples/symbolic.py
-   :pyobject: SymbolicModel
    :language: python
 
-``compile`` uses the current case, ``plan`` caches the class's usual unbound
-view, and ``over`` applies that default view to aligned columns.
+.. raw:: html
 
-Build a position-valuing model on top of the component we already defined:
-
->>> from typing import ClassVar
->>> from modello import component
->>> from examples.symbolic import SymbolicModel
->>> class PositionValue(SymbolicModel):
-...     position = component(EquityPosition)
-...     quantity = position.quantity
-...     price = position.instrument.price
-...     value = position.market_value
-...     inputs: ClassVar[tuple[str, ...]] = ("quantity", "price")
-...     outputs: ClassVar[tuple[str, ...]] = ("value",)
->>> fixed = PositionValue("fixed", position=EquityPosition("holding", quantity=10))
->>> view = fixed.compile(inputs=("price",))
->>> view.over(times, NamedMap({"price": prices}))["value"].values
-(1000.0, 1020.0, 980.0, 1040.0, 1030.0)
-
-No additional valuation formula was introduced: the model aliases the existing
-position's fields. The default unbound plan can instead vary both quantities
-and prices, which will be useful when the account trades.
-
-Select another solving direction
---------------------------------
-
-Suppose market value is observed and quantity is the desired output. The same
-model can solve the exact constraint:
-
->>> inverse = PositionValue("quantity", price=100, value=1500)
->>> inverse.quantity
-15
-
-To repeat that inverse question numerically, supply a symbolic observation when
-constructing the case, then choose its input and output fields:
-
->>> from sympy import Symbol
->>> observed = Symbol("observed_value", positive=True)
->>> fitted = PositionValue("observed", price=100, value=observed)
->>> inverse_view = fitted.compile(inputs=("value",), outputs=("quantity",))
->>> dict(inverse_view.evaluate(NamedMap({"value": 1500})))
-{'quantity': 15.0}
-
-This is exact calibration to an observation. Statistical estimation from noisy
-samples requires its own model and estimation layer. Providers and calendars
-also remain outside this numerical executor.
+   </details>
 
 We can now evaluate a model on data, but we have entered those prices by hand.
 The :doc:`next chapter <providers>` defines the data contract, acquires prices,

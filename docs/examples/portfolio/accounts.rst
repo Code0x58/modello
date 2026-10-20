@@ -137,6 +137,13 @@ The account needs to vary prices, quantities, and cash. This compiled view of
    :dedent: 4
    :language: python
 
+The cached factory compiles the case's remaining independent fields and keeps
+its full component schema:
+
+.. literalinclude:: ../../../examples/portfolio/valuation.py
+   :pyobject: _portfolio_plan
+   :language: python
+
 At a mark, the replay adapter obtains causal prices and supplies the current
 state to that plan. Its constructor validates the opening portfolio, records
 its known quantities and cash, stores the market/age policy, and compiles this
