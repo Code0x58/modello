@@ -1,5 +1,8 @@
 """The research layer's adapter from Modello components to named numeric domains."""
 
+from __future__ import annotations
+
+from collections.abc import Iterator
 from dataclasses import dataclass
 from functools import cache
 from typing import Any, Callable, ClassVar, Generic, TypeVar, cast
@@ -10,6 +13,48 @@ from modello import Modello, ModelloMeta, ModelloMetaNamespace, ScalarValue, _Mo
 _Model = TypeVar("_Model", bound=Modello)
 _Binding = TypeVar("_Binding")
 _Definition = TypeVar("_Definition", bound=Callable[..., type[Modello]])
+_Value = TypeVar("_Value", covariant=True)
+_Result = TypeVar("_Result")
+
+
+def member_name(members: NamedMap[_Model], member: _Model) -> str:
+    """Resolve a declared member by its actual model instance, preserving scope."""
+    for name, candidate in members.items():
+        if candidate is member:
+            return name
+    raise ValueError("Select a member of this model case")
+
+
+@dataclass(frozen=True)
+class MemberValues(Generic[_Model, _Value]):
+    """A projection of declared model members, selected through typed references.
+
+    A projection can omit members, for example a holding needing no order.
+    Names are retained for traversal and export; selection uses the source case.
+    """
+
+    members: NamedMap[_Model]
+    by_name: NamedMap[_Value]
+
+    def __post_init__(self) -> None:
+        if len({id(member) for member in self.members.values()}) != len(self.members):
+            raise ValueError("Each declared member must have its own model instance")
+        if self.by_name.keys() - self.members.keys():
+            raise ValueError("Projected values must belong to declared members")
+
+    def for_member(self, member: _Model) -> _Value:
+        """Read a value for this case's member; an omitted member raises KeyError."""
+        return self.by_name[member_name(self.members, member)]
+
+    def map(self, project: Callable[[_Value], _Result]) -> MemberValues[_Model, _Result]:
+        """Transform the values while retaining their declared member bindings."""
+        return MemberValues(self.members, self.by_name.map(project))
+
+    def __iter__(self) -> Iterator[_Value]:
+        return iter(self.by_name.values())
+
+    def __len__(self) -> int:
+        return len(self.by_name)
 
 
 def cached_definition(factory: _Definition) -> _Definition:

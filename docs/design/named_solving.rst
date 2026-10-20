@@ -41,6 +41,22 @@ combination checks that both maps have exactly the same names and aligns by
 name rather than iteration position. Adding a declaration creates a new model
 definition. Numeric feeds bind to that domain afterward.
 
+Application views can retain the same typed member references. ``MemberValues``
+associates a projection with its source case, so a consumer can select an actual
+member and map the values without reconstructing string keys:
+
+>>> from examples.named_members import MemberValues
+>>> members = component_members(result.readings, Reading)
+>>> values = MemberValues(members, members.map(lambda reading: float(reading.value)))
+>>> values.for_member(result.readings.outlet)
+7.0
+>>> values.map(lambda value: value * 2).for_member(result.readings.inlet)
+6.0
+
+Selection checks case ownership. A projection can omit members while keeping
+the full source domain, as with holdings that need no order. This association
+lives in the example adapter; the core continues to solve scalar equations.
+
 Questions before a public API
 ------------------------------
 

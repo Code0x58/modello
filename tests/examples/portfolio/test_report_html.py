@@ -70,7 +70,7 @@ def test_report_supports_longer_histories_and_supplied_benchmark_context():
     engine = AccountEngine(Account(name, times[0], opening), NamedMap({}), max_price_age=timedelta(0))
     ledger = TransactionLog(tuple(Income(str(i), name, at, at, 10) for i, at in enumerate(times[1:])))
     path = engine.evaluate(ledger, times)
-    reporting = AccountReport.from_account(path, NamedMap({}), signals=NamedMap({}), utilities=NamedMap({}))
+    reporting = AccountReport.from_account(path, (), signals=NamedMap({}), utilities=NamedMap({}))
     comparison = PerformanceIndex("Account after costs", path.unit_nav).compare(
         PerformanceIndex("Reference <index> & income", Series(times, (100, 103, 106, 109, 112))),
         risk_free=PerformanceIndex("Cash <reference>", Series(times, (100,) * 5)),

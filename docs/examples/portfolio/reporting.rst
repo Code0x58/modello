@@ -73,18 +73,26 @@ nonnegative signal-credit weights that sum to one:
    :language: python
 
 Declare those weights alongside the decision, before using its execution
-outcome. For our one-signal policy:
+outcome. The order's method constructs this record:
 
->>> from examples.portfolio.reporting import OrderAttribution
->>> attributions = orders.map(
-...     lambda order: OrderAttribution(order, NamedMap({"momentum": 1.0}))
-... )
->>> attributions["rebalance-1:aapl"].weights["momentum"]
+.. literalinclude:: ../../../examples/portfolio/signals.py
+   :pyobject: OrderIntent.attribute
+   :dedent: 4
+   :language: python
+
+For our one-signal policy, map the orders into attribution records. The projection
+retains the decision's member bindings:
+
+>>> attributions = orders.map(lambda order: order.attribute(NamedMap({"momentum": 1.0})))
+>>> members = decision.portfolio.basket.members
+>>> attributions.for_member(members.aapl).weights["momentum"]
 1.0
 
 A multi-signal decision could use ``NamedMap({"value": 0.4, "momentum": 0.6})``.
-The reporting adapter checks the named histories were available at the decision
-and that linked fills match the account, instrument, timing, side, and quantity.
+The reporting adapter accepts these records, including records from multiple
+decisions. It derives its ledger index from each record's order ID, checks that
+IDs are unique, and checks the named histories were available at the decision.
+Linked fills must match the account, instrument, timing, side, and quantity.
 
 Evaluate an executed sleeve with the existing model
 ---------------------------------------------------
@@ -245,7 +253,10 @@ its local absolute and relative Arrow–Pratt risk aversion from derivatives:
 
 .. math::
 
-   A(W)=-U''(W)/U'(W), \qquad R(W)=-W U''(W)/U'(W).
+   \begin{aligned}
+   A(W)&=-U''(W)/U'(W),\\
+   R(W)&=-W U''(W)/U'(W).
+   \end{aligned}
 
 Start with an expression and its wealth symbol. ``CashUtility`` stores those
 inputs and derives the view as follows:

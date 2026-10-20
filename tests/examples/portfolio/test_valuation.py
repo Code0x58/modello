@@ -30,7 +30,7 @@ def test_identified_quotes_evaluate_to_the_original_typed_portfolio():
     assert float(value.basket.members.aapl.market_value) == 1000
     assert float(value.basket.positions["aapl"].weight) == pytest.approx(10 / 21)
     assert float(value.basket.holding(value.basket.members.aapl).weight) == pytest.approx(10 / 21)
-    with pytest.raises(ValueError, match="this basket"):
+    with pytest.raises(ValueError, match="this model case"):
         value.basket.holding(book.basket.members.aapl)
     assert value.providers == book.providers
     assert book.basket.members.aapl.instrument.price.free_symbols

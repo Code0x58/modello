@@ -5,6 +5,7 @@ import pytest
 from examples.compute.named_map import NamedMap
 from examples.portfolio.account import Account, AccountEngine
 from examples.portfolio.basket import EquityBasket, EquityHoldings
+from examples.portfolio.demo import asdict_snapshot
 from examples.portfolio.explicit import Basket, EquityMembers
 from examples.portfolio.models import EquityPosition, Quote, USDCash
 from examples.portfolio.signals import TargetWeights
@@ -49,7 +50,7 @@ def test_cash_flow_valuation_does_not_depend_on_the_output_grid(engine, ledger):
     baseline = engine.evaluate(ledger, TIMES)
     more_times = tuple(sorted((*TIMES, DECISION, timestamp("2026-01-07T12:00:00Z"), timestamp("2026-01-07T09:06:00Z"))))
     refined = engine.evaluate(ledger, more_times)
-    assert refined.snapshots[-1] == baseline.snapshots[-1]
+    assert asdict_snapshot(refined.snapshots[-1]) == asdict_snapshot(baseline.snapshots[-1])
     assert sum(refined.pnl.total.values) == pytest.approx(sum(baseline.pnl.total.values))
     assert refined.reconciliation.values == pytest.approx((0,) * (len(more_times) - 1), abs=1e-10)
 
@@ -57,7 +58,9 @@ def test_cash_flow_valuation_does_not_depend_on_the_output_grid(engine, ledger):
 def test_replaying_postings_reuses_compilation_without_symbolic_solves(engine, ledger, monkeypatch):
     baseline = engine.evaluate(ledger, TIMES)
     monkeypatch.setattr("modello.solve", lambda *args, **kwargs: pytest.fail("Repeated symbolic solve"))
-    assert engine.evaluate(ledger, TIMES).snapshots == baseline.snapshots
+    assert tuple(map(asdict_snapshot, engine.evaluate(ledger, TIMES).snapshots)) == tuple(
+        map(asdict_snapshot, baseline.snapshots)
+    )
 
 
 def test_empty_equity_account_flows_are_not_investment_returns():
@@ -101,7 +104,9 @@ def test_other_accounts_and_opening_history_are_excluded(engine, ledger):
             CashFlow("opening", "research", TIMES[0], TIMES[0], 1e6),
         )
     )
-    assert engine.evaluate(log, TIMES).snapshots == engine.evaluate(ledger, TIMES).snapshots
+    assert tuple(map(asdict_snapshot, engine.evaluate(log, TIMES).snapshots)) == tuple(
+        map(asdict_snapshot, engine.evaluate(ledger, TIMES).snapshots)
+    )
 
 
 def test_simultaneous_postings_preserve_source_order(engine):

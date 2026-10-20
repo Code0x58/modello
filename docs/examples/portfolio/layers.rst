@@ -45,7 +45,8 @@ Where each layer lives
      - Compile resolved expressions and evaluate points or aligned columns.
    * - Model integration
      - ``examples.named_members``, ``model_plan``, ``symbolic``
-     - Reflect components, pair bindings, and evaluate typed model trees and observation records.
+     - Reflect components, pair bindings, evaluate typed model trees and observations,
+       and retain member references in projected views.
    * - Portfolio composition and valuation
      - ``examples.portfolio.models``, ``basket``, ``valuation``
      - Shared definitions, contextual holding queries, and portfolio plans.
@@ -217,6 +218,15 @@ vectors, and non-financial measurements can therefore use the same evaluator.
 The portfolio's ``pricer()`` simply selects input fields and returns an ordinary
 ``ModelPlan``. ``MarketSnapshot.sample`` owns causal selection, while
 ``NamedPortfolioPath.from_model`` supplies the financial analytics projection.
+
+Account snapshots retain the evaluated portfolio model. ``MemberValues`` projects
+orders, assessments, and attribution records over the decision's actual member
+instances. Its ``for_member`` selector checks case ownership; ``map`` retains the
+bindings and result types. A holding needing no order can be absent without
+changing the declared domain. ``by_name`` exposes the declared names for export.
+External order IDs belong to the ledger join and are derived from the records.
+Reporting can accept records from multiple decisions, including several orders
+for the same holding. These are application projections, not new solver rules.
 
 The reporting models expose the chosen decomposition and sensitivities. They
 provide useful inputs for further research without making accounting depend on

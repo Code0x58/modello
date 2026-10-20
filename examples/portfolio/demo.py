@@ -15,11 +15,12 @@ from typing import Generic, TypeVar
 from examples.compute.named_map import NamedMap
 from examples.compute.providers import Provider
 from examples.compute.series import Series
+from examples.named_members import MemberValues
 from examples.portfolio.account import Account, AccountPath, AccountSnapshot
 from examples.portfolio.basket import EquityHoldings, equity
 from examples.portfolio.execution import ExecutionBenchmark
 from examples.portfolio.explicit import Basket, EquityMembers, Portfolio
-from examples.portfolio.models import USDCash
+from examples.portfolio.models import EquityPosition, USDCash
 from examples.portfolio.performance import Comparison, PerformanceIndex
 from examples.portfolio.reporting import AccountReport, OrderAttribution
 from examples.portfolio.signals import (
@@ -44,20 +45,21 @@ CONTEXT = (
 
 
 @dataclass(frozen=True)
-class ResearchRun:
+class ResearchRun(Generic[_Members]):
     """Inspectable intermediate layers rather than a monolithic backtest result."""
 
-    account: AccountPath
+    account: AccountPath[_Members]
+    decision: AccountSnapshot[_Members]
     signals: NamedMap[Series[datetime]]
     targets: TargetWeights
-    orders: NamedMap[OrderIntent]
-    execution: NamedMap[ExecutionBenchmark]
+    orders: MemberValues[EquityPosition, OrderIntent]
+    execution: MemberValues[EquityPosition, ExecutionBenchmark]
 
-    attributions: NamedMap[OrderAttribution]
+    attributions: MemberValues[EquityPosition, OrderAttribution]
     utilities: NamedMap[CashUtility]
     comparison: Comparison[datetime]
 
-    def report(self) -> AccountReport:
+    def report(self) -> AccountReport[_Members]:
         """Evaluate the reporting layer using the decision-time attribution declaration."""
         return self.account.report(
             self.attributions, signals=NamedMap({"momentum": self.signals}), utilities=self.utilities
@@ -85,7 +87,7 @@ class ResearchScenario(Generic[_Members]):
     batch: str = "rebalance-1"
     performance_name: str = "Account, net of booked fees, including income"
 
-    def run(self) -> ResearchRun:
+    def run(self) -> ResearchRun[_Members]:
         market = self.account.opening.load_market()
         ledger = self.transactions.load()
         decision = self.account.replay(
@@ -98,15 +100,25 @@ class ResearchScenario(Generic[_Members]):
         signals = MomentumSignals(prices, lookback=self.lookback).load()
         targets = TargetWeights.from_signals(signals, self.decision_at, exposure=self.exposure)
         orders = decision.rebalance(targets, batch=self.batch, arrival_at=self.arrival_at)
-        attributions = orders.map(lambda order: OrderAttribution(order, NamedMap({"momentum": 1.0})))
-        execution = ExecutionBenchmark.assess(
-            orders, ledger, market, at=self.assessment_at, max_price_age=self.max_price_age
+        attributions = orders.map(lambda order: order.attribute(NamedMap({"momentum": 1.0})))
+        execution = orders.map(
+            lambda order: order.assess(ledger, market, at=self.assessment_at, max_price_age=self.max_price_age)
         )
         path = self.account.replay(ledger, self.valuation_times, market=market, max_price_age=self.max_price_age)
         comparison = PerformanceIndex(self.performance_name, path.unit_nav).compare(
             self.benchmark, risk_free=self.cash_reference, periods_per_year=self.periods_per_year
         )
-        return ResearchRun(path, signals, targets, orders, execution, attributions, self.utilities, comparison)
+        return ResearchRun(
+            account=path,
+            decision=decision,
+            signals=signals,
+            targets=targets,
+            orders=orders,
+            execution=execution,
+            attributions=attributions,
+            utilities=self.utilities,
+            comparison=comparison,
+        )
 
     @staticmethod
     def example() -> ResearchScenario[EquityMembers]:
@@ -179,9 +191,9 @@ def main() -> None:
     print(CONTEXT)
     print("P&L:", path.pnl.total.values, "External capital:", path.pnl.external_flows.values)
     print("NAV reconciliation residuals:", path.reconciliation.values)
-    for order_id, report in result.execution.items():
+    for report in result.execution:
         print(
-            f"{order_id}: filled {report.filled_quantity:.4f}, remaining {report.remaining_quantity:.4f}, "
+            f"{report.order.id}: filled {report.filled_quantity:.4f}, remaining {report.remaining_quantity:.4f}, "
             f"model slippage USD {report.model_slippage_cost:.4f}, "
             f"implementation shortfall USD {report.implementation_shortfall:.4f}"
         )
@@ -211,7 +223,7 @@ def main() -> None:
                 name: {at.isoformat(): value for at, value in zip(series.times, series.values, strict=True)}
                 for name, series in result.signals.items()
             },
-            "execution": {name: asdict(report) for name, report in result.execution.items()},
+            "execution": {report.order.id: report.to_dict() for report in result.execution},
             "pnl": {
                 "profit": path.pnl.total.values,
                 "external_flows": path.pnl.external_flows.values,

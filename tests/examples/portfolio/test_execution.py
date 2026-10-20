@@ -5,7 +5,6 @@ from dataclasses import replace
 import pytest
 
 from examples.compute.named_map import NamedMap
-from examples.portfolio.execution import ExecutionBenchmark
 from examples.portfolio.models import MSFT
 from examples.portfolio.sources import (
     Fill,
@@ -17,8 +16,9 @@ from ._data import AGE, ARRIVAL, ASSESSMENT
 
 
 def test_execution_cost_decomposition_and_partial_fill_opportunity(scenario):
-    apple = scenario.execution["rebalance-1:aapl"]
-    microsoft = scenario.execution["rebalance-1:msft"]
+    members = scenario.decision.portfolio.basket.members
+    apple = scenario.execution.for_member(members.aapl)
+    microsoft = scenario.execution.for_member(members.msft)
     assert apple.filled_quantity == 7
     assert apple.remaining_quantity == pytest.approx(0.8 * 2520 / 104 - 17)
     assert apple.execution_vwap == pytest.approx((4 * 105 + 3 * 105.2) / 7)
@@ -36,27 +36,27 @@ def test_execution_cost_decomposition_and_partial_fill_opportunity(scenario):
 
 
 def test_execution_improvement_has_a_negative_cost_for_both_sides(scenario, market):
-    for name, fill_price in (("aapl", 103), ("msft", 49)):
-        order = replace(scenario.orders[f"rebalance-1:{name}"], quantity=2 if name == "aapl" else -2)
+    members = scenario.decision.portfolio.basket.members
+    for member, fill_price in ((members.aapl, 103), (members.msft, 49)):
+        original = scenario.orders.for_member(member)
+        order = replace(original, quantity=2 if original.quantity > 0 else -2)
         fill = Fill(
             "better",
             "research",
             timestamp("2026-01-07T09:06:00Z"),
             timestamp("2026-01-07T09:06:00Z"),
-            name,
+            order.member,
             order.quantity,
             fill_price,
             order_id=order.id,
         )
-        result = ExecutionBenchmark.assess(
-            NamedMap({order.id: order}), TransactionLog((fill,)), market, at=ASSESSMENT, max_price_age=AGE
-        )[order.id]
+        result = order.assess(TransactionLog((fill,)), market, at=ASSESSMENT, max_price_age=AGE)
         assert result.model_slippage_cost == pytest.approx(-2)
         assert result.implementation_shortfall == pytest.approx(-2)
 
 
 def test_unfilled_orders_and_late_publication_are_explicit(scenario, market):
-    order = scenario.orders["rebalance-1:aapl"]
+    order = scenario.orders.for_member(scenario.decision.portfolio.basket.members.aapl)
     fill = Fill(
         "late",
         "research",
@@ -67,9 +67,7 @@ def test_unfilled_orders_and_late_publication_are_explicit(scenario, market):
         105,
         order_id=order.id,
     )
-    report = ExecutionBenchmark.assess(
-        NamedMap({order.id: order}), TransactionLog((fill,)), market, at=ASSESSMENT, max_price_age=AGE
-    )[order.id]
+    report = order.assess(TransactionLog((fill,)), market, at=ASSESSMENT, max_price_age=AGE)
     assert report.filled_quantity == 0
     assert report.execution_vwap is None and report.model_slippage_bps is None
     assert report.model_slippage_cost == 0
@@ -80,7 +78,7 @@ def test_unfilled_orders_and_late_publication_are_explicit(scenario, market):
     "change", [{"quantity": -1}, {"quantity": 100}, {"member": "msft"}, {"at": timestamp("2026-01-07T09:04:00Z")}]
 )
 def test_order_fill_linkage_is_validated(scenario, market, change):
-    order = scenario.orders["rebalance-1:aapl"]
+    order = scenario.orders.for_member(scenario.decision.portfolio.basket.members.aapl)
     fill = Fill(
         "bad",
         "research",
@@ -92,8 +90,7 @@ def test_order_fill_linkage_is_validated(scenario, market, change):
         order_id=order.id,
     )
     with pytest.raises(ValueError):
-        ExecutionBenchmark.assess(
-            NamedMap({order.id: order}),
+        order.assess(
             TransactionLog((replace(fill, **change),)),
             market,
             at=ASSESSMENT,
@@ -102,18 +99,15 @@ def test_order_fill_linkage_is_validated(scenario, market, change):
 
 
 def test_market_benchmarks_are_independent_of_the_accounts_fill_prices(scenario, market):
-    order = scenario.orders["rebalance-1:aapl"]
+    member = scenario.decision.portfolio.basket.members.aapl
+    order = scenario.orders.for_member(member)
     fill = Fill("expensive", "research", ARRIVAL, ARRIVAL, "aapl", 1, 999, order_id=order.id)
-    result = ExecutionBenchmark.assess(
-        NamedMap({order.id: order}), TransactionLog((fill,)), market, at=ASSESSMENT, max_price_age=AGE
-    )[order.id]
-    assert result.market_vwap == scenario.execution[order.id].market_vwap
+    result = order.assess(TransactionLog((fill,)), market, at=ASSESSMENT, max_price_age=AGE)
+    assert result.market_vwap == scenario.execution.for_member(member).market_vwap
     assert result.execution_vwap == 999
     wrong = NamedMap({"aapl": replace(market["aapl"], equity=MSFT), "msft": market["msft"]})
     with pytest.raises(ValueError, match="instrument must match"):
-        ExecutionBenchmark.assess(
-            NamedMap({order.id: order}), TransactionLog(()), wrong, at=ASSESSMENT, max_price_age=AGE
-        )
+        order.assess(TransactionLog(()), wrong, at=ASSESSMENT, max_price_age=AGE)
 
 
 def test_execution_model_can_infer_fees_from_an_observed_shortfall():

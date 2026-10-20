@@ -192,14 +192,14 @@ def render_html(report: AccountReport, comparison: Comparison[datetime], *, cont
             ("Order", "Decision (UTC)", "Instrument", "Signal", "Observed value", "Allocation"),
             (
                 (
-                    order_id,
+                    attribution.order.id,
                     attribution.order.decision_at.strftime("%Y-%m-%d %H:%M"),
                     attribution.order.member,
                     signal,
                     f"{report.signals[signal][attribution.order.member].asof(attribution.order.decision_at):.6g}",
                     f"{weight:.0%}",
                 )
-                for order_id, attribution in report.attributions.items()
+                for attribution in report.attributions
                 for signal, weight in attribution.weights.items()
                 if weight
             ),
@@ -338,12 +338,12 @@ def report_data(report: AccountReport) -> dict[str, object]:
     return {
         "attribution_method": METHOD,
         "orders": {
-            order_id: {
+            attribution.order.id: {
                 "member": attribution.order.member,
                 "decision_at": attribution.order.decision_at.isoformat(),
                 "signal_weights": dict(attribution.weights),
             }
-            for order_id, attribution in report.attributions.items()
+            for attribution in report.attributions
         },
         "account": columns(report.account),
         "sources": {name: columns(values) for name, values in report.sources.items()},

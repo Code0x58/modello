@@ -38,8 +38,8 @@ def test_a_scenario_declares_policy_and_labels_without_inventing_new_fills():
     scenario = replace(ResearchScenario.example(), exposure=0.5, batch="alternative", performance_name="Other account")
     result = scenario.run()
     assert result.targets.weights == {"aapl": 0.5, "msft": 0}
-    assert tuple(result.orders) == ("alternative:aapl", "alternative:msft")
+    assert tuple(order.id for order in result.orders) == ("alternative:aapl", "alternative:msft")
     assert result.comparison.portfolio_name == "Other account"
     assert result.account.nav.values[-1] == pytest.approx(3066.9)
-    assert all(benchmark.filled_quantity == 0 for benchmark in result.execution.values())
+    assert all(benchmark.filled_quantity == 0 for benchmark in result.execution)
     assert sum(result.report().sources["unattributed"]["net"].values) == pytest.approx(11.9)

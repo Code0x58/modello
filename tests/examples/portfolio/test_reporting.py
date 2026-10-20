@@ -103,7 +103,7 @@ def test_cash_only_reports_separate_income_and_external_capital():
         (CashFlow("deposit", "cash", times[1], times[1], 500), Income("interest", "cash", times[2], times[2], 10))
     )
     result = AccountReport.from_account(
-        engine.evaluate(ledger, times), NamedMap({}), signals=NamedMap({}), utilities=NamedMap({})
+        engine.evaluate(ledger, times), (), signals=NamedMap({}), utilities=NamedMap({})
     )
     assert not result.instruments
     assert result.account["net"].values == (0, 10)
@@ -114,15 +114,12 @@ def test_cash_only_reports_separate_income_and_external_capital():
 @pytest.mark.parametrize("weights", [{}, {"a": 0.5}, {"a": -1, "b": 2}, {"a": float("nan")}])
 def test_invalid_attribution_weights(scenario, weights):
     with pytest.raises(ValueError, match="sum to one"):
-        OrderAttribution(scenario.orders["rebalance-1:aapl"], NamedMap(weights))
+        scenario.orders.for_member(scenario.decision.portfolio.basket.members.aapl).attribute(NamedMap(weights))
 
 
 def test_attribution_requires_correct_order_identity_side_and_available_signals(scenario):
     for changes in ({"account": "other"}, {"equity": MSFT}, {"quantity": -1}, {"quantity": 1}):
-        orders = NamedMap(
-            (name, replace(order, **changes) if order.member == "aapl" else order)
-            for name, order in scenario.orders.items()
-        )
+        orders = scenario.orders.map(lambda order: replace(order, **changes) if order.member == "aapl" else order)
         with pytest.raises(ValueError):
             attribute(scenario, orders=orders)
     with pytest.raises(ValueError, match="named signal history"):

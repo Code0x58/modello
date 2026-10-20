@@ -8,7 +8,14 @@ from typing import Generic, TypeVar
 from sympy import Expr, S
 
 from examples.compute.named_map import NamedMap
-from examples.named_members import BoundMembers, ModelFactory, cached_definition, component_members, member_bindings
+from examples.named_members import (
+    BoundMembers,
+    ModelFactory,
+    cached_definition,
+    component_members,
+    member_bindings,
+    member_name,
+)
 from examples.portfolio.models import Equity, EquityPosition
 from examples.portfolio.providers import EquityProvider
 from modello import InstanceDummy, Modello, component
@@ -87,10 +94,7 @@ class EquityBasket(Modello, Generic[_Members]):
 
     def holding(self, member: EquityPosition) -> EquityHolding:
         """Select a contextual holding by its declared, typed component instance."""
-        for holding in self.positions.values():
-            if holding.model is member:
-                return holding
-        raise ValueError("Select a member of this basket's model case")
+        return self.positions[member_name(component_members(self.members, EquityPosition), member)]
 
     @property
     def values(self) -> NamedMap[Expr]:

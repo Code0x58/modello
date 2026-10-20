@@ -32,15 +32,16 @@ def test_future_prices_and_postings_cannot_change_decisions(engine, market, ledg
     signals = MomentumSignals(feature_prices, lookback=2).load()
     targets = TargetWeights.from_signals(signals, DECISION)
     assert targets == scenario.targets
-    assert targets.orders(snapshot, batch="rebalance-1", arrival_at=ARRIVAL) == scenario.orders
+    assert targets.orders(snapshot, batch="rebalance-1", arrival_at=ARRIVAL).by_name == scenario.orders.by_name
     assert snapshot.quantities == {"aapl": 10, "msft": 10}
     assert snapshot.cash == 1000
 
 
 def test_signal_targets_and_rebalance_quantities(scenario):
     assert scenario.targets.weights == {"aapl": 0.8, "msft": 0}
-    apple = scenario.orders["rebalance-1:aapl"]
-    microsoft = scenario.orders["rebalance-1:msft"]
+    members = scenario.decision.portfolio.basket.members
+    apple = scenario.orders.for_member(members.aapl)
+    microsoft = scenario.orders.for_member(members.msft)
     assert apple.quantity == pytest.approx(0.8 * 2520 / 104 - 10)
     assert microsoft.quantity == -10
     assert apple.model_price == 104

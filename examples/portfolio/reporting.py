@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from math import isclose, isfinite
+from typing import Generic, TypeVar
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
 from examples.model_plan import Known, ModelPlan
 from examples.portfolio.account import AccountPath, PositionHistory
+from examples.portfolio.basket import EquityHoldings
 from examples.portfolio.performance import Comparison
 from examples.portfolio.pnl import AccountPnL, InstrumentPnL, Profit
 from examples.portfolio.signals import OrderIntent
 from examples.portfolio.sources import CashFlow, Fill, Income
 from examples.portfolio.utility import CashUtility
+
+_Members = TypeVar("_Members", bound=EquityHoldings)
 
 
 @dataclass(frozen=True)
@@ -63,15 +68,15 @@ class _InstrumentInterval:
 
 
 @dataclass(frozen=True)
-class AccountReport:
+class AccountReport(Generic[_Members]):
     """Typed, inspectable reporting layers; every monetary attribution adds back to the account."""
 
-    path: AccountPath
+    path: AccountPath[_Members]
     account: NamedMap[Series[datetime]]
     instruments: NamedMap[InstrumentReport]
     sources: NamedMap[NamedMap[Series[datetime]]]
     signals: NamedMap[NamedMap[Series[datetime]]]
-    attributions: NamedMap[OrderAttribution]
+    attributions: tuple[OrderAttribution, ...]
     utilities: NamedMap[UtilityReport]
     instrument_plan: ModelPlan[InstrumentPnL]
     account_plan: ModelPlan[AccountPnL]
@@ -89,18 +94,20 @@ class AccountReport:
     @classmethod
     def from_account(
         cls,
-        path: AccountPath,
-        attributions: NamedMap[OrderAttribution],
+        path: AccountPath[_Members],
+        attributions: Iterable[OrderAttribution],
         *,
         signals: NamedMap[NamedMap[Series[datetime]]],
         utilities: NamedMap[CashUtility],
-    ) -> AccountReport:
+    ) -> AccountReport[_Members]:
         """Attribute executed decisions relative to the unchanged opening reference book.
 
         Signal sleeves start empty and retain signed incremental shares from tagged
         fills. Instrument income follows sleeve shares at the income event. Untagged
         fills, unassignable income, and account cash income remain visible as unattributed.
         """
+        attributions = tuple(attributions)
+        by_order = NamedMap((attribution.order.id, attribution) for attribution in attributions)
         times = path.nav.times
         axis = times[1:]
         members = tuple(path.positions)
@@ -112,9 +119,9 @@ class AccountReport:
             for event in path.ledger.events
         ):
             raise ValueError("Use the account's in-window ledger known by the reporting horizon")
-        for order_id, attribution in attributions.items():
+        for attribution in attributions:
             order = attribution.order
-            if order_id != order.id or order.account != path.snapshots[0].account or order.member not in members:
+            if order.account != path.snapshots[0].account or order.member not in members:
                 raise ValueError("Attribution must identify an order for this account and instrument")
             if order.equity != path.snapshots[0].instruments[order.member]:
                 raise ValueError("Attribution must match the declared instrument identity")
@@ -136,7 +143,7 @@ class AccountReport:
         quantity_paths = {key: [value] for key, value in quantities.items()}
         columns: dict[tuple[str, str], list[_InstrumentInterval]] = {key: [] for key in quantities}
         cash_income = [0.0] * len(axis)
-        filled = {key: 0.0 for key in attributions}
+        filled = {key: 0.0 for key in by_order}
         cursor = 0
         for i, end in enumerate(axis):
             rows = {
@@ -154,7 +161,7 @@ class AccountReport:
                 if isinstance(event, CashFlow):
                     continue
                 if isinstance(event, Fill):
-                    linked = attributions.get(event.order_id or "")
+                    linked = by_order.get(event.order_id or "")
                     if linked is not None:
                         order = linked.order
                         if (
@@ -260,13 +267,13 @@ class AccountReport:
         if any(abs(value) > 1e-8 for value in account["residual"].values):
             raise ValueError("Attributed investment P&L and external capital must reconcile to NAV")
         return cls(
-            path,
-            account,
-            instruments,
-            source_reports,
-            signals,
-            attributions,
-            utilities.map(lambda definition: UtilityReport(definition, definition.over(path.nav))),
-            instrument_plan,
-            account_plan,
+            path=path,
+            account=account,
+            instruments=instruments,
+            sources=source_reports,
+            signals=signals,
+            attributions=attributions,
+            utilities=utilities.map(lambda definition: UtilityReport(definition, definition.over(path.nav))),
+            instrument_plan=instrument_plan,
+            account_plan=account_plan,
         )

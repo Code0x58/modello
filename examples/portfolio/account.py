@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from bisect import bisect_left
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import cached_property
@@ -24,6 +24,8 @@ from examples.portfolio.sources import CashFlow, Fill, Income, PriceHistory, Tra
 from examples.portfolio.valuation import MarketSnapshot, NamedPortfolio
 
 if TYPE_CHECKING:
+    from examples.named_members import MemberValues
+    from examples.portfolio.models import EquityPosition
     from examples.portfolio.reporting import AccountReport, OrderAttribution
     from examples.portfolio.signals import OrderIntent, TargetWeights
     from examples.portfolio.utility import CashUtility
@@ -51,35 +53,56 @@ class Account(Generic[_Members]):
         *,
         market: NamedMap[PriceHistory],
         max_price_age: timedelta,
-    ) -> AccountPath:
+    ) -> AccountPath[_Members]:
         """Replay an explicitly supplied ledger and market snapshot through the models."""
         return AccountEngine(self, market, max_price_age=max_price_age).evaluate(ledger, times)
 
 
 @dataclass(frozen=True)
-class AccountSnapshot:
+class AccountSnapshot(Generic[_Members]):
     """A valued account after postings at this timestamp."""
 
     at: datetime
     known_at: datetime
     account: str
-    instruments: NamedMap[Equity]
-    quantities: NamedMap[float]
-    prices: NamedMap[float]
-    values: NamedMap[float]
-    cash: float
-    nav: float
+    portfolio: NamedPortfolio[_Members]
     units: float
 
+    @cached_property
+    def instruments(self) -> NamedMap[Equity]:
+        return self.portfolio.instruments
+
+    @cached_property
+    def quantities(self) -> NamedMap[float]:
+        return self.portfolio.positions.map(lambda position: float(position.quantity))
+
+    @cached_property
+    def prices(self) -> NamedMap[float]:
+        return self.portfolio.positions.map(lambda position: float(position.price))
+
+    @cached_property
+    def values(self) -> NamedMap[float]:
+        return self.portfolio.values.map(float)
+
     @property
+    def cash(self) -> float:
+        return float(self.portfolio.cash.amount)
+
+    @property
+    def nav(self) -> float:
+        return float(self.portfolio.nav)
+
+    @cached_property
     def weights(self) -> NamedMap[float]:
-        return self.values.map(lambda value: value / self.nav)
+        return self.portfolio.weights.map(float)
 
     @property
     def unit_nav(self) -> float:
         return self.nav / self.units
 
-    def rebalance(self, targets: TargetWeights, *, batch: str, arrival_at: datetime) -> NamedMap[OrderIntent]:
+    def rebalance(
+        self, targets: TargetWeights, *, batch: str, arrival_at: datetime
+    ) -> MemberValues[EquityPosition, OrderIntent]:
         """Solve the target-allocation model using this decision-time account view."""
         return targets.orders(self, batch=batch, arrival_at=arrival_at)
 
@@ -134,13 +157,13 @@ class PnL:
 
 
 @dataclass(frozen=True)
-class AccountPath:
+class AccountPath(Generic[_Members]):
     """Valuation snapshots and the ledger known by the reporting horizon."""
 
-    snapshots: tuple[AccountSnapshot, ...]
+    snapshots: tuple[AccountSnapshot[_Members], ...]
     ledger: TransactionLog
 
-    def series(self, project: Callable[[AccountSnapshot], float]) -> Series[datetime]:
+    def series(self, project: Callable[[AccountSnapshot[_Members]], float]) -> Series[datetime]:
         return Series(
             tuple(snapshot.at for snapshot in self.snapshots), tuple(project(snapshot) for snapshot in self.snapshots)
         )
@@ -250,11 +273,11 @@ class AccountPath:
 
     def report(
         self,
-        attributions: NamedMap[OrderAttribution],
+        attributions: Iterable[OrderAttribution],
         *,
         signals: NamedMap[NamedMap[Series[datetime]]],
         utilities: NamedMap[CashUtility],
-    ) -> AccountReport:
+    ) -> AccountReport[_Members]:
         """Add symbolic reporting and an explicit signal-attribution convention."""
         from examples.portfolio.reporting import AccountReport
 
@@ -272,9 +295,6 @@ class AccountEngine(Generic[_Members]):
         max_price_age: timedelta,
     ) -> None:
         self.account = account
-        instruments = account.opening.instruments
-        self.instruments = instruments
-
         self.market = account.opening.match_market(market)
         if max_price_age < timedelta(0):
             raise ValueError("Price age must be nonnegative")
@@ -298,17 +318,13 @@ class AccountEngine(Generic[_Members]):
         if cash < -1e-8 or any(quantity < -1e-10 for quantity in quantities.values()):
             raise ValueError("This account requires funded cash and nonnegative positions")
 
-    def _value(
-        self, at: datetime, quantities: NamedMap[float], cash: float
-    ) -> tuple[NamedMap[float], NamedPortfolio[_Members]]:
+    def _value(self, at: datetime, quantities: NamedMap[float], cash: float) -> NamedPortfolio[_Members]:
         snapshot = MarketSnapshot.sample(self.market, at=at, max_price_age=self.max_price_age)
-        prices = snapshot.prices.map(lambda quote: quote.price)
         model = self._plan.source
         quantity_inputs = model.positions.combine(quantities, lambda position, value: Known(position.quantity, value))
-        values = self._plan.evaluate(snapshot, *quantity_inputs.values(), Known(model.cash.amount, cash))
-        return prices, values
+        return self._plan.evaluate(snapshot, *quantity_inputs.values(), Known(model.cash.amount, cash))
 
-    def evaluate(self, ledger: TransactionLog, times: tuple[datetime, ...]) -> AccountPath:
+    def evaluate(self, ledger: TransactionLog, times: tuple[datetime, ...]) -> AccountPath[_Members]:
         """Report using knowledge at the final mark; balances include (opening, mark]."""
         times = tuple(utc_time(at) for at in times)
         if len(times) < 2 or times[0] != self.account.opened_at or any(a >= b for a, b in zip(times, times[1:])):
@@ -318,7 +334,7 @@ class AccountEngine(Generic[_Members]):
         )
         quantities = dict(self._opening_quantities)
         cash = self._opening_cash
-        _, opening = self._value(times[0], NamedMap(quantities), cash)
+        opening = self._value(times[0], NamedMap(quantities), cash)
         units = float(opening.nav) / 100
         snapshots = []
         cursor = 0
@@ -326,7 +342,7 @@ class AccountEngine(Generic[_Members]):
             while cursor < len(events) and events[cursor].at <= at:
                 event = events[cursor]
                 if isinstance(event, CashFlow):
-                    _, before = self._value(event.at, NamedMap(quantities), cash)
+                    before = self._value(event.at, NamedMap(quantities), cash)
                     capital = self._capital_plan.source
                     changed = self._capital_plan.evaluate(
                         Known(capital.before.cash, cash),
@@ -357,19 +373,14 @@ class AccountEngine(Generic[_Members]):
                 if units <= 0:
                     raise ValueError("External flows must leave positive account units")
                 cursor += 1
-            prices, values = self._value(at, NamedMap(quantities), cash)
+            values = self._value(at, NamedMap(quantities), cash)
             snapshots.append(
                 AccountSnapshot(
-                    at,
-                    times[-1],
-                    self.account.name,
-                    self.instruments,
-                    NamedMap(quantities),
-                    prices,
-                    values.values.map(float),
-                    cash,
-                    float(values.nav),
-                    units,
+                    at=at,
+                    known_at=times[-1],
+                    account=self.account.name,
+                    portfolio=values,
+                    units=units,
                 )
             )
         path = AccountPath(tuple(snapshots), TransactionLog(events))

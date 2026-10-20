@@ -267,8 +267,10 @@ Supply state to the portfolio's valuation
 -----------------------------------------
 
 ``Account`` is a name, opening time, and typed opening portfolio. ``AccountSnapshot``
-records a mark's quantities, prices, values, cash, NAV, and units, together with
-its knowledge horizon. ``AccountPath`` holds the snapshots and the in-window
+retains the evaluated portfolio and participation units at a mark, together with
+its knowledge horizon. Its ``portfolio`` preserves the declared basket and
+member types. Quantities, prices, values, cash, NAV, and weights are projections
+of that same model. ``AccountPath`` holds these snapshots and the in-window
 ledger used to produce them.
 
 .. literalinclude:: ../../../examples/portfolio/account.py
@@ -278,7 +280,7 @@ ledger used to produce them.
 
 .. literalinclude:: ../../../examples/portfolio/account.py
    :pyobject: AccountSnapshot
-   :end-before:     @property
+   :end-before:     @cached_property
    :language: python
 
 The account needs to vary prices, quantities, and cash. This compiled view of

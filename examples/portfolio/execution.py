@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 
 from sympy import S
@@ -92,142 +92,175 @@ class Slippage(SymbolicModel):
     reference_price = prices.before.price
     bps = side * prices.simple_return * 10000
 
+    @classmethod
+    def measure(cls, *, side: float, price: float, reference: float) -> float:
+        view = cls.plan()
+        model = view.source
+        result = view.evaluate(
+            Known(model.side, side),
+            Known(model.execution_price, price),
+            Known(model.reference_price, reference),
+        )
+        return float(result.bps)
+
 
 class CostRate(SymbolicModel):
     cost = InstanceDummy("cost", real=True)
     notional = InstanceDummy("notional", positive=True)
     bps = cost / notional * 10000
 
+    @classmethod
+    def measure(cls, *, cost: float, notional: float) -> float:
+        view = cls.plan()
+        model = view.source
+        result = view.evaluate(
+            Known(model.cost, cost),
+            Known(model.notional, notional),
+        )
+        return float(result.bps)
+
 
 @dataclass(frozen=True)
 class ExecutionBenchmark:
-    """Positive costs are adverse for both buys and sells; monetary values are USD."""
+    """Positive costs are adverse for buys and sells; monetary values are USD."""
 
     order: OrderIntent
     assessed_at: datetime
-    filled_quantity: float
-    remaining_quantity: float
+    costs: ExecutionCosts
     execution_vwap: float | None
     market_vwap: float | None
-    decision_price: float
-    arrival_price: float
-    model_slippage_cost: float
     model_slippage_bps: float | None
     arrival_slippage_bps: float | None
     market_vwap_slippage_bps: float | None
-    delay_cost: float
-    trading_cost: float
-    fees: float
-    opportunity_cost: float
+
+    @property
+    def filled_quantity(self) -> float:
+        return float(self.costs.quantity)
+
+    @property
+    def remaining_quantity(self) -> float:
+        return float(self.costs.remaining)
+
+    @property
+    def decision_price(self) -> float:
+        return float(self.costs.decision_price)
+
+    @property
+    def arrival_price(self) -> float:
+        return float(self.costs.arrival_price)
+
+    @property
+    def model_slippage_cost(self) -> float:
+        return float(self.costs.model_slippage.cost)
+
+    @property
+    def delay_cost(self) -> float:
+        return float(self.costs.delay.cost)
+
+    @property
+    def trading_cost(self) -> float:
+        return float(self.costs.trading.cost)
+
+    @property
+    def fees(self) -> float:
+        return float(self.costs.shortfall.fees)
+
+    @property
+    def opportunity_cost(self) -> float:
+        return float(self.costs.opportunity.cost)
 
     @property
     def implementation_shortfall(self) -> float:
-        view = Shortfall.plan()
-        model = view.source
-        result = view.evaluate(
-            Known(model.delay_cost, self.delay_cost),
-            Known(model.trading_cost, self.trading_cost),
-            Known(model.fees, self.fees),
-            Known(model.opportunity_cost, self.opportunity_cost),
-        )
-        return float(result.implementation_shortfall)
+        return float(self.costs.shortfall.implementation_shortfall)
+
+    def to_dict(self) -> dict[str, object]:
+        """Export the report schema without serializing the symbolic model internals."""
+        return {
+            "order": asdict(self.order),
+            "assessed_at": self.assessed_at,
+            "filled_quantity": self.filled_quantity,
+            "remaining_quantity": self.remaining_quantity,
+            "execution_vwap": self.execution_vwap,
+            "market_vwap": self.market_vwap,
+            "decision_price": self.decision_price,
+            "arrival_price": self.arrival_price,
+            "model_slippage_cost": self.model_slippage_cost,
+            "model_slippage_bps": self.model_slippage_bps,
+            "arrival_slippage_bps": self.arrival_slippage_bps,
+            "market_vwap_slippage_bps": self.market_vwap_slippage_bps,
+            "delay_cost": self.delay_cost,
+            "trading_cost": self.trading_cost,
+            "fees": self.fees,
+            "opportunity_cost": self.opportunity_cost,
+        }
 
     @classmethod
-    def assess(
+    def from_order(
         cls,
-        orders: NamedMap[OrderIntent],
+        order: OrderIntent,
         ledger: TransactionLog,
         market: NamedMap[PriceHistory],
         *,
         at: datetime,
         max_price_age: timedelta,
-    ) -> NamedMap[ExecutionBenchmark]:
+    ) -> ExecutionBenchmark:
         """Assess filled and unfilled shares over the explicit [arrival, at] window."""
         at = utc_time(at)
-        if len({order.id for order in orders.values()}) != len(orders):
-            raise ValueError("Execution analysis needs unique order IDs")
         costs_view = ExecutionCosts.plan()
         model = costs_view.source
-        rate_view = CostRate.plan()
-        rate = rate_view.source
-        slippage_view = Slippage.plan()
-        slippage = slippage_view.source
-
-        def slippage_bps(side: float, price: float, reference: float) -> float:
-            result = slippage_view.evaluate(
-                Known(slippage.side, side),
-                Known(slippage.execution_price, price),
-                Known(slippage.reference_price, reference),
-            )
-            return float(result.bps)
-
-        def benchmark(order: OrderIntent) -> ExecutionBenchmark:
-            if at < order.arrival_at:
-                raise ValueError("Execution assessment must be at or after order arrival")
-            history = market[order.member]
-            if history.equity != order.equity:
-                raise ValueError("Execution benchmark instrument must match the model order")
-            decision = history.mark(order.decision_at, max_age=max_price_age)
-            arrival = history.mark(order.arrival_at, max_age=max_price_age)
-            terminal = history.mark(at, max_age=max_price_age)
-            fills = tuple(
-                event
-                for event in ledger.known(order.account, at).events
-                if isinstance(event, Fill) and event.order_id == order.id
-            )
-            side = 1 if order.quantity > 0 else -1
-            if any(
-                fill.member != order.member or fill.quantity * side <= 0 or fill.at < order.arrival_at for fill in fills
-            ):
-                raise ValueError("Fills must match their order's member, side, and arrival time")
-            quantity = sum(abs(fill.quantity) for fill in fills)
-            if quantity > abs(order.quantity) + 1e-10:
-                raise ValueError("Executed quantity exceeds the model order")
-            remaining = max(0.0, abs(order.quantity) - quantity)
-            notional = sum(abs(fill.quantity) * fill.price for fill in fills)
-            fees = sum(fill.fee for fill in fills)
-            execution_vwap = notional / quantity if quantity else None
-            market_vwap = history.vwap(order.arrival_at, at)
-            costs = costs_view.evaluate(
-                Known(model.quantity, quantity),
-                Known(model.remaining, remaining),
-                Known(model.side, side),
-                Known(model.notional, notional),
-                Known(model.model_price, order.model_price),
-                Known(model.decision_price, decision),
-                Known(model.arrival_price, arrival),
-                Known(model.terminal_price, terminal),
-                Known(model.fees, fees),
-            )
-            model_cost = float(costs.model_slippage_cost)
-            model_bps = (
-                float(
-                    rate_view.evaluate(
-                        Known(rate.cost, model_cost), Known(rate.notional, quantity * order.model_price)
-                    ).bps
-                )
-                if quantity
-                else None
-            )
-            return cls(
-                order,
-                at,
-                quantity,
-                remaining,
-                execution_vwap,
-                market_vwap,
-                decision,
-                arrival,
-                model_cost,
-                model_bps,
-                slippage_bps(side, execution_vwap, arrival) if execution_vwap is not None else None,
-                slippage_bps(side, execution_vwap, market_vwap)
-                if execution_vwap is not None and market_vwap is not None
-                else None,
-                float(costs.delay_cost),
-                float(costs.trading_cost),
-                fees,
-                float(costs.opportunity_cost),
-            )
-
-        return orders.map(benchmark)
+        if at < order.arrival_at:
+            raise ValueError("Execution assessment must be at or after order arrival")
+        history = market[order.member]
+        if history.equity != order.equity:
+            raise ValueError("Execution benchmark instrument must match the model order")
+        decision = history.mark(order.decision_at, max_age=max_price_age)
+        arrival = history.mark(order.arrival_at, max_age=max_price_age)
+        terminal = history.mark(at, max_age=max_price_age)
+        fills = tuple(
+            event
+            for event in ledger.known(order.account, at).events
+            if isinstance(event, Fill) and event.order_id == order.id
+        )
+        side = 1 if order.quantity > 0 else -1
+        if any(
+            fill.member != order.member or fill.quantity * side <= 0 or fill.at < order.arrival_at for fill in fills
+        ):
+            raise ValueError("Fills must match their order's member, side, and arrival time")
+        quantity = sum(abs(fill.quantity) for fill in fills)
+        if quantity > abs(order.quantity) + 1e-10:
+            raise ValueError("Executed quantity exceeds the model order")
+        remaining = max(0.0, abs(order.quantity) - quantity)
+        notional = sum(abs(fill.quantity) * fill.price for fill in fills)
+        fees = sum(fill.fee for fill in fills)
+        execution_vwap = notional / quantity if quantity else None
+        market_vwap = history.vwap(order.arrival_at, at)
+        costs = costs_view.evaluate(
+            Known(model.quantity, quantity),
+            Known(model.remaining, remaining),
+            Known(model.side, side),
+            Known(model.notional, notional),
+            Known(model.model_price, order.model_price),
+            Known(model.decision_price, decision),
+            Known(model.arrival_price, arrival),
+            Known(model.terminal_price, terminal),
+            Known(model.fees, fees),
+        )
+        model_bps = (
+            CostRate.measure(cost=float(costs.model_slippage.cost), notional=quantity * order.model_price)
+            if quantity
+            else None
+        )
+        return cls(
+            order=order,
+            assessed_at=at,
+            costs=costs,
+            execution_vwap=execution_vwap,
+            market_vwap=market_vwap,
+            model_slippage_bps=model_bps,
+            arrival_slippage_bps=Slippage.measure(side=side, price=execution_vwap, reference=arrival)
+            if execution_vwap is not None
+            else None,
+            market_vwap_slippage_bps=Slippage.measure(side=side, price=execution_vwap, reference=market_vwap)
+            if execution_vwap is not None and market_vwap is not None
+            else None,
+        )

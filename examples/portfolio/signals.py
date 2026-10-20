@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Protocol
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Protocol
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series, utc_time
 from examples.model_plan import Known
+from examples.named_members import MemberValues, component_members
 from examples.portfolio.account import AccountSnapshot
 from examples.portfolio.models import AccountValue, Allocation, Equity, EquityPosition, PriceChange, Trade
 from examples.portfolio.sources import finite
 from examples.symbolic import SymbolicModel
 from modello import component
+
+if TYPE_CHECKING:
+    from examples.portfolio.execution import ExecutionBenchmark
+    from examples.portfolio.reporting import OrderAttribution
+    from examples.portfolio.sources import PriceHistory, TransactionLog
 
 
 class Momentum(SymbolicModel):
@@ -101,41 +107,41 @@ class TargetWeights:
         *,
         batch: str,
         arrival_at: datetime,
-    ) -> NamedMap[OrderIntent]:
+    ) -> MemberValues[EquityPosition, OrderIntent]:
         """Translate targets to fractional-share intentions; submit no actual orders."""
         if snapshot.at != self.at or snapshot.known_at > self.at:
             raise ValueError("Use an account snapshot evaluated with knowledge at the decision time")
-        quantities = self.weights.combine(snapshot.quantities, lambda weight, held: (weight, held))
+        targets = self.weights.combine(snapshot.portfolio.positions, lambda weight, position: (weight, position))
         view = Rebalance.plan()
         model = view.source
         orders = []
-        for name, (weight, held) in quantities.items():
-            price = snapshot.prices[name]
+        for name, (weight, position) in targets.items():
+            price = float(position.price)
             result = view.evaluate(
-                Known(model.nav, snapshot.nav),
-                Known(model.price, price),
-                Known(model.opening_quantity, held),
-                Known(model.target_weight, weight),
+                Known(model.account.nav, snapshot.nav),
+                Known(model.before.instrument.price, price),
+                Known(model.before.quantity, float(position.quantity)),
+                Known(model.allocation.weight, weight),
             )
             quantity = float(result.order_quantity)
             if abs(quantity) > 1e-12:
                 order_id = f"{batch}:{name}"
                 orders.append(
                     (
-                        order_id,
+                        name,
                         OrderIntent(
-                            order_id,
-                            snapshot.account,
-                            name,
-                            snapshot.instruments[name],
-                            self.at,
-                            arrival_at,
-                            quantity,
-                            price,
+                            id=order_id,
+                            account=snapshot.account,
+                            member=name,
+                            equity=position.instrument,
+                            decision_at=self.at,
+                            arrival_at=arrival_at,
+                            quantity=quantity,
+                            model_price=price,
                         ),
                     )
                 )
-        return NamedMap(orders)
+        return MemberValues(component_members(snapshot.portfolio.basket.members, EquityPosition), NamedMap(orders))
 
 
 @dataclass(frozen=True)
@@ -159,3 +165,22 @@ class OrderIntent:
             raise ValueError("Orders need identities, nonzero shares, and a positive model price")
         if self.arrival_at < self.decision_at:
             raise ValueError("Order arrival must follow its decision")
+
+    def assess(
+        self,
+        ledger: TransactionLog,
+        market: NamedMap[PriceHistory],
+        *,
+        at: datetime,
+        max_price_age: timedelta,
+    ) -> ExecutionBenchmark:
+        """Assess this intention against independently observed fills and market data."""
+        from examples.portfolio.execution import ExecutionBenchmark
+
+        return ExecutionBenchmark.from_order(self, ledger, market, at=at, max_price_age=max_price_age)
+
+    def attribute(self, weights: NamedMap[float]) -> OrderAttribution:
+        """Declare decision-time signal credit for this order's eventual fills."""
+        from examples.portfolio.reporting import OrderAttribution
+
+        return OrderAttribution(self, weights)

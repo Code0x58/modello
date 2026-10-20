@@ -57,8 +57,12 @@ horizon, rather than using a later restated snapshot:
 ... ).snapshots[-1]
 >>> decision.at == decision.known_at == decision_at
 True
->>> dict(decision.quantities), decision.nav
-({'aapl': 10.0, 'msft': 10.0}, 2520.0)
+>>> members = decision.portfolio.basket.members
+>>> float(members.aapl.quantity), float(members.msft.quantity), decision.nav
+(10.0, 10.0, 2520.0)
+
+The snapshot keeps the evaluated portfolio's concrete member type. These member
+references can also select later order and execution views of this decision.
 
 Choose a feature grid with two prior closes and the decision observation.
 Sampling uses the publication-time rule built in chapter 4:
@@ -172,9 +176,41 @@ required shares from the position valuation and allocation equations. An order
 observation instead determines the weight. The root fields such as ``nav`` and
 ``target_weight`` alias the components for concise column bindings.
 
-The adapter applies the compiled forward view to each named holding and
-constructs an ``OrderIntent``. That record carries account, member and instrument
-identity, decision and arrival times, signed shares, and model price:
+The adapter applies the compiled forward view to each holding and constructs an
+``OrderIntent``. That record carries account, member and instrument identity,
+decision and arrival times, signed shares, and model price.
+
+.. literalinclude:: ../../../examples/portfolio/signals.py
+   :pyobject: OrderIntent
+   :end-before:     def __post_init__
+   :language: python
+
+We need to keep each order associated with its declared holding. Introduce a
+small generic projection, ``MemberValues``. It retains the actual source members
+and their names, selects through a typed member reference, and preserves those
+bindings when mapped. A holding with no order can be omitted:
+
+.. code-block:: python
+
+   from collections.abc import Callable, Iterator
+   from dataclasses import dataclass
+   from typing import Generic, TypeVar
+   from examples.compute.named_map import NamedMap
+   from modello import Modello
+
+   _Model = TypeVar("_Model", bound=Modello)
+   _Value = TypeVar("_Value", covariant=True)
+   _Result = TypeVar("_Result")
+
+.. literalinclude:: ../../../examples/named_members.py
+   :pyobject: member_name
+   :language: python
+
+.. literalinclude:: ../../../examples/named_members.py
+   :pyobject: MemberValues
+   :language: python
+
+Use that projection as the return type of the target-to-order adapter:
 
 .. literalinclude:: ../../../examples/portfolio/signals.py
    :pyobject: TargetWeights.orders
@@ -182,12 +218,17 @@ identity, decision and arrival times, signed shares, and model price:
    :language: python
 
 >>> orders = decision.rebalance(targets, batch="rebalance-1", arrival_at=arrival_at)
->>> {name: round(order.quantity, 4) for name, order in orders.items()}
-{'rebalance-1:aapl': 9.3846, 'rebalance-1:msft': -10.0}
+>>> apple_order = orders.for_member(members.aapl)
+>>> microsoft_order = orders.for_member(members.msft)
+>>> round(apple_order.quantity, 4), microsoft_order.quantity
+(9.3846, -10.0)
 
 The snapshot method delegates to these target equations. It requires a snapshot
 whose knowledge ends at the decision time. These records express intentions;
-the external transaction log continues to determine actual positions.
+the external transaction log continues to determine actual positions. The batch
+name supplies external order IDs for matching that log; selecting an order uses
+the model member itself. A member from another model case is rejected. Selecting
+a member with no order raises ``KeyError``.
 
 Define monetary execution costs
 -------------------------------
@@ -223,25 +264,37 @@ Check Apple's filled shares directly. The ledger records buys of four shares
 at USD 105 and three at USD 105.20, with USD 1 total fees. Relative to the model
 price of USD 104:
 
->>> from examples.portfolio.execution import ExecutionCosts
+>>> from examples.portfolio.models import PriceChange
+>>> from examples.portfolio.execution import ExecutionCosts, PriceCost, FillCost
 >>> cost = ExecutionCosts(
 ...     "apple",
-...     quantity=7,
-...     remaining=0,
-...     side=1,
-...     notional=Rational("735.6"),
-...     model_price=104,
-...     decision_price=104,
-...     arrival_price=Rational("104.5"),
-...     terminal_price=Rational("104.8"),
-...     fees=1,
+...     delay=PriceCost(
+...         "delay",
+...         quantity=7,
+...         side=1,
+...         prices=PriceChange(
+...             "prices",
+...             before=Quote("decision", price=104),
+...             after=Quote("arrival", price=Rational("104.5")),
+...         ),
+...     ),
+...     trading=FillCost("fills", notional=Rational("735.6")),
+...     opportunity=PriceCost(
+...         "unfilled",
+...         quantity=0,
+...         prices=PriceChange("prices", after=Quote("terminal", price=Rational("104.8"))),
+...     ),
+...     model_slippage=FillCost("model", reference=Quote("reference", price=104), fees=1),
 ... )
->>> cost.model_slippage_cost, cost.delay_cost, cost.trading_cost
+>>> cost.model_slippage.cost, cost.delay.cost, cost.trading.cost
 (43/5, 7/2, 41/10)
+>>> cost.delay.quantity == cost.trading.quantity == cost.model_slippage.quantity
+True
 
 Model slippage is USD 8.60, including fees. Positive cost denotes worse execution
 for the order's side. Unfilled shares add opportunity cost when the intended
-order exceeds the executed quantity.
+order exceeds the executed quantity. Shared quantities, sides, and quotes were
+supplied once; the model's bindings complete the other cost components.
 
 For an independent traded benchmark, calculate VWAP from market prints in the
 arrival-to-assessment window, using only prints published by assessment:
@@ -254,24 +307,68 @@ arrival-to-assessment window, using only prints published by assessment:
 Assess the independently recorded fills
 ---------------------------------------
 
-``ExecutionBenchmark.assess`` joins known fills by order ID, checks account,
-member, side, timing, and overfills, then sums filled quantities, notionals,
-and fees. It supplies those inputs to ``ExecutionCosts``. ``Slippage`` expresses
-signed price differences in basis points; ``CostRate`` expresses monetary cost
-as basis points of filled model notional. A zero-fill order has no execution
-price or filled-notional rate.
+First define the two rate views used by an assessment. ``Slippage`` expresses
+signed price changes in basis points; ``CostRate`` expresses monetary cost as
+basis points of notional. Their methods evaluate the same compiled definitions:
 
->>> from examples.portfolio.execution import ExecutionBenchmark
+.. literalinclude:: ../../../examples/portfolio/execution.py
+   :pyobject: Slippage
+   :language: python
+
+.. literalinclude:: ../../../examples/portfolio/execution.py
+   :pyobject: CostRate
+   :language: python
+
+An order can assess its own fills. ``OrderIntent.assess`` delegates to the
+benchmark constructor, which joins known fills by order ID, checks account,
+member, side, timing, and overfills, and supplies the aggregated observations to
+``ExecutionCosts``. The result retains that evaluated model:
+
+.. literalinclude:: ../../../examples/portfolio/execution.py
+   :pyobject: ExecutionBenchmark
+   :end-before:     @property
+   :language: python
+
+.. literalinclude:: ../../../examples/portfolio/signals.py
+   :pyobject: OrderIntent.assess
+   :dedent: 4
+   :language: python
+
 >>> assessment_at = timestamp("2026-01-07T09:15:00Z")
->>> execution = ExecutionBenchmark.assess(
-...     orders, ledger, market, at=assessment_at, max_price_age=age
-... )
->>> apple = execution["rebalance-1:aapl"]
+>>> apple = apple_order.assess(ledger, market, at=assessment_at, max_price_age=age)
 >>> apple.filled_quantity, round(apple.remaining_quantity, 4)
 (7.0, 2.3846)
->>> round(apple.model_slippage_cost, 4), round(apple.implementation_shortfall, 4)
+>>> (
+...     round(float(apple.costs.model_slippage.cost), 4),
+...     round(float(apple.costs.shortfall.implementation_shortfall), 4),
+... )
 (8.6, 10.5077)
->>> round(execution["rebalance-1:msft"].implementation_shortfall, 4)
+
+The model's delay, trading, opportunity, and shortfall components remain available
+for traversal and reporting. Convenience properties read that same model. A
+zero-fill order has no execution price or filled-notional rate.
+
+.. raw:: html
+
+   <details><summary>Inspect the ledger-to-assessment adapter</summary>
+
+.. literalinclude:: ../../../examples/portfolio/execution.py
+   :pyobject: ExecutionBenchmark.from_order
+   :dedent: 4
+   :language: python
+
+.. raw:: html
+
+   </details>
+
+Assess every order with the same method. Mapping preserves the source member
+bindings and gives a typed execution view for each holding:
+
+>>> execution = orders.map(
+...     lambda order: order.assess(ledger, market, at=assessment_at, max_price_age=age)
+... )
+>>> microsoft = execution.for_member(members.msft)
+>>> round(microsoft.implementation_shortfall, 4)
 4.0
 
 A later change to targets may produce different intentions. It does not invent
