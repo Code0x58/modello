@@ -71,8 +71,8 @@ Sampling uses the publication-time rule built in chapter 4:
 Define the signal, then apply it to windows
 -------------------------------------------
 
-Momentum is a price ratio. Define that relationship with the model evaluation
-methods from chapter 3:
+Momentum is the proportional return of the ``PriceChange`` model from chapter 5.
+Bind its opening and closing quotes and expose that return as the signal:
 
 .. literalinclude:: ../../../examples/portfolio/signals.py
    :pyobject: Momentum
@@ -123,7 +123,16 @@ its solver.
 Solve the order relationship
 ----------------------------
 
-An allocation and its signed order quantity are views of one model:
+An allocation expresses a share of capital as a monetary value:
+
+.. literalinclude:: ../../../examples/portfolio/models.py
+   :pyobject: Allocation
+   :language: python
+
+Reuse the marked ``EquityPosition``, ``AccountValue``, and signed ``Trade`` models
+from earlier chapters. The rebalance connects opening and target positions,
+shares their quote with the order, and equates the target position's value to
+the allocation's value:
 
 .. literalinclude:: ../../../examples/portfolio/signals.py
    :pyobject: Rebalance
@@ -132,17 +141,36 @@ An allocation and its signed order quantity are views of one model:
 Before processing the account, check a small exact case in both directions:
 
 >>> from sympy import Rational
->>> from examples.portfolio.signals import Rebalance
->>> proposed = Rebalance(
-...     "target", nav=1000, price=100, opening_quantity=3, target_weight=Rational(1, 2)
+>>> from examples.portfolio.models import (
+...     AccountValue,
+...     Allocation,
+...     EquityPosition,
+...     Quote,
+...     Trade,
 ... )
->>> proposed.target_quantity, proposed.order_quantity
+>>> from examples.portfolio.signals import Rebalance
+>>> held = EquityPosition("held", quantity=3, instrument=Quote("quote", price=100))
+>>> proposed = Rebalance(
+...     "target",
+...     before=held,
+...     account=AccountValue("account", nav=1000),
+...     allocation=Allocation("allocation", weight=Rational(1, 2)),
+... )
+>>> proposed.after.quantity, proposed.order.quantity
 (5, 2)
 >>> observed = Rebalance(
-...     "observed", nav=1000, price=100, opening_quantity=3, order_quantity=2
+...     "observed",
+...     before=held,
+...     account=AccountValue("account", nav=1000),
+...     order=Trade("order", quantity=2),
 ... )
->>> observed.target_weight
+>>> observed.allocation.weight
 1/2
+
+There is no separate ``weight * nav / price`` instruction. SymPy derives the
+required shares from the position valuation and allocation equations. An order
+observation instead determines the weight. The root fields such as ``nav`` and
+``target_weight`` alias the components for concise column bindings.
 
 The adapter applies the compiled forward view to each named holding and
 constructs an ``OrderIntent``. That record carries account, member and instrument
@@ -171,8 +199,21 @@ history at decision, arrival, and assessment. Monetary shortfall decomposes as:
    :pyobject: Shortfall
    :language: python
 
-The execution model relates those terms to filled quantity, signed side,
-executed notional, unfilled quantity, and the reference prices:
+Delay and opportunity cost are applications of the same price-movement model;
+trading cost and model slippage are applications of the same fill-cost model.
+Define these two reusable pieces:
+
+.. literalinclude:: ../../../examples/portfolio/execution.py
+   :pyobject: PriceCost
+   :language: python
+
+.. literalinclude:: ../../../examples/portfolio/execution.py
+   :pyobject: FillCost
+   :language: python
+
+The execution model connects their quantities, sides, and reference quotes to
+the shortfall account. It counts fees once in shortfall; the model-slippage view
+also includes those fees, while the trading-cost component excludes them:
 
 .. literalinclude:: ../../../examples/portfolio/execution.py
    :pyobject: ExecutionCosts

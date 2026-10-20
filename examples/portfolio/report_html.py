@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from html import escape
 
-from sympy import Symbol
+from sympy import Expr, Symbol
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
@@ -298,9 +298,10 @@ def render_html(report: AccountReport, comparison: Comparison[datetime], *, cont
         ("Instrument", report.instrument_plan, ("holding", "trading", "net")),
         ("Account", report.account_plan, ("net", "residual")),
     ):
-        replacements = {
-            field.expression: Symbol(".".join(field.path)) for field in plan.walk() if field.role == "input"
-        }
+        replacements: dict[Expr, Symbol] = {}
+        for model_field in plan.walk():
+            if model_field.role == "input":
+                replacements.setdefault(model_field.expression, Symbol(".".join(model_field.path)))
         for name in fields:
             rows.append((f"{label} / {name}", str(getattr(plan.source, name).xreplace(replacements))))
     for name, utility in report.utilities.items():

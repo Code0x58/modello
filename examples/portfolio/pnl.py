@@ -6,8 +6,10 @@ from typing import TypeVar
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series, Time
 from examples.model_plan import ModelPath
+from examples.portfolio.models import AccountValue, Position, PriceChange
+from examples.portfolio.postings import CashMovement
 from examples.symbolic import SymbolicModel
-from modello import InstanceDummy
+from modello import InstanceDummy, Modello, component
 
 PROFIT_FIELDS = ("holding", "trading", "income", "fees", "gross", "net")
 _Profit = TypeVar("_Profit", bound="Profit")
@@ -53,23 +55,59 @@ class Profit(SymbolicModel):
         )
 
 
-class InstrumentPnL(Profit):
+class ProfitView(Profit):
+    """Expose a shared profit component through the standard reporting fields."""
+
+    profit = component(Profit)
+    holding = profit.holding
+    trading = profit.trading
+    income = profit.income
+    fees = profit.fees
+    gross = profit.gross
+    net = profit.net
+
+
+class TradingActivity(Modello):
+    """Signed interval totals from the external transaction log."""
+
+    quantity = InstanceDummy("quantity", real=True)
+    notional = InstanceDummy("notional", real=True)
+    income = InstanceDummy("income", real=True)
+    fees = InstanceDummy("fees", nonnegative=True)
+
+
+class InstrumentPnL(ProfitView):
     """Exact interval mark-to-market profit, including signed virtual sleeves."""
 
-    opening_quantity = InstanceDummy("opening_quantity", real=True)
-    opening_price = InstanceDummy("opening_price", positive=True)
-    closing_price = InstanceDummy("closing_price", positive=True)
-    fill_quantity = InstanceDummy("fill_quantity", real=True)
-    fill_notional = InstanceDummy("fill_notional", real=True)
-    holding = opening_quantity * (closing_price - opening_price)
-    trading = fill_quantity * closing_price - fill_notional
+    before = component(Position)
+    after = component(Position)
+    activity = component(TradingActivity)
+    prices = component(PriceChange)
+
+    opening_quantity = before.quantity
+    closing_quantity = after.quantity
+    closing_quantity = before.quantity + activity.quantity
+    opening_price = before.instrument.price
+    opening_price = prices.before.price
+    closing_price = after.instrument.price
+    closing_price = prices.after.price
+    fill_quantity = activity.quantity
+    fill_notional = activity.notional
+    income = activity.income
+    fees = activity.fees
+    holding = before.quantity * prices.change
+    trading = activity.quantity * after.instrument.price - activity.notional
 
 
-class AccountPnL(Profit):
+class AccountPnL(ProfitView):
     """Relate investment profit and external capital to account NAV changes."""
 
-    opening_nav = InstanceDummy("opening_nav", positive=True)
-    closing_nav = InstanceDummy("closing_nav", positive=True)
-    external_flows = InstanceDummy("external_flows", real=True)
-    nav_change = closing_nav - opening_nav
-    residual = nav_change - Profit.net - external_flows
+    before = component(AccountValue)
+    after = component(AccountValue)
+    capital = component(CashMovement)
+
+    opening_nav = before.nav
+    closing_nav = after.nav
+    external_flows = capital.amount
+    nav_change = after.nav - before.nav
+    residual = nav_change - ProfitView.profit.net - capital.amount

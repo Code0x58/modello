@@ -14,54 +14,74 @@ pip install modello
 
 Requires Python 3.10 or newer and SymPy 1.14 or newer.
 
-## Define a model
+## Build a system from its parts
 
-Declare independent quantities with `InstanceDummy` and write expressions for
-the relationships between them:
+Define a holding's state and an execution, then connect them with balance
+equations. Each part is an ordinary model with typed, named quantities:
 
 ```python
-from sympy import sqrt
-
 from modello import InstanceDummy, Modello, component
 
 
-class RightAngleTriangle(Modello):
-    a = InstanceDummy("a", real=True, positive=True)
-    b = InstanceDummy("b", real=True, positive=True)
-    c = sqrt(a**2 + b**2)
+class HoldingState(Modello):
+    quantity = InstanceDummy("quantity", real=True)
+    cash = InstanceDummy("cash", real=True)
 
 
-triangle = RightAngleTriangle("T", a=3, b=4)
-assert triangle.c == 5
+class Execution(Modello):
+    quantity = InstanceDummy("quantity", real=True)
+    price = InstanceDummy("price", positive=True)
+    fee = InstanceDummy("fee", nonnegative=True)
+    notional = quantity * price
 
-triangle = RightAngleTriangle("T", b=4, c=5)
-assert triangle.a == 3
+
+class FillPosting(Modello):
+    before = component(HoldingState)
+    fill = component(Execution)
+    after = component(HoldingState)
+
+    quantity = after.quantity
+    quantity = before.quantity + fill.quantity
+    cash = after.cash
+    cash = before.cash - fill.notional - fill.fee
 ```
 
-The same model works in either direction. Positive assumptions select the
-positive side length when solving for `a`.
+The first `quantity` assignment binds the name to `after.quantity`; the second
+defines its relationship to the other components. The cash assignments do the
+same for settlement. Together, these equations describe the whole posting.
 
-## Compose models
-
-Use `component()` to give a model named parts. A parent's equations can determine
-unknown values inside its children:
+Supply an opening state and a fill to find the closing balances:
 
 ```python
-class Box(Modello):
-    base = component(RightAngleTriangle)
-    height = InstanceDummy("height", positive=True)
-    diagonal = sqrt(base.c**2 + height**2)
-
-
-base = RightAngleTriangle("base", b=4)
-box = Box("B", base=base, height=12, diagonal=13)
-assert box.base.a == 3
+opening = HoldingState("opening", quantity=3, cash=1000)
+posted = FillPosting(
+    "buy",
+    before=opening,
+    fill=Execution("execution", quantity=2, price=100, fee=1),
+)
+assert posted.after.quantity == 5
+assert posted.after.cash == 799
 ```
 
-Here the box's height and diagonal determine the missing side of its base.
-The original `base` stays symbolic; `box.base` contains the completed values.
-`component(RightAngleTriangle)` also gives `box.base` its model instance type
-for editors and type checkers.
+Or observe the closing cash and let the **same model** infer the execution price:
+
+```python
+observed = FillPosting(
+    "infer_price",
+    before=opening,
+    fill=Execution("execution", quantity=2, fee=1),
+    after=HoldingState("observed", cash=799),
+)
+assert observed.fill.price == 100
+assert opening.cash == 1000
+```
+
+Components are solved together, so known values can determine unknowns anywhere
+in the hierarchy. `before` and `after` describe economic order; the values you
+supply determine the solving direction. The original instances stay unchanged,
+and the completed components retain their model types for editors, traversal,
+and further composition. Another model can connect one posting's closing state
+to the next posting's opening state using the very same pattern.
 
 Follow the [nested-model guide](https://modello.readthedocs.io/en/latest/nesting.html)
 for more examples of composition and symbolic inputs. The

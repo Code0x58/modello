@@ -5,13 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from sympy import S
+
 from examples.compute.named_map import NamedMap
 from examples.compute.series import utc_time
 from examples.model_plan import Known
+from examples.portfolio.models import PriceChange, Quote
 from examples.portfolio.signals import OrderIntent
 from examples.portfolio.sources import Fill, PriceHistory, TransactionLog
 from examples.symbolic import SymbolicModel
-from modello import InstanceDummy
+from modello import InstanceDummy, Modello, component
 
 
 class Shortfall(SymbolicModel):
@@ -22,28 +25,72 @@ class Shortfall(SymbolicModel):
     implementation_shortfall = delay_cost + trading_cost + fees + opportunity_cost
 
 
-class ExecutionCosts(Shortfall):
-    """Execution and opportunity costs share one symbolic accounting definition."""
+class PriceCost(Modello):
+    """The directional cost of a price movement on a number of shares."""
 
+    prices = component(PriceChange)
     quantity = InstanceDummy("quantity", nonnegative=True)
-    remaining = InstanceDummy("remaining", nonnegative=True)
     side = InstanceDummy("side", real=True)
+    cost = quantity * side * prices.change
+
+
+class FillCost(Modello):
+    """A fill total against a reference quote, including unfilled intervals."""
+
+    reference = component(Quote)
+    quantity = InstanceDummy("quantity", nonnegative=True)
     notional = InstanceDummy("notional", nonnegative=True)
-    model_price = InstanceDummy("model_price", positive=True)
-    decision_price = InstanceDummy("decision_price", positive=True)
-    arrival_price = InstanceDummy("arrival_price", positive=True)
-    terminal_price = InstanceDummy("terminal_price", positive=True)
-    model_slippage_cost = side * (notional - quantity * model_price) + Shortfall.fees
-    delay_cost = quantity * side * (arrival_price - decision_price)
-    trading_cost = side * (notional - quantity * arrival_price)
-    opportunity_cost = remaining * side * (terminal_price - decision_price)
+    side = InstanceDummy("side", real=True)
+    fees = InstanceDummy("fees", nonnegative=True)
+    cost = side * (notional - quantity * reference.price) + fees
+
+
+class ExecutionCosts(Shortfall):
+    """Bind delay, fills, and unexecuted shares to one shortfall account."""
+
+    shortfall = component(Shortfall)
+    delay = component(PriceCost)
+    trading = component(FillCost)
+    opportunity = component(PriceCost)
+    model_slippage = component(FillCost)
+
+    delay_cost = shortfall.delay_cost
+    delay_cost = delay.cost
+    trading_cost = shortfall.trading_cost
+    trading_cost = trading.cost
+    opportunity_cost = shortfall.opportunity_cost
+    opportunity_cost = opportunity.cost
+    implementation_shortfall = shortfall.implementation_shortfall
+    fees = shortfall.fees
+    fees = model_slippage.fees
+
+    quantity = delay.quantity
+    quantity = trading.quantity
+    quantity = model_slippage.quantity
+    remaining = opportunity.quantity
+    side = delay.side
+    side = trading.side
+    side = opportunity.side
+    side = model_slippage.side
+    notional = trading.notional
+    notional = model_slippage.notional
+    model_price = model_slippage.reference.price
+    decision_price = delay.prices.before.price
+    decision_price = opportunity.prices.before.price
+    arrival_price = delay.prices.after.price
+    arrival_price = trading.reference.price
+    terminal_price = opportunity.prices.after.price
+    trading_fees = trading.fees
+    trading_fees = S.Zero
+    model_slippage_cost = model_slippage.cost
 
 
 class Slippage(SymbolicModel):
+    prices = component(PriceChange)
     side = InstanceDummy("side", real=True)
-    execution_price = InstanceDummy("execution_price", positive=True)
-    reference_price = InstanceDummy("reference_price", positive=True)
-    bps = side * (execution_price / reference_price - 1) * 10000
+    execution_price = prices.after.price
+    reference_price = prices.before.price
+    bps = side * prices.simple_return * 10000
 
 
 class CostRate(SymbolicModel):

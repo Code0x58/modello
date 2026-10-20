@@ -37,12 +37,49 @@ class Quote(Modello):
     price = InstanceDummy("price", positive=True)
 
 
-class EquityPosition(Modello):
-    """A long position in an equity, separate from the instrument itself."""
+class PriceChange(Modello):
+    """Two marks of the same instrument, in currency and proportional terms."""
+
+    before = component(Quote)
+    after = component(Quote)
+    change = after.price - before.price
+    simple_return = after.price / before.price - 1
+
+
+class Position(Modello):
+    """A marked position, including signed virtual attribution sleeves."""
 
     instrument = component(Quote)
-    quantity = InstanceDummy("quantity", nonnegative=True)
+    quantity = InstanceDummy("quantity", real=True)
     market_value = quantity * instrument.price
+
+
+class EquityPosition(Position):
+    """A long position in an equity, separate from the instrument itself."""
+
+    quantity = InstanceDummy("quantity", nonnegative=True)
+
+
+class AccountValue(Modello):
+    """The net asset value at an account boundary."""
+
+    nav = InstanceDummy("nav", positive=True)
+
+
+class Trade(Modello):
+    """A signed share exchange at a price, before settlement charges."""
+
+    quantity = InstanceDummy("quantity", real=True)
+    price = InstanceDummy("price", positive=True)
+    notional = quantity * price
+
+
+class Allocation(Modello):
+    """A share of capital expressed as an amount and a weight."""
+
+    capital = InstanceDummy("capital", positive=True)
+    weight = InstanceDummy("weight", nonnegative=True)
+    value = capital * weight
 
 
 class USDCash(Modello):

@@ -27,7 +27,26 @@ from sympy.solvers.solveset import NonlinearError
 from examples.compute.named_map import NamedMap
 from examples.portfolio.optimal_execution.calibration import Calibration, ImpactObservation
 from examples.symbolic import SymbolicModel
-from modello import InstanceDummy, ScalarValue
+from modello import InstanceDummy, Modello, ScalarValue, component
+
+
+class QuadraticImpact(Modello):
+    """Temporary execution cost rate, quadratic in trading speed."""
+
+    speed = InstanceDummy("speed", real=True)
+    volume = InstanceDummy("volume", positive=True)
+    eta = InstanceDummy("eta", positive=True)
+    cost = eta * speed**2 / volume
+
+
+class InventoryRisk(Modello):
+    """CARA risk penalty on the variance rate of remaining inventory."""
+
+    inventory = InstanceDummy("inventory", real=True)
+    sigma = InstanceDummy("sigma", positive=True)
+    gamma = InstanceDummy("gamma", nonnegative=True)
+    variance = sigma**2 * inventory**2
+    cost = gamma * variance / 2
 
 
 class ExecutionDensity(SymbolicModel):
@@ -39,15 +58,18 @@ class ExecutionDensity(SymbolicModel):
     spread, alpha, or participation constraint in this particular model.
     """
 
-    inventory = InstanceDummy("inventory", real=True)
-    speed = InstanceDummy("speed", real=True)
-    volume = InstanceDummy("volume", positive=True)
-    eta = InstanceDummy("eta", positive=True)
-    sigma = InstanceDummy("sigma", positive=True)
-    gamma = InstanceDummy("gamma", nonnegative=True)
-    impact = eta * speed**2 / volume
-    variance = sigma**2 * inventory**2
-    risk = gamma * variance / 2
+    impact_model = component(QuadraticImpact)
+    risk_model = component(InventoryRisk)
+
+    inventory = risk_model.inventory
+    speed = impact_model.speed
+    volume = impact_model.volume
+    eta = impact_model.eta
+    sigma = risk_model.sigma
+    gamma = risk_model.gamma
+    impact = impact_model.cost
+    variance = risk_model.variance
+    risk = risk_model.cost
     objective = impact + risk
 
     def lagrangian(self, time: Symbol, remaining: Expr) -> Expr:
@@ -150,14 +172,22 @@ class ExecutionDensity(SymbolicModel):
         return fields
 
 
-class CrowdedImpact(ExecutionDensity):
-    """A smooth convex extension, quadratic plus quartic participation costs."""
+class CrowdedImpactCost(QuadraticImpact):
+    """Extend the shared impact law with a quartic participation cost."""
 
+    quadratic = component(QuadraticImpact)
+    speed = quadratic.speed
+    volume = quadratic.volume
+    eta = quadratic.eta
     beta = InstanceDummy("beta", nonnegative=True)
-    impact = (
-        ExecutionDensity.eta * ExecutionDensity.speed**2 / ExecutionDensity.volume
-        + beta * ExecutionDensity.speed**4 / ExecutionDensity.volume**3
-    )
+    cost = quadratic.cost + beta * quadratic.speed**4 / quadratic.volume**3
+
+
+class CrowdedImpact(ExecutionDensity):
+    """Replace the impact component; all continuous and discrete views follow."""
+
+    impact_model = component(CrowdedImpactCost)
+    beta = impact_model.beta
 
 
 @dataclass(frozen=True)

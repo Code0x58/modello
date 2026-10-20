@@ -9,19 +9,23 @@ Define a price and a position
 -----------------------------
 
 A quote has an unknown positive price. A position combines a quote with a
-nonnegative number of shares:
+number of shares. Specialise it to nonnegative shares for a long equity holding:
 
 >>> from modello import Modello, InstanceDummy, component
 >>> class Quote(Modello):
 ...     price = InstanceDummy("price", positive=True)
->>> class EquityPosition(Modello):
+>>> class Position(Modello):
 ...     instrument = component(Quote)
-...     quantity = InstanceDummy("quantity", nonnegative=True)
+...     quantity = InstanceDummy("quantity", real=True)
 ...     market_value = quantity * instrument.price
+>>> class EquityPosition(Position):
+...     quantity = InstanceDummy("quantity", nonnegative=True)
 
 These are complete model definitions. ``component(Quote)`` scopes the quote's
 symbols inside each position and exposes a typed ``Quote`` instance after
-solving. Give one position its quantity and price:
+solving. The signed base position will also support virtual attribution sleeves
+later; both use the same valuation equation. Give one position its quantity and
+price:
 
 >>> apple = EquityPosition("apple", quantity=10, instrument=Quote("quote", price=100))
 >>> apple.market_value

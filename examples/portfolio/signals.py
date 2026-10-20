@@ -10,27 +10,40 @@ from examples.compute.named_map import NamedMap
 from examples.compute.series import Series, utc_time
 from examples.model_plan import Known
 from examples.portfolio.account import AccountSnapshot
-from examples.portfolio.models import Equity
+from examples.portfolio.models import AccountValue, Allocation, Equity, EquityPosition, PriceChange, Trade
 from examples.portfolio.sources import finite
 from examples.symbolic import SymbolicModel
-from modello import InstanceDummy
+from modello import component
 
 
 class Momentum(SymbolicModel):
-    opening_price = InstanceDummy("opening_price", positive=True)
-    closing_price = InstanceDummy("closing_price", positive=True)
-    signal = closing_price / opening_price - 1
+    prices = component(PriceChange)
+    opening_price = prices.before.price
+    closing_price = prices.after.price
+    signal = prices.simple_return
 
 
 class Rebalance(SymbolicModel):
     """A target allocation and its signed order are views of the same equation."""
 
-    nav = InstanceDummy("nav", positive=True)
-    price = InstanceDummy("price", positive=True)
-    opening_quantity = InstanceDummy("opening_quantity", nonnegative=True)
-    target_weight = InstanceDummy("target_weight", nonnegative=True)
-    target_quantity = target_weight * nav / price
-    order_quantity = target_quantity - opening_quantity
+    before = component(EquityPosition)
+    after = component(EquityPosition)
+    account = component(AccountValue)
+    allocation = component(Allocation)
+    order = component(Trade)
+
+    target_quantity = after.quantity
+    nav = account.nav
+    nav = allocation.capital
+    price = before.instrument.price
+    price = after.instrument.price
+    price = order.price
+    opening_quantity = before.quantity
+    target_weight = allocation.weight
+    target_value = after.market_value
+    target_value = allocation.value
+    order_quantity = order.quantity
+    order_quantity = after.quantity - before.quantity
 
 
 class SignalSource(Protocol):

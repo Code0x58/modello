@@ -40,6 +40,13 @@ First define that state, then the execution's economic terms:
    :pyobject: HoldingState
    :language: python
 
+A signed trade owns the relationship between shares, price, and notional.
+An execution extends it with a settlement fee:
+
+.. literalinclude:: ../../../examples/portfolio/models.py
+   :pyobject: Trade
+   :language: python
+
 .. literalinclude:: ../../../examples/portfolio/postings.py
    :pyobject: Execution
    :language: python
@@ -84,6 +91,10 @@ opening instance remains unchanged:
 A capital deposit changes cash, but it should not count as investment return.
 Keep an account's number of units and issue new units at its pre-flow unit
 price. Define a valued account state and a signed cash movement:
+
+.. literalinclude:: ../../../examples/portfolio/models.py
+   :pyobject: AccountValue
+   :language: python
 
 .. literalinclude:: ../../../examples/portfolio/postings.py
    :pyobject: AccountState
@@ -210,8 +221,26 @@ We also need a reconciliation identity. First define gross and net profit:
    :language: python
 
 ``PROFIT_FIELDS`` names ``holding``, ``trading``, ``income``, ``fees``, ``gross``,
-and ``net``. An instrument supplies the holding and trading terms from interval
-inputs:
+and ``net``. A reporting view contains this profit model and exposes its fields
+as convenient aliases. Both instrument and account views inherit that binding:
+
+.. literalinclude:: ../../../examples/portfolio/pnl.py
+   :pyobject: ProfitView
+   :language: python
+
+For an interval we need two marked positions, the signed activity between them,
+and a price change. ``Position`` and ``Quote`` were defined in chapter 1; now
+define their interval counterparts:
+
+.. literalinclude:: ../../../examples/portfolio/pnl.py
+   :pyobject: TradingActivity
+   :language: python
+
+.. literalinclude:: ../../../examples/portfolio/models.py
+   :pyobject: PriceChange
+   :language: python
+
+Connect those parts to each other and to the profit components:
 
 .. literalinclude:: ../../../examples/portfolio/pnl.py
    :pyobject: InstrumentPnL
@@ -220,7 +249,9 @@ inputs:
 Holding profit marks opening shares from opening to closing price. Trading
 profit marks signed fills from their execution prices to that closing price.
 The interval adapter supplies ``sum(quantity * price)`` as signed fill notional.
-Income and fees remain separate columns.
+Income and fees remain separate columns. Closing shares are opening shares
+plus signed trading activity. All these relationships belong to one joint
+model; the adapter only supplies observations from the external log.
 
 At account level, the identity is closing NAV minus opening NAV, less net profit
 and external capital. A zero residual reconciles the layers:

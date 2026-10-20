@@ -100,19 +100,24 @@ shares for USD 735.60, receives USD 3.50 of the income, and pays USD 1 fees.
 The same ``InstrumentPnL`` definition used by actual account positions gives:
 
 >>> from sympy import Rational
->>> from examples.portfolio.pnl import InstrumentPnL
+>>> from examples.portfolio.models import Position, Quote
+>>> from examples.portfolio.pnl import InstrumentPnL, TradingActivity
 >>> sleeve = InstrumentPnL(
 ...     "momentum",
-...     opening_quantity=0,
-...     opening_price=100,
-...     closing_price=107,
-...     fill_quantity=7,
-...     fill_notional=Rational("735.6"),
-...     income=Rational("3.5"),
-...     fees=1,
+...     before=Position("opening", quantity=0, instrument=Quote("quote", price=100)),
+...     after=Position("closing", instrument=Quote("quote", price=107)),
+...     activity=TradingActivity(
+...         "executed",
+...         quantity=7,
+...         notional=Rational("735.6"),
+...         income=Rational("3.5"),
+...         fees=1,
+...     ),
 ... )
->>> sleeve.net
+>>> sleeve.profit.net
 159/10
+>>> sleeve.after.quantity
+7
 
 Selling ten opening MSFT shares creates a negative signal sleeve against the
 unchanged positive reference book. Their quantities add to the actual holding,
@@ -213,17 +218,19 @@ can remain unknown or symbolic while the executed stream stays fixed:
 >>> weight = Symbol("signal_weight", nonnegative=True)
 >>> allocated = InstrumentPnL(
 ...     "allocated",
-...     opening_quantity=0,
-...     opening_price=100,
-...     closing_price=107,
-...     fill_quantity=7 * weight,
-...     fill_notional=Rational("735.6") * weight,
-...     income=Rational("3.5") * weight,
-...     fees=weight,
+...     before=sleeve.before,
+...     after=Position("closing", instrument=sleeve.after.instrument),
+...     activity=TradingActivity(
+...         "allocated",
+...         quantity=7 * weight,
+...         notional=Rational("735.6") * weight,
+...         income=Rational("3.5") * weight,
+...         fees=weight,
+...     ),
 ... )
->>> allocated.net == Rational("15.9") * weight
+>>> allocated.profit.net == Rational("15.9") * weight
 True
->>> diff(allocated.net, weight)
+>>> diff(allocated.profit.net, weight)
 159/10
 
 This derivative changes the declared credit allocation, holding execution fixed.

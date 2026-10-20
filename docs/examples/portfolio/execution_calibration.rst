@@ -217,8 +217,15 @@ liquidity-adjusted value separately. Only realised cash costs enter replay.
 Change the economics without rewriting its applications
 -------------------------------------------------------
 
-Make high participation more expensive by adding a quartic term to the impact
-density. This changes one economic definition; the risk model is inherited:
+Make high participation more expensive by extending the impact component.
+Reuse the quadratic cost and add a quartic participation term:
+
+.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+   :pyobject: CrowdedImpactCost
+   :language: python
+
+Replace that component in the density. The objective, risk component, and all
+the mathematical transformations remain inherited:
 
 .. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
    :pyobject: CrowdedImpact

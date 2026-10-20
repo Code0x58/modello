@@ -12,9 +12,10 @@ from pathlib import Path
 
 from packaging.version import Version
 
-SMOKE_TEST = """
+SMOKE_TEST = r"""
 from importlib import metadata
 from pathlib import Path
+import re
 import sys
 
 import modello
@@ -28,6 +29,13 @@ assert distribution.metadata["Requires-Python"] == ">=3.10"
 assert Path(modello.__file__).with_name("py.typed").is_file()
 assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
 assert not any(str(path).startswith("tests/") for path in distribution.files or ())
+assert not any(name == "examples" or name.startswith("examples.") for name in sys.modules)
+namespace = {}
+readme = distribution.metadata.get_payload()
+blocks = re.findall(r"^```python\n(.*?)^```", readme, re.MULTILINE | re.DOTALL)
+assert blocks
+for source in blocks:
+    exec(compile(source, "README.md", "exec"), namespace)
 assert not any(name == "examples" or name.startswith("examples.") for name in sys.modules)
 if sys.argv[1]:
     assert distribution.version == sys.argv[1], distribution.version
@@ -128,6 +136,7 @@ def check_wheel(
         "tests/examples/compute/test_providers.py",
         "tests/examples/portfolio/test_valuation.py",
         "tests/examples/portfolio/test_postings.py",
+        "tests/examples/portfolio/test_composition.py",
         "tests/examples/portfolio/optimal_execution/test_model.py",
     ):
         source = Path(__file__).resolve().parents[1] / path

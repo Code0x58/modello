@@ -1,5 +1,6 @@
 """Typed state transitions for externally supplied fills and capital movements."""
 
+from examples.portfolio.models import AccountValue, Trade
 from examples.symbolic import SymbolicModel
 from modello import InstanceDummy, Modello, component
 
@@ -15,11 +16,9 @@ class HoldingState(Modello):
     cash = InstanceDummy("cash", real=True)
 
 
-class Execution(Modello):
+class Execution(Trade):
     """The economic terms of a signed fill, separate from its ledger identity."""
 
-    quantity = InstanceDummy("quantity", real=True)
-    price = InstanceDummy("price", positive=True)
     fee = InstanceDummy("fee", nonnegative=True)
 
 
@@ -33,16 +32,15 @@ class FillPosting(SymbolicModel):
     quantity = after.quantity
     quantity = before.quantity + fill.quantity
     cash = after.cash
-    cash = before.cash - fill.quantity * fill.price - fill.fee
+    cash = before.cash - fill.notional - fill.fee
 
 
-class AccountState(Modello):
+class AccountState(AccountValue):
     """A valued account and its participation units at one event boundary."""
 
     cash = InstanceDummy("cash", real=True)
-    nav = InstanceDummy("nav", positive=True)
     units = InstanceDummy("units", positive=True)
-    unit_price = nav / units
+    unit_price = AccountValue.nav / units
 
 
 class CashMovement(Modello):

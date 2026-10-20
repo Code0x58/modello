@@ -35,13 +35,24 @@ term uses deterministic inventory and an arithmetic Brownian reference price.
 Under CARA utility, Gaussian cash risk contributes half its variance times
 absolute risk aversion to the certainty-equivalent cost.
 
-Define the rates as an ordinary Modello model. These are the economic equations
-from which the later views will be derived:
+Define impact and inventory risk as separate ordinary Modello models. Each owns
+its economic equations:
 
 .. code-block:: python
 
-   from modello import InstanceDummy
+   from modello import InstanceDummy, Modello, component
    from examples.symbolic import SymbolicModel
+
+.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+   :pyobject: QuadraticImpact
+   :language: python
+
+.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+   :pyobject: InventoryRisk
+   :language: python
+
+Compose the objective from those costs. The parameter aliases expose convenient
+names while retaining the component hierarchy for inspection and substitution:
 
 .. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
    :pyobject: ExecutionDensity
@@ -70,11 +81,16 @@ Reuse the cash utility from chapter 8 to supply the preference parameter:
 
 >>> from sympy import Function, Rational, Symbol, diff, simplify, solve
 >>> from examples.portfolio.optimal_execution import ExecutionDensity
+>>> from examples.portfolio.optimal_execution.model import QuadraticImpact, InventoryRisk
 >>> from examples.portfolio.utility import CashUtility
 >>> from examples.model_plan import Known, ModelPlan
 >>> utility = CashUtility.cara(0.001)
 >>> gamma = utility.expressions["absolute_risk_aversion"]
->>> model = ExecutionDensity("execution", eta=2, volume=100, sigma=3, gamma=gamma)
+>>> model = ExecutionDensity(
+...     "execution",
+...     impact_model=QuadraticImpact("impact", eta=2, volume=100),
+...     risk_model=InventoryRisk("risk", sigma=3, gamma=gamma),
+... )
 >>> rates = ModelPlan(model)
 >>> point = rates.evaluate(Known(model.inventory, 10), Known(model.speed, 4))
 >>> round(float(point.impact), 4), round(float(point.risk), 4)
