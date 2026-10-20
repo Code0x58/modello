@@ -1,8 +1,14 @@
 """Shared symbolic profit models, sensitivities, and inverse reconciliation."""
 
-from sympy import Rational, diff, simplify
+import pytest
+from sympy import Rational, Symbol, diff, simplify
 
-from examples.portfolio.pnl import AccountPnL, InstrumentPnL
+from examples.model_plan import Known
+from examples.portfolio.models import Position, Quote
+from examples.portfolio.pnl import AccountPnL, InstrumentPnL, Profit, TradingActivity
+from examples.portfolio.postings import Execution, FillPosting, HoldingState
+from examples.symbolic import SymbolicModel
+from modello import component
 
 
 def test_reporting_models_support_symbolic_sensitivities_and_inverse_reconciliation():
@@ -34,21 +40,39 @@ def test_reporting_models_support_symbolic_sensitivities_and_inverse_reconciliat
     assert account.closing_nav == Rational(30669, 10)
 
 
-def test_profit_model_compiles_a_fitted_fill_notional_view():
-    from sympy import Symbol
+class ExecutedProfit(SymbolicModel):
+    posting = component(FillPosting)
+    pnl = component(InstrumentPnL)
 
-    from examples.model_plan import Known
+    opening_quantity = pnl.before.quantity
+    opening_quantity = posting.before.quantity
+    filled = pnl.activity.quantity
+    filled = posting.fill.quantity
+    notional = pnl.activity.notional
+    notional = posting.fill.notional
+    fees = pnl.activity.fees
+    fees = posting.fill.fee
 
-    observed = Symbol("observed_net", real=True)
-    fitted = InstrumentPnL(
-        "fit",
-        opening_quantity=10,
-        opening_price=100,
-        closing_price=105,
-        fill_quantity=2,
-        income=0,
-        fees=1,
-        net=observed,
+
+def test_profit_observation_can_infer_execution_and_settlement_through_shared_components():
+    source = ExecutedProfit(
+        "inferred_fill",
+        posting=FillPosting(
+            "fill", before=HoldingState("opening", quantity=0, cash=1000), fill=Execution("buy", quantity=7, fee=1)
+        ),
+        pnl=InstrumentPnL(
+            "observed",
+            before=Position("opening", instrument=Quote("quote", price=100)),
+            after=Position("closing", instrument=Quote("quote", price=107)),
+            activity=TradingActivity("totals", income=Rational("3.5")),
+            profit=Profit("observed", net=Symbol("observed_profit", real=True)),
+        ),
     )
-    plan = fitted.compile()
-    assert float(plan.evaluate(Known(fitted.net, 59)).fill_notional) == 200
+    result = source.compile().evaluate(Known(source.pnl.profit.net, 15.9))
+    assert float(result.posting.fill.price) == pytest.approx(735.6 / 7)
+    assert float(result.posting.after.cash) == pytest.approx(263.4)
+    assert float(result.posting.after.quantity) == float(result.pnl.after.quantity) == 7
+    assert float(result.pnl.activity.notional) == pytest.approx(735.6)
+    assert type(result.pnl.profit) is Profit
+    assert type(result.pnl.before) is type(result.pnl.after) is Position
+    assert source.posting.fill.price.free_symbols

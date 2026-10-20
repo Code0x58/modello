@@ -34,6 +34,13 @@ shares the synthetic scenario; ``_data.py`` locates fixtures through the example
 package, independently of the tests' location. Cross-layer import checks live
 in ``tests/test_layer_boundaries.py``.
 
+Executable walkthroughs cover the examples' ordinary usage. Focus additional
+tests on distinct regressions, accounting and chronology invariants, and
+independent mathematical checks. Test shared validation and compilation behavior
+at their owning layer. Portfolio typing contracts are collected in
+``tests/examples/portfolio/typing_contracts.py`` and checked against installed
+packages as well as the checkout.
+
 Jobs and streaming tests also live under ``tests/examples/``. Example source
 modules retain their executable doctests; explicit test functions are collected
 from the test tree.
@@ -60,7 +67,7 @@ distribution check installs locked runtime dependencies and the wheel in a fresh
 environment outside the checkout, checks metadata, forward/inverse solving, and
 the installed type annotations, then rebuilds the source distribution and repeats
 the checks. It also selects the ``examples`` extra on both installed wheels,
-checks the packaged CSV fixtures, and runs the three portfolio walkthroughs,
+checks the packaged CSV fixtures, and runs the portfolio entry points,
 including HTML and JSON output. The core and generic-example typing contracts
 include valid calls and expected type errors; unused-ignore checks ensure mypy
 continues to catch those errors against the installed packages.

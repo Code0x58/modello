@@ -108,25 +108,3 @@ def test_market_benchmarks_are_independent_of_the_accounts_fill_prices(scenario,
     wrong = NamedMap({"aapl": replace(market["aapl"], equity=MSFT), "msft": market["msft"]})
     with pytest.raises(ValueError, match="instrument must match"):
         order.assess(TransactionLog(()), wrong, at=ASSESSMENT, max_price_age=AGE)
-
-
-def test_execution_model_can_infer_fees_from_an_observed_shortfall():
-    from sympy import Rational
-
-    from examples.portfolio.execution import ExecutionCosts
-
-    known = dict(
-        quantity=7,
-        remaining=3,
-        side=1,
-        notional=Rational("735.6"),
-        model_price=104,
-        decision_price=104,
-        arrival_price=Rational("104.5"),
-        terminal_price=Rational("104.8"),
-    )
-    forward = ExecutionCosts("cost", **known, fees=1)
-    fitted = ExecutionCosts("fit", **known, implementation_shortfall=11)
-    assert forward.implementation_shortfall == 11
-    assert fitted.fees == 1
-    assert fitted.model_slippage_cost == forward.model_slippage_cost

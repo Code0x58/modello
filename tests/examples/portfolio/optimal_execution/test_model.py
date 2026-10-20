@@ -1,23 +1,11 @@
 """Check derived mathematics against independent limits and analytic identities."""
 
-from typing import TYPE_CHECKING
-
 import pytest
 from sympy import Function, Rational, S, Symbol, diff, simplify, sinh, sqrt
 
 from examples.compute.named_map import NamedMap
 from examples.portfolio.optimal_execution import CrowdedImpact, ExecutionDensity
 from modello import InstanceDummy
-
-if TYPE_CHECKING:
-    from examples.portfolio.optimal_execution import Calibration, ExecutionGrid, ExecutionSolution, ImpactObservation
-
-    def typed_views(
-        model: ExecutionDensity, observations: tuple[ImpactObservation, ...]
-    ) -> tuple[ExecutionGrid, ExecutionSolution, Calibration]:
-        grid = model.discretize(10, (1, 1))
-        solution = grid.stationary(at=NamedMap({"gamma": 0.001}))
-        return grid, solution, model.fit_impact(observations)
 
 
 def test_variation_and_continuous_boundary_value_solution():

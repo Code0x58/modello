@@ -100,15 +100,22 @@ def test_cash_only_reports_separate_income_and_external_capital():
     )
     engine = AccountEngine(account, NamedMap({}), max_price_age=timedelta(days=1))
     ledger = TransactionLog(
-        (CashFlow("deposit", "cash", times[1], times[1], 500), Income("interest", "cash", times[2], times[2], 10))
+        (
+            CashFlow("deposit", "cash", times[1], times[1], 500),
+            CashFlow("withdrawal", "cash", times[2], times[2], -100),
+            Income("interest", "cash", times[2], times[2], 10),
+            Income("expense", "cash", times[2], times[2], -2),
+        )
     )
     result = AccountReport.from_account(
         engine.evaluate(ledger, times), (), signals=NamedMap({}), utilities=NamedMap({})
     )
     assert not result.instruments
-    assert result.account["net"].values == (0, 10)
-    assert result.account["external_flows"].values == (500, 0)
-    assert result.sources["unattributed"]["income"].values == (0, 10)
+    assert result.path.cash.values == (100, 600, 508)
+    assert result.path.unit_nav.values == pytest.approx((100, 100, 101.6))
+    assert result.account["net"].values == (0, 8)
+    assert result.account["external_flows"].values == (500, -100)
+    assert result.sources["unattributed"]["income"].values == (0, 8)
 
 
 @pytest.mark.parametrize("weights", [{}, {"a": 0.5}, {"a": -1, "b": 2}, {"a": float("nan")}])
@@ -152,3 +159,18 @@ def test_reporting_requires_the_account_ledger_known_by_the_horizon(scenario):
     ):
         with pytest.raises(ValueError, match="in-window ledger"):
             attribute(scenario, path=replace(scenario.account, ledger=TransactionLog((event, *rest))))
+
+
+def test_reporting_derives_ledger_ids_and_supports_multiple_orders_per_member(scenario):
+    first, second = scenario.attributions
+    another = replace(first.order, id="another-decision").attribute(first.weights)
+    report = AccountReport.from_account(
+        scenario.account,
+        (first, second, another),
+        signals=NamedMap({"momentum": scenario.signals}),
+        utilities=NamedMap({}),
+    )
+    assert tuple(record.order for record in report.attributions) == (first.order, second.order, another.order)
+    assert sum(report.account["net"].values) == pytest.approx(66.9)
+    with pytest.raises(ValueError, match="Duplicate member name"):
+        AccountReport.from_account(scenario.account, (first, first), signals=NamedMap({}), utilities=NamedMap({}))

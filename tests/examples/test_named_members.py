@@ -75,26 +75,6 @@ class BoundReadings(BoundMembers[str]):
 reading_factory = ModelFactory(Reading, str)
 
 
-def test_model_factory_constructs_fresh_instances_with_the_original_model_type():
-    first, second = reading_factory("same"), reading_factory("same")
-    assert type(first) is type(second) is Reading
-    assert first.value != second.value
-    assert reading_factory("known", value=3).value == 3
-    assert first.value.free_symbols
-
-
-def test_model_factory_uses_the_same_equations_for_forward_inverse_and_fitted_cases():
-    class Calibrated(Modello):
-        raw = InstanceDummy("raw", real=True)
-        gain = InstanceDummy("gain", positive=True)
-        result = raw * gain
-
-    calibrated = ModelFactory(Calibrated, str)
-    assert calibrated("forward", raw=3, gain=2).result == 6
-    assert calibrated("inverse", gain=2, result=6).raw == 3
-    assert calibrated("fitted", raw=3, result=6).gain == 2
-
-
 def test_model_factory_declarations_keep_bindings_and_typed_nested_construction():
     class Sensors(BoundMembers[str]):
         inlet = reading_factory.component("source:in")
@@ -108,22 +88,6 @@ def test_model_factory_declarations_keep_bindings_and_typed_nested_construction(
         reading_factory.component(3)
     with pytest.raises(TypeError, match="inlet must be a Reading instance"):
         sensors("invalid", inlet={"value": 3})
-
-
-def test_model_factory_never_acquires_external_data_implicitly():
-    class Request:
-        def load(self) -> int:
-            raise AssertionError("Explicit loading only")
-
-    sensor = ModelFactory(Reading, Request)
-    request = Request()
-
-    class Sensors(BoundMembers[Request]):
-        inlet = sensor.component(request)
-
-    measured = Sensors("measured", inlet=sensor("in", value=3))
-    assert member_bindings(measured)["inlet"] is request
-    assert measured.inlet.value == 3
 
 
 def test_bound_members_keep_bindings_with_classes_references_and_solved_instances():

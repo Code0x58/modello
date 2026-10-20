@@ -65,3 +65,13 @@ def test_rebalance_model_can_solve_an_order_or_the_implied_target():
     view = Rebalance("inverse", nav=1000, price=100, opening_quantity=3, order_quantity=observed)
     plan = view.compile()
     assert float(plan.evaluate(Known(view.order_quantity, 2)).target_weight) == 0.5
+
+
+def test_an_unchanged_allocation_has_an_empty_order_projection(scenario):
+    decision = scenario.decision
+    targets = TargetWeights(decision.at, decision.weights)
+    orders = decision.rebalance(targets, batch="unchanged", arrival_at=decision.at)
+    assert len(orders) == 0
+    assert len(orders.members) == 2
+    with pytest.raises(KeyError):
+        orders.for_member(decision.portfolio.basket.members.aapl)

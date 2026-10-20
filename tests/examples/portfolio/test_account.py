@@ -6,7 +6,6 @@ import pytest
 
 from examples.compute.named_map import NamedMap
 from examples.portfolio.account import Account, AccountEngine
-from examples.portfolio.basket import EquityBasket, EquityHoldings
 from examples.portfolio.demo import asdict_snapshot
 from examples.portfolio.explicit import Basket, EquityMembers
 from examples.portfolio.models import EquityPosition, Quote, USDCash
@@ -109,25 +108,6 @@ def test_replaying_postings_reuses_compilation_without_symbolic_solves(engine, l
     assert tuple(map(asdict_snapshot, engine.evaluate(ledger, TIMES).snapshots)) == tuple(
         map(asdict_snapshot, baseline.snapshots)
     )
-
-
-def test_empty_equity_account_flows_are_not_investment_returns():
-    class Empty(EquityHoldings):
-        pass
-
-    opening = NamedPortfolio.define(EquityBasket.define(Empty))("cash", cash=USDCash("cash", amount=100))
-    engine = AccountEngine(Account("cash", TIMES[0], opening), NamedMap({}), max_price_age=AGE)
-    ledger = TransactionLog(
-        (
-            CashFlow("deposit", "cash", TIMES[1], TIMES[1], 200),
-            CashFlow("withdraw", "cash", TIMES[2], TIMES[2], -150),
-        )
-    )
-    path = engine.evaluate(ledger, TIMES)
-    assert path.nav.values == (100, 300, 150, 150)
-    assert path.unit_nav.values == (100,) * 4
-    assert path.analytics(periods_per_year=252).performance.total_return == 0
-    assert path.positions == {}
 
 
 def test_restatements_are_explicit_and_cannot_be_used_for_past_decisions(engine, ledger):

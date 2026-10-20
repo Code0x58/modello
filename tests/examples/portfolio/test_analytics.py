@@ -54,30 +54,6 @@ def test_return_attribution_uses_start_of_period_weights():
         assert actual == pytest.approx(apple + microsoft, abs=1e-15)
 
 
-def test_sample_statistics_and_covariance_matrix():
-    """Reference covariance uses a centered return matrix and n-1 degrees of freedom."""
-    path = NamedPortfolioPath.from_model(Portfolio.example().pricer().over(MarketData.example().named()))
-    analytics = path.analytics(periods_per_year=252)
-    returns = path.nav.simple_returns().values
-    sample_mean = sum(returns) / len(returns)
-    sample_variance = sum((value - sample_mean) ** 2 for value in returns) / (len(returns) - 1)
-    assert analytics.performance.total_return == pytest.approx(11 / 210)
-    assert analytics.performance.mean_period_return == pytest.approx(sample_mean)
-    assert analytics.performance.annualized_volatility == pytest.approx(sqrt(252 * sample_variance))
-    assert analytics.performance.maximum_drawdown == pytest.approx(1 / 35)
-    observations = ImmutableMatrix.hstack(
-        ImmutableMatrix(path.positions["aapl"].returns.values), ImmutableMatrix(path.positions["msft"].returns.values)
-    )
-    count = observations.rows
-    centered = observations - ones(count, 1) * (ones(1, count) * observations / count)
-    reference = centered.T * centered * 252 / (count - 1)
-    actual = ImmutableMatrix(
-        [[analytics.annualized_covariance[left][right] for right in ("aapl", "msft")] for left in ("aapl", "msft")]
-    )
-    for index in range(4):
-        assert float(actual[index]) == pytest.approx(float(reference[index]))
-
-
 def test_euler_contributions_and_reference_weights_risk():
     """Volatility allocation agrees with finite differences of the covariance formula."""
     path = NamedPortfolioPath.from_model(Portfolio.example().pricer().over(MarketData.example().named()))
@@ -135,23 +111,6 @@ def test_opposite_asset_returns_diversify_reference_weights_risk():
     assert path.nav.values == (200, 200, 198)
 
 
-@pytest.mark.parametrize("frequency", [0, -1, True, 1.5])
-def test_invalid_risk_frequency(frequency):
-    path = NamedPortfolioPath.from_model(Portfolio.example().pricer().over(MarketData.example().named()))
-    with pytest.raises(ValueError, match="positive integer"):
-        path.analytics(periods_per_year=frequency)
-
-
-def test_insufficient_observations():
-    first = date(2026, 1, 1)
-    with pytest.raises(ValueError, match="at least two"):
-        Series((first,), (1,)).simple_returns()
-    dates = (first, date(2026, 1, 2))
-    data = MarketData(EquityPrices(AAPL, Series(dates, (1, 2))), EquityPrices(MSFT, Series(dates, (1, 2))))
-    with pytest.raises(ValueError, match="at least three"):
-        NamedPortfolioPath.from_model(Portfolio.example().pricer().over(data.named())).analytics(periods_per_year=252)
-
-
 def test_named_covariance_and_risk_agree_with_independent_matrix_calculation():
     path = NamedPortfolioPath.from_model(
         ThreeEquityPortfolio.example().pricer().over(ThreeEquityPortfolio.example_data())
@@ -171,3 +130,29 @@ def test_named_covariance_and_risk_agree_with_independent_matrix_calculation():
         contribution = float(weights[i] * (cov * weights)[i]) / volatility
         assert result.latest_weights_risk.contributions[left] == pytest.approx(contribution)
     assert sum(result.latest_weights_risk.contributions.values()) == pytest.approx(volatility)
+
+
+def test_cash_only_portfolio_and_zero_risk():
+    """Zero equity positions have zero returns and risk without dividing by zero."""
+    portfolio = Portfolio(
+        "cash only",
+        basket=Basket(
+            "basket",
+            members=EquityMembers(
+                "members", aapl=EquityPosition("apple", quantity=0), msft=EquityPosition("microsoft", quantity=0)
+            ),
+        ),
+        cash=USDCash("cash", amount=100),
+    )
+    path = NamedPortfolioPath.from_model(portfolio.pricer().over(MarketData.example().named()))
+    result = path.analytics(periods_per_year=252)
+    assert path.nav.values == (100,) * 5
+    assert path.cash_weight.values == (1,) * 5
+    assert (
+        result.performance.total_return
+        == result.performance.annualized_volatility
+        == result.performance.maximum_drawdown
+        == 0
+    )
+    assert result.latest_weights_risk.volatility == 0
+    assert result.latest_weights_risk.contributions["aapl"] == result.latest_weights_risk.contributions["msft"] == 0

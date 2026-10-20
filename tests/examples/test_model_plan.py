@@ -10,6 +10,7 @@ from sympy import Symbol
 
 from examples.compute.series import Series
 from examples.model_plan import Known, ModelPath, ModelPlan
+from examples.symbolic import SymbolicModel
 from modello import InstanceDummy, Modello, component
 
 
@@ -17,7 +18,7 @@ class Reading(Modello):
     value = InstanceDummy("value", positive=True)
 
 
-class Sensor(Modello):
+class Sensor(SymbolicModel):
     reading = component(Reading)
     scale = InstanceDummy("scale", positive=True)
     adjusted = reading.value * scale
@@ -96,12 +97,17 @@ def test_the_compiled_case_is_a_snapshot_and_numeric_cases_can_be_composed():
     assert float(parent.adjusted) == 12
 
 
-def test_an_inverse_case_uses_the_same_structured_evaluator():
-    observed = Symbol("observed", positive=True)
-    source = Sensor("inverse", scale=2, adjusted=observed)
-    result = ModelPlan(source).evaluate(Known(source.adjusted, 6))
-    assert float(result.reading.value) == 3
-    assert source.reading.value.free_symbols
+def test_cached_plans_are_reused_within_a_class_and_separate_for_subclasses():
+    class Shifted(Sensor):
+        adjusted = Sensor.reading.value * Sensor.scale + 1
+
+    for model_type, expected in ((Sensor, 6), (Shifted, 7)):
+        view = model_type.plan()
+        model = view.source
+        result = view.evaluate(Known(model.reading.value, 3), Known(model.scale, 2))
+        assert type(result) is model_type and float(result.adjusted) == expected
+        assert model_type.plan() is view
+    assert Shifted.plan() is not Sensor.plan()
 
 
 def test_a_model_without_scalar_fields_still_has_an_observation_axis():
@@ -118,12 +124,14 @@ def test_a_model_without_scalar_fields_still_has_an_observation_axis():
 if TYPE_CHECKING:
 
     def typed_results(source: Sensor, view: ModelPlan[Sensor], times: tuple[date, ...], values: Series[date]) -> None:
+        compiled: ModelPlan[Sensor] = source.compile()
+        cached: ModelPlan[Sensor] = Sensor.plan()
         result: Sensor = view.evaluate(Known(source.reading.value, 3.0))
         reading: Reading = result.reading
         path: ModelPath[Sensor, date] = view.over(times, Known(source.reading.value, values))
         column: Series[date] = path.column(source.adjusted)
         numeric: Sensor = path.at(0)
-        assert reading and column and numeric
+        assert reading and column and numeric and compiled and cached
         _wrong: Reading = view.evaluate(Known(source.reading.value, 3.0))  # type: ignore[assignment]
         view.evaluate(Known("reading.value", 3.0))  # type: ignore[arg-type]
         view.evaluate(Known(source.reading.value, "three"))  # type: ignore[arg-type]

@@ -1,32 +1,13 @@
-# mypy: warn-unused-ignores
 """Equity providers, quote identity, and configured acquisition parameters."""
-
-from pathlib import Path
 
 import pytest
 
 from examples.compute.named_map import NamedMap
-from examples.compute.providers import Provider, load_providers
-from examples.portfolio.models import AAPL, Equity
-from examples.portfolio.providers import CSVEquityProvider, DummyEquityProvider, EquityProvider
-from examples.portfolio.sources import PriceHistory
+from examples.compute.providers import load_providers
+from examples.portfolio.models import Equity
+from examples.portfolio.providers import CSVEquityProvider, DummyEquityProvider
 
 from ._data import DATA
-
-
-def test_dummy_provider_returns_typed_fixture_data():
-    provider = DummyEquityProvider(symbol="AAPL")
-    assert provider.instrument == AAPL
-    assert provider.load().prices.values[0] == 100
-
-
-def test_provider_symbols_are_independent_of_holding_names_and_shared():
-    histories = load_providers(
-        NamedMap({"growth": DummyEquityProvider(symbol="AAPL"), "income": DummyEquityProvider(symbol="AAPL")})
-    )
-    assert tuple(histories) == ("growth", "income")
-    assert histories["growth"] is histories["income"]
-    assert histories["growth"].equity == AAPL
 
 
 def test_requests_include_all_parameters_not_only_the_instrument_id(tmp_path):
@@ -93,20 +74,3 @@ def test_provider_construction_and_symbolic_use_do_not_fetch_data(tmp_path):
     assert portfolio.nav.free_symbols
     with pytest.raises(FileNotFoundError):
         load_providers(portfolio.providers)
-
-
-@pytest.mark.parametrize("field", ["symbol", "namespace", "currency"])
-def test_provider_parameters_validate_identity_without_reading_a_file(field):
-    values = {"symbol": "AAPL", "namespace": "test", "currency": "USD"}
-    values[field] = ""
-    with pytest.raises(ValueError, match="symbol, provider, and quote currency"):
-        CSVEquityProvider(path=Path("unused.csv"), **values)
-
-
-def _typing_contract() -> None:
-    provider: EquityProvider = DummyEquityProvider(symbol="AAPL")
-    generic: Provider[PriceHistory] = provider
-    history: PriceHistory = generic.load()
-    identity: Equity = provider.instrument
-    assert history.equity == identity
-    _wrong_provider: Provider[Equity] = provider  # type: ignore[assignment]

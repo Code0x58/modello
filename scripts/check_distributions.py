@@ -130,16 +130,11 @@ def check_wheel(
         "tests/typing_checks.py",
         "tests/examples/test_named_members.py",
         "tests/examples/test_member_values.py",
-        "tests/examples/test_symbolic.py",
         "tests/examples/test_model_plan.py",
         "tests/examples/test_model_data.py",
         "tests/examples/compute/test_series.py",
         "tests/examples/compute/test_providers.py",
-        "tests/examples/portfolio/test_valuation.py",
-        "tests/examples/portfolio/test_postings.py",
-        "tests/examples/portfolio/test_composition.py",
-        "tests/examples/portfolio/test_views.py",
-        "tests/examples/portfolio/optimal_execution/test_model.py",
+        "tests/examples/portfolio/typing_contracts.py",
     ):
         source = Path(__file__).resolve().parents[1] / path
         target = directory / source.name
