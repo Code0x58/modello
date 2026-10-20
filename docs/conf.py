@@ -19,6 +19,7 @@ release = metadata.version("modello")
 version = release
 
 extensions = ["sphinx.ext.autodoc", "sphinx.ext.intersphinx", "sphinxcontrib.mermaid"]
+mermaid_height = "auto"
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 html_theme = "sphinx_rtd_theme"

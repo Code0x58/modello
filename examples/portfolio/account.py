@@ -107,24 +107,26 @@ class PnL:
     @cached_property
     def totals(self) -> NamedMap[Series[datetime]]:
         times = self.income.times
-        total = Profit.over(
+        view = Profit.plan()
+        model = view.source
+        total = view.over(
             times,
-            NamedMap(
-                {
-                    "holding": Series(
-                        times,
-                        tuple(sum(series.values[i] for series in self.holding.values()) for i in range(len(times))),
-                    ),
-                    "trading": Series(
-                        times,
-                        tuple(sum(series.values[i] for series in self.trading.values()) for i in range(len(times))),
-                    ),
-                    "income": self.income,
-                    "fees": self.fees,
-                }
+            Known(
+                model.holding,
+                Series(
+                    times, tuple(sum(series.values[i] for series in self.holding.values()) for i in range(len(times)))
+                ),
             ),
+            Known(
+                model.trading,
+                Series(
+                    times, tuple(sum(series.values[i] for series in self.trading.values()) for i in range(len(times)))
+                ),
+            ),
+            Known(model.income, self.income),
+            Known(model.fees, self.fees),
         )
-        return total
+        return Profit.columns(total)
 
     @property
     def total(self) -> Series[datetime]:
@@ -190,29 +192,27 @@ class AccountPath:
             else:
                 income[index] += event.amount
         zero = Series(axis, (0.0,) * len(axis))
+        view = InstrumentPnL.plan()
+        model = view.source
         reports = NamedMap(
             (
                 name,
-                InstrumentPnL.over(
+                view.over(
                     axis,
-                    NamedMap(
-                        {
-                            "opening_quantity": position.quantity.lag(),
-                            "opening_price": position.price.lag(),
-                            "closing_price": Series(axis, position.price.values[1:]),
-                            "fill_quantity": Series(axis, tuple(fill_quantities[name])),
-                            "fill_notional": Series(axis, tuple(notionals[name])),
-                            "income": zero,
-                            "fees": zero,
-                        }
-                    ),
+                    Known(model.opening_quantity, position.quantity.lag()),
+                    Known(model.opening_price, position.price.lag()),
+                    Known(model.closing_price, Series(axis, position.price.values[1:])),
+                    Known(model.fill_quantity, Series(axis, tuple(fill_quantities[name]))),
+                    Known(model.fill_notional, Series(axis, tuple(notionals[name]))),
+                    Known(model.income, zero),
+                    Known(model.fees, zero),
                 ),
             )
             for name, position in positions.items()
         )
         return PnL(
-            reports.map(lambda report: report["holding"]),
-            reports.map(lambda report: report["trading"]),
+            reports.map(lambda report: report.column(model.holding)),
+            reports.map(lambda report: report.column(model.trading)),
             Series(axis, tuple(income)),
             Series(axis, tuple(fees)),
             Series(axis, tuple(flows)),
@@ -223,17 +223,19 @@ class AccountPath:
         """NAV change minus investment P&L and external flows, ideally zero."""
         pnl = self.pnl
         times = self.nav.times[1:]
-        return AccountPnL.over(
+        view = AccountPnL.plan()
+        model = view.source
+        result = view.over(
             times,
-            NamedMap(
-                {
-                    "opening_nav": self.nav.lag(),
-                    "closing_nav": Series(times, self.nav.values[1:]),
-                    **{name: pnl.totals[name] for name in ("holding", "trading", "income", "fees")},
-                    "external_flows": pnl.external_flows,
-                }
-            ),
-        )["residual"]
+            Known(model.opening_nav, self.nav.lag()),
+            Known(model.closing_nav, Series(times, self.nav.values[1:])),
+            Known(model.holding, pnl.totals["holding"]),
+            Known(model.trading, pnl.totals["trading"]),
+            Known(model.income, pnl.income),
+            Known(model.fees, pnl.fees),
+            Known(model.external_flows, pnl.external_flows),
+        )
+        return result.column(model.residual)
 
     def analytics(
         self, *, periods_per_year: int, risk_free: Series[datetime] | None = None
@@ -293,6 +295,8 @@ class AccountEngine(Generic[_Members]):
         finite(*self._opening_quantities.values(), self._opening_cash)
         self._check_balances(dict(self._opening_quantities), self._opening_cash)
         self._plan = type(account.opening).plan()
+        self._fill_plan = FillPosting.plan()
+        self._capital_plan = CapitalFlow.plan()
 
     @staticmethod
     def _check_balances(quantities: dict[str, float], cash: float) -> None:
@@ -330,32 +334,26 @@ class AccountEngine(Generic[_Members]):
                 event = events[cursor]
                 if isinstance(event, CashFlow):
                     _, before = self._value(event.at, NamedMap(quantities), cash)
-                    changed = CapitalFlow.plan().evaluate(
-                        NamedMap(
-                            {
-                                "opening_cash": cash,
-                                "opening_nav": float(before.nav),
-                                "opening_units": units,
-                                "amount": event.amount,
-                            }
-                        )
+                    capital = self._capital_plan.source
+                    changed = self._capital_plan.evaluate(
+                        Known(capital.before.cash, cash),
+                        Known(capital.before.nav, float(before.nav)),
+                        Known(capital.before.units, units),
+                        Known(capital.flow.amount, event.amount),
                     )
-                    cash, units = changed["closing_cash"], changed["closing_units"]
+                    cash, units = float(changed.after.cash), float(changed.after.units)
                 elif isinstance(event, Fill):
                     if event.member not in quantities:
                         raise ValueError(f"Unknown transaction member {event.member!r}")
-                    changed = FillPosting.plan().evaluate(
-                        NamedMap(
-                            {
-                                "opening_quantity": quantities[event.member],
-                                "opening_cash": cash,
-                                "quantity": event.quantity,
-                                "price": event.price,
-                                "fee": event.fee,
-                            }
-                        )
+                    fill = self._fill_plan.source
+                    posted = self._fill_plan.evaluate(
+                        Known(fill.before.quantity, quantities[event.member]),
+                        Known(fill.before.cash, cash),
+                        Known(fill.fill.quantity, event.quantity),
+                        Known(fill.fill.price, event.price),
+                        Known(fill.fill.fee, event.fee),
                     )
-                    quantities[event.member], cash = changed["closing_quantity"], changed["closing_cash"]
+                    quantities[event.member], cash = float(posted.after.quantity), float(posted.after.cash)
                 elif isinstance(event, Income):
                     if event.member is not None and event.member not in quantities:
                         raise ValueError(f"Unknown income member {event.member!r}")

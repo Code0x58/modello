@@ -53,6 +53,7 @@ def test_signal_targets_and_rebalance_quantities(scenario):
 def test_rebalance_model_can_solve_an_order_or_the_implied_target():
     from sympy import Rational, Symbol
 
+    from examples.model_plan import Known
     from examples.portfolio.signals import Rebalance
 
     forward = Rebalance("target", nav=1000, price=100, opening_quantity=3, target_weight=Rational(1, 2))
@@ -61,5 +62,5 @@ def test_rebalance_model_can_solve_an_order_or_the_implied_target():
     assert fitted.target_weight == Rational(1, 2)
     observed = Symbol("observed_order", real=True)
     view = Rebalance("inverse", nav=1000, price=100, opening_quantity=3, order_quantity=observed)
-    plan = view.compile(inputs=("order_quantity",), outputs=("target_weight",))
-    assert plan.evaluate(NamedMap({"order_quantity": 2}))["target_weight"] == 0.5
+    plan = view.compile()
+    assert float(plan.evaluate(Known(view.order_quantity, 2)).target_weight) == 0.5

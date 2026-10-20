@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import ClassVar
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import utc_time
+from examples.model_plan import Known
 from examples.portfolio.signals import OrderIntent
 from examples.portfolio.sources import Fill, PriceHistory, TransactionLog
 from examples.symbolic import SymbolicModel
@@ -20,9 +20,6 @@ class Shortfall(SymbolicModel):
     fees = InstanceDummy("fees", nonnegative=True)
     opportunity_cost = InstanceDummy("opportunity_cost", real=True)
     implementation_shortfall = delay_cost + trading_cost + fees + opportunity_cost
-
-    inputs: ClassVar[tuple[str, ...]] = ("delay_cost", "trading_cost", "fees", "opportunity_cost")
-    outputs: ClassVar[tuple[str, ...]] = ("implementation_shortfall",)
 
 
 class ExecutionCosts(Shortfall):
@@ -41,26 +38,6 @@ class ExecutionCosts(Shortfall):
     trading_cost = side * (notional - quantity * arrival_price)
     opportunity_cost = remaining * side * (terminal_price - decision_price)
 
-    inputs: ClassVar[tuple[str, ...]] = (
-        "quantity",
-        "remaining",
-        "side",
-        "notional",
-        "model_price",
-        "decision_price",
-        "arrival_price",
-        "terminal_price",
-        "fees",
-    )
-    outputs: ClassVar[tuple[str, ...]] = (
-        "model_slippage_cost",
-        "delay_cost",
-        "trading_cost",
-        "fees",
-        "opportunity_cost",
-        "implementation_shortfall",
-    )
-
 
 class Slippage(SymbolicModel):
     side = InstanceDummy("side", real=True)
@@ -68,17 +45,11 @@ class Slippage(SymbolicModel):
     reference_price = InstanceDummy("reference_price", positive=True)
     bps = side * (execution_price / reference_price - 1) * 10000
 
-    inputs: ClassVar[tuple[str, ...]] = ("side", "execution_price", "reference_price")
-    outputs: ClassVar[tuple[str, ...]] = ("bps",)
-
 
 class CostRate(SymbolicModel):
     cost = InstanceDummy("cost", real=True)
     notional = InstanceDummy("notional", positive=True)
     bps = cost / notional * 10000
-
-    inputs: ClassVar[tuple[str, ...]] = ("cost", "notional")
-    outputs: ClassVar[tuple[str, ...]] = ("bps",)
 
 
 @dataclass(frozen=True)
@@ -104,16 +75,15 @@ class ExecutionBenchmark:
 
     @property
     def implementation_shortfall(self) -> float:
-        return Shortfall.plan().evaluate(
-            NamedMap(
-                {
-                    "delay_cost": self.delay_cost,
-                    "trading_cost": self.trading_cost,
-                    "fees": self.fees,
-                    "opportunity_cost": self.opportunity_cost,
-                }
-            )
-        )["implementation_shortfall"]
+        view = Shortfall.plan()
+        model = view.source
+        result = view.evaluate(
+            Known(model.delay_cost, self.delay_cost),
+            Known(model.trading_cost, self.trading_cost),
+            Known(model.fees, self.fees),
+            Known(model.opportunity_cost, self.opportunity_cost),
+        )
+        return float(result.implementation_shortfall)
 
     @classmethod
     def assess(
@@ -129,6 +99,20 @@ class ExecutionBenchmark:
         at = utc_time(at)
         if len({order.id for order in orders.values()}) != len(orders):
             raise ValueError("Execution analysis needs unique order IDs")
+        costs_view = ExecutionCosts.plan()
+        model = costs_view.source
+        rate_view = CostRate.plan()
+        rate = rate_view.source
+        slippage_view = Slippage.plan()
+        slippage = slippage_view.source
+
+        def slippage_bps(side: float, price: float, reference: float) -> float:
+            result = slippage_view.evaluate(
+                Known(slippage.side, side),
+                Known(slippage.execution_price, price),
+                Known(slippage.reference_price, reference),
+            )
+            return float(result.bps)
 
         def benchmark(order: OrderIntent) -> ExecutionBenchmark:
             if at < order.arrival_at:
@@ -157,22 +141,27 @@ class ExecutionBenchmark:
             fees = sum(fill.fee for fill in fills)
             execution_vwap = notional / quantity if quantity else None
             market_vwap = history.vwap(order.arrival_at, at)
-            costs = ExecutionCosts.plan().evaluate(
-                NamedMap(
-                    {
-                        "quantity": quantity,
-                        "remaining": remaining,
-                        "side": side,
-                        "notional": notional,
-                        "model_price": order.model_price,
-                        "decision_price": decision,
-                        "arrival_price": arrival,
-                        "terminal_price": terminal,
-                        "fees": fees,
-                    }
-                )
+            costs = costs_view.evaluate(
+                Known(model.quantity, quantity),
+                Known(model.remaining, remaining),
+                Known(model.side, side),
+                Known(model.notional, notional),
+                Known(model.model_price, order.model_price),
+                Known(model.decision_price, decision),
+                Known(model.arrival_price, arrival),
+                Known(model.terminal_price, terminal),
+                Known(model.fees, fees),
             )
-            model_cost = costs["model_slippage_cost"]
+            model_cost = float(costs.model_slippage_cost)
+            model_bps = (
+                float(
+                    rate_view.evaluate(
+                        Known(rate.cost, model_cost), Known(rate.notional, quantity * order.model_price)
+                    ).bps
+                )
+                if quantity
+                else None
+            )
             return cls(
                 order,
                 at,
@@ -183,25 +172,15 @@ class ExecutionBenchmark:
                 decision,
                 arrival,
                 model_cost,
-                CostRate.plan().evaluate(NamedMap({"cost": model_cost, "notional": quantity * order.model_price}))[
-                    "bps"
-                ]
-                if quantity
-                else None,
-                Slippage.plan().evaluate(
-                    NamedMap({"side": side, "execution_price": execution_vwap, "reference_price": arrival})
-                )["bps"]
-                if execution_vwap is not None
-                else None,
-                Slippage.plan().evaluate(
-                    NamedMap({"side": side, "execution_price": execution_vwap, "reference_price": market_vwap})
-                )["bps"]
+                model_bps,
+                slippage_bps(side, execution_vwap, arrival) if execution_vwap is not None else None,
+                slippage_bps(side, execution_vwap, market_vwap)
                 if execution_vwap is not None and market_vwap is not None
                 else None,
-                costs["delay_cost"],
-                costs["trading_cost"],
+                float(costs.delay_cost),
+                float(costs.trading_cost),
                 fees,
-                costs["opportunity_cost"],
+                float(costs.opportunity_cost),
             )
 
         return orders.map(benchmark)

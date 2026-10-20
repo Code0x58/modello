@@ -54,6 +54,12 @@ def test_cash_flow_valuation_does_not_depend_on_the_output_grid(engine, ledger):
     assert refined.reconciliation.values == pytest.approx((0,) * (len(more_times) - 1), abs=1e-10)
 
 
+def test_replaying_postings_reuses_compilation_without_symbolic_solves(engine, ledger, monkeypatch):
+    baseline = engine.evaluate(ledger, TIMES)
+    monkeypatch.setattr("modello.solve", lambda *args, **kwargs: pytest.fail("Repeated symbolic solve"))
+    assert engine.evaluate(ledger, TIMES).snapshots == baseline.snapshots
+
+
 def test_empty_equity_account_flows_are_not_investment_returns():
     class Empty(EquityHoldings):
         pass

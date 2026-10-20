@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from functools import cache
-from typing import Any, Generic, TypeVar, cast
+from typing import Any, Generic, TypeVar
 
 from sympy import Expr, Symbol
 
@@ -19,14 +18,15 @@ from examples.portfolio.basket import EquityBasket, EquityHolding, EquityHolding
 from examples.portfolio.models import Equity, EquityPrice, EquityPrices, USDCash
 from examples.portfolio.providers import EquityProvider
 from examples.portfolio.sources import PriceHistory
-from modello import Modello, SymbolicScalar, component
+from examples.symbolic import SymbolicModel
+from modello import SymbolicScalar, component
 
 _Members = TypeVar("_Members", bound=EquityHoldings)
 _Declared = TypeVar("_Declared", bound=EquityHoldings)
 _Portfolio = TypeVar("_Portfolio", bound="NamedPortfolio[Any]")
 
 
-class NamedPortfolio(Modello, Generic[_Members]):
+class NamedPortfolio(SymbolicModel, Generic[_Members]):
     """Common queries for portfolios built from an equity member declaration."""
 
     basket: EquityBasket[_Members]
@@ -61,11 +61,6 @@ class NamedPortfolio(Modello, Generic[_Members]):
         """Compile a complete typed model case, using its remaining symbolic fields."""
         return ModelPlan(self, inputs=inputs, properties=(*self.weights.values(), self.cash_weight))
 
-    @classmethod
-    def plan(cls: type[_Portfolio]) -> ModelPlan[_Portfolio]:
-        """Cache an unbound view for varying quantities, prices, and cash."""
-        return cast(ModelPlan[_Portfolio], _portfolio_plan(cls))
-
     @staticmethod
     @cached_definition
     def define(basket: type[EquityBasket[_Declared]]) -> type[NamedPortfolio[_Declared]]:
@@ -86,11 +81,6 @@ class NamedPortfolio(Modello, Generic[_Members]):
     def load_market(self) -> NamedMap[PriceHistory]:
         """Explicitly acquire the configured market data for this portfolio."""
         return load_providers(self.providers)
-
-
-@cache
-def _portfolio_plan(model: type[NamedPortfolio[Any]]) -> ModelPlan[NamedPortfolio[Any]]:
-    return model("valuation").compile()
 
 
 @dataclass(frozen=True)

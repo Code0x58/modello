@@ -126,6 +126,7 @@ def check_wheel(
         "tests/examples/compute/test_series.py",
         "tests/examples/compute/test_providers.py",
         "tests/examples/portfolio/test_valuation.py",
+        "tests/examples/portfolio/test_postings.py",
         "tests/examples/portfolio/optimal_execution/test_model.py",
     ):
         source = Path(__file__).resolve().parents[1] / path

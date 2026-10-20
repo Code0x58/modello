@@ -37,7 +37,7 @@ def test_reporting_models_support_symbolic_sensitivities_and_inverse_reconciliat
 def test_profit_model_compiles_a_fitted_fill_notional_view():
     from sympy import Symbol
 
-    from examples.compute.named_map import NamedMap
+    from examples.model_plan import Known
 
     observed = Symbol("observed_net", real=True)
     fitted = InstrumentPnL(
@@ -50,5 +50,5 @@ def test_profit_model_compiles_a_fitted_fill_notional_view():
         fees=1,
         net=observed,
     )
-    plan = fitted.compile(inputs=("net",), outputs=("fill_notional",))
-    assert plan.evaluate(NamedMap({"net": 59}))["fill_notional"] == 200
+    plan = fitted.compile()
+    assert float(plan.evaluate(Known(fitted.net, 59)).fill_notional) == 200

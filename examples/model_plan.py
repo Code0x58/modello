@@ -46,6 +46,26 @@ def _get_field(model: Modello, path: FieldPath) -> Expr:
     return value
 
 
+def _check_column(symbol: Expr, values: tuple[float, ...]) -> None:
+    """Check real numeric columns without materializing a model per observation."""
+    if symbol.is_positive:
+        invalid = any(value <= 0 for value in values)
+    elif symbol.is_nonnegative:
+        invalid = any(value < 0 for value in values)
+    elif symbol.is_negative:
+        invalid = any(value >= 0 for value in values)
+    elif symbol.is_nonpositive:
+        invalid = any(value > 0 for value in values)
+    else:
+        invalid = False
+    if symbol.is_nonzero and any(value == 0 for value in values):
+        invalid = True
+    if symbol.is_integer and any(not value.is_integer() for value in values):
+        invalid = True
+    if invalid:
+        raise ValueError("A column violates its model assumptions")
+
+
 def _copy_model(model: Model, values: dict[FieldPath, Expr]) -> Model:
     """Populate a copy without solving again or changing the source case.
 
@@ -135,31 +155,25 @@ class ModelPlan(Generic[Model]):
 
     def evaluate(self, *knowns: Known[float]) -> Model:
         """Evaluate once and return a fresh numeric case with the same component types."""
-        values = self._plan.evaluate(self._align(knowns))
+        inputs = self._align(knowns)
+        try:
+            values = self._plan.evaluate(inputs)
+        except ArithmeticError as error:
+            raise ValueError("Values violate model assumptions or leave expressions undefined") from error
         return self._materialize(tuple(values.values()))
 
     def over(self, times: tuple[Time, ...], *knowns: Known[Series[Time]]) -> ModelPath[Model, Time]:
         """Evaluate aligned columns once; materialize model cases only when requested."""
         inputs = self._align(knowns)
         for name, symbol in self._input_columns.items():
-            values = inputs[name].values
-            if symbol.is_positive:
-                invalid = any(value <= 0 for value in values)
-            elif symbol.is_nonnegative:
-                invalid = any(value < 0 for value in values)
-            elif symbol.is_negative:
-                invalid = any(value >= 0 for value in values)
-            elif symbol.is_nonpositive:
-                invalid = any(value > 0 for value in values)
-            else:
-                invalid = False
-            if symbol.is_nonzero and any(value == 0 for value in values):
-                invalid = True
-            if symbol.is_integer and any(not value.is_integer() for value in values):
-                invalid = True
-            if invalid:
-                raise ValueError("An input column violates its model assumptions")
-        outputs = self._plan.over(times, inputs)
+            _check_column(symbol, inputs[name].values)
+        try:
+            outputs = self._plan.over(times, inputs)
+        except ArithmeticError as error:
+            raise ValueError("Values violate model assumptions or leave expressions undefined") from error
+        columns = dict(zip(self._outputs, outputs.values(), strict=True))
+        for path, expression in zip(self._paths, self._expressions, strict=True):
+            _check_column(type(self.source)._modello_fields[path], columns[expression].values)
         return ModelPath(self, times, inputs, tuple(outputs.values()))
 
     def walk(self, result: Model | None = None) -> Iterator[ModelField]:

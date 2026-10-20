@@ -40,7 +40,6 @@ from which the later views will be derived:
 
 .. code-block:: python
 
-   from typing import ClassVar
    from modello import InstanceDummy
    from examples.symbolic import SymbolicModel
 

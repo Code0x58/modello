@@ -141,8 +141,19 @@ optional at this stage; we will populate them below:
 
 The ledger adapter maintains ``(member, source)`` quantities. For each interval
 it records opening quantities/prices, signed fill quantities/notionals, closing
-prices, income, and fees. Those are precisely ``InstrumentPnL``'s inputs from
-chapter 5. The compiled model supplies each source's profit columns.
+prices, income, and fees in typed interval records. Those are precisely
+``InstrumentPnL``'s inputs from chapter 5. ``Known`` bindings connect each column
+to its actual model field, and the compiled view retains the full model schema.
+
+Project the calculated profit fields into the labelled columns used by tables:
+
+.. literalinclude:: ../../../examples/portfolio/pnl.py
+   :pyobject: Profit.columns
+   :dedent: 4
+   :language: python
+
+The labels belong to the report. Model evaluation and field selection use the
+declared component and scalar references.
 
 To add instrument and account columns, use an axis-checked reduction:
 

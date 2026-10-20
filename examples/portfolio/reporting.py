@@ -7,8 +7,8 @@ from datetime import datetime
 from math import isclose, isfinite
 
 from examples.compute.named_map import NamedMap
-from examples.compute.scalar_plan import ScalarPlan
 from examples.compute.series import Series
+from examples.model_plan import Known, ModelPlan
 from examples.portfolio.account import AccountPath, PositionHistory
 from examples.portfolio.performance import Comparison
 from examples.portfolio.pnl import AccountPnL, InstrumentPnL, Profit
@@ -49,6 +49,19 @@ class UtilityReport:
     values: NamedMap[Series[datetime]]
 
 
+@dataclass
+class _InstrumentInterval:
+    """Mutable ledger aggregates; symbolic P&L remains on InstrumentPnL."""
+
+    opening_quantity: float
+    opening_price: float
+    closing_price: float
+    fill_quantity: float = 0.0
+    fill_notional: float = 0.0
+    income: float = 0.0
+    fees: float = 0.0
+
+
 @dataclass(frozen=True)
 class AccountReport:
     """Typed, inspectable reporting layers; every monetary attribution adds back to the account."""
@@ -60,8 +73,8 @@ class AccountReport:
     signals: NamedMap[NamedMap[Series[datetime]]]
     attributions: NamedMap[OrderAttribution]
     utilities: NamedMap[UtilityReport]
-    instrument_plan: ScalarPlan
-    account_plan: ScalarPlan
+    instrument_plan: ModelPlan[InstrumentPnL]
+    account_plan: ModelPlan[AccountPnL]
 
     def to_dict(self) -> dict[str, object]:
         from examples.portfolio.report_html import report_data
@@ -121,23 +134,17 @@ class AccountReport:
             for source in sources
         }
         quantity_paths = {key: [value] for key, value in quantities.items()}
-        columns: dict[tuple[str, str], dict[str, list[float]]] = {
-            key: {name: [] for name in instrument_plan.inputs} for key in quantities
-        }
+        columns: dict[tuple[str, str], list[_InstrumentInterval]] = {key: [] for key in quantities}
         cash_income = [0.0] * len(axis)
         filled = {key: 0.0 for key in attributions}
         cursor = 0
         for i, end in enumerate(axis):
             rows = {
-                (member, source): {
-                    "opening_quantity": quantities[member, source],
-                    "opening_price": path.positions[member].price.values[i],
-                    "closing_price": path.positions[member].price.values[i + 1],
-                    "fill_quantity": 0.0,
-                    "fill_notional": 0.0,
-                    "income": 0.0,
-                    "fees": 0.0,
-                }
+                (member, source): _InstrumentInterval(
+                    quantities[member, source],
+                    path.positions[member].price.values[i],
+                    path.positions[member].price.values[i + 1],
+                )
                 for member in members
                 for source in sources
             }
@@ -165,9 +172,9 @@ class AccountReport:
                     for source, weight in weights.items():
                         row = rows[event.member, source]
                         quantity = event.quantity * weight
-                        row["fill_quantity"] += quantity
-                        row["fill_notional"] += quantity * event.price
-                        row["fees"] += event.fee * weight
+                        row.fill_quantity += quantity
+                        row.fill_notional += quantity * event.price
+                        row.fees += event.fee * weight
                         quantities[event.member, source] += quantity
                 elif isinstance(event, Income):
                     if event.member is None:
@@ -175,31 +182,32 @@ class AccountReport:
                         continue
                     held = sum(quantities[event.member, source] for source in sources)
                     if abs(held) <= 1e-10:
-                        rows[event.member, "unattributed"]["income"] += event.amount
+                        rows[event.member, "unattributed"].income += event.amount
                     else:
                         for source in sources:
-                            rows[event.member, source]["income"] += (
-                                event.amount * quantities[event.member, source] / held
-                            )
+                            rows[event.member, source].income += event.amount * quantities[event.member, source] / held
             for key, row in rows.items():
-                for name, value in row.items():
-                    columns[key][name].append(value)
+                columns[key].append(row)
                 quantity_paths[key].append(quantities[key])
+
+        model = instrument_plan.source
+
+        def profit(rows: list[_InstrumentInterval]) -> NamedMap[Series[datetime]]:
+            result = instrument_plan.over(
+                axis,
+                Known(model.opening_quantity, Series(axis, tuple(row.opening_quantity for row in rows))),
+                Known(model.opening_price, Series(axis, tuple(row.opening_price for row in rows))),
+                Known(model.closing_price, Series(axis, tuple(row.closing_price for row in rows))),
+                Known(model.fill_quantity, Series(axis, tuple(row.fill_quantity for row in rows))),
+                Known(model.fill_notional, Series(axis, tuple(row.fill_notional for row in rows))),
+                Known(model.income, Series(axis, tuple(row.income for row in rows))),
+                Known(model.fees, Series(axis, tuple(row.fees for row in rows))),
+            )
+            return Profit.columns(result)
 
         reports = {}
         for member in members:
-            by_source = NamedMap(
-                (
-                    source,
-                    instrument_plan.over(
-                        axis,
-                        NamedMap(
-                            (name, Series(axis, tuple(values))) for name, values in columns[member, source].items()
-                        ),
-                    ),
-                )
-                for source in sources
-            )
+            by_source = NamedMap((source, profit(columns[member, source])) for source in sources)
             reports[member] = InstrumentReport(
                 path.positions[member],
                 Profit.sum(axis, tuple(by_source.values())),
@@ -207,15 +215,17 @@ class AccountReport:
                 NamedMap((source, Series(times, tuple(quantity_paths[member, source]))) for source in sources),
             )
         instruments = NamedMap(reports)
-        cash = Profit.plan().over(
+        cash_plan = Profit.plan()
+        cash_model = cash_plan.source
+        zero = Series(axis, (0.0,) * len(axis))
+        cash_result = cash_plan.over(
             axis,
-            NamedMap(
-                {
-                    **{name: Series(axis, (0.0,) * len(axis)) for name in ("holding", "trading", "fees")},
-                    "income": Series(axis, tuple(cash_income)),
-                }
-            ),
+            Known(cash_model.holding, zero),
+            Known(cash_model.trading, zero),
+            Known(cash_model.fees, zero),
+            Known(cash_model.income, Series(axis, tuple(cash_income))),
         )
+        cash = Profit.columns(cash_result)
         source_reports = NamedMap(
             (
                 source,
@@ -228,16 +238,24 @@ class AccountReport:
             for source in sources
         )
         totals = Profit.sum(axis, tuple(source_reports.values()))
-        account = account_plan.over(
+        account_model = account_plan.source
+        result = account_plan.over(
             axis,
-            NamedMap(
-                {
-                    **{name: totals[name] for name in ("holding", "trading", "income", "fees")},
-                    "opening_nav": path.nav.lag(),
-                    "closing_nav": Series(axis, path.nav.values[1:]),
-                    "external_flows": path.pnl.external_flows,
-                }
-            ),
+            Known(account_model.holding, totals["holding"]),
+            Known(account_model.trading, totals["trading"]),
+            Known(account_model.income, totals["income"]),
+            Known(account_model.fees, totals["fees"]),
+            Known(account_model.opening_nav, path.nav.lag()),
+            Known(account_model.closing_nav, Series(axis, path.nav.values[1:])),
+            Known(account_model.external_flows, path.pnl.external_flows),
+        )
+        account = NamedMap(
+            {
+                **Profit.columns(result),
+                "nav_change": result.column(account_model.nav_change),
+                "external_flows": result.column(account_model.external_flows),
+                "residual": result.column(account_model.residual),
+            }
         )
         if any(abs(value) > 1e-8 for value in account["residual"].values):
             raise ValueError("Attributed investment P&L and external capital must reconcile to NAV")

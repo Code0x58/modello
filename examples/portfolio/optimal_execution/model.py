@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cached_property
-from typing import ClassVar
 
 from sympy import (
     Eq,
@@ -50,9 +49,6 @@ class ExecutionDensity(SymbolicModel):
     variance = sigma**2 * inventory**2
     risk = gamma * variance / 2
     objective = impact + risk
-
-    inputs: ClassVar[tuple[str, ...]] = ("inventory", "speed", "volume", "eta", "sigma", "gamma")
-    outputs: ClassVar[tuple[str, ...]] = ("impact", "variance", "risk", "objective")
 
     def lagrangian(self, time: Symbol, remaining: Expr) -> Expr:
         """Lift the resolved scalar model to q(t), with selling speed -q'(t)."""
@@ -162,7 +158,6 @@ class CrowdedImpact(ExecutionDensity):
         ExecutionDensity.eta * ExecutionDensity.speed**2 / ExecutionDensity.volume
         + beta * ExecutionDensity.speed**4 / ExecutionDensity.volume**3
     )
-    inputs: ClassVar[tuple[str, ...]] = (*ExecutionDensity.inputs, "beta")
 
 
 @dataclass(frozen=True)

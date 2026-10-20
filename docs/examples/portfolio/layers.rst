@@ -14,7 +14,7 @@ Where each layer lives
 
    flowchart TD
        core[Modello scalar models] --> declarations[Named components and bindings]
-       declarations --> plan[Compiled scalar views]
+       declarations --> plan[Compiled model views]
        providers[Typed providers] --> observations[Observed series and external ledger]
        observations --> replay[Chronological account replay]
        plan --> replay
@@ -51,7 +51,7 @@ Where each layer lives
      - Shared definitions, contextual holding queries, and portfolio plans.
    * - Temporal accounting
      - ``examples.portfolio.sources``, ``postings``, ``account``, ``pnl``
-     - External records, posting equations, unitized accounts, and reconciliation.
+     - External records, typed state transitions, unitized accounts, and reconciliation.
    * - Decisions and execution
      - ``examples.portfolio.signals``, ``execution``
      - Trailing features, allocation policy, orders, slippage, and shortfall.
@@ -171,13 +171,13 @@ One exploratory run on Python 3.14.8 with SymPy 1.14.0 gave rounded medians:
    * - Work
      - Time
    * - Construct the symbolic portfolio
-     - 141 ms
+     - 147 ms
    * - Compile its numerical calculation
-     - 2.7 ms
+     - 3.0 ms
    * - Evaluate complete paths for 10,000 observations
-     - 75 ms
+     - 91 ms
    * - Construct and solve a portfolio for each of 10 observations
-     - 1,329 ms
+     - 1,376 ms
 
 Data creation and risk analytics are outside these timings. The benchmark warms
 up first, then measures five batches, or three for the slower baseline. Its
@@ -187,7 +187,8 @@ timings, not throughput guarantees.
 
 Vector evaluation retains the model schema and columns without creating a
 model instance at every observation. A typed numeric case is materialized only
-when requested with ``ModelPath.at``.
+when requested with ``ModelPath.at``. Both input and calculated columns are
+checked against the model's numeric sign and integer assumptions.
 
 Boundaries left explicit
 ------------------------

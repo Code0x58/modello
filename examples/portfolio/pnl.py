@@ -1,14 +1,16 @@
 """The P&L equations shared by account valuation and attribution reports."""
 
 from datetime import datetime
-from typing import ClassVar
+from typing import TypeVar
 
 from examples.compute.named_map import NamedMap
-from examples.compute.series import Series
+from examples.compute.series import Series, Time
+from examples.model_plan import ModelPath
 from examples.symbolic import SymbolicModel
 from modello import InstanceDummy
 
 PROFIT_FIELDS = ("holding", "trading", "income", "fees", "gross", "net")
+_Profit = TypeVar("_Profit", bound="Profit")
 
 
 class Profit(SymbolicModel):
@@ -21,8 +23,20 @@ class Profit(SymbolicModel):
     gross = holding + trading + income
     net = gross - fees
 
-    inputs: ClassVar[tuple[str, ...]] = ("holding", "trading", "income", "fees")
-    outputs: ClassVar[tuple[str, ...]] = PROFIT_FIELDS
+    @staticmethod
+    def columns(path: ModelPath[_Profit, Time]) -> NamedMap[Series[Time]]:
+        """Project the typed calculation to the six columns of a profit table."""
+        model = path.view.source
+        return NamedMap(
+            {
+                "holding": path.column(model.holding),
+                "trading": path.column(model.trading),
+                "income": path.column(model.income),
+                "fees": path.column(model.fees),
+                "gross": path.column(model.gross),
+                "net": path.column(model.net),
+            }
+        )
 
     @classmethod
     def sum(
@@ -50,16 +64,6 @@ class InstrumentPnL(Profit):
     holding = opening_quantity * (closing_price - opening_price)
     trading = fill_quantity * closing_price - fill_notional
 
-    inputs: ClassVar[tuple[str, ...]] = (
-        "opening_quantity",
-        "opening_price",
-        "closing_price",
-        "fill_quantity",
-        "fill_notional",
-        "income",
-        "fees",
-    )
-
 
 class AccountPnL(Profit):
     """Relate investment profit and external capital to account NAV changes."""
@@ -69,14 +73,3 @@ class AccountPnL(Profit):
     external_flows = InstanceDummy("external_flows", real=True)
     nav_change = closing_nav - opening_nav
     residual = nav_change - Profit.net - external_flows
-
-    inputs: ClassVar[tuple[str, ...]] = (
-        "holding",
-        "trading",
-        "income",
-        "fees",
-        "opening_nav",
-        "closing_nav",
-        "external_flows",
-    )
-    outputs: ClassVar[tuple[str, ...]] = (*PROFIT_FIELDS, "nav_change", "external_flows", "residual")

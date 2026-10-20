@@ -298,9 +298,11 @@ def render_html(report: AccountReport, comparison: Comparison[datetime], *, cont
         ("Instrument", report.instrument_plan, ("holding", "trading", "net")),
         ("Account", report.account_plan, ("net", "residual")),
     ):
-        replacements = {symbol: Symbol(name) for name, symbol in plan.inputs.items()}
+        replacements = {
+            field.expression: Symbol(".".join(field.path)) for field in plan.walk() if field.role == "input"
+        }
         for name in fields:
-            rows.append((f"{label} / {name}", str(plan.expressions[name].xreplace(replacements))))
+            rows.append((f"{label} / {name}", str(getattr(plan.source, name).xreplace(replacements))))
     for name, utility in report.utilities.items():
         rows.extend(
             (f"{name} / {field}", str(expression)) for field, expression in utility.definition.expressions.items()

@@ -206,21 +206,21 @@ values, and recomputes cached properties. It invokes no symbolic solver.
 
    </details>
 
-Some interval-report adapters need selected numeric columns rather than a
-complete numeric model. ``examples/symbolic.py`` supplies a small
-``SymbolicModel`` helper for those named scalar views. Its default ``inputs``
-and ``outputs`` are tuples of model field names:
+Reuse a model's compiled view
+-----------------------------
 
-.. raw:: html
-
-   <details><summary>Inspect the selected-scalar-view helper used by later reports</summary>
+Later models will use a small ``SymbolicModel`` subclass of ``Modello``. It
+provides ``case.compile()`` for a bound or inverse case and ``Model.plan()``
+for a cached, unbound case. Both return the same ``ModelPlan`` we just built:
 
 .. literalinclude:: ../../../examples/symbolic.py
    :language: python
 
-.. raw:: html
-
-   </details>
+Independent fields are inferred from the resolved case. Every declared field
+and component remains in the result; a numerical input can be on either side
+of an equation. Additional input selection, when needed, uses actual field
+references. A report can project chosen fields into labelled table columns
+after the calculation.
 
 We can now evaluate a model on data, but we have entered those prices by hand.
 The :doc:`next chapter <providers>` defines the data contract, acquires prices,
