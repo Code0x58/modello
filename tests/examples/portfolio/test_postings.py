@@ -9,8 +9,8 @@ from sympy import Symbol, diff, simplify
 
 from examples.compute.series import Series
 from examples.model_plan import Known, ModelPath, ModelPlan
+from examples.portfolio.models import Quote
 from examples.portfolio.postings import AccountState, CapitalFlow, CashMovement, Execution, FillPosting, HoldingState
-from examples.symbolic import SymbolicModel
 from modello import component
 
 
@@ -83,38 +83,97 @@ def test_compiled_transitions_keep_real_component_paths_and_do_not_solve_again(m
     assert diff(source.after.cash, source.fill.quantity) == -source.fill.price
 
 
-class TwoFills(SymbolicModel):
-    first = component(FillPosting)
-    second = component(FillPosting)
+class FollowingFill(FillPosting):
+    before = component(FillPosting)
 
-    quantity = second.before.quantity
-    quantity = first.after.quantity
-    cash = second.before.cash
-    cash = first.after.cash
+
+class QuotedExecution(Execution):
+    quote = component(Quote)
+    price = quote.price
+
+
+class Reinvestment(FillPosting):
+    before = component(FollowingFill)
+    fill = component(QuotedExecution)
+
+
+class FollowingCapitalFlow(CapitalFlow):
+    before = component(CapitalFlow)
 
 
 def test_connected_states_support_joint_inference_and_compiled_observation_paths():
     observed_cash = Symbol("observed_cash", real=True)
-    source = TwoFills(
+    source = FollowingFill(
         "observed_chain",
-        first=FillPosting(
+        before=FillPosting(
             "buy", before=HoldingState("start", quantity=3, cash=1000), fill=Execution("buy", quantity=2, fee=1)
         ),
-        second=FillPosting(
-            "sell", fill=Execution("sell", quantity=-1, price=110, fee=1), after=HoldingState("end", cash=observed_cash)
-        ),
+        fill=Execution("sell", quantity=-1, price=110, fee=1),
+        after=HoldingState("end", cash=observed_cash),
     )
-    assert simplify(source.first.fill.price - (1108 - observed_cash) / 2) == 0
-    assert source.first.after.cash == source.second.before.cash
+    assert simplify(source.before.fill.price - (1108 - observed_cash) / 2) == 0
+    assert source.before.cash == source.before.after.cash
     times = (date(2026, 1, 1), date(2026, 1, 2))
-    path = source.compile().over(times, Known(source.second.after.cash, Series(times, (908, 906))))
-    assert path.column(source.first.fill.price).values == (100, 101)
-    assert path.column(source.second.after.quantity).values == (4, 4)
-    assert type(path.at(0)) is TwoFills
-    assert float(path.at(0).second.before.cash) == 799
+    path = source.compile().over(times, Known(source.cash, Series(times, (908, 906))))
+    assert path.column(source.before.fill.price).values == (100, 101)
+    assert path.column(source.quantity).values == (4, 4)
+    assert type(path.at(0)) is FollowingFill
+    assert type(path.at(0).before) is FillPosting
+    assert isinstance(path.at(0), HoldingState)
+    assert float(path.at(0).before.cash) == 799
     # The observation axis compares alternative cases; the two child models
     # describe chronological steps within each case.
-    assert float(path.at(1).second.before.cash) == 797
+    assert float(path.at(1).before.cash) == 797
+
+
+def test_a_deeper_operation_tree_can_infer_a_quote_inside_its_execution_branch():
+    observed_cash = Symbol("closing_cash", real=True)
+    source = Reinvestment(
+        "reinvest",
+        before=FollowingFill(
+            "sale",
+            before=FillPosting(
+                "buy",
+                before=HoldingState("opening", quantity=3, cash=1000),
+                fill=Execution("buy", quantity=2, price=100, fee=1),
+            ),
+            fill=Execution("sell", quantity=-1, price=110, fee=1),
+        ),
+        fill=QuotedExecution("reinvest", quantity=1, fee=1),
+        cash=observed_cash,
+    )
+    view = source.compile()
+    result = view.evaluate(Known(source.cash, 817))
+    assert type(result.before) is FollowingFill
+    assert type(result.before.before) is FillPosting
+    assert type(result.fill) is QuotedExecution
+    assert type(result.fill.quote) is Quote
+    assert float(result.quantity) == 5
+    assert float(result.fill.quote.price) == 90
+    assert float(result.before.cash) == 908
+    assert float(result.before.before.cash) == 799
+    fields = {field.path: field for field in view.walk(result)}
+    assert fields[("fill", "quote", "price")].value == 90
+    assert source.fill.quote.price.free_symbols
+
+
+def test_capital_movements_also_nest_as_account_states():
+    flow = FollowingCapitalFlow(
+        "second_deposit",
+        before=CapitalFlow(
+            "first_deposit",
+            before=AccountState("opening", cash=1000, nav=2500, units=25),
+            flow=CashMovement("first", amount=500),
+        ),
+        cash=1600,
+    )
+    assert isinstance(flow, AccountState)
+    assert flow.before.cash == 1500
+    assert flow.flow.amount == 100
+    assert flow.cash == flow.after.cash == 1600
+    assert flow.nav == 3100
+    assert flow.units == 31
+    assert flow.unit_price == flow.before.unit_price == 100
 
 
 def test_conflicting_states_are_rejected():
@@ -150,10 +209,19 @@ if TYPE_CHECKING:
         view: ModelPlan[FillPosting] = source.compile()
         cached: ModelPlan[FillPosting] = FillPosting.plan()
         result: FillPosting = view.evaluate(Known(source.fill.price, 100.0))
-        state: HoldingState = result.after
+        state: HoldingState = result
         execution: Execution = result.fill
         path: ModelPath[FillPosting, date] = view.over(times, Known(source.fill.price, values))
         assert state and execution and path and cached
         _wrong: AccountState = result.after  # type: ignore[assignment]
         _wrong_result: Execution = view.evaluate(Known(source.fill.price, 100.0))  # type: ignore[assignment]
         view.evaluate(Known("fill.price", 100.0))  # type: ignore[arg-type]
+
+    def typed_nested_states(fill: Reinvestment, flow: FollowingCapitalFlow) -> None:
+        state: HoldingState = fill
+        previous: FollowingFill = fill.before
+        earlier: FillPosting = previous.before
+        quote: Quote = fill.fill.quote
+        account: AccountState = flow
+        previous_flow: CapitalFlow = flow.before
+        assert state and earlier and quote and account and previous_flow

@@ -22,8 +22,8 @@ class Execution(Trade):
     fee = InstanceDummy("fee", nonnegative=True)
 
 
-class FillPosting(SymbolicModel):
-    """Relate a holding before and after an execution, in either solving direction."""
+class FillPosting(HoldingState, SymbolicModel):
+    """A holding state resulting from a prior state and an execution."""
 
     before = component(HoldingState)
     fill = component(Execution)
@@ -49,8 +49,8 @@ class CashMovement(Modello):
     amount = InstanceDummy("amount", real=True)
 
 
-class CapitalFlow(SymbolicModel):
-    """Issue or redeem account units at the pre-flow price, preserving unit NAV."""
+class CapitalFlow(AccountState, SymbolicModel):
+    """An account state after issuing or redeeming units at the pre-flow price."""
 
     before = component(AccountState)
     flow = component(CashMovement)

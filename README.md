@@ -35,7 +35,7 @@ class Execution(Modello):
     notional = quantity * price
 
 
-class FillPosting(Modello):
+class FillPosting(HoldingState):
     before = component(HoldingState)
     fill = component(Execution)
     after = component(HoldingState)
@@ -80,8 +80,9 @@ Components are solved together, so known values can determine unknowns anywhere
 in the hierarchy. `before` and `after` describe economic order; the values you
 supply determine the solving direction. The original instances stay unchanged,
 and the completed components retain their model types for editors, traversal,
-and further composition. Another model can connect one posting's closing state
-to the next posting's opening state using the very same pattern.
+and further composition. A posting is itself a holding state: its `quantity`
+and `cash` describe the result. Declare another posting as its `before`
+component to nest the operations and retain their complete equations.
 
 Follow the [nested-model guide](https://modello.readthedocs.io/en/latest/nesting.html)
 for more examples of composition and symbolic inputs. The

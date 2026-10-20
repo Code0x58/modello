@@ -147,40 +147,39 @@ of the same holding and cash account can share the intermediate state:
        middle --> second["Second fill"]
        second --> next["State T+1"]
 
-Declare the two transitions and equate their intermediate quantities and cash.
-As with basket composition, the outer model supplies only the connecting
-equalities; each child owns its economic equations:
+``FillPosting`` is itself a ``HoldingState``: it is the typed operation
+``(HoldingState, Execution) -> HoldingState``. Its ``quantity`` and ``cash`` alias
+the closing state's fields. To apply another fill, specialise the same operation
+with a previous posting as its state input:
 
->>> from examples.symbolic import SymbolicModel
 >>> from modello import component
->>> class TwoFills(SymbolicModel):
-...     first = component(FillPosting)
-...     second = component(FillPosting)
-...     quantity = second.before.quantity
-...     quantity = first.after.quantity
-...     cash = second.before.cash
-...     cash = first.after.cash
+>>> class FollowingFill(FillPosting):
+...     before = component(FillPosting)
 
 Reuse our known buy as the first fill. For the second, observe the cash after
-selling one share and leave its price unknown. The joint model connects the
-first fill's closing cash to the second fill's opening cash and infers the
-sale price:
+selling one share and leave its price unknown. The nested component retains the
+buy's complete equations. Its resulting state supplies the sale's opening
+state, so the joint model infers the sale price:
 
->>> pair = TwoFills(
+>>> sale = FollowingFill(
 ...     "buy_then_sell",
-...     first=posted,
-...     second=FillPosting(
-...         "sale",
-...         fill=Execution("sale", quantity=-1, fee=1),
-...         after=HoldingState("observed", cash=908),
-...     ),
+...     before=posted,
+...     fill=Execution("sale", quantity=-1, fee=1),
+...     after=HoldingState("observed", cash=908),
 ... )
->>> pair.second.before.quantity, pair.second.before.cash
+>>> sale.before.quantity, sale.before.cash
 (5, 799)
->>> pair.second.fill.price, pair.second.after.quantity
+>>> sale.fill.price, sale.quantity
 (110, 4)
 
-The links identify state at event boundaries. The account adapter below supplies
+No additional balance equations are needed. Nest this operation again for a
+longer chain; other typed operands may themselves be composed models, giving a
+tree. ``CapitalFlow`` similarly returns an ``AccountState``. The declared
+component type determines which upstream model structure is retained: use
+``component(FillPosting)`` here to keep the first fill available for traversal
+and joint inference. Supplying only ``posted.after`` provides its state view.
+
+These states identify event boundaries. The account adapter below supplies
 event order, economic timestamps, and knowledge horizons. An observation axis
 can evaluate many such cases; it does not implicitly connect one row's state
 to the next. Signals needing a longer history will use explicit lagged series.
