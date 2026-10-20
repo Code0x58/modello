@@ -104,7 +104,12 @@ def check_wheel(
     )
     subprocess.run(["uv", "pip", "install", "--python", str(python), "--no-deps", f"{wheel}[examples]"], check=True)
     subprocess.run([str(python), "-I", "-c", EXAMPLES_SMOKE_TEST], cwd=directory, check=True)
-    for module in ("examples.portfolio", "examples.portfolio.named", "examples.portfolio.demo"):
+    for module in (
+        "examples.portfolio",
+        "examples.portfolio.named",
+        "examples.portfolio.demo",
+        "examples.portfolio.optimal_execution",
+    ):
         arguments = [str(python), "-I", "-m", module]
         if module == "examples.portfolio.demo":
             arguments.extend(["--json", str(directory / "report.json"), "--html", str(directory / "report.html")])
@@ -120,6 +125,7 @@ def check_wheel(
         "tests/examples/compute/test_series.py",
         "tests/examples/compute/test_providers.py",
         "tests/examples/portfolio/test_valuation.py",
+        "tests/examples/portfolio/optimal_execution/test_model.py",
     ):
         source = Path(__file__).resolve().parents[1] / path
         target = directory / source.name

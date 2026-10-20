@@ -419,3 +419,7 @@ Generate both views of the completed run:
 dates, three observed daily returns, the independent index comparison, and the
 unavailable short-history CAGR/Sharpe values. The :doc:`implementation map <layers>`
 locates the modules behind each layer and records the remaining scope boundaries.
+
+The :doc:`next study <optimal_execution>` goes beyond scalar reuse: define an
+execution cost functional, let SymPy derive continuous and discrete systems,
+then reuse them for calibration, decision sensitivities, and liquidity reporting.

@@ -58,6 +58,10 @@ Where each layer lives
    * - Statistics and reporting
      - ``examples.portfolio.performance``, ``analytics``, ``reporting``, ``utility``
      - Index comparison, risk, signal attribution, and utility-derived preferences.
+   * - Variational execution studies
+     - ``examples.portfolio.optimal_execution``
+     - A continuous cost density, integrated grids, generated stationarity,
+       impact/preference calibration, and liquidity sensitivities.
    * - Concrete cases and presentation
      - ``examples.portfolio.explicit``, ``named``, ``demo``, ``report_html``
      - Synthetic fixtures, completed scenario assembly, JSON, and interactive HTML.
@@ -67,13 +71,14 @@ extra currently uses only the standard library and core SymPy. These application
 and computation interfaces are experimental; they remain separate from the core
 Modello package and can be extracted or reorganised independently.
 
-The three completed entry points are:
+The completed entry points are:
 
 .. code-block:: console
 
    $ python -m examples.portfolio
    $ python -m examples.portfolio.named
    $ python -m examples.portfolio.demo --html account.html --json account.json
+   $ python -m examples.portfolio.optimal_execution
 
 The named runner extends the fixed-share date-vector example with GOOGL. Its
 daily vectors are entered explicitly; the account's bundled intraday CSV serves
