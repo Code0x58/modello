@@ -7,11 +7,12 @@ from sympy import Rational, simplify
 
 from examples.compute.named_map import NamedMap
 from examples.named_members import bound_component
+from examples.portfolio.analytics import NamedPortfolioPath
 from examples.portfolio.basket import EquityBasket, EquityHoldings, equity
 from examples.portfolio.explicit import Basket, EquityMembers, MarketData, Portfolio
 from examples.portfolio.models import AAPL, MSFT, Equity, EquityPosition, Quote, USDCash
 from examples.portfolio.providers import DummyEquityProvider
-from examples.portfolio.valuation import NamedMarketData, NamedPortfolio, NamedPortfolioPricer
+from examples.portfolio.valuation import NamedMarketData, NamedPortfolio
 from modello import BoundInstanceDummy, InstanceDummy, component
 
 
@@ -138,8 +139,8 @@ def test_same_instrument_can_have_separate_holdings_and_weights():
         cash=USDCash("cash", amount=100),
     )
     data = MarketData.example().aapl
-    path = NamedPortfolioPricer(portfolio).over(
-        NamedMarketData(data.close.times, NamedMap({"income": data, "growth": data}))
+    path = NamedPortfolioPath.from_model(
+        portfolio.pricer().over(NamedMarketData(data.close.times, NamedMap({"income": data, "growth": data})))
     )
     assert path.nav.values[0] == 500
     assert path.positions["growth"].weight.values[0] == pytest.approx(0.2)
@@ -161,9 +162,12 @@ def test_provider_and_currency_are_part_of_valuation_identity():
     )
     for identity in (replace(AAPL, provider="other"), replace(AAPL, currency="EUR")):
         with pytest.raises(ValueError, match="Price instrument"):
-            NamedPortfolioPricer(portfolio).over(
-                NamedMarketData(
-                    data.aapl.close.times, NamedMap({"aapl": replace(data.aapl, equity=identity), "msft": data.msft})
+            NamedPortfolioPath.from_model(
+                portfolio.pricer().over(
+                    NamedMarketData(
+                        data.aapl.close.times,
+                        NamedMap({"aapl": replace(data.aapl, equity=identity), "msft": data.msft}),
+                    )
                 )
             )
 

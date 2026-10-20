@@ -123,6 +123,7 @@ def check_wheel(
         "tests/examples/test_named_members.py",
         "tests/examples/test_symbolic.py",
         "tests/examples/test_model_plan.py",
+        "tests/examples/test_model_data.py",
         "tests/examples/compute/test_series.py",
         "tests/examples/compute/test_providers.py",
         "tests/examples/portfolio/test_valuation.py",

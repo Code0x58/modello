@@ -8,6 +8,7 @@ from time import perf_counter
 from typing import TypeVar
 
 from examples.compute.series import Series
+from examples.portfolio.analytics import NamedPortfolioPath
 from examples.portfolio.explicit import MarketData, Portfolio
 from examples.portfolio.models import AAPL, MSFT, EquityPrices
 
@@ -49,7 +50,7 @@ def main() -> None:
     print(f"Numerical compilation: {compile_ms:.3f} ms")
     for count in (10, 100, 10000):
         data = observations(count)
-        elapsed, path = measure(lambda: pricer.over(data.named()))
+        elapsed, path = measure(lambda: NamedPortfolioPath.from_model(pricer.over(data.named())))
         assert isclose(path.nav.values[-1], 2100 + 0.02 * (count - 1))
         print(f"{count} observations, compiled complete paths: {elapsed:.3f} ms")
 
@@ -70,7 +71,7 @@ def main() -> None:
         )
 
     baseline_ms, baseline = measure(solve_points, samples=3)
-    path = pricer.over(sample.named())
+    path = NamedPortfolioPath.from_model(pricer.over(sample.named()))
     assert all(
         isclose(actual, expected, abs_tol=1e-9) for actual, expected in zip(path.nav.values, baseline, strict=True)
     )

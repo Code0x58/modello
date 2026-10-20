@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
+from examples.portfolio.analytics import NamedPortfolioPath
 from examples.portfolio.basket import EquityBasket, equity
 from examples.portfolio.explicit import EquityMembers, MarketData
 from examples.portfolio.models import GOOGL, EquityPrices, USDCash
@@ -71,7 +72,9 @@ class ThreeEquityPortfolio(NamedPortfolio[ThreeEquities]):
 
 def main() -> None:
     """Show the same named domain carried through valuation and risk."""
-    path = ThreeEquityPortfolio.example().pricer().over(ThreeEquityPortfolio.example_data())
+    path = NamedPortfolioPath.from_model(
+        ThreeEquityPortfolio.example().pricer().over(ThreeEquityPortfolio.example_data())
+    )
     result = path.analytics(periods_per_year=252)
     print("Named equity members:", ", ".join(path.positions))
     print("NAV:", path.nav.values)

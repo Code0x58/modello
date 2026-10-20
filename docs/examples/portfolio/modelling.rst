@@ -104,6 +104,68 @@ scalar through a model reference; ``at`` materializes a typed numeric case when
 needed. No joint solve is performed per observation. Properties derived from
 model fields can also be selected as expressions.
 
+Bind typed observation records
+------------------------------
+
+Repeated calculations can receive a typed data record instead of spelling out
+the same field bindings at every call. Define how an observation supplies its
+knowns to the model case selected by the evaluator:
+
+>>> from dataclasses import dataclass
+>>> @dataclass(frozen=True)
+... class PriceObservation:
+...     price: float
+...
+...     def knowns(self, model: EquityPosition) -> tuple[Known[float], ...]:
+...         return (Known(model.instrument.price, self.price),)
+>>> valued = view.evaluate(PriceObservation(100))
+>>> float(valued.market_value)
+1000.0
+
+This follows the generic ``ModelData`` protocol. The observation receives the
+compiled case's own model fields, so the same record can bind to another
+compatible case without retaining symbols from the first:
+
+.. code-block:: python
+
+   from typing import Protocol, TypeVar, runtime_checkable
+   from modello import Modello
+
+   InputModel = TypeVar("InputModel", bound=Modello, contravariant=True)
+
+.. literalinclude:: ../../../examples/model_plan.py
+   :pyobject: ModelData
+   :language: python
+
+A record containing aligned series can carry its observation axis as well:
+
+>>> @dataclass(frozen=True)
+... class PriceSamples:
+...     times: tuple[date, ...]
+...     prices: Series[date]
+...
+...     def knowns(self, model: EquityPosition) -> tuple[Known[Series[date]], ...]:
+...         return (Known(model.instrument.price, self.prices),)
+>>> sampled = view.over(PriceSamples(times, prices))
+>>> sampled.column(position.market_value).values
+(1000.0, 1020.0, 980.0, 1040.0, 1030.0)
+
+The ``ModelSeries`` protocol adds that axis to ``ModelData``:
+
+.. code-block:: python
+
+   from examples.compute.series import Time
+
+.. literalinclude:: ../../../examples/model_plan.py
+   :pyobject: ModelSeries
+   :language: python
+
+Both forms use the same evaluator and return the same typed model or path.
+Field ownership, missing/duplicate inputs, axis alignment, and numeric domains
+are still checked centrally. ``evaluate(record, Known(...))`` can combine a
+record with other inputs; ``over(times, record, Known(...))`` does the same for
+series. Data acquisition remains explicit and outside these protocols.
+
 Expose the declared fields for inspection
 -----------------------------------------
 
@@ -220,7 +282,9 @@ Independent fields are inferred from the resolved case. Every declared field
 and component remains in the result; a numerical input can be on either side
 of an equation. Additional input selection, when needed, uses actual field
 references. A report can project chosen fields into labelled table columns
-after the calculation.
+after the calculation. ``compile(properties=(...))`` can include derived model
+properties in the same numerical batch; ``ModelPath.column`` also supports
+computing such properties on demand.
 
 We can now evaluate a model on data, but we have entered those prices by hand.
 The :doc:`next chapter <providers>` defines the data contract, acquires prices,

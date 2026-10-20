@@ -14,9 +14,14 @@ Model = TypeVar("Model", bound="SymbolicModel")
 class SymbolicModel(Modello):
     """Reuse one equation definition through model-preserving numerical views."""
 
-    def compile(self: Model, *, inputs: tuple[SymbolicScalar, ...] | None = None) -> ModelPlan[Model]:
+    def compile(
+        self: Model,
+        *,
+        inputs: tuple[SymbolicScalar, ...] | None = None,
+        properties: tuple[SymbolicScalar, ...] = (),
+    ) -> ModelPlan[Model]:
         """Compile this case's remaining independent fields and retain its model type."""
-        return ModelPlan(self, inputs=inputs)
+        return ModelPlan(self, inputs=inputs, properties=properties)
 
     @classmethod
     def plan(cls: type[Model]) -> ModelPlan[Model]:

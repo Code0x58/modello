@@ -5,11 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import sqrt
 from statistics import covariance, variance
-from typing import Generic
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series, Time
 from examples.portfolio.performance import Performance, measure
+
+if TYPE_CHECKING:
+    from examples.model_plan import ModelPath
+    from examples.portfolio.valuation import NamedPortfolio
+
+_Portfolio = TypeVar("_Portfolio", bound="NamedPortfolio[Any]")
 
 
 @dataclass(frozen=True)
@@ -48,6 +54,35 @@ class NamedPortfolioPath(Generic[Time]):
     cash_value: Series[Time]
     cash_weight: Series[Time]
     nav: Series[Time]
+
+    @classmethod
+    def from_model(cls, path: ModelPath[_Portfolio, Time]) -> NamedPortfolioPath[Time]:
+        """Project fixed holdings' valuation columns into interval return analytics."""
+        model = path.view.source
+        if any(instrument.currency != "USD" for instrument in model.instruments.values()):
+            raise ValueError("The example requires USD equities and cash")
+        if (
+            any(len(set(path.column(holding.quantity).values)) > 1 for holding in model.positions.values())
+            or len(set(path.column(model.cash.amount).values)) > 1
+        ):
+            raise ValueError("Fixed-holding return attribution requires constant quantities and cash")
+
+        def position(name: str) -> PositionPath[Time]:
+            holding = model.positions[name]
+            value = path.column(holding.market_value)
+            weight = path.column(holding.weight)
+            returns = path.column(holding.price).simple_returns()
+            contribution = Series(
+                returns.times, tuple(w * r for w, r in zip(weight.values[:-1], returns.values, strict=True))
+            )
+            return PositionPath(value, weight, returns, contribution)
+
+        return cls(
+            NamedMap((name, position(name)) for name in model.positions),
+            path.column(model.cash.amount),
+            path.column(model.cash_weight),
+            path.column(model.nav),
+        )
 
     @property
     def values(self) -> NamedMap[Series[Time]]:

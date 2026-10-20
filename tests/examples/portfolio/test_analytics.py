@@ -7,6 +7,8 @@ import pytest
 from sympy import ImmutableMatrix, ones
 
 from examples.compute.series import Series
+from examples.model_plan import Known
+from examples.portfolio.analytics import NamedPortfolioPath
 from examples.portfolio.explicit import Basket, EquityMembers, MarketData, Portfolio
 from examples.portfolio.models import (
     AAPL,
@@ -16,13 +18,31 @@ from examples.portfolio.models import (
     USDCash,
 )
 from examples.portfolio.named import ThreeEquityPortfolio
-from examples.portfolio.valuation import NamedPortfolioPricer
+
+
+@pytest.mark.parametrize("varying", ["quantity", "cash"])
+def test_fixed_holding_attribution_rejects_state_changes_on_a_general_model_path(varying):
+    view = Portfolio.plan()
+    model = view.source
+    data = MarketData.example().named()
+    times = data.times
+    quantities = Series(times, (10, 11, 12, 13, 14) if varying == "quantity" else (10,) * len(times))
+    cash = Series(times, (100, 200, 300, 400, 500) if varying == "cash" else (100,) * len(times))
+    path = view.over(
+        times,
+        data,
+        Known(model.basket.members.aapl.quantity, quantities),
+        Known(model.basket.members.msft.quantity, Series(times, (20,) * len(times))),
+        Known(model.cash.amount, cash),
+    )
+    with pytest.raises(ValueError, match="constant quantities and cash"):
+        NamedPortfolioPath.from_model(path)
 
 
 def test_return_attribution_uses_start_of_period_weights():
     """Contributions reconcile to actual NAV returns as the weights drift."""
     data = MarketData.example()
-    path = Portfolio.example().pricer().over(data.named())
+    path = NamedPortfolioPath.from_model(Portfolio.example().pricer().over(data.named()))
     returns = path.nav.simple_returns()
     assert returns.times == data.aapl.close.times[1:]
     assert returns.values == pytest.approx((0, -1 / 35, 7 / 102, 3 / 218))
@@ -36,7 +56,7 @@ def test_return_attribution_uses_start_of_period_weights():
 
 def test_sample_statistics_and_covariance_matrix():
     """Reference covariance uses a centered return matrix and n-1 degrees of freedom."""
-    path = Portfolio.example().pricer().over(MarketData.example().named())
+    path = NamedPortfolioPath.from_model(Portfolio.example().pricer().over(MarketData.example().named()))
     analytics = path.analytics(periods_per_year=252)
     returns = path.nav.simple_returns().values
     sample_mean = sum(returns) / len(returns)
@@ -60,7 +80,7 @@ def test_sample_statistics_and_covariance_matrix():
 
 def test_euler_contributions_and_reference_weights_risk():
     """Volatility allocation agrees with finite differences of the covariance formula."""
-    path = Portfolio.example().pricer().over(MarketData.example().named())
+    path = NamedPortfolioPath.from_model(Portfolio.example().pricer().over(MarketData.example().named()))
     analytics = path.analytics(periods_per_year=252)
     risk = analytics.latest_weights_risk
     cov = ImmutableMatrix(
@@ -107,7 +127,7 @@ def test_opposite_asset_returns_diversify_reference_weights_risk():
         EquityPrices(AAPL, Series(dates, (100, 110, 99))),
         EquityPrices(MSFT, Series(dates, (100, 90, 99))),
     )
-    path = portfolio.pricer().over(data.named())
+    path = NamedPortfolioPath.from_model(portfolio.pricer().over(data.named()))
     result = path.analytics(periods_per_year=252)
     assert result.annualized_covariance["aapl"]["msft"] < 0
     assert result.latest_weights_risk.volatility == pytest.approx(0, abs=1e-12)
@@ -117,7 +137,7 @@ def test_opposite_asset_returns_diversify_reference_weights_risk():
 
 @pytest.mark.parametrize("frequency", [0, -1, True, 1.5])
 def test_invalid_risk_frequency(frequency):
-    path = Portfolio.example().pricer().over(MarketData.example().named())
+    path = NamedPortfolioPath.from_model(Portfolio.example().pricer().over(MarketData.example().named()))
     with pytest.raises(ValueError, match="positive integer"):
         path.analytics(periods_per_year=frequency)
 
@@ -129,11 +149,13 @@ def test_insufficient_observations():
     dates = (first, date(2026, 1, 2))
     data = MarketData(EquityPrices(AAPL, Series(dates, (1, 2))), EquityPrices(MSFT, Series(dates, (1, 2))))
     with pytest.raises(ValueError, match="at least three"):
-        Portfolio.example().pricer().over(data.named()).analytics(periods_per_year=252)
+        NamedPortfolioPath.from_model(Portfolio.example().pricer().over(data.named())).analytics(periods_per_year=252)
 
 
 def test_named_covariance_and_risk_agree_with_independent_matrix_calculation():
-    path = NamedPortfolioPricer(ThreeEquityPortfolio.example()).over(ThreeEquityPortfolio.example_data())
+    path = NamedPortfolioPath.from_model(
+        ThreeEquityPortfolio.example().pricer().over(ThreeEquityPortfolio.example_data())
+    )
     result = path.analytics(periods_per_year=252)
     names = tuple(path.positions)
     observations = ImmutableMatrix.hstack(*(ImmutableMatrix(path.positions[name].returns.values) for name in names))

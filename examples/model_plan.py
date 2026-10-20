@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from copy import copy
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Generic, Literal, TypeVar, cast
+from typing import Generic, Literal, Protocol, TypeVar, cast, overload, runtime_checkable
 
 from sympy import Expr, Float, Symbol
 
@@ -17,6 +17,7 @@ from modello import FieldPath, Modello, SymbolicScalar
 
 Model = TypeVar("Model", bound=Modello)
 Value = TypeVar("Value", covariant=True)
+InputModel = TypeVar("InputModel", bound=Modello, contravariant=True)
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,23 @@ class Known(Generic[Value]):
 
     field: SymbolicScalar
     value: Value
+
+
+@runtime_checkable
+class ModelData(Protocol[InputModel, Value]):
+    """Typed observations that bind themselves to fields of a compatible model."""
+
+    def knowns(self, model: InputModel) -> tuple[Known[Value], ...]:
+        """Select model fields and validate application identities at the boundary."""
+        ...
+
+
+@runtime_checkable
+class ModelSeries(ModelData[InputModel, Series[Time]], Protocol[InputModel, Time]):
+    """Model observations carrying their explicit evaluation axis."""
+
+    @property
+    def times(self) -> tuple[Time, ...]: ...
 
 
 @dataclass(frozen=True)
@@ -114,7 +132,9 @@ class ModelPlan(Generic[Model]):
         self._outputs = tuple(dict.fromkeys((*self._expressions, *cast(tuple[Expr, ...], properties))))
         inferred = tuple(dict.fromkeys(expr for expr in self._expressions if isinstance(expr, Symbol)))
         selected = inferred if inputs is None else inputs
-        if any(not isinstance(expr, Symbol) or expr not in inferred for expr in selected):
+        if len(set(selected)) != len(selected) or any(
+            not isinstance(expr, Symbol) or expr not in inferred for expr in selected
+        ):
             raise ValueError("Inputs must be independent symbolic fields of this model case")
         self._inputs = cast(tuple[Expr, ...], selected)
         self._input_columns = NamedMap((str(i), expr) for i, expr in enumerate(self._inputs))
@@ -129,14 +149,22 @@ class ModelPlan(Generic[Model]):
             self._property_plans[expression] = ScalarPlan(self._input_columns, NamedMap({"value": expression}))
         return self._property_plans[expression]
 
-    def _align(self, knowns: tuple[Known[Value], ...]) -> NamedMap[Value]:
+    def _align(self, observations: tuple[Known[Value] | ModelData[Model, Value], ...]) -> NamedMap[Value]:
         supplied: dict[Expr, Value] = {}
-        for known in knowns:
-            if not isinstance(known, Known) or not isinstance(known.field, Expr) or known.field not in self._inputs:
-                raise ValueError("Supply Known values for this view's input fields")
-            if known.field in supplied:
-                raise ValueError("An input field was supplied more than once")
-            supplied[known.field] = known.value
+        for observation in observations:
+            knowns: tuple[Known[Value], ...]
+            if isinstance(observation, Known):
+                knowns = (observation,)
+            elif isinstance(observation, ModelData):
+                knowns = observation.knowns(self.source)
+            else:
+                raise TypeError("Supply Known values or typed ModelData observations")
+            for known in knowns:
+                if not isinstance(known, Known) or not isinstance(known.field, Expr) or known.field not in self._inputs:
+                    raise ValueError("Supply Known values for this view's input fields")
+                if known.field in supplied:
+                    raise ValueError("An input field was supplied more than once")
+                supplied[known.field] = known.value
         if set(supplied) != set(self._inputs):
             raise ValueError("Supply every input field exactly once")
         return NamedMap((name, supplied[expr]) for name, expr in self._input_columns.items())
@@ -153,7 +181,7 @@ class ModelPlan(Generic[Model]):
                 raise ValueError(f"Evaluated field {'.'.join(path)} violates its model assumptions")
         return _copy_model(self.source, fields)
 
-    def evaluate(self, *knowns: Known[float]) -> Model:
+    def evaluate(self, *knowns: Known[float] | ModelData[Model, float]) -> Model:
         """Evaluate once and return a fresh numeric case with the same component types."""
         inputs = self._align(knowns)
         try:
@@ -162,9 +190,27 @@ class ModelPlan(Generic[Model]):
             raise ValueError("Values violate model assumptions or leave expressions undefined") from error
         return self._materialize(tuple(values.values()))
 
-    def over(self, times: tuple[Time, ...], *knowns: Known[Series[Time]]) -> ModelPath[Model, Time]:
+    @overload
+    def over(self, data: ModelSeries[Model, Time], /) -> ModelPath[Model, Time]: ...
+
+    @overload
+    def over(
+        self, times: tuple[Time, ...], *knowns: Known[Series[Time]] | ModelData[Model, Series[Time]]
+    ) -> ModelPath[Model, Time]: ...
+
+    def over(
+        self,
+        times: tuple[Time, ...] | ModelSeries[Model, Time],
+        *knowns: Known[Series[Time]] | ModelData[Model, Series[Time]],
+    ) -> ModelPath[Model, Time]:
         """Evaluate aligned columns once; materialize model cases only when requested."""
-        inputs = self._align(knowns)
+        if isinstance(times, ModelSeries):
+            if knowns:
+                raise TypeError("Supply an observation record or an axis with field bindings")
+            inputs = self._align((times,))
+            times = times.times
+        else:
+            inputs = self._align(knowns)
         for name, symbol in self._input_columns.items():
             _check_column(symbol, inputs[name].values)
         try:

@@ -131,7 +131,7 @@ def test_unknown_members_and_unfunded_withdrawals(engine):
 
 
 def test_price_identity_staleness_and_mark_grid_are_checked(engine, market):
-    with pytest.raises(ValueError, match="match the declared"):
+    with pytest.raises(ValueError, match="Price instrument must"):
         AccountEngine(engine.account, NamedMap({"aapl": market["msft"], "msft": market["aapl"]}), max_price_age=AGE)
     with pytest.raises(ValueError, match="stale"):
         engine.evaluate(TransactionLog(()), (TIMES[0], timestamp("2026-02-01T16:01:00Z")))

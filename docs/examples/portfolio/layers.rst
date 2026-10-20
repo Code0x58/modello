@@ -45,7 +45,7 @@ Where each layer lives
      - Compile resolved expressions and evaluate points or aligned columns.
    * - Model integration
      - ``examples.named_members``, ``model_plan``, ``symbolic``
-     - Reflect components, pair bindings, evaluate typed model trees, and select views.
+     - Reflect components, pair bindings, and evaluate typed model trees and observation records.
    * - Portfolio composition and valuation
      - ``examples.portfolio.models``, ``basket``, ``valuation``
      - Shared definitions, contextual holding queries, and portfolio plans.
@@ -171,13 +171,13 @@ One exploratory run on Python 3.14.8 with SymPy 1.14.0 gave rounded medians:
    * - Work
      - Time
    * - Construct the symbolic portfolio
-     - 147 ms
+     - 128 ms
    * - Compile its numerical calculation
-     - 3.0 ms
+     - 2.7 ms
    * - Evaluate complete paths for 10,000 observations
-     - 91 ms
+     - 80 ms
    * - Construct and solve a portfolio for each of 10 observations
-     - 1,376 ms
+     - 1,328 ms
 
 Data creation and risk analytics are outside these timings. The benchmark warms
 up first, then measures five batches, or three for the slower baseline. Its
@@ -210,6 +210,13 @@ beside the example's other integration adapters. A compiled result uses the
 existing model classes and properties; ``ModelPath`` keeps the observation axis
 separate from that scalar schema. Field paths and source expressions remain
 available for tables, debugging, and other renderers.
+
+``ModelData`` lets typed observations bind to a compatible case, and
+``ModelSeries`` adds their explicit axis. Scalar market snapshots, daily price
+vectors, and non-financial measurements can therefore use the same evaluator.
+The portfolio's ``pricer()`` simply selects input fields and returns an ordinary
+``ModelPlan``. ``MarketSnapshot.sample`` owns causal selection, while
+``NamedPortfolioPath.from_model`` supplies the financial analytics projection.
 
 The reporting models expose the chosen decomposition and sensitivities. They
 provide useful inputs for further research without making accounting depend on

@@ -6,6 +6,7 @@ import pytest
 from sympy import Rational, Symbol
 
 from examples.compute.series import Series
+from examples.portfolio.analytics import NamedPortfolioPath
 from examples.portfolio.explicit import Basket, EquityMembers, MarketData, Portfolio
 from examples.portfolio.models import (
     AAPL,
@@ -43,7 +44,7 @@ def test_explicit_instrument_types_and_inverse_valuation():
 
 def test_valuation_vectors_and_drifting_weights():
     """A fixed-share portfolio values each aligned observation independently."""
-    path = Portfolio.example().pricer().over(MarketData.example().named())
+    path = NamedPortfolioPath.from_model(Portfolio.example().pricer().over(MarketData.example().named()))
     assert path.nav.values == (2100, 2100, 2040, 2180, 2210)
     assert path.positions["aapl"].value.values == (1000, 1020, 980, 1040, 1030)
     assert path.positions["msft"].value.values == (1000, 980, 960, 1040, 1080)
@@ -67,7 +68,7 @@ def test_cash_only_portfolio_and_zero_risk():
         ),
         cash=USDCash("cash", amount=100),
     )
-    path = portfolio.pricer().over(MarketData.example().named())
+    path = NamedPortfolioPath.from_model(portfolio.pricer().over(MarketData.example().named()))
     result = path.analytics(periods_per_year=252)
     assert path.nav.values == (100,) * 5
     assert path.cash_weight.values == (1,) * 5
@@ -89,8 +90,8 @@ def test_pricer_reuses_the_model_for_another_price_vector():
         EquityPrices(AAPL, Series(dates, (10, 20, 30))),
         EquityPrices(MSFT, Series(dates, (5, 10, 15))),
     )
-    assert pricer.over(data.named()).nav.values == (300, 500, 700)
-    assert pricer.over(MarketData.example().named()).nav.values[-1] == 2210
+    assert NamedPortfolioPath.from_model(pricer.over(data.named())).nav.values == (300, 500, 700)
+    assert NamedPortfolioPath.from_model(pricer.over(MarketData.example().named())).nav.values[-1] == 2210
 
 
 def test_prices_are_not_silently_aligned_or_relabelled():
@@ -103,7 +104,7 @@ def test_prices_are_not_silently_aligned_or_relabelled():
 
 
 def test_compile_requires_fixed_holdings_and_independent_symbolic_prices():
-    with pytest.raises(ValueError, match="position quantities"):
+    with pytest.raises(ValueError, match="unspecified inputs"):
         Portfolio("unspecified").pricer()
     for price in (100, Symbol("shared", positive=True)):
         portfolio = Portfolio(
@@ -118,5 +119,5 @@ def test_compile_requires_fixed_holdings_and_independent_symbolic_prices():
             ),
             cash=USDCash("cash", amount=100),
         )
-        with pytest.raises(ValueError, match="independent symbolic input"):
+        with pytest.raises(ValueError, match="independent symbolic fields"):
             portfolio.pricer()

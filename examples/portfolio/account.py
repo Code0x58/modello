@@ -21,7 +21,7 @@ from examples.portfolio.models import Equity
 from examples.portfolio.pnl import AccountPnL, InstrumentPnL, Profit
 from examples.portfolio.postings import CapitalFlow, FillPosting
 from examples.portfolio.sources import CashFlow, Fill, Income, PriceHistory, TransactionLog, finite
-from examples.portfolio.valuation import NamedPortfolio
+from examples.portfolio.valuation import MarketSnapshot, NamedPortfolio
 
 if TYPE_CHECKING:
     from examples.portfolio.reporting import AccountReport, OrderAttribution
@@ -275,12 +275,7 @@ class AccountEngine(Generic[_Members]):
         instruments = account.opening.instruments
         self.instruments = instruments
 
-        def checked(instrument: Equity, history: PriceHistory) -> PriceHistory:
-            if history.equity != instrument or instrument.currency != "USD":
-                raise ValueError("Account price histories must match the declared USD instruments")
-            return history
-
-        self.market = instruments.combine(market, checked)
+        self.market = account.opening.match_market(market)
         if max_price_age < timedelta(0):
             raise ValueError("Price age must be nonnegative")
         self.max_price_age = max_price_age
@@ -306,13 +301,11 @@ class AccountEngine(Generic[_Members]):
     def _value(
         self, at: datetime, quantities: NamedMap[float], cash: float
     ) -> tuple[NamedMap[float], NamedPortfolio[_Members]]:
-        prices = self.market.map(lambda history: history.mark(at, max_age=self.max_price_age))
+        snapshot = MarketSnapshot.sample(self.market, at=at, max_price_age=self.max_price_age)
+        prices = snapshot.prices.map(lambda quote: quote.price)
         model = self._plan.source
-        price_inputs = model.positions.combine(prices, lambda position, value: Known(position.price, value))
         quantity_inputs = model.positions.combine(quantities, lambda position, value: Known(position.quantity, value))
-        values = self._plan.evaluate(*price_inputs.values(), *quantity_inputs.values(), Known(model.cash.amount, cash))
-        if float(values.nav) <= 0:
-            raise ValueError("Account value must remain positive")
+        values = self._plan.evaluate(snapshot, *quantity_inputs.values(), Known(model.cash.amount, cash))
         return prices, values
 
     def evaluate(self, ledger: TransactionLog, times: tuple[datetime, ...]) -> AccountPath:

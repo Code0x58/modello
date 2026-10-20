@@ -10,6 +10,7 @@ from datetime import date
 
 from examples.compute.named_map import NamedMap
 from examples.compute.series import Series
+from examples.portfolio.analytics import NamedPortfolioPath
 from examples.portfolio.basket import EquityBasket, EquityHoldings, equity
 from examples.portfolio.models import AAPL, MSFT, EquityPrices, USDCash
 from examples.portfolio.providers import DummyEquityProvider
@@ -86,7 +87,7 @@ class MarketData:
 
 def main() -> None:
     """Show valuation, attribution, and risk for the fixed example portfolio."""
-    path = Portfolio.example().pricer().over(MarketData.example().named())
+    path = NamedPortfolioPath.from_model(Portfolio.example().pricer().over(MarketData.example().named()))
     analytics = path.analytics(periods_per_year=252)
     print("Synthetic AAPL / MSFT portfolio, fixed shares and USD cash")
     print("Date          AAPL value  MSFT value       Cash        NAV")

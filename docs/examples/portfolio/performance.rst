@@ -162,19 +162,21 @@ Package the numerical columns already produced by chapter 3 into typed paths:
 
 .. literalinclude:: ../../../examples/portfolio/analytics.py
    :pyobject: NamedPortfolioPath
-   :end-before:     @property
+   :end-before:     @classmethod
    :language: python
 
-``NamedPortfolioPricer`` binds quantities and cash, compiles the portfolio's
-named values and weights, and checks each supplied quote identity. Its time
-adapter builds these path records and uses opening weights for contributions:
+The ordinary ``ModelPlan`` evaluates the price observations into a ``ModelPath``.
+The analytics layer projects that path's model fields and properties into these
+records. It requires constant quantities and cash, and uses opening weights for
+return contributions:
 
 .. raw:: html
 
    <details><summary>Inspect the valuation-to-path adapter</summary>
 
-.. literalinclude:: ../../../examples/portfolio/valuation.py
-   :pyobject: NamedPortfolioPricer
+.. literalinclude:: ../../../examples/portfolio/analytics.py
+   :pyobject: NamedPortfolioPath.from_model
+   :dedent: 4
    :language: python
 
 .. raw:: html
@@ -205,10 +207,20 @@ repeats the quantities and cash we assembled in chapter 4:
 
 ``EquityPrices`` pairs each positive date-price series with its quote identity;
 ``MarketData.named()`` exposes those two fields as a named map on a common axis.
-Use the compiled pricer on the fixed-share portfolio from the early chapters:
+Define that named observation record, including its ``knowns`` bindings:
+
+.. literalinclude:: ../../../examples/portfolio/valuation.py
+   :pyobject: NamedMarketData
+   :language: python
+
+It implements chapter 3's ``ModelSeries`` contract: an explicit axis and typed
+bindings to the supplied case. Use the shared compiler, then project the
+result for financial analytics:
 
 >>> from examples.portfolio.explicit import MarketData
->>> fixed = Portfolio.example().pricer().over(MarketData.example().named())
+>>> from examples.portfolio.analytics import NamedPortfolioPath
+>>> values = Portfolio.example().pricer().over(MarketData.example().named())
+>>> fixed = NamedPortfolioPath.from_model(values)
 >>> fixed.nav.values
 (2100.0, 2100.0, 2040.0, 2180.0, 2210.0)
 

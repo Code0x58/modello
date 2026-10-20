@@ -216,15 +216,9 @@ request with it; each model instance still receives independent symbols.
 Assemble and evaluate the portfolio
 -----------------------------------
 
-``NamedPortfolio`` uses the structured ``ModelPlan`` developed in chapter 3.
-The remaining independent symbolic fields supply its inputs. Evaluation returns
-another instance of the same portfolio class, with the same typed component
-tree and numeric scalar fields:
-
-.. literalinclude:: ../../../examples/portfolio/valuation.py
-   :pyobject: NamedPortfolio.compile
-   :dedent: 4
-   :language: python
+``NamedPortfolio`` inherits the ``SymbolicModel`` compilation methods developed
+in chapter 3. Evaluation returns another instance of the same portfolio class,
+with the same typed component tree and numeric scalar fields.
 
 Declare the complete portfolio and give it known quantities and cash:
 
@@ -248,7 +242,21 @@ Declare the complete portfolio and give it known quantities and cash:
 ...     cash=USDCash("cash", amount=100),
 ... )
 >>> market = book.load_market()
+
+For this fixed-holding view, select the position price fields as inputs. The
+ordinary compiler checks that these are independent and that all remaining
+fields are determined by them. Include the derived weight properties in the
+same numerical batch for later analytics:
+
+.. literalinclude:: ../../../examples/portfolio/valuation.py
+   :pyobject: NamedPortfolio.pricer
+   :dedent: 4
+   :language: python
+
+>>> from examples.model_plan import ModelPlan
 >>> pricer = book.pricer()
+>>> type(pricer) is ModelPlan
+True
 
 The market boundary carries identified quotes. Define a scalar quote and a
 timestamped group of them before using it:
@@ -257,20 +265,38 @@ timestamped group of them before using it:
    :pyobject: EquityPrice
    :language: python
 
+Before binding these observations, match holding names and complete instrument
+identities. Histories, scalar quotes, and price vectors all carry an ``equity``
+attribute, so they share this small typed contract:
+
+.. code-block:: python
+
+   from typing import Protocol, TypeVar
+
+.. literalinclude:: ../../../examples/portfolio/valuation.py
+   :pyobject: _EquityData
+   :language: python
+
+.. code-block:: python
+
+   _Data = TypeVar("_Data", bound=_EquityData)
+
+.. literalinclude:: ../../../examples/portfolio/valuation.py
+   :pyobject: NamedPortfolio.match_market
+   :dedent: 4
+   :language: python
+
+``MarketSnapshot`` carries the observation time and quotes. Its ``sample``
+constructor selects causal prices; its ``knowns`` method implements chapter 3's
+``ModelData`` contract, binding those prices to the model case supplied by the
+shared evaluator:
+
 .. literalinclude:: ../../../examples/portfolio/valuation.py
    :pyobject: MarketSnapshot
    :language: python
 
-``snapshot`` samples the causal histories and preserves their instrument identity.
-``evaluate`` checks the declared domain and identities, then supplies field-bound
-knowns to the compiled model:
-
-.. literalinclude:: ../../../examples/portfolio/valuation.py
-   :pyobject: NamedPortfolioPricer.evaluate
-   :dedent: 4
-   :language: python
-
->>> snapshot = pricer.snapshot(market, at=mark, max_price_age=timedelta(days=4))
+>>> from examples.portfolio.valuation import MarketSnapshot
+>>> snapshot = MarketSnapshot.sample(market, at=mark, max_price_age=timedelta(days=4))
 >>> valued = pricer.evaluate(snapshot)
 >>> float(valued.nav), float(valued.basket.members.aapl.market_value)
 (2100.0, 1000.0)
@@ -294,15 +320,17 @@ The same declaration supplies symbolic expressions, evaluated values, and
 traversable field paths. For example, a debugger or table renderer can inspect
 the evaluated inputs together with their source expressions:
 
->>> observed = tuple(field for field in pricer.view.walk(valued) if field.role == "input")
+>>> observed = tuple(field for field in pricer.walk(valued) if field.role == "input")
 >>> for field in observed:
 ...     print(".".join(field.path), field.value)
 basket.members.aapl.instrument.price 100.0
 basket.members.msft.instrument.price 50.0
 
-``pricer.at(market, at=..., max_price_age=...)`` combines sampling and evaluation.
-The original ``book`` stays symbolic; repeated evaluation uses the compiled
-calculation without another joint solve.
+The same snapshot can bind to another compatible portfolio case, because
+``knowns`` receives that case's own fields. The original ``book`` stays symbolic;
+repeated evaluation uses the compiled calculation without another joint solve.
+Account replay will reuse this snapshot binding alongside known quantities and
+cash, rather than build a separate price-input adapter.
 
 Loading remains an explicit operation. The portfolio's ``load_market`` method
 uses this batch loader to preserve holding names and reuse equivalent requests:

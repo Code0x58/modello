@@ -7,20 +7,21 @@ from datetime import date, timedelta
 import pytest
 
 from examples.compute.named_map import NamedMap
+from examples.portfolio.analytics import NamedPortfolioPath
 from examples.portfolio.basket import EquityBasket, EquityHolding, EquityHoldings, equity
 from examples.portfolio.explicit import Basket, EquityMembers, MarketData, Portfolio
 from examples.portfolio.models import Equity, EquityPosition, Quote, USDCash
 from examples.portfolio.named import ThreeEquityPortfolio
 from examples.portfolio.providers import DummyEquityProvider, EquityProvider
 from examples.portfolio.sources import PriceHistory, timestamp
-from examples.portfolio.valuation import MarketSnapshot, NamedMarketData, NamedPortfolio, NamedPortfolioPricer
+from examples.portfolio.valuation import MarketSnapshot, NamedMarketData, NamedPortfolio
 
 
 def test_identified_quotes_evaluate_to_the_original_typed_portfolio():
     book = Portfolio.example()
     pricer = book.pricer()
     at = timestamp("2026-01-05T16:01:00Z")
-    snapshot = pricer.snapshot(book.load_market(), at=at, max_price_age=timedelta(days=4))
+    snapshot = MarketSnapshot.sample(book.load_market(), at=at, max_price_age=timedelta(days=4))
     assert snapshot.at == at and snapshot.prices["aapl"].equity == book.instruments["aapl"]
     value = pricer.evaluate(snapshot)
     assert type(value) is Portfolio
@@ -45,7 +46,7 @@ def test_identified_quotes_evaluate_to_the_original_typed_portfolio():
 
 def test_vector_evaluation_keeps_the_model_schema_for_points_and_columns():
     book = ThreeEquityPortfolio.example()
-    path = book.pricer().evaluate_over(ThreeEquityPortfolio.example_data())
+    path = book.pricer().over(ThreeEquityPortfolio.example_data())
     assert path.column(book.nav).values == (3100, 3105, 3030, 3190, 3230)
     point = path.at(4)
     assert type(point) is ThreeEquityPortfolio
@@ -67,8 +68,10 @@ def test_member_names_share_no_namespace_with_portfolio_totals():
         ),
         cash=USDCash("cash", amount=100),
     )
-    value = portfolio.pricer().at(
-        portfolio.load_market(), at=timestamp("2026-01-05T16:01:00Z"), max_price_age=timedelta(days=4)
+    value = portfolio.pricer().evaluate(
+        MarketSnapshot.sample(
+            portfolio.load_market(), at=timestamp("2026-01-05T16:01:00Z"), max_price_age=timedelta(days=4)
+        )
     )
     assert float(value.nav) == 2100
     assert float(value.basket.members.nav.market_value) == float(value.basket.members.cash.market_value) == 1000
@@ -105,9 +108,11 @@ def test_runtime_composition_reuses_definitions_with_independent_case_symbols():
 
 def test_named_calculation_reproduces_original_portfolio():
     data = MarketData.example()
-    reference = Portfolio.example().pricer().over(data.named())
-    actual = NamedPortfolioPricer(two_equities()).over(
-        NamedMarketData(data.aapl.close.times, NamedMap({"msft": data.msft, "aapl": data.aapl}))
+    reference = NamedPortfolioPath.from_model(Portfolio.example().pricer().over(data.named()))
+    actual = NamedPortfolioPath.from_model(
+        two_equities()
+        .pricer()
+        .over(NamedMarketData(data.aapl.close.times, NamedMap({"msft": data.msft, "aapl": data.aapl})))
     )
     assert tuple(actual.positions) == ("aapl", "msft")
     assert actual.nav == reference.nav
@@ -135,7 +140,7 @@ def test_empty_equity_domain_is_a_cash_portfolio():
 
     portfolio = NamedPortfolio.define(EquityBasket.define(NoEquities))("cash", cash=USDCash("cash", amount=100))
     dates = ThreeEquityPortfolio.example_data().times
-    path = NamedPortfolioPricer(portfolio).over(NamedMarketData(dates, NamedMap({})))
+    path = NamedPortfolioPath.from_model(portfolio.pricer().over(NamedMarketData(dates, NamedMap({}))))
     assert portfolio.positions == portfolio.values == portfolio.weights == {}
     assert path.positions == path.values == path.weights == {}
     assert path.nav.values == (100,) * len(dates)
@@ -155,14 +160,14 @@ def test_price_domain_must_match_the_compiled_model(names):
     data = ThreeEquityPortfolio.example_data()
     prices = NamedMap((name, data.prices[name] if name in data.prices else data.prices["aapl"]) for name in names)
     with pytest.raises(ValueError, match="Member names differ"):
-        NamedPortfolioPricer(ThreeEquityPortfolio.example()).over(NamedMarketData(data.times, prices))
+        NamedPortfolioPath.from_model(ThreeEquityPortfolio.example().pricer().over(NamedMarketData(data.times, prices)))
 
 
 def test_names_and_instrument_types_are_distinct_checks():
     data = ThreeEquityPortfolio.example_data()
     prices = NamedMap({"aapl": data.prices["msft"], "msft": data.prices["aapl"], "googl": data.prices["googl"]})
     with pytest.raises(ValueError, match="Price instrument must be AAPL"):
-        NamedPortfolioPricer(ThreeEquityPortfolio.example()).over(NamedMarketData(data.times, prices))
+        NamedPortfolioPath.from_model(ThreeEquityPortfolio.example().pricer().over(NamedMarketData(data.times, prices)))
 
 
 def test_every_price_vector_uses_the_declared_date_axis():
@@ -176,8 +181,8 @@ def test_every_price_vector_uses_the_declared_date_axis():
 
 
 def test_invalid_compilation_inputs():
-    with pytest.raises(ValueError, match="position quantities"):
-        NamedPortfolioPricer(NamedPortfolio.define(Basket)("missing"))
+    with pytest.raises(ValueError, match="unspecified inputs"):
+        NamedPortfolio.define(Basket)("missing").pricer()
     portfolio = NamedPortfolio.define(Basket)(
         "known prices",
         basket=Basket(
@@ -190,8 +195,8 @@ def test_invalid_compilation_inputs():
         ),
         cash=USDCash("cash", amount=100),
     )
-    with pytest.raises(ValueError, match="independent symbolic input"):
-        NamedPortfolioPricer(portfolio)
+    with pytest.raises(ValueError, match="independent symbolic fields"):
+        portfolio.pricer()
 
 
 def test_currency_needs_an_explicit_conversion_model():
@@ -205,7 +210,7 @@ def test_currency_needs_an_explicit_conversion_model():
         cash=USDCash("cash", amount=1),
     )
     with pytest.raises(ValueError, match="requires USD"):
-        NamedPortfolioPricer(portfolio)
+        portfolio.pricer()
 
 
 def _typing_contract() -> None:
@@ -232,7 +237,7 @@ def _typing_contract() -> None:
     member: EquityPosition = evaluated.basket.members.aapl
     assert member
     extended: ThreeEquityPortfolio = (
-        ThreeEquityPortfolio.example().pricer().evaluate_over(ThreeEquityPortfolio.example_data()).at(0)
+        ThreeEquityPortfolio.example().pricer().over(ThreeEquityPortfolio.example_data()).at(0)
     )
     assert extended.basket.members.googl
     pricer.evaluate(NamedMap({}))  # type: ignore[arg-type]

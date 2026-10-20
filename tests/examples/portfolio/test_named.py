@@ -3,15 +3,16 @@
 import pytest
 from sympy import Rational
 
+from examples.portfolio.analytics import NamedPortfolioPath
 from examples.portfolio.models import EquityPosition, Quote, USDCash
 from examples.portfolio.named import ThreeEquities, ThreeEquityBasket, ThreeEquityPortfolio
-from examples.portfolio.valuation import NamedPortfolio, NamedPortfolioPricer
+from examples.portfolio.valuation import NamedPortfolio
 from modello import BoundInstanceDummy
 
 
 def test_new_member_flows_through_aggregates_and_all_projections():
     portfolio = ThreeEquityPortfolio.example()
-    path = NamedPortfolioPricer(portfolio).over(ThreeEquityPortfolio.example_data())
+    path = NamedPortfolioPath.from_model(portfolio.pricer().over(ThreeEquityPortfolio.example_data()))
     assert path.nav.values == (3100, 3105, 3030, 3190, 3230)
     assert (
         tuple(portfolio.positions) == tuple(portfolio.values) == tuple(portfolio.weights) == ("aapl", "msft", "googl")
