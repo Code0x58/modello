@@ -33,10 +33,10 @@ API reference
    :class:`modello.errors.SolutionCountError`; a backend exception raises
    :class:`modello.errors.SolverBackendError`. Both are
    :class:`modello.errors.ModelSolveError` and :class:`ValueError` subclasses.
-   Symbol assumptions help select valid
-   solutions; assumptions about external symbolic parameters may remain
-   undecided. Each explicitly constructed input model must have a valid solution
-   before it can be passed to a parent.
+   Symbol assumptions help select candidates; assumptions about external symbolic
+   parameters may remain undecided. A supplied component is constructed first in
+   its own context. Parent observations can impose additional constraints, so
+   successful child construction does not establish consistency of the parent.
 
    Solve failures retain a frozen ``problem`` snapshot with actual symbol
    identities, aliases, origins, equations, inputs, and solver candidates.
@@ -70,8 +70,9 @@ API reference
 
 .. autofunction:: inspect_model
 
-   Supply the same typed inputs as construction. No solver runs during
-   preparation; explicitly constructed component inputs must already be valid.
+   Supply the same typed inputs as construction. Preparing a snapshot does not
+   invoke the solver. Component instances supplied as inputs have already been
+   constructed separately.
    See :doc:`diagnostics` for the structured snapshot, report types, and guarantees.
 
 .. autofunction:: component
@@ -117,15 +118,16 @@ handlers still apply. Ordinary key and attribute lookups retain their Python
 
 ``SolutionCountError.solution_count`` is the number of retained solver
 candidates. ``returned_count`` counts the captured candidates before domain
-filtering; these are available through ``problem.candidates``. Either count can
-refer to symbolic families, rather than individual numerical points. A zero
-retained count alone is not a proof of inconsistency.
+filtering; these are available through ``problem.candidates``, including rejected
+proposals. Each candidate can contain symbolic expressions representing a family
+of numerical answers. Neither count establishes how many mathematical solutions
+the model has, and a zero retained count alone does not prove inconsistency.
 
 ``SolverBackendError.backend_error`` retains the original exception, also
 available as ``__cause__``; ``solution_count`` is ``None``. The recorded problem
-is available for both failure types. No counts or categories are extracted by
-parsing exception messages, and constructing or printing an error does not
-launch diagnostic analysis.
+is available for both failure types. Handle failures through these attributes
+rather than parsing exception messages. Constructing or printing an error does
+not launch diagnostic analysis.
 
 For example, ``case SolutionCountError(solution_count=0)`` selects a zero-count
 failure. Positional ``case SolutionCountError(0)`` is supported too.

@@ -6,14 +6,19 @@ The tools separate recorded facts, witnessed feasibility, exact contradictions,
 and checks that could not decide. They analyse the recorded SymPy model, with
 all declared symbol assumptions retained as background constraints.
 
+These report statuses describe the evidence found by ``analyse()``. They are
+separate from constructor candidate counts: an ambiguous construction can have
+a ``consistent`` report, and a zero-count failure need not have an
+``inconsistent`` report.
+
 What each conclusion establishes
 ---------------------------------
 
 ``consistent``
    A closed, finite numerical assignment has passed every recorded equality and
-   every declared domain predicate. This proves existence, without establishing uniqueness or
-   enumerating every solution. A solver candidate is checked before it can
-   serve as a witness.
+   every declared domain predicate. This proves existence without establishing
+   uniqueness or enumerating every solution. A solver candidate is checked before
+   it can serve as a witness.
 
 ``inconsistent``
    An exact consequence contradicts an equality or domain, an expression is
@@ -23,7 +28,7 @@ What each conclusion establishes
    nonzero constant. Its ``verify()`` method checks that identity directly.
 
 ``unknown``
-   No checked witness or contradiction has been established. Empty legacy ``solve``
+   No checked witness or contradiction has been established. Empty ``solve``
    results, unsupported mathematics, undecided predicates, Float residuals,
    conditional external parameters, and exhausted search budgets do not become
    inconsistency proofs.
@@ -79,8 +84,7 @@ value as an input rather than attributing it to the original inference.
 Numerical views preserve this distinction for evaluated inputs and outputs too.
 Constraint kinds are ``ConstraintKind`` string-enum members: ``DEFINITION``,
 ``INPUT``, and ``INFERRED``. They retain their lowercase string values in reports
-and JSON. Python 3.10 uses a compatible string-enum base; newer runtimes use
-the standard-library ``StrEnum``.
+and JSON.
 
 Conflicts, probes, and costs
 ----------------------------
@@ -94,24 +98,23 @@ admits a checked witness. Each final deletion check is available through
 irreducibility unestablished. The filter finds one conflict, without claiming
 minimum cardinality, preferences, or enumeration of all conflicts.
 
-With ``relaxations=True``, the original problem is checked after removing each
-whole supplied constructor argument. Definitions and all domain assumptions
-stay fixed. Component inputs group all copied fields, including derived values.
+Once inconsistency is established, ``relaxations=True`` checks the original
+problem after removing each whole supplied constructor argument, within the
+shared budget. Definitions and all domain assumptions stay fixed. Component
+inputs group all copied fields, including derived values.
 ``input_checks`` records all outcomes; ``relaxations`` includes only witnessed
 feasible removals. These are single-input probes, not an enumeration of minimal
 diagnoses. Multiple independent conflicts can require several changes.
 
-The shared ``max_checks`` budget counts distinct subset assessments. Conflict
-reduction runs before input probes. Individual assessments may simplify and
-solve expressions, so this is not a wall-clock timeout. Field queries,
-component views, snapshot formatting, and ordinary exception formatting do not
-run analysis. Preparation is shared with construction rather than rebuilding
-an approximate diagnostic model. Numeric model results are unchanged by analysis.
-Successful instances retain each field's bound symbol, construction value,
-and provenance together, so copies can distinguish original results from
-changed values. Reports label symbols through a printer without substituting
-into the algebra; field paths and external parameters remain distinguishable.
-Nested equations omit their longest common component prefix on both sides.
+The shared ``max_checks`` budget counts distinct subset assessments, including
+the original problem. Conflict reduction runs before input probes. Individual
+assessments may simplify and solve expressions, so this is not a wall-clock
+timeout. Field queries, component views, snapshot formatting, and ordinary
+exception formatting do not run analysis. Preparing a problem and analysing it
+leave existing model values unchanged.
+
+Reports distinguish field paths from external parameters. Nested equations omit
+their longest common component prefix on both sides.
 An equation reaching outside its component is relative to the nearest common
 ancestor of the referenced fields. Aliases prefer a path within the displayed
 component where available. Structured paths and ``problem.format(expression)``
