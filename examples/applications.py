@@ -6,7 +6,8 @@ All prices and rates are synthetic; quantities use the units in each docstring.
 
 from sympy import Rational
 
-from modello import InstanceDummy, Modello, component
+from examples.reconcile import DECIMAL_SHIFTS, Reconciliation, Scale, Suspect
+from modello import InstanceDummy, Modello, component, inspect_model
 
 
 class InvoiceLine(Modello):
@@ -100,6 +101,22 @@ def main() -> None:
     )
     print("Invoice total:", billed.total)
     print("Unit price implied by the invoice total:", reconciled.items.parts.unit_price)
+
+    # Different cause labels can share the same numerical correction.
+    price_check = inspect_model(InvoiceLine, "price units", quantity=10, unit_price=1200, amount=120)
+    price_study = Reconciliation(
+        price_check,
+        (Suspect(price_check.field("unit_price"), (*DECIMAL_SHIFTS, Scale("GBX quoted as GBP", Rational(1, 100)))),),
+    )
+    for match in price_study.scan().matches:
+        print("Price correction:", match.original, "->", match.proposed)
+        print("Possible explanations:", "; ".join(mutation.label for mutation in match.mutations))
+    lot_check = inspect_model(InvoiceLine, "lot size", quantity=2, unit_price=3, amount=150)
+    lot_study = Reconciliation(
+        lot_check, (Suspect(lot_check.field("quantity"), (*DECIMAL_SHIFTS, Scale("25 items per lot", 25))),)
+    )
+    for match in lot_study.scan().matches:
+        print("Quantity correction for a 25-item lot:", match.original, "->", match.proposed)
 
     packs = Packaging("packs", units=180, mass_per_unit=Rational(1, 2))
     planned = ProductionOrder("planned", batch=Batch("batch", yield_fraction=Rational(9, 10)), packaging=packs)

@@ -104,6 +104,11 @@ The inferred price is an explanation conditional on the other observations.
 If both the quantity and price are suspect, the total alone generally cannot
 identify which was wrong. The original component remains unchanged.
 
+Before freely inferring a price, the :doc:`reconciliation framework
+<../reconciliation/framework>` can try common decimal shifts and configured
+quote-unit corrections. The runnable application also demonstrates a GBX/GBP
+price hypothesis and a 25-item lot-size hypothesis for quantity.
+
 Material requirements and measured yield
 -----------------------------------------
 

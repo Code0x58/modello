@@ -1,4 +1,4 @@
-"""Investigate a synthetic CDS PnL break by releasing individual observations.
+"""Investigate a synthetic CDS PnL break with common mutations, then inference.
 
 Run ``python -m examples.reconciliation``. The pricing model has one remaining
 period: premium on survival and protection on default, both paid at its end.
@@ -8,6 +8,7 @@ conventions. See the documentation for the precise scope and sign conventions.
 
 from sympy import Rational, S
 
+from examples.reconcile import Reconciliation, Suspect
 from modello import FieldValue, InstanceDummy, Modello, ModelProblem, component, inspect_model
 
 
@@ -87,7 +88,7 @@ def sample_problem() -> ModelProblem[CDSPnL]:
 
 
 def main() -> None:
-    """Show the formula, the break, and individually implied alternatives."""
+    """Try common errors first; expose inverse inference as a separate stage."""
     pricing = inspect_model(CDSMark, "pricing")
     expression = pricing.solutions().expression(pricing.field("value"))
     print("Pricing formula:", pricing.format(expression))
@@ -96,18 +97,24 @@ def main() -> None:
     print("Recorded PnL:", recorded.pnl)
     print("Trusted PnL:", 51_000)
     print("Break (recorded - trusted):", recorded.pnl - 51_000)
-    print("One observation released at a time; all other observations stay fixed:")
-    for name in ("signed_notional", "coupon_bps", "recovery", "cashflow"):
-        family = problem.without(name).solutions()
-        print(f"  {name}: {family.values(problem.field(name))}")
-        # cases() checks every state against the retained equations and domains.
-        for case in family.cases():
-            print(f"    opening PV={case.opening.value}, closing PV={case.closing.value}, PnL={case.pnl}")
+    study = Reconciliation(problem, tuple(Suspect(problem.field(name)) for name in ("signed_notional", "coupon_bps")))
+    report = study.scan()
+    print("Common entry mistakes, one field at a time:")
+    for match in report.matches:
+        print(f"  {'.'.join(match.field.path)}: {match.original} -> {match.proposed}")
+        print("    Possible explanations:", "; ".join(mutation.label for mutation in match.mutations))
+    for trial in report.unresolved:
+        print(f"  Undecided: {'.'.join(trial.field.path)} -> {trial.proposed}: {trial.analysis.reason}")
+    if report.baseline.status != "consistent" and not report.matches:
+        print("No confirmed common mutation; infer each suspect independently:")
+        for suspect in study.suspects:
+            family = study.infer(suspect.field)
+            print(f"  {'.'.join(suspect.field.path)}: {family.values(suspect.field)}")
     print("Also requiring independently observed opening PV=22000:")
     opening_value = FieldValue(problem.field("opening", "value"), 22_000)
-    for name in ("signed_notional", "coupon_bps", "cashflow"):
-        family = problem.without(name).solutions().observe(opening_value)
-        print(f"  {name}: {family.values(problem.field(name))}")
+    for match in report.matches:
+        checked = match.problem.solutions().observe(opening_value)
+        print(f"  {'.'.join(match.field.path)}: {checked.values(match.field)}")
     print("Alternatives explain the number; confirm any correction against independent records.")
 
 

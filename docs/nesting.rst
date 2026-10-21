@@ -141,4 +141,5 @@ constraints, and multiple possible solutions.
 The :doc:`practical applications <examples/applications/index>` apply the same
 pattern to invoices, production yield, and connected circuits. The
 :doc:`trade reconciliation example <examples/reconciliation/index>` keeps a
-trusted PnL fixed and releases individual observations to investigate a break.
+trusted PnL fixed, tries common entry mistakes, and then offers inference for
+individual observations to investigate a break.

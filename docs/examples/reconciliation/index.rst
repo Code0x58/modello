@@ -1,10 +1,11 @@
 Investigate a trade PnL break
 ==============================
 
-A trusted output can be an input to the investigation. Keep that output fixed,
-release a suspect observation, and ask what value would satisfy the same
-equations. Repeat for other observations. The useful result is a set of
-conditional explanations that operations can compare with independent records.
+A trusted output can be an input to the investigation. Keep it fixed and first
+try common entry mistakes on selected fields: an extra zero, a missing zero,
+or a known unit or lot-size conversion. If those hypotheses do not explain the
+break, release an observation and infer the value the equations require.
+Both stages give conditional explanations to compare with independent records.
 
 This example uses a deliberately small CDS model with visible pricing
 equations. It demonstrates the full workflow without requiring a production
@@ -13,6 +14,15 @@ pricing engine:
 .. code-block:: console
 
    $ python -m examples.reconciliation
+
+The reusable :doc:`small reconciliation framework <framework>` separates these
+stages and also demonstrates price-unit and lot-size checks. It lives under
+``examples/`` while the workflow is being explored.
+
+.. toctree::
+   :maxdepth: 1
+
+   framework
 
 Pricing assumptions and signs
 ------------------------------
@@ -124,10 +134,52 @@ trade's calculated result:
 >>> problem.analyse().status
 'inconsistent'
 
-For the investigation, start every trial from the original problem, which
-includes the trusted PnL. Release exactly one recorded observation:
+Try common entry mistakes first
+--------------------------------
 
->>> notional_trial = problem.without("signed_notional").solutions()
+Declare the fields that may be wrong. The default catalogue tries multiplication
+and division by 10 and 100, independently on each field. PnL, cashflow, recovery,
+and market data remain fixed in this investigation:
+
+>>> from examples.reconcile import Reconciliation, Suspect
+>>> study = Reconciliation(problem, (
+...     Suspect(problem.field("signed_notional")),
+...     Suspect(problem.field("coupon_bps")),
+... ))
+>>> report = study.scan()
+>>> len(report.trials), len(report.matches), len(report.unresolved)
+(8, 1, 0)
+>>> match, = report.matches
+>>> match.field.path, match.original, match.proposed
+(('signed_notional',), 1000000, 10000000)
+>>> match.mutations[0].label
+'one missing zero (x10)'
+>>> match.analysis.witness.verdict
+'satisfied'
+>>> candidate = match.problem.solutions().one()
+>>> candidate.opening.value, candidate.closing.value, candidate.pnl
+(22000, 83000, 51000)
+
+Each concrete replacement is bound before analysis starts. This stage does not
+solve freely for notional and then classify the answer as a typo. A match needs
+a closed, checked witness satisfying the entire modified model. Other trial
+outcomes, including undecided ones, stay available in the report. The source
+snapshot is unchanged.
+
+The match suggests checking a missing zero in the notional. It does not prove
+the cause, and the framework never updates the original record.
+
+Use inference as the next stage
+-------------------------------
+
+If the common hypotheses produce no confirmed match, ``study.infer(field)``
+releases that suspect's original scalar observation and returns a solution
+family. It is a separate, explicit operation; the runner only enters this stage
+when the common-mutation scan has no match.
+
+For comparison with the earlier example, infer notional directly here:
+
+>>> notional_trial = study.infer(problem.field("signed_notional"))
 >>> notional_trial.values(problem.field("signed_notional"))
 {10000000}
 >>> corrected = notional_trial.one()
@@ -139,7 +191,9 @@ includes the trusted PnL. Release exactly one recorded observation:
 ``one()`` checks the selected state against the retained equations and domains
 and returns typed model components. The original problem remains unchanged.
 
-Repeat the same question for other fields:
+For a broader investigation, explicitly consider other fields too. These manual
+trials also release recovery or cashflow, which were held fixed in the common
+mutation scan:
 
 >>> for name in ("coupon_bps", "recovery", "cashflow"):
 ...     alternatives = problem.without(name).solutions()

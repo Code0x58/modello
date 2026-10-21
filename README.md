@@ -134,8 +134,10 @@ selecting concrete model states.
 The [practical applications](docs/examples/applications/index.rst) demonstrate
 invoice reconciliation, production planning, and circuit measurement checks.
 The [CDS PnL reconciliation example](docs/examples/reconciliation/index.rst)
-keeps a trusted output fixed and releases individual recorded inputs to show
-the corrections they would imply, using a small, fully visible pricing model:
+keeps a trusted output fixed and tries common entry mistakes before inferring
+individual inputs, using a small, fully visible pricing model. The reusable
+[reconciliation framework](docs/examples/reconciliation/framework.rst) tests
+decimal shifts and configured quote-unit, lot-size, or sign corrections:
 
 ```sh
 python -m examples.applications
