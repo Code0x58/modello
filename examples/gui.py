@@ -3,7 +3,7 @@
 from sympy import Rational
 
 from modello import InstanceDummy, Modello, component
-from modello.gui import FieldInfo, create_app
+from modello.gui import FieldInfo, ModelInfo, create_app
 
 
 class Room(Modello):
@@ -12,11 +12,13 @@ class Room(Modello):
     width = InstanceDummy("width", positive=True)
     length = InstanceDummy("length", positive=True)
     area = width * length
-    __gui__ = {
-        "width": FieldInfo(description="The clear internal width, in metres.", symbol="w"),
-        "length": FieldInfo(description="The clear internal length, in metres.", symbol="l"),
-        "area": FieldInfo(description="The floor area, in square metres.", symbol="A"),
-    }
+    __gui__ = ModelInfo(
+        fields={
+            "width": FieldInfo(description="The clear internal width, in metres.", symbol="w"),
+            "length": FieldInfo(description="The clear internal length, in metres.", symbol="l"),
+            "area": FieldInfo(description="The floor area, in square metres.", symbol="A"),
+        }
+    )
 
 
 class Studio(Modello):
@@ -27,27 +29,29 @@ class Studio(Modello):
     waste = InstanceDummy("waste", nonnegative=True)
     material = room.area * (1 + waste)
     total = material * unit_cost
-    __gui__ = {
-        "": FieldInfo(
-            title="A room to explore",
-            description=(
-                "A small renovation, expressed as a connected model. Adjust a dimension or price and follow the effect."
+    __gui__ = ModelInfo(
+        title="A room to explore",
+        description=(
+            "A small renovation, expressed as a connected model. Adjust a dimension or price and follow the effect."
+        ),
+        info=(
+            "The waste allowance is a hidden input. It stays in the model as you explore; "
+            "computed results stay derived."
+        ),
+        fields={
+            "room": FieldInfo(title="Room geometry", description="Dimensions are in metres; area is in square metres."),
+            "unit_cost": FieldInfo(title="Unit cost", description="Material price per square metre.", symbol="c"),
+            "waste": FieldInfo(description="A 10% material allowance, held as an input.", symbol="r", hidden=True),
+            "material": FieldInfo(
+                title="Material required",
+                description="Floor area plus the waste allowance, in square metres.",
+                symbol="M",
             ),
-            info=(
-                "The waste allowance is a hidden input. It stays in the model as you explore; "
-                "computed results stay derived."
+            "total": FieldInfo(
+                title="Estimated total", description="The material estimate before labour and tax.", symbol="C"
             ),
-        ),
-        "room": FieldInfo(title="Room geometry", description="Dimensions are in metres; area is in square metres."),
-        "unit_cost": FieldInfo(title="Unit cost", description="Material price per square metre.", symbol="c"),
-        "waste": FieldInfo(description="A 10% material allowance, held as an input.", symbol="r", hidden=True),
-        "material": FieldInfo(
-            title="Material required", description="Floor area plus the waste allowance, in square metres.", symbol="M"
-        ),
-        "total": FieldInfo(
-            title="Estimated total", description="The material estimate before labour and tax.", symbol="C"
-        ),
-    }
+        },
+    )
 
 
 def main() -> None:

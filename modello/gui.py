@@ -1,38 +1,35 @@
-"""Optional local browser exploration of nested models (install ``modello[gui]``).
+"""Optional local exploration of nested models (install ``modello[gui]``).
 
 Presentation metadata never changes the algebra. Raw snapshots do not solve;
-interactive bindings are exact scalars parsed without Python or SymPy evaluation.
+browser edits are exact scalars parsed without evaluating expression strings.
 """
 
 from __future__ import annotations
 
-import ast
-import math
-import re
 from dataclasses import dataclass, replace
-from html.entities import html5
+from dataclasses import field as dataclass_field
 from typing import TYPE_CHECKING, Any, Mapping
-from xml.dom.minidom import Text
 
-from sympy import E, Eq, Expr, I, Rational, S, Symbol, pi, solve, sqrt
-from sympy.printing.mathml import MathMLPresentationPrinter
+from sympy import Expr, S, Symbol
 
-from modello import Modello, ScalarValue, inspect_model
-from modello.diagnostics import Candidate, ConstraintKind, FieldValue, ModelConstraint, ModelProblem
-from modello.errors import ModelInputError, ModelValidationError
+from modello import Modello, ScalarValue, _solve_problem, inspect_model
+from modello._gui.inputs import parse_scalar
+from modello.diagnostics import Candidate, ConstraintKind, FieldValue, ModelConstraint, ModelField, ModelProblem
+from modello.errors import ModelInputError, ModelValidationError, SolverBackendError
 
 if TYPE_CHECKING:
     from flask import Flask
 
+__all__ = ["BindingError", "Explorer", "FieldInfo", "ModelInfo", "create_app"]
+
 
 @dataclass(frozen=True)
 class FieldInfo:
-    """Display-only metadata for a scalar, component, or the model at ``''``.
+    """Display metadata for a scalar or component, without changing its algebra.
 
-    ``symbol`` is literal text in MathML, not LaTeX. Hidden quantities retain
-    their input constraints but have no editor, value, or observation in the
-    browser response. This is presentation, not a secrecy boundary: derived
-    outputs can reveal their inputs.
+    ``symbol`` is literal MathML text, not LaTeX. ``hidden`` removes the editor
+    and observation value while retaining its inputs. Calculated outputs can
+    still reveal input values; hiding is a presentation choice.
     """
 
     title: str = ""
@@ -42,103 +39,26 @@ class FieldInfo:
     hidden: bool = False
 
 
+@dataclass(frozen=True)
+class ModelInfo:
+    """Model-level text and field metadata for a ``__gui__`` declaration.
+
+    Field keys are relative dotted paths. Component classes supply their own
+    declarations; a parent's ``fields`` can override them by full path.
+    """
+
+    title: str = ""
+    description: str = ""
+    info: str = ""
+    fields: Mapping[str, FieldInfo] = dataclass_field(default_factory=dict)
+
+
 class BindingError(ModelValidationError):
     """A rejected edit, with field paths that the interface can highlight."""
 
     def __init__(self, message: str, paths: tuple[str, ...] = ()) -> None:
         self.paths = paths
         super().__init__(message)
-
-
-def _parse_scalar(text: str) -> Expr:
-    """Read a deliberately small arithmetic language, never eval/sympify text."""
-    if not text.strip() or len(text) > 160:
-        raise ModelInputError("Enter a number or a short exact arithmetic expression.")
-    try:
-        tree = ast.parse(text.strip(), mode="eval")
-    except (SyntaxError, ValueError) as error:
-        raise ModelInputError("Use numbers, +, -, *, /, **, sqrt, pi, E, or I.") from error
-    if sum(1 for _ in ast.walk(tree)) > 64:
-        raise ModelInputError("The arithmetic expression is too long.")
-
-    def read(node: ast.AST) -> Expr:
-        result = read_node(node)
-        if result.is_Rational and max(int(result.p).bit_length(), int(result.q).bit_length()) > 4096:
-            raise ModelInputError("The arithmetic result is too large.")
-        return result
-
-    def read_node(node: ast.AST) -> Expr:
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
-            token = ast.get_source_segment(text.strip(), node) or ""
-            if len(token) > 32 or not math.isfinite(node.value) or abs(node.value) > 10**100:
-                raise ModelInputError("Numeric literals must be finite and at most 1e100.")
-            exponent = re.search(r"[eE]([+-]?[0-9_]+)$", token)
-            if exponent and abs(int(exponent[1].replace("_", ""))) > 1000:
-                raise ModelInputError("Decimal exponents must be between -1000 and 1000.")
-            return Rational(token.replace("_", ""))
-        if isinstance(node, ast.Name) and node.id in ("pi", "E", "I"):
-            return {"pi": pi, "E": E, "I": I}[node.id]
-        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
-            value = read(node.operand)
-            return -value if isinstance(node.op, ast.USub) else value
-        if isinstance(node, ast.BinOp):
-            left, right = read(node.left), read(node.right)
-            if isinstance(node.op, ast.Add):
-                return left + right
-            if isinstance(node.op, ast.Sub):
-                return left - right
-            if isinstance(node.op, ast.Mult):
-                return left * right
-            if isinstance(node.op, ast.Div):
-                return left / right
-            if isinstance(node.op, ast.Pow) and right.is_Rational and abs(right) <= 100:
-                return left**right
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "sqrt"
-            and len(node.args) == 1
-            and not node.keywords
-        ):
-            return sqrt(read(node.args[0]))
-        raise ModelInputError("Use numbers, +, -, *, /, ** (power at most 100), sqrt, pi, E, or I.")
-
-    try:
-        result = read(tree.body)
-    except (TypeError, ValueError, ZeroDivisionError, OverflowError) as error:
-        raise ModelInputError(str(error)) from error
-    if result.is_finite is not True:
-        raise ModelInputError("Inputs must be finite scalar values.")
-    return result
-
-
-class _MathPrinter(MathMLPresentationPrinter):
-    """Attach real field paths to symbols without modifying the expressions."""
-
-    def __init__(self, problem: ModelProblem, metadata: Mapping[str, FieldInfo]) -> None:
-        super().__init__()
-        self.labels: dict[Symbol, tuple[str, str]] = {}
-        for field in problem.fields:
-            path = ".".join(field.path)
-            self.labels.setdefault(field.symbol, (path, metadata[path].symbol or path))
-
-    def _print_Symbol(self, expression: Symbol) -> Any:
-        node = self.dom.createElement("mi")
-        path, label = self.labels.get(expression, ("", expression.name))
-        # SymPy replaces Document.createTextNode with an unescaped writer.
-        # Field labels are literal user text and require the standard DOM node.
-        text = Text()
-        text.data = label
-        text.ownerDocument = self.dom
-        node.appendChild(text)
-        if path:
-            node.setAttribute("data-path", path)
-            node.setAttribute("tabindex", "0")
-        return node
-
-    _print_Dummy = _print_Symbol
-    _print_InstanceDummy = _print_Symbol
-    _print_BoundInstanceDummy = _print_Symbol
 
 
 def _instance_problem(instance: Modello, name: str) -> ModelProblem:
@@ -172,58 +92,27 @@ def _instance_problem(instance: Modello, name: str) -> ModelProblem:
     return replace(problem, constraints=tuple(constraints))
 
 
-def _assumptions(symbol: Symbol) -> list[str]:
-    """Omit predicates already implied by more informative requirements."""
-    requirements = {k: v for k, v in symbol.assumptions0.items() if k != "commutative"}
-    for key in sorted(requirements):
-        others = {k: v for k, v in requirements.items() if k != key}
-        if Symbol("requirements", **others).assumptions0.get(key) == requirements[key]:
-            del requirements[key]
-    return [key if expected else f"not {key}" for key, expected in sorted(requirements.items())]
-
-
 def _preview(problem: ModelProblem) -> tuple[dict[Symbol, Expr], str]:
-    """Follow construction's directed expansion, then audit its unique preview.
-
-    A solver answer is a proposal. Unknown audits remain conditional, and no
-    branch or sampled point is selected to stand in for an ambiguous model.
-    """
-    fields = tuple(dict.fromkeys(f.symbol for f in problem.fields))
-    values = {symbol: symbol for symbol in fields}
-    pending = {c.left: c.right for c in problem.constraints if c.kind is ConstraintKind.DEFINITION}
-    while pending:
-        ready = {left: right for left, right in pending.items() if not right.free_symbols & pending.keys()}
-        if not ready:
-            break
-        for left, right in ready.items():
-            values[left] = right.xreplace(values)
-            del pending[left]
-    equations = [Eq(c.left, c.right).xreplace(values) for c in problem.constraints]
-    if S.false in equations:
-        raise BindingError("These inputs contradict a model equation.")
-    equations = [eq for eq in equations if eq is not S.true]
+    """Audit the shared solver's proposals without selecting an arbitrary branch."""
     try:
-        proposals = (
-            solve(equations, list(dict.fromkeys([*pending, *fields])), dict=True, check=False) if equations else [{}]
-        )
-    except Exception as error:
-        raise BindingError(f"No preview: the symbolic solver raised {type(error).__name__}.") from error
+        proposals = _solve_problem(problem, check=False)
+    except SolverBackendError as error:
+        raise BindingError(f"No preview: the symbolic solver raised {type(error.backend_error).__name__}.") from error
     accepted = []
     rejected_paths: set[str] = set()
-    for proposal in proposals:
-        resolved = {symbol: value.xreplace(proposal) for symbol, value in values.items()}
-        audit = problem.check(Candidate(tuple(FieldValue(f, resolved[f.symbol]) for f in problem.fields)))
+    for values in proposals:
+        audit = problem.check(Candidate(tuple(FieldValue(f, values[f.symbol]) for f in problem.fields)))
         if audit.verdict != "violated":
-            accepted.append((resolved, audit.verdict))
-        else:
-            rejected_paths.update(
-                ".".join(check.value.field.path)
-                for check in audit.assumptions
-                if check.actual not in (None, check.expected)
-            )
-            rejected_paths.update(
-                ".".join(check.constraint.path) for check in audit.residuals if check.verdict == "violated"
-            )
+            accepted.append((values, audit.verdict))
+            continue
+        rejected_paths.update(
+            ".".join(check.value.field.path)
+            for check in audit.assumptions
+            if check.actual not in (None, check.expected)
+        )
+        rejected_paths.update(
+            ".".join(check.constraint.path) for check in audit.residuals if check.verdict == "violated"
+        )
     if len(accepted) != 1:
         message = (
             "Multiple solutions remain. Add an observation to select a unique preview."
@@ -237,10 +126,10 @@ def _preview(problem: ModelProblem) -> tuple[dict[Symbol, Expr], str]:
 class Explorer:
     """Prepare raw or bound views of a class, instance, or recorded problem.
 
-    Model classes may define ``__gui__ = {'field': FieldInfo(...), '': ...}``.
-    Nested metadata is inherited from component classes; explicit ``metadata``
-    overrides it by full dotted path. ``inputs`` supplies initial bindings by
-    dotted path, including nested fields. Original instances are never mutated.
+    Declare model text and field labels with ``__gui__ = ModelInfo(...)``.
+    Component declarations are inherited by the layout; ``metadata`` overrides
+    field or component labels by full dotted path. ``inputs`` supplies initial
+    bindings by dotted path. The original model instance is never mutated.
     """
 
     def __init__(
@@ -251,64 +140,27 @@ class Explorer:
         inputs: Mapping[str, ScalarValue] | None = None,
         metadata: Mapping[str, FieldInfo] | None = None,
     ) -> None:
+        from modello._gui.presentation import Layout
+
         if isinstance(model, ModelProblem):
-            problem = model
+            self.problem = model
         elif isinstance(model, Modello):
-            problem = _instance_problem(model, name)
+            self.problem = _instance_problem(model, name)
         else:
-            problem = inspect_model(model, name)
-        self.problem = problem
-        self.metadata: dict[str, FieldInfo] = {}
+            self.problem = inspect_model(model, name)
+        self._layout = Layout(self.problem, metadata or {})
+        self._initial = self._bind(self.problem, inputs or {})
 
-        def collect(model: type[Modello], prefix: tuple[str, ...]) -> None:
-            self.metadata[".".join(prefix)] = FieldInfo(description=model.__doc__ or "")
-            for path in model._modello_fields:
-                self.metadata.setdefault(".".join(prefix + path), FieldInfo())
-            for attr, child in model._modello_namespace.nested_models.items():
-                collect(child._modello_model, (*prefix, attr))
-            declared = getattr(model, "__gui__", {})
-            for path, info in declared.items():
-                full_path = ".".join((*prefix, *path.split("."))) if path else ".".join(prefix)
-                self.metadata[full_path] = info
-
-        collect(problem.model, ())
-        self.metadata.update(metadata or {})
-        valid_paths = {"", *(".".join(field.path) for field in problem.fields)}
-        valid_paths.update(".".join(field.path[:i]) for field in problem.fields for i in range(1, len(field.path)))
-        for path, info in self.metadata.items():
-            if path not in valid_paths or not isinstance(info, FieldInfo):
-                raise ModelInputError(f"Invalid GUI metadata at {path!r}")
-        self._initial = self._bind(problem, inputs or {})
-        self._printer = _MathPrinter(problem, self.metadata)
-
-    def _hidden(self, path: str) -> bool:
-        paths = [path]
-        field = next((f for f in self.problem.fields if ".".join(f.path) == path), None)
-        if field is not None:
-            paths.extend(".".join(alias.path) for alias in self.problem.aliases(field))
-        for candidate in paths:
-            parts = candidate.split(".")
-            if any(self.metadata[".".join(parts[:i])].hidden for i in range(1, len(parts) + 1)):
-                return True
-        return False
-
-    def _bind(self, problem: ModelProblem, bindings: Mapping[str, ScalarValue | None]) -> ModelProblem:
-        constraints = list(problem.constraints)
-        changed: dict[Symbol, Expr | None] = {}
+    def _bind(self, initial: ModelProblem, bindings: Mapping[str, ScalarValue | None]) -> ModelProblem:
+        changes: dict[Symbol, tuple[ModelField, Expr | None]] = {}
         for path, raw in bindings.items():
             try:
-                field = problem.field(*path.split("."))
-            except KeyError as error:
-                raise BindingError(f"Unknown field: {path}", (path,)) from error
-            try:
+                field = self._layout.field(path)
                 value = None if raw is None else FieldValue(field, raw).value
             except ModelInputError as error:
                 raise BindingError(str(error), (path,)) from error
-            if field.symbol in changed and changed[field.symbol] != value:
+            if field.symbol in changes and changes[field.symbol][1] != value:
                 raise BindingError("Aliases must have the same input value.", (path,))
-            changed[field.symbol] = value
-            # Definitions and inferred component observations retain their meaning.
-            constraints = [c for c in constraints if c.left != field.symbol or c.kind is not ConstraintKind.INPUT]
             if value is not None:
                 bad = [
                     key
@@ -316,12 +168,31 @@ class Explorer:
                     if getattr(value, f"is_{key}", None) not in (None, expected)
                 ]
                 if value.is_finite is False or value.has(S.NaN, S.ComplexInfinity) or bad:
-                    requirements = ", ".join(bad) or "finite scalar"
-                    raise BindingError(f"{path}: value violates {requirements}.", (path,))
-                constraints.append(ModelConstraint(0, field.path, ConstraintKind.INPUT, field.symbol, value, path))
-        return replace(
-            problem, constraints=tuple(replace(c, index=i) for i, c in enumerate(constraints)), candidates=()
+                    raise BindingError(f"{path}: value violates {', '.join(bad) or 'finite scalar'}.", (path,))
+            changes[field.symbol] = (field, value)
+        constraints = [c for c in initial.constraints if c.kind is not ConstraintKind.INPUT or c.left not in changes]
+        constraints.extend(
+            ModelConstraint(0, field.path, ConstraintKind.INPUT, field.symbol, value, ".".join(field.path))
+            for field, value in changes.values()
+            if value is not None
         )
+        return replace(
+            initial, constraints=tuple(replace(c, index=i) for i, c in enumerate(constraints)), candidates=()
+        )
+
+    def _browser_bindings(self, bindings: Mapping[str, str | None]) -> dict[str, Expr | None]:
+        """Apply the same edit policy used to decide which fields have editors."""
+        parsed = {}
+        for path, text in bindings.items():
+            if path not in self._layout.editable:
+                raise BindingError("This field cannot be edited.", (path,))
+            if text is not None and not isinstance(text, str):
+                raise BindingError("Enter input values as text.", (path,))
+            try:
+                parsed[path] = None if text is None or not text.strip() else parse_scalar(text)
+            except ModelInputError as error:
+                raise BindingError(str(error), (path,)) from error
+        return parsed
 
     def snapshot(
         self, bindings: Mapping[str, ScalarValue | None] | None = None, *, raw: bool = False
@@ -329,83 +200,32 @@ class Explorer:
         """Return a JSON-ready view; invalid edits raise without changing state.
 
         Bindings replace initial inputs, and ``None`` releases an input. Raw
-        views never invoke a solver. Bound views retain unresolved conditions;
-        an undecided domain is clearly labelled as a conditional preview.
+        views show definitions without solving and still identify observations.
+        Bound views label an undecided audit as a conditional preview.
         """
         problem = self._bind(self._initial, bindings or {})
         values, verdict = ({}, "raw") if raw else _preview(problem)
         definitions = {c.left: c.right for c in problem.constraints if c.kind is ConstraintKind.DEFINITION}
         supplied = {c.left: c.right for c in problem.constraints if c.kind is ConstraintKind.INPUT}
-        inferred = {c.left for c in problem.constraints if c.kind is ConstraintKind.INFERRED}
-        rows = []
-        for field in problem.fields:
-            path = ".".join(field.path)
-            if self._hidden(path):
+        constraints: dict[Symbol, list[dict[str, str]]] = {}
+        for c in problem.constraints:
+            if ".".join(c.path) in self._layout.hidden:
                 continue
-            info = self.metadata[path]
-            expression = definitions.get(field.symbol, field.symbol) if raw else values[field.symbol]
-            kind = (
-                "input"
-                if field.symbol in supplied
-                else "fixed"
-                if field.symbol in inferred or not expression.free_symbols
-                else "free"
-                if expression == field.symbol
-                else "derived"
-            )
-            assumptions = _assumptions(field.symbol)
-            rows.append(
-                {
-                    "path": path,
-                    "name": field.path[-1],
-                    "depth": len(field.path) - 1,
-                    "title": info.title or field.path[-1].replace("_", " "),
-                    "description": info.description,
-                    "info": info.info,
-                    "symbol": info.symbol or path,
-                    "kind": kind,
-                    "value": problem.format(expression),
-                    "input": problem.format(supplied[field.symbol]) if field.symbol in supplied else "",
-                    "editable": field.symbol not in inferred,
-                    "assumptions": assumptions,
-                    "constraints": [
-                        {
-                            "kind": str(c.kind),
-                            "path": ".".join(c.path),
-                            "text": f"{problem.format(c.left)} = {problem.format(c.right)}",
-                        }
-                        for c in problem.uses(field)
-                        if not self._hidden(".".join(c.path))
-                    ],
-                    "aliases": [".".join(f.path) for f in problem.aliases(field) if not self._hidden(".".join(f.path))],
-                }
-            )
-        components = []
-        for path, info in self.metadata.items():
-            if path and path not in {".".join(f.path) for f in problem.fields} and not self._hidden(path):
-                components.append(
-                    {"path": path, "title": info.title or path.split(".")[-1], "description": info.description}
-                )
-        equations = [
-            {
+            entry = {
+                "kind": str(c.kind),
                 "path": ".".join(c.path),
-                "mathml": '<math xmlns="http://www.w3.org/1998/Math/MathML" display="block">'
-                + re.sub(
-                    r"&([A-Za-z][A-Za-z0-9]+);",
-                    lambda match: (
-                        match[0]
-                        if match[1] in {"amp", "lt", "gt", "quot", "apos"}
-                        else "".join(f"&#{ord(char)};" for char in html5[match[1] + ";"])
-                    ),
-                    self._printer.doprint(Eq(c.left, c.right, evaluate=False)),
-                )
-                + "</math>",
                 "text": f"{problem.format(c.left)} = {problem.format(c.right)}",
             }
-            for c in self.problem.constraints
-            if c.kind is ConstraintKind.DEFINITION and not self._hidden(".".join(c.path))
-        ]
-        root = self.metadata[""]
+            for symbol in c.symbols:
+                constraints.setdefault(symbol, []).append(entry)
+        rows: list[dict[str, Any]] = []
+        symbols: list[dict[str, Any]] = []
+        for path, field in self._layout.fields.items():
+            expression = definitions.get(field.symbol, field.symbol) if raw else values[field.symbol]
+            row = self._field_view(path, expression, supplied, definitions, constraints, problem)
+            (symbols if path in self._layout.hidden else rows).append(row)
+        status, message = _preview_status(raw, verdict)
+        root = self._layout.metadata[""]
         return {
             "title": root.title or problem.model.__name__,
             "name": problem.name,
@@ -413,33 +233,85 @@ class Explorer:
             "info": root.info,
             "raw": raw,
             "fields": rows,
-            "components": components,
-            "equations": equations,
-            "symbols": [
+            "symbols": symbols,
+            "components": [
                 {
-                    "path": ".".join(f.path),
-                    "title": self.metadata[".".join(f.path)].title or f.path[-1],
-                    "description": self.metadata[".".join(f.path)].description,
-                    "info": self.metadata[".".join(f.path)].info,
-                    "value": "Hidden input" if f.symbol in supplied else "Hidden quantity",
-                    "kind": "input" if f.symbol in supplied else "derived",
-                    "assumptions": _assumptions(f.symbol),
-                    "constraints": [],
-                    "aliases": [],
+                    "path": path,
+                    "title": self._layout.metadata[path].title or path.split(".")[-1],
+                    "description": self._layout.metadata[path].description,
                 }
-                for f in problem.fields
-                if self._hidden(".".join(f.path))
+                for path in self._layout.components
+                if path not in self._layout.hidden
             ],
-            "status": "raw" if raw else "checked" if verdict == "satisfied" else "conditional",
-            "condition": ""
-            if raw
-            else "All equations and domains checked"
-            if verdict == "satisfied"
-            else "Symbolic or undecided: not a validated numeric state",
+            "equations": [dict(equation) for equation in self._layout.equations],
+            "status": status,
+            "condition": message,
             "hidden_inputs": sum(
-                1 for c in problem.constraints if c.kind is ConstraintKind.INPUT and self._hidden(".".join(c.path))
+                c.kind is ConstraintKind.INPUT and ".".join(c.path) in self._layout.hidden for c in problem.constraints
             ),
         }
+
+    def _field_view(
+        self,
+        path: str,
+        expression: Expr,
+        supplied: Mapping[Symbol, Expr],
+        definitions: Mapping[Symbol, Expr],
+        constraints: Mapping[Symbol, list[dict[str, str]]],
+        problem: ModelProblem,
+    ) -> dict[str, Any]:
+        field = self._layout.fields[path]
+        symbol = field.symbol
+        info = self._layout.metadata[path]
+        hidden = path in self._layout.hidden
+        kind = _field_kind(symbol, expression, supplied, self._layout.copied)
+        if symbol in supplied:
+            provenance = "Supplied input"
+        elif symbol in self._layout.copied:
+            provenance = "Copied component result"
+        elif symbol in definitions:
+            provenance = "Model definition"
+        elif kind == "free":
+            provenance = "Free quantity"
+        else:
+            provenance = "Inferred from equations"
+        return {
+            "path": path,
+            "name": field.path[-1],
+            "depth": len(field.path) - 1,
+            "title": info.title or field.path[-1].replace("_", " "),
+            "description": info.description,
+            "info": info.info,
+            "symbol": info.symbol or path,
+            "kind": kind,
+            "provenance": provenance,
+            "value": ("Hidden input" if symbol in supplied else "Hidden quantity")
+            if hidden
+            else problem.format(expression),
+            "input": problem.format(supplied[symbol]) if symbol in supplied and not hidden else "",
+            "editable": path in self._layout.editable,
+            "assumptions": list(self._layout.assumptions[symbol]),
+            "constraints": [] if hidden else list(constraints.get(symbol, ())),
+            "aliases": []
+            if hidden
+            else [alias for alias in self._layout.aliases[symbol] if alias not in self._layout.hidden],
+        }
+
+
+def _field_kind(symbol: Symbol, value: Expr, supplied: Mapping[Symbol, Expr], copied: frozenset[Symbol]) -> str:
+    if symbol in supplied:
+        return "input"
+    if symbol in copied or not value.free_symbols:
+        return "fixed"
+    return "free" if value == symbol else "derived"
+
+
+def _preview_status(raw: bool, verdict: str) -> tuple[str, str]:
+    if raw:
+        return "raw", "Definitions only; recorded inputs retained"
+    if verdict == "satisfied":
+        return "checked", "All equations and domains checked"
+    return "conditional", "Symbolic or undecided: not a validated numeric state"
 
 
 def create_app(
@@ -461,7 +333,7 @@ def create_app(
         raise ImportError("The browser explorer requires: pip install 'modello[gui]'") from error
 
     explorer = Explorer(model, name, inputs=inputs, metadata=metadata)
-    app = Flask(__name__, template_folder="_gui", static_folder="_gui", static_url_path="/assets")
+    app = Flask(__name__, template_folder="_gui/templates", static_folder="_gui/static", static_url_path="/assets")
     app.config.update(MAX_CONTENT_LENGTH=16_384, TRUSTED_HOSTS=["localhost", "127.0.0.1", "[::1]"])
 
     @app.get("/")
@@ -473,34 +345,14 @@ def create_app(
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict) or set(payload) - {"bindings", "raw"}:
             return jsonify(error="Expected bindings and an optional raw flag.", paths=[]), 400
-        bindings = payload.get("bindings", {})
-        raw = payload.get("raw", False)
+        bindings, raw = payload.get("bindings", {}), payload.get("raw", False)
         if not isinstance(bindings, dict) or not isinstance(raw, bool) or len(bindings) > len(explorer.problem.fields):
             return jsonify(error="Invalid bindings or raw flag.", paths=[]), 400
-        parsed: dict[str, Expr | None] = {}
         try:
-            for path, value in bindings.items():
-                if path not in explorer.metadata or explorer._hidden(path):
-                    raise BindingError("This field cannot be edited.", (path,))
-                field = (
-                    explorer.problem.field(*path.split("."))
-                    if any(".".join(f.path) == path for f in explorer.problem.fields)
-                    else None
-                )
-                if field is not None and any(
-                    c.kind is ConstraintKind.INFERRED and c.left == field.symbol for c in explorer.problem.constraints
-                ):
-                    raise BindingError("A copied inferred observation is fixed in this snapshot.", (path,))
-                if value is not None and not isinstance(value, str):
-                    raise BindingError("Enter input values as text.", (path,))
-                try:
-                    parsed[path] = None if value is None or not value.strip() else _parse_scalar(value)
-                except ModelInputError as error:
-                    raise BindingError(str(error), (path,)) from error
-            return jsonify(explorer.snapshot(parsed, raw=raw))
+            return jsonify(explorer.snapshot(explorer._browser_bindings(bindings), raw=raw))
         except BindingError as error:
-            return jsonify(error=str(error), paths=list(error.paths or parsed)), 422
+            return jsonify(error=str(error), paths=list(error.paths or bindings)), 422
         except (ModelInputError, ModelValidationError) as error:
-            return jsonify(error=str(error), paths=list(parsed)), 422
+            return jsonify(error=str(error), paths=list(bindings)), 422
 
     return app

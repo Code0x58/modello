@@ -60,13 +60,16 @@ nested paths. The badges distinguish:
 
 Definitions, observations, and domain assumptions appear in quieter text and
 in the inspector. The original constraint kinds remain available there, so a
-fixed numeric result can still be traced to its definition. Aliases share an
-identity and show their alternate paths.
+fixed numeric result can still be traced to its definition. The inspector
+names its source explicitly: supplied input, model definition, inferred value,
+or copied component result. A fixed value is determined by the current
+observations and can still change when inputs change. Aliases share an identity
+and one editable observation across their alternate paths.
 
 .. image:: _static/gui/partial.png
    :alt: A released room length remains free and the cost becomes a symbolic expression.
 
-``Unbound model`` shows definitions without invoking the solver. Existing inputs
+``Raw model`` shows definitions without invoking the solver. Existing inputs
 remain identified in their editors and inspector. ``Reset inputs`` restores the
 initial observations. Each browser holds its own edits; requests cannot change
 another browser's state.
@@ -74,24 +77,32 @@ another browser's state.
 Descriptions, information, and hidden inputs
 --------------------------------------------
 
-Declare display metadata on a model with ``__gui__``. ``FieldInfo`` applies to
-fields, components, and the model itself at the empty path. Component classes
-supply their own metadata; parent metadata and the ``metadata=`` argument can
-override it with full dotted paths. Class docstrings provide default model and
-component descriptions. None of this changes the algebra:
+Declare model-level text with ``ModelInfo`` and scalar or component labels
+with ``FieldInfo``. Component classes supply their own declarations; a parent's
+``fields`` and the ``metadata=`` argument can override labels by full dotted
+path. Class docstrings provide default model and component descriptions.
+Presentation metadata does not change the algebra:
 
 .. code-block:: python
 
-   from modello.gui import FieldInfo
+   from modello.gui import FieldInfo, ModelInfo
 
    # Inside a Modello class body:
-   __gui__ = {
-       "": FieldInfo(title="Material estimate", description="A first estimate.",
-                     info="Prices exclude labour and tax."),
-       "room.width": FieldInfo(description="Clear internal width, in metres.",
-                               symbol="w"),
-       "waste": FieldInfo(symbol="r", hidden=True),
-   }
+   __gui__ = ModelInfo(
+       title="Material estimate",
+       description="A first estimate.",
+       info="Prices exclude labour and tax.",
+       fields={
+           "room.width": FieldInfo(description="Clear internal width, in metres.",
+                                   symbol="w"),
+           "waste": FieldInfo(symbol="r", hidden=True),
+       },
+   )
+
+Model-level labels are separate from field paths. The parent can set a
+component's title with ``FieldInfo`` at that component path, while the
+component's quantities retain their own descriptions. The complete declaration
+and initial observations are shown in :mod:`examples.gui`.
 
 A hidden field or component has no quantity row or editor. Its original inputs
 remain in every solve, and the browser cannot replace or release them. Hidden
@@ -131,7 +142,7 @@ proof of inconsistency.
 Equations and mobile exploration
 --------------------------------
 
-``Raw equations`` presents the original defining equations as a simultaneous
+``Equations`` presents the original defining equations as a simultaneous
 system using native presentation MathML. Inputs are not substituted into this
 view. ``FieldInfo.symbol`` provides literal symbol text, including Unicode;
 it is not interpreted as LaTeX. Symbols retain actual field identities even
@@ -157,9 +168,10 @@ not a solver timeout. There is no deployment, authentication, persistence,
 multi-branch selection, or model-instance export flow in this draft. Browser
 edits update the preview; they do not mutate the source Python model.
 
-The solver preview follows the constructor's directed-definition expansion and
-uses the existing diagnostic audit. Its implementation is local to the GUI;
-ordinary model construction and diagnostic formatting are unchanged. Python
+Construction and the preview share directed-definition expansion and candidate
+generation. The preview applies the existing diagnostic audit, while ordinary
+construction retains its original candidate filtering. Input parsing and MathML
+printing are separate from the compiled presentation layout and HTTP adapter. Python
 users can also call ``Explorer(...).snapshot(raw=True)`` for a solver-free,
 JSON-ready view without installing Flask.
 
@@ -167,4 +179,4 @@ API
 ---
 
 .. automodule:: modello.gui
-   :members: FieldInfo, Explorer, BindingError, create_app
+   :members: ModelInfo, FieldInfo, Explorer, BindingError, create_app

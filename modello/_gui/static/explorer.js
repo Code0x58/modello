@@ -3,9 +3,10 @@ const $ = (id) => document.getElementById(id);
 let state,
   bindings = {},
   selected = "",
-  formula = false,
+  equationsVisible = false,
   busy = false;
 const collapsed = new Set();
+let fieldsByPath = new Map();
 const node = (tag, className, text) => {
   const el = document.createElement(tag);
   if (className) el.className = className;
@@ -47,6 +48,7 @@ async function refresh(next = bindings) {
       "The local explorer could not be reached. Your last model is still shown.",
     );
   } finally {
+    $("raw").checked = state?.raw || false;
     busy = false;
     document.querySelectorAll("button, input").forEach((el) => {
       el.disabled = false;
@@ -54,9 +56,7 @@ async function refresh(next = bindings) {
   }
 }
 function details(path) {
-  const field = [...state.fields, ...state.symbols].find(
-    (f) => f.path === path,
-  );
+  const field = fieldsByPath.get(path);
   if (!field) return;
   selected = path;
   document
@@ -79,6 +79,7 @@ function details(path) {
   detail.append(
     node("div", "detail-label", "PROVENANCE"),
     node("span", `badge ${field.kind}`, field.kind),
+    node("div", "detail-constraint", field.provenance),
   );
   detail.append(node("div", "detail-label", "DOMAIN & ASSUMPTIONS"));
   detail.append(
@@ -119,9 +120,7 @@ function fieldRow(field) {
     const input = node("input");
     input.type = "text";
     input.inputMode = "text";
-    input.value = Object.hasOwn(bindings, field.path)
-      ? bindings[field.path] || ""
-      : field.input;
+    input.value = field.input;
     input.placeholder = "Bind value";
     input.setAttribute("aria-label", `Input ${field.path}`);
     input.title =
@@ -129,7 +128,11 @@ function fieldRow(field) {
     input.addEventListener("focus", () => details(field.path));
     editor.addEventListener("submit", (event) => {
       event.preventDefault();
-      refresh({ ...bindings, [field.path]: input.value.trim() || null });
+      const next = { ...bindings };
+      // Aliases share one observation, even when edited through another path.
+      field.aliases.forEach((alias) => delete next[alias]);
+      next[field.path] = input.value.trim() || null;
+      refresh(next);
     });
     editor.append(input);
     row.append(editor);
@@ -148,11 +151,14 @@ function fieldRow(field) {
 function renderTree() {
   $("tree").replaceChildren();
   const containers = new Map([["", $("tree")]]);
+  const components = new Map(
+    state.components.map((component) => [component.path, component]),
+  );
   const ensure = (path) => {
     if (containers.has(path)) return containers.get(path);
     const parent = path.split(".").slice(0, -1).join(".");
     const group = node("section", "component");
-    const info = state.components.find((c) => c.path === path);
+    const info = components.get(path);
     const toggle = node(
       "button",
       "component-head",
@@ -179,26 +185,30 @@ function renderTree() {
       fieldRow(field),
     ),
   );
+  state.components.forEach((component) => ensure(component.path));
   if (!state.fields.length)
     $("tree").append(
       node("p", "empty", "This model has no visible quantities."),
     );
 }
 function setView() {
-  $("tree").hidden = formula;
-  $("equations").hidden = !formula;
-  $("explore-tab").classList.toggle("active", !formula);
-  $("formula-tab").classList.toggle("active", formula);
-  $("explore-tab").setAttribute("aria-pressed", String(!formula));
-  $("formula-tab").setAttribute("aria-pressed", String(formula));
-  $("view-label").textContent = formula
+  $("tree").hidden = equationsVisible;
+  $("equations").hidden = !equationsVisible;
+  $("explore-tab").classList.toggle("active", !equationsVisible);
+  $("formula-tab").classList.toggle("active", equationsVisible);
+  $("explore-tab").setAttribute("aria-pressed", String(!equationsVisible));
+  $("formula-tab").setAttribute("aria-pressed", String(equationsVisible));
+  $("view-label").textContent = equationsVisible
     ? "SIMULTANEOUS EQUATIONS"
     : "MODEL STRUCTURE";
-  $("view-title").textContent = formula
+  $("view-title").textContent = equationsVisible
     ? "The model, in its own symbols"
     : "Quantities & relationships";
 }
 function render() {
+  fieldsByPath = new Map(
+    [...state.fields, ...state.symbols].map((field) => [field.path, field]),
+  );
   $("title").textContent = state.title;
   document.title = `${state.title} · modello`;
   $("model-name").textContent = state.name;
@@ -207,16 +217,14 @@ function render() {
   $("model-info").hidden = !state.info;
   $("status").textContent =
     state.status === "raw"
-      ? "○ Unbound view"
+      ? "○ Raw model"
       : state.status === "conditional"
         ? "◐ Conditional"
         : "● Checked model";
   $("status").classList.toggle("conditional", state.status === "conditional");
   $("summary").textContent =
     `${state.fields.length} quantities · ${state.equations.length} definitions${state.hidden_inputs ? ` · ${state.hidden_inputs} hidden inputs retained` : ""}`;
-  $("condition").textContent = state.raw
-    ? "Raw view · no solver invoked"
-    : state.condition;
+  $("condition").textContent = state.condition;
   $("message").hidden = true;
   renderTree();
   $("equation-list").replaceChildren();
@@ -246,18 +254,14 @@ function render() {
       ),
     );
   setView();
-  details(
-    state.fields.some((f) => f.path === selected)
-      ? selected
-      : state.fields[0]?.path,
-  );
+  details(fieldsByPath.has(selected) ? selected : state.fields[0]?.path);
 }
 $("explore-tab").addEventListener("click", () => {
-  formula = false;
+  equationsVisible = false;
   setView();
 });
 $("formula-tab").addEventListener("click", () => {
-  formula = true;
+  equationsVisible = true;
   setView();
 });
 $("raw").addEventListener("change", () => refresh());

@@ -75,11 +75,12 @@ docs = { requires-python = ">=3.12" }
 notebooks = { requires-python = ">=3.11" }
 
 [tool.setuptools.packages.find]
-include = ["modello", "examples", "examples.*"]
+include = ["modello", "modello._gui", "examples", "examples.*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-modello = ["py.typed", "_gui/*.html", "_gui/*.css", "_gui/*.js"]
+modello = ["py.typed"]
+"modello._gui" = ["templates/*.html", "static/*.css", "static/*.js"]
 examples = ["py.typed"]
 "examples.portfolio" = ["data/*.csv"]
 

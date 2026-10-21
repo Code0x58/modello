@@ -9,9 +9,10 @@ import pytest
 from sympy import Rational, Symbol, pi, sqrt
 
 from modello import InstanceDummy, Modello, component, inspect_model
+from modello._gui.inputs import parse_scalar
 from modello.diagnostics import ConstraintKind
 from modello.errors import ModelInputError
-from modello.gui import BindingError, Explorer, FieldInfo, _parse_scalar, create_app
+from modello.gui import BindingError, Explorer, FieldInfo, ModelInfo, create_app
 
 
 class Panel(Modello):
@@ -20,14 +21,14 @@ class Panel(Modello):
     width = InstanceDummy("width", positive=True)
     height = InstanceDummy("height", positive=True)
     area = width * height
-    __gui__ = {"width": FieldInfo(description="Width in metres.", symbol="w")}
+    __gui__ = ModelInfo(fields={"width": FieldInfo(description="Width in metres.", symbol="w")})
 
 
 class Estimate(Modello):
     panel = component(Panel)
     price = InstanceDummy("price", positive=True)
     total = panel.area * price
-    __gui__ = {"price": FieldInfo(symbol="p", hidden=True)}
+    __gui__ = ModelInfo(fields={"price": FieldInfo(symbol="p", hidden=True)})
 
 
 def rows(data):
@@ -38,7 +39,7 @@ def test_raw_never_solves(monkeypatch):
     def unexpected(*args, **kwargs):
         raise AssertionError("Raw rendering must not solve")
 
-    monkeypatch.setattr("modello.gui.solve", unexpected)
+    monkeypatch.setattr("modello.solve", unexpected)
     data = Explorer(Estimate).snapshot(raw=True)
     assert data["status"] == "raw"
     assert rows(data)["panel.width"]["depth"] == 1
@@ -172,7 +173,7 @@ def test_mathml_is_valid_xml_and_escapes_metadata():
     ],
 )
 def test_exact_arithmetic(text, value):
-    assert _parse_scalar(text) == value
+    assert parse_scalar(text) == value
 
 
 @pytest.mark.parametrize(
@@ -198,7 +199,7 @@ def test_exact_arithmetic(text, value):
 )
 def test_parser_rejects_code_and_unbounded_arithmetic(text):
     with pytest.raises(ModelInputError):
-        _parse_scalar(text)
+        parse_scalar(text)
 
 
 def test_metadata_errors_and_component_hiding():
@@ -275,3 +276,67 @@ def test_browser_cannot_edit_a_copied_inferred_observation():
     response = client.post("/api/explore", json={"bindings": {"panel.area": "20"}})
     assert response.status_code == 422
     assert response.json["paths"] == ["panel.area"]
+
+
+def test_model_info_composes_model_component_and_field_labels():
+    class Described(Modello):
+        panel = component(Panel)
+        __gui__ = ModelInfo(
+            title="Panel estimate",
+            description="A model description.",
+            info="A model note.",
+            fields={"panel": FieldInfo(title="Geometry"), "panel.height": FieldInfo(description="Height in metres.")},
+        )
+
+    data = Explorer(Described, metadata={"panel.area": FieldInfo(title="Surface")}).snapshot(raw=True)
+    assert (data["title"], data["description"], data["info"]) == (
+        "Panel estimate",
+        "A model description.",
+        "A model note.",
+    )
+    assert data["components"][0]["title"] == "Geometry"
+    assert rows(data)["panel.width"]["description"] == "Width in metres."
+    assert rows(data)["panel.height"]["description"] == "Height in metres."
+    assert rows(data)["panel.area"]["title"] == "Surface"
+
+
+def test_model_info_rejects_ambiguous_declarations():
+    class WrongType(Modello):
+        __gui__ = {}
+
+    class EmptyPath(Modello):
+        __gui__ = ModelInfo(fields={"": FieldInfo(title="Title")})
+
+    with pytest.raises(ModelInputError, match="ModelInfo declaration"):
+        Explorer(WrongType)
+    with pytest.raises(ModelInputError, match="empty field path"):
+        Explorer(EmptyPath)
+
+
+def test_field_provenance_distinguishes_fixed_results_from_copied_observations():
+    ordinary = rows(Explorer(Panel, inputs={"width": 2, "height": 3}).snapshot())
+    assert ordinary["width"]["provenance"] == "Supplied input"
+    assert ordinary["area"]["kind"] == "fixed" and ordinary["area"]["provenance"] == "Model definition"
+    inverse = rows(Explorer(Panel, inputs={"area": 6, "height": 3}).snapshot())
+    assert inverse["width"]["kind"] == "fixed" and inverse["width"]["provenance"] == "Inferred from equations"
+    copied = rows(Explorer(inspect_model(Estimate, "copy", panel=Panel("source", width=2, height=3))).snapshot())
+    assert copied["panel.area"]["provenance"] == "Copied component result"
+    assert not copied["panel.area"]["editable"]
+
+
+def test_empty_components_remain_in_the_raw_model_structure():
+    class Empty(Modello):
+        """No quantities yet."""
+
+    class Root(Modello):
+        empty = component(Empty)
+        __gui__ = ModelInfo(fields={"empty": FieldInfo(title="Placeholder")})
+
+    data = Explorer(Root).snapshot(raw=True)
+    assert not data["fields"]
+    assert data["components"][0]["title"] == "Placeholder"
+
+
+def test_python_implementation_is_not_served_as_a_frontend_asset():
+    client = create_app(Panel).test_client()
+    assert client.get("/assets/inputs.py").status_code == 404
