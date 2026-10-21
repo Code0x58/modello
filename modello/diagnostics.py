@@ -12,16 +12,22 @@ from typing import TYPE_CHECKING, Literal
 
 from sympy import (
     Basic,
+    ConditionSet,
+    Eq,
     Expr,
+    FiniteSet,
     Float,
     I,
+    Interval,
     Matrix,
     S,
+    Set,
     Symbol,
     SympifyError,
     linear_eq_to_matrix,
     simplify,
     solve,
+    solveset,
     sqrt,
     sympify,
 )
@@ -122,6 +128,23 @@ class CandidateCheck:
     residuals: tuple[ResidualCheck, ...]
     assumptions: tuple[AssumptionCheck, ...]
     verdict: Verdict
+
+
+@dataclass(frozen=True)
+class SolutionSet:
+    """Necessary values for one field, after substituting forced ground values.
+
+    ``values`` solves only the recorded ``constraints`` in ``domain``. Other
+    equations and predicates still require checking against the whole problem.
+    Infinite families and unresolved ConditionSets are retained as SymPy sets.
+    """
+
+    field: ModelField
+    domain: Set
+    values: Set
+    constraints: tuple[ModelConstraint, ...]
+    substitutions: tuple[FieldValue, ...]
+    solver_errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -227,11 +250,27 @@ class ModelProblem:
         return str(_FieldPrinter(self.fields).doprint(expression))
 
     def __str__(self) -> str:
-        equations = "\n".join(
-            f"  c{c.index} [{c.kind} {'.'.join(c.path)}]: {self.format(c.left)} = {self.format(c.right)}"
-            for c in self.constraints
-        )
-        return f"{self.model.__name__}({self.name!r})\n{equations}"
+        return "\n".join([f"{self.model.__name__}({self.name!r})", *self._constraint_lines(self.constraints)])
+
+    def _tree_lines(self, entries: tuple[tuple[FieldPath, str], ...], indent: int) -> list[str]:
+        def visit(model: type[Modello], path: FieldPath, depth: int) -> list[str]:
+            lines = [" " * depth + text for owner, text in entries if owner == path]
+            for name, component in model._modello_namespace.nested_models.items():
+                child_path = (*path, name)
+                if any(owner[: len(child_path)] == child_path for owner, _ in entries):
+                    child = component._modello_model
+                    lines.append(f"{' ' * depth}{name}: {child.__name__}")
+                    lines.extend(visit(child, child_path, depth + 2))
+            return lines
+
+        return visit(self.model, (), indent)
+
+    def _constraint_lines(self, constraints: tuple[ModelConstraint, ...], indent: int = 2) -> list[str]:
+        entries = []
+        for c in constraints:
+            source = "definition" if c.kind == "definition" else f"input {c.input!r}"
+            entries.append((c.path[:-1], f"c{c.index}: self.{'.'.join(c.path)} = {self.format(c.right)} [{source}]"))
+        return self._tree_lines(tuple(entries), indent)
 
     def field(self, *path: str) -> ModelField:
         """Look up a declared path, without matching symbols by printed name."""
@@ -317,6 +356,7 @@ class ProblemAnalysis:
     input_checks: tuple[InputCheck, ...]
     checks: int
     budget_exhausted: bool
+    solution_sets: tuple[SolutionSet, ...] = ()
 
     @property
     def relaxations(self) -> tuple[InputCheck, ...]:
@@ -324,31 +364,44 @@ class ProblemAnalysis:
         return tuple(check for check in self.input_checks if check.witness is not None)
 
     def __str__(self) -> str:
-        lines = [f"{self.problem.model.__name__}({self.problem.name!r}): {self.status}", self.reason]
+        lines = [f"{self.problem.model.__name__}({self.problem.name!r}): {self.status}", f"  {self.reason}"]
         if self.linear is not None:
             scope = "all equations" if self.linear.complete else "affine subset only"
             lines.append(
-                f"Exact equality rank {self.linear.rank}; augmented rank {self.linear.augmented_rank}; "
+                f"  Exact equality rank {self.linear.rank}; augmented rank {self.linear.augmented_rank}; "
                 f"nullity {self.linear.nullity} ({scope}, domains excluded)."
             )
+        if self.solution_sets:
+            lines.append("  Univariate solution sets (necessary conditions):")
+            entries = tuple(
+                (
+                    result.field.path[:-1],
+                    f"{result.field.path[-1]} in {self.problem.format(result.values)} "
+                    f"[domain: {result.domain}; " + ", ".join(f"c{c.index}" for c in result.constraints) + "]",
+                )
+                for result in self.solution_sets
+            )
+            lines.extend(self.problem._tree_lines(entries, 4))
+            for result in self.solution_sets:
+                lines.extend(f"    Solver: {error}" for error in result.solver_errors)
         if self.conflict is not None:
             minimal = "irreducible" if self.conflict.irreducible is True else "irreducibility not established"
-            lines.append(f"Proven conflict ({minimal}; declared domains retained):")
-            for c in self.conflict.constraints:
-                lines.append(
-                    f"  c{c.index} [{c.kind} {'.'.join(c.path)}]: "
-                    f"{self.problem.format(c.left)} = {self.problem.format(c.right)}"
-                )
+            lines.append(f"  Proven conflict ({minimal}; declared domains retained):")
+            lines.extend(self.problem._constraint_lines(self.conflict.constraints, 4))
             certificate = self.conflict.linear_certificate
             if certificate is not None:
                 terms = " + ".join(f"({weight})*c{c.index}" for c, weight in certificate.terms)
-                lines.append(f"  Certificate: {terms} gives {certificate.constant} = 0.")
-        for check in self.input_checks:
-            lines.append(f"Removing input {check.input!r}: {check.status}.")
+                lines.append(f"    Certificate: {terms} gives {certificate.constant} = 0.")
+        if self.input_checks:
+            lines.append("  Input removals:")
+            for check in self.input_checks:
+                lines.append(f"    {check.input}: {check.status}")
+                if check.status == "unknown":
+                    lines.append(f"      {check.reason}")
         if self.candidates:
-            lines.append("Solver candidate audits: " + ", ".join(check.verdict for check in self.candidates) + ".")
+            lines.append("  Solver candidate audits: " + ", ".join(check.verdict for check in self.candidates) + ".")
         suffix = "; check budget exhausted" if self.budget_exhausted else ""
-        lines.append(f"Subset assessments: {self.checks}{suffix}.")
+        lines.append(f"  Subset assessments: {self.checks}{suffix}.")
         return "\n".join(lines)
 
 
@@ -511,6 +564,78 @@ class _Assessment:
     linear: LinearAnalysis | None = None
     witness: CandidateCheck | None = None
     candidates: tuple[CandidateCheck, ...] = ()
+    solution_sets: tuple[SolutionSet, ...] = ()
+
+
+def _domain(symbol: Symbol) -> Set:
+    """A numeric search domain containing every permitted finite scalar value."""
+    domain = (
+        S.Integers
+        if symbol.is_integer
+        else S.Rationals
+        if symbol.is_rational
+        else S.Reals
+        if symbol.is_real
+        else S.Complexes
+    )
+    if symbol.is_real:
+        if symbol.is_positive:
+            domain &= Interval.open(0, S.Infinity)
+        elif symbol.is_nonnegative:
+            domain &= Interval(0, S.Infinity)
+        elif symbol.is_negative:
+            domain &= Interval.open(S.NegativeInfinity, 0)
+        elif symbol.is_nonpositive:
+            domain &= Interval(S.NegativeInfinity, 0)
+    if symbol.is_zero is False:
+        domain -= FiniteSet(0)
+    return domain
+
+
+def _solution_sets(
+    problem: ModelProblem, constraints: tuple[ModelConstraint, ...], expressions: dict[Symbol, Expr]
+) -> tuple[SolutionSet, ...]:
+    # Use only forced, finite, exact numerical substitutions. External parameters
+    # and simultaneous multivariate systems are left to the witness generator.
+    substitutions = tuple(
+        FieldValue(field, expressions[field.symbol])
+        for field in _canonical_fields(problem)
+        if field.symbol in expressions
+        and expressions[field.symbol].is_number is True
+        and expressions[field.symbol].is_finite is True
+        and not expressions[field.symbol].has(Float)
+    )
+    bindings = {item.field.symbol: item.value for item in substitutions}
+    fields = {field.symbol: field for field in _canonical_fields(problem)}
+    groups: dict[Symbol, list[tuple[ModelConstraint, Expr]]] = {}
+    for c in constraints:
+        if (
+            not isinstance(c.right, Expr)
+            or c.right.has(Float)
+            or any(symbol.is_commutative is not True for symbol in c.symbols)
+        ):
+            continue
+        residual = c.left.xreplace(bindings) - c.right.xreplace(bindings)
+        symbols = residual.free_symbols
+        if len(symbols) == 1:
+            symbol = next(iter(symbols))
+            if symbol in fields:
+                groups.setdefault(symbol, []).append((c, residual))
+    results = []
+    for symbol, equations in groups.items():
+        domain = _domain(symbol)
+        values = domain
+        errors = []
+        for c, residual in equations:
+            try:
+                values &= solveset(residual, symbol, domain)
+            except Exception as error:
+                values &= ConditionSet(symbol, Eq(residual, 0), domain)
+                errors.append(f"c{c.index}: {type(error).__name__}: {error}")
+        results.append(
+            SolutionSet(fields[symbol], domain, values, tuple(c for c, _ in equations), substitutions, tuple(errors))
+        )
+    return tuple(results)
 
 
 _SAMPLES = (S.Zero, S.One, S.NegativeOne, S(2), S(-2), I, sqrt(2))
@@ -566,6 +691,15 @@ class _Analyser:
         deductions = _audit(self.problem, constraints, _candidate(self.problem, expressions))
         if deductions.verdict == "violated":
             return _Assessment("inconsistent", _violation(self.problem, deductions), deductions, linear)
+        solution_sets = _solution_sets(self.problem, constraints, expressions)
+        if any(result.values is S.EmptySet for result in solution_sets):
+            return _Assessment(
+                "inconsistent",
+                "A univariate subsystem has an empty solution set in a domain containing all permitted values.",
+                deductions,
+                linear,
+                solution_sets=solution_sets,
+            )
         # A failed sample never proves inconsistency. Only a fully checked
         # closed assignment may establish consistency, including all domains.
         witness = self._witness(constraints, expressions)
@@ -576,9 +710,28 @@ class _Analyser:
                 deductions,
                 linear,
                 witness,
+                solution_sets=solution_sets,
+            )
+        generated = []
+        witness = None
+        for result in solution_sets:
+            if isinstance(result.values, FiniteSet):
+                for value in result.values:
+                    proposal = {**expressions, result.field.symbol: value}
+                    check = _audit(self.problem, constraints, _candidate(self.problem, proposal))
+                    generated.append(check)
+                    witness = witness or self._witness(constraints, proposal)
+        if witness is not None:
+            return _Assessment(
+                "consistent",
+                "A solution-set candidate supplies a checked closed witness.",
+                deductions,
+                linear,
+                witness,
+                tuple(generated),
+                solution_sets,
             )
         # Solver answers are witness proposals. An empty answer is not a proof.
-        generated = []
         detail = "No closed witness or exact contradiction was established."
         try:
             solutions = solve(
@@ -602,6 +755,7 @@ class _Analyser:
                     linear,
                     witness,
                     tuple(generated),
+                    solution_sets,
                 )
         return _Assessment(
             "unknown",
@@ -609,6 +763,7 @@ class _Analyser:
             deductions,
             linear,
             candidates=tuple(generated),
+            solution_sets=solution_sets,
         )
 
     def _witness(
@@ -616,6 +771,7 @@ class _Analyser:
     ) -> CandidateCheck | None:
         for sample in _SAMPLES:
             choices = {field.symbol: _sample(field.symbol, sample) for field in _canonical_fields(self.problem)}
+            choices.update({symbol: value for symbol, value in expressions.items() if not value.free_symbols})
             values = {
                 field.symbol: expressions.get(field.symbol, field.symbol).xreplace(choices)
                 for field in self.problem.fields
@@ -677,4 +833,5 @@ class _Analyser:
             tuple(removals),
             len(self.cache),
             self.exhausted,
+            original.solution_sets,
         )

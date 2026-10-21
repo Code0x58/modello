@@ -8,7 +8,7 @@ from fractions import Fraction
 from sympy import Symbol
 
 from modello import InstanceDummy, Modello, ModelProblem, ModelSolveError, ScalarValue, component, inspect_model
-from modello.diagnostics import ComponentView, FieldValue, ModelField, ProblemAnalysis
+from modello.diagnostics import ComponentView, FieldValue, ModelField, ProblemAnalysis, SolutionSet
 
 
 class Point(Modello):
@@ -72,9 +72,11 @@ def check_diagnostics() -> None:
     field: ModelField = problem.field("line", "start", "x")
     view: ComponentView = problem.at("line")
     report: ProblemAnalysis = problem.analyse(max_checks=1)
+    sets: tuple[SolutionSet, ...] = report.solution_sets
     FieldValue(field, 3)
     assert field in view.fields
     assert report.problem is problem
+    assert all(result.field in problem.fields for result in sets)
     try:
         Line("case", start=Point("start", x=1))
     except ModelSolveError as error:

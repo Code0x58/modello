@@ -371,7 +371,7 @@ def test_scalar_aliases_keep_all_supplied_constraints():
     with pytest.raises(ModelSolveError, match="0 solutions") as error:
         Child("C", x=1, alias=2)
     assert "self.x = 1" in str(error.value.problem)
-    assert "self.x = 2" in str(error.value.problem)
+    assert "self.alias = 2" in str(error.value.problem)
     with pytest.raises(ValueError, match="0 solutions"):
         Parent("P", child=Child("C", x=1), alias=2)
 

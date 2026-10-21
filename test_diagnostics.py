@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError, replace
 from itertools import combinations, product
 
 import pytest
-from sympy import Function, S, Symbol, expand, linsolve, sqrt
+from sympy import ConditionSet, Eq, FiniteSet, Function, ImageSet, S, Symbol, cos, expand, linsolve, pi, sin, sqrt
 
 import modello
 import modello.diagnostics as diagnostics
@@ -55,6 +55,7 @@ def test_snapshot_preserves_aliases_origins_and_component_boundaries(monkeypatch
     source = Reading("input", x=2)
     monkeypatch.setattr(modello, "solve", forbidden)
     monkeypatch.setattr(diagnostics, "solve", forbidden)
+    monkeypatch.setattr(diagnostics, "solveset", forbidden)
     p = inspect_model(Joined, "repl", left=source, gap=0)
     field = p.field("left", "x")
     assert {f.path for f in p.aliases(field)} == {("alias",), ("left", "x")}
@@ -66,7 +67,7 @@ def test_snapshot_preserves_aliases_origins_and_component_boundaries(monkeypatch
     assert all(field.symbol in c.symbols for c in p.uses(field))
     assert p.at().owned_constraints == p.constraints
     assert "ModelProblem(Joined" in repr(p)
-    assert "definition left.squared" in str(p)
+    assert "  left: Reading\n    c1: self.left.squared = self.alias**2 [definition]" in str(p)
     assert {c.input for c in p.constraints if c.kind == "observation"} == {"left", "gap"}
     with pytest.raises(FrozenInstanceError):
         p.name = "changed"
@@ -174,6 +175,7 @@ def test_nonlinear_singular_solution_is_not_inferred_from_rank():
 
 def test_empty_solver_output_is_unknown_and_external_witness_can_prove_feasibility(monkeypatch):
     monkeypatch.setattr(diagnostics, "solve", lambda *args, **kwargs: [])
+    monkeypatch.setattr(diagnostics, "solveset", lambda f, x, domain: ConditionSet(x, Eq(f, 0), domain))
     p = inspect_model(Reading, "unknown", squared=3)
     result = p.analyse(conflicts=True)
     assert result.status == "unknown"
@@ -185,6 +187,7 @@ def test_empty_solver_output_is_unknown_and_external_witness_can_prove_feasibili
 
 def test_unknown_deletion_does_not_certify_irreducibility(monkeypatch):
     monkeypatch.setattr(diagnostics, "solve", lambda *args, **kwargs: [])
+    monkeypatch.setattr(diagnostics, "solveset", lambda f, x, domain: ConditionSet(x, Eq(f, 0), domain))
     p = inspect_model(Reading, "conflict", x=0, squared=3)
     result = p.analyse(conflicts=True)
     assert result.status == "inconsistent"
@@ -295,6 +298,7 @@ def test_constructor_failure_keeps_candidates_and_backend_cause(monkeypatch):
 
     monkeypatch.setattr(modello, "solve", unsupported)
     monkeypatch.setattr(diagnostics, "solve", unsupported)
+    monkeypatch.setattr(diagnostics, "solveset", unsupported)
     with pytest.raises(ModelSolveError) as caught:
         Reading("unsupported", squared=3)
     assert isinstance(caught.value.__cause__, NotImplementedError)
@@ -302,6 +306,7 @@ def test_constructor_failure_keeps_candidates_and_backend_cause(monkeypatch):
     analysis = caught.value.problem.analyse()
     assert analysis.status == "unknown"
     assert "NotImplementedError" in analysis.reason
+    assert "NotImplementedError" in analysis.solution_sets[0].solver_errors[0]
     monkeypatch.setattr(diagnostics, "linear_eq_to_matrix", unsupported)
     assert inspect_model(Sum, "unsupported_linear", x=1, y=2, total=3).analyse().status == "unknown"
 
@@ -314,7 +319,7 @@ def test_exception_creation_and_printing_never_launch_analysis(monkeypatch):
     with pytest.raises(ModelSolveError) as caught:
         Sum("plain_failure", x=1, y=2, total=4)
     assert "0 solutions reported" in str(caught.value)
-    assert "definition total" in str(caught.value.problem)
+    assert "self.total = self.x + self.y [definition]" in str(caught.value.problem)
 
 
 def test_unevaluated_function_values_are_not_numeric_witnesses():
@@ -334,3 +339,93 @@ def test_noncommutative_algebra_remains_inspectable_without_scalar_proofs():
     p = inspect_model(Operators, "operators")
     assert "self.x*self.y - self.y*self.x" in str(p)
     assert p.analyse().status == "unknown"
+
+
+def test_solution_sets_preserve_infinite_families_and_unresolved_conditions():
+    class Periodic(Modello):
+        angle = InstanceDummy("angle", real=True)
+        sine = sin(angle)
+
+    p = inspect_model(Periodic, "periodic", sine=0)
+    report = p.analyse()
+    (result,) = report.solution_sets
+    assert result.field == p.field("angle")
+    assert result.domain is S.Reals
+    assert result.values.has(ImageSet)
+    assert result.values.contains(7 * pi) is S.true
+    assert result.values.contains(pi / 2) is S.false
+    assert result.constraints == (p.constraints[0],)
+    assert result.substitutions == (FieldValue(p.field("sine"), 0),)
+    assert_witness(p, report.witness)
+    assert "Univariate solution sets (necessary conditions):" in str(report)
+
+    class Transcendental(Modello):
+        x = InstanceDummy("x", real=True)
+        residual = cos(x) - x
+
+    report = inspect_model(Transcendental, "unresolved", residual=0).analyse()
+    assert report.solution_sets[0].values.has(ConditionSet)
+    assert report.status == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("assumptions", "expected"),
+    [
+        ({"real": True}, FiniteSet(-sqrt(3), sqrt(3))),
+        ({"positive": True}, FiniteSet(sqrt(3))),
+        ({"nonnegative": True}, FiniteSet(sqrt(3))),
+        ({"negative": True}, FiniteSet(-sqrt(3))),
+        ({"nonpositive": True}, FiniteSet(-sqrt(3))),
+        ({"integer": True}, S.EmptySet),
+        ({"rational": True}, S.EmptySet),
+        ({"complex": True}, FiniteSet(-sqrt(3), sqrt(3))),
+    ],
+)
+def test_solution_set_domains_and_finite_witnesses(assumptions, expected):
+    class DomainReading(Reading):
+        x = InstanceDummy("x", **assumptions)
+
+    p = inspect_model(DomainReading, "domain", squared=3)
+    report = p.analyse()
+    assert report.solution_sets[0].values == expected
+    assert report.status == ("inconsistent" if expected is S.EmptySet else "consistent")
+    if report.witness is not None:
+        assert_witness(p, report.witness)
+
+
+def test_nonempty_solution_set_is_not_a_whole_model_witness():
+    class Prime(Reading):
+        x = InstanceDummy("x", prime=True)
+
+    report = inspect_model(Prime, "extra_predicate", squared=16).analyse()
+    assert report.solution_sets[0].values == FiniteSet(4)
+    assert report.status == "unknown"
+    assert report.witness is None
+    assert all(check.verdict == "violated" for check in report.candidates)
+
+
+def test_univariate_sets_intersect_all_applicable_equations():
+    class Powers(Reading):
+        cubed = Reading.x**3
+
+    p = inspect_model(Powers, "incompatible_roots", squared=4, cubed=3)
+    report = p.analyse()
+    assert report.solution_sets[0].values is S.EmptySet
+    assert report.solution_sets[0].constraints == p.constraints[:2]
+    assert report.status == "inconsistent"
+
+
+def test_nested_reports_show_component_types_and_equation_origins():
+    class Envelope(Modello):
+        check = component(Check)
+        total = check.total + 1
+
+    p = inspect_model(Envelope, "nested", total=0)
+    assert "\n  check: Check\n    c1: self.check.total" in str(p)
+    assert "\n    reading: Reading\n      c2: self.check.reading.squared" in str(p)
+    report = p.analyse(conflicts=True)
+    assert report.status == "inconsistent"
+    rendered = str(report)
+    assert "\n    check: Check\n      c1: self.check.total" in rendered
+    assert "\n      reading: Reading\n        c2: self.check.reading.squared" in rendered
+    assert "reading: Reading" in rendered

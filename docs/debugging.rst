@@ -86,11 +86,12 @@ Inspect .problem or call .problem.analyse() for an opt-in diagnostic report.
 ModelProblem(Check, 'conflict', fields=3, constraints=5)
 >>> print(problem)
 Check('conflict')
-  c0 [definition total]: self.total = self.reading.squared + 1
-  c1 [definition reading.squared]: self.reading.squared = self.reading.x**2
-  c2 [observation reading.x]: self.reading.x = 2
-  c3 [observation reading.squared]: self.reading.squared = 4
-  c4 [observation total]: self.total = 6
+  c0: self.total = self.reading.squared + 1 [definition]
+  c4: self.total = 6 [input 'total']
+  reading: Reading
+    c1: self.reading.squared = self.reading.x**2 [definition]
+    c2: self.reading.x = 2 [input 'reading']
+    c3: self.reading.squared = 4 [input 'reading']
 
 Here the child fixes ``x = 2``, so its square is 4 and the parent's total must
 be 5. Remove or correct the conflicting observation. Adding more observations
@@ -113,8 +114,12 @@ Observing only a total of 5 leaves two real readings, ``-2`` and ``2``:
 >>> field = ambiguous.field("reading", "x")
 >>> sorted(candidate.value(field) for candidate in ambiguous.candidates)
 [-2, 2]
->>> ambiguous.analyse().status
+>>> answers = ambiguous.analyse()
+>>> answers.status
 'consistent'
+>>> roots, = answers.solution_sets
+>>> roots.field == field, roots.values, roots.domain
+(True, {-2, 2}, Reals)
 
 Here ``consistent`` establishes existence, not uniqueness. Each candidate can
 be audited with ``ambiguous.check(candidate)``; its residual and assumption
@@ -151,6 +156,25 @@ The solution count describes retained solver answers, not the number of numeric
 points represented by a symbolic model. The unresolved ``partial`` model above
 represents a family of readings and is valid.
 
+``solution_sets`` uses SymPy's ``solveset`` where equations reduce to one
+unknown after forced numerical substitutions. Unlike a finite candidate list,
+a SymPy set can retain an infinite family or an unresolved ``ConditionSet``:
+
+>>> from sympy import ImageSet, pi, sin
+>>> class Oscillation(Modello):
+...     angle = InstanceDummy("angle", real=True)
+...     sine = sin(angle)
+>>> periodic = inspect_model(Oscillation, "periodic", sine=0).analyse()
+>>> family, = periodic.solution_sets
+>>> family.values.has(ImageSet), family.values.contains(7 * pi)
+(True, True)
+
+These are necessary values for the recorded subsystem, with its substitutions
+and search domain retained. Other equations and declared predicates can still
+exclude values; a nonempty set alone does not establish whole-model consistency.
+An unresolved set is not evidence of inconsistency. See :doc:`diagnostics` for
+the scope of these results.
+
 Inspect components and their connections
 -----------------------------------------
 
@@ -167,8 +191,22 @@ True
 ``reading.owned_constraints`` contains the subtree's definitions and copied
 observations. Its boundary includes the parent's total equation. This describes
 structure; a conflict can span individually valid layers, with no single guilty
-component. An invalid explicitly constructed input still fails before it can
-reach the parent.
+component.
+
+An explicitly constructed child such as ``Reading("bad", x=2, squared=5)``
+raises before it can be passed to ``Check``. In that case, inspect the child's
+exception: the parent has not been constructed. A supplied child has therefore
+already passed construction in its own context, so investigate the additional
+parent observations and connections first. That does not prove the child is
+correct for the intended application or for every external parameter value.
+
+``component(Reading)`` declares a type rather than constructing a child.
+Class definitions do not check satisfiability: even an inconsistent child type
+can appear in a parent declaration. An omitted child, or a supplied child with
+symbolic quantities, can gain constraints when the parent is solved. Those
+constraints can conflict with the
+child's equations or domain even though its declaration or earlier construction
+succeeded.
 
 Ask for evidence explicitly
 ----------------------------
@@ -179,16 +217,18 @@ algebra, generate and check solver candidates, and assess many subsets:
 >>> report = problem.analyse(conflicts=True, relaxations=True)
 >>> print(report)
 Check('conflict'): inconsistent
-An exact linear combination proves a contradiction.
-Exact equality rank 3; augmented rank 4; nullity 0 (affine subset only, domains excluded).
-Proven conflict (irreducible; declared domains retained):
-  c0 [definition total]: self.total = self.reading.squared + 1
-  c3 [observation reading.squared]: self.reading.squared = 4
-  c4 [observation total]: self.total = 6
-  Certificate: (-1)*c0 + (-1)*c3 + (1)*c4 gives -1 = 0.
-Removing input 'reading': consistent.
-Removing input 'total': consistent.
-Subset assessments: 6.
+  An exact linear combination proves a contradiction.
+  Exact equality rank 3; augmented rank 4; nullity 0 (affine subset only, domains excluded).
+  Proven conflict (irreducible; declared domains retained):
+    c0: self.total = self.reading.squared + 1 [definition]
+    c4: self.total = 6 [input 'total']
+    reading: Reading
+      c3: self.reading.squared = 4 [input 'reading']
+    Certificate: (-1)*c0 + (-1)*c3 + (1)*c4 gives -1 = 0.
+  Input removals:
+    reading: consistent
+    total: consistent
+  Subset assessments: 6.
 >>> report.conflict.linear_certificate.verify()
 True
 

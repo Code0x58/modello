@@ -17,12 +17,13 @@ What each conclusion establishes
 
 ``inconsistent``
    An exact consequence contradicts an equality or domain, an expression is
-   undefined, or a rational affine subset supplies a contradiction certificate.
+   undefined, a univariate subsystem has an empty solution set, or a rational
+   affine subset supplies a contradiction certificate.
    A certificate is a weighted sum of original equation residuals equal to a
    nonzero constant. Its ``verify()`` method checks that identity directly.
 
 ``unknown``
-   No checked witness or contradiction has been established. Empty solver
+   No checked witness or contradiction has been established. Empty legacy ``solve``
    results, unsupported mathematics, undecided predicates, Float residuals,
    conditional external parameters, and exhausted search budgets do not become
    inconsistency proofs.
@@ -32,6 +33,24 @@ and extracts the affine equations with exact rational coefficients. Those
 equations can prove a contradiction even when other equations are nonlinear.
 Otherwise it tries sample assignments and, if needed, SymPy solver candidates
 as possible witnesses. Failure to find a witness proves nothing.
+
+``solution_sets`` retains SymPy sets for equations that reduce to one model
+field after forced, exact, finite numerical substitutions. Each ``SolutionSet``
+records the field, original equations, substitutions, search domain, and returned
+set. Sets from equations for the same field are intersected. ``solveset`` can
+represent finite roots, infinite families, and unresolved ``ConditionSet``
+expressions; these are not flattened into an allegedly exhaustive candidate list.
+External symbolic parameters, Float equations, noncommutative expressions, and
+equations still involving several unknowns are excluded from this step.
+
+The search domain respects integer, rational, real, sign, and nonzero restrictions
+where declared. It can contain extra values: other predicates, such as primality,
+are checked separately. These are necessary solutions to a subsystem after
+substitution, not a projection of every constraint in the model. A nonempty set
+alone proves neither whole-model consistency nor uniqueness. An empty set proves
+inconsistency because the domain contains all permitted finite scalar values.
+Finite roots are audited as witness proposals against the original problem;
+unresolved sets and solver exceptions do not become inconsistency proofs.
 
 ``LinearAnalysis`` reports only the rational affine part. Its ``complete`` flag
 states whether that part includes every recorded equation. Rank and nullity
@@ -97,6 +116,14 @@ Research and SymPy foundations
   <https://docs.sympy.org/latest/modules/solvers/solvers.html#sympy.solvers.solvers.checksol>`_
   document inconclusive results. Candidate generation disables numerical solver
   checks; diagnostic equality verdicts use exact residuals and preserve unknowns.
+* The `solveset reference
+  <https://docs.sympy.org/latest/modules/solvers/solveset.html>`_ explains its
+  set-valued results and explicit domains: unlike ``solve``, the domain is not
+  inferred from the target symbol's assumptions. The `algebraic solving guide
+  <https://docs.sympy.org/latest/guides/solving/solve-equation-algebraically.html>`_
+  explains why some solution sets cannot be enumerated. Diagnostics retain these
+  representations and use an explicit domain rather than assuming complex roots
+  satisfy a real field's requirements.
 * The `linear equation conversion reference
   <https://docs.sympy.org/latest/modules/solvers/solveset.html#sympy.solvers.solveset.linear_eq_to_matrix>`_
   and `matrix zero-testing discussion
@@ -127,6 +154,8 @@ Recorded problems and reports
 .. autoclass:: FieldValue
 
 .. autoclass:: CandidateCheck
+
+.. autoclass:: SolutionSet
 
 .. autoclass:: ResidualCheck
 
