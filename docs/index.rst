@@ -11,40 +11,62 @@ Install with Python 3.10 or newer:
 
    $ pip install modello
 
-Declare independent inputs with :class:`modello.InstanceDummy` and derive a model
-from :class:`modello.Modello`:
+Build a system from its parts. Each component owns its quantities; the parent
+connects them with equations. Here a fill relates a holding's opening and closing
+states:
+
+.. literalinclude:: ../README.md
+   :start-after: ```python
+   :end-before: ```
+   :language: python
+
+The first ``quantity`` assignment binds that name to ``after.quantity``; the
+second defines its relationship to the opening state and execution. Cash follows
+the same pattern. Supply typed instances with the values you know:
 
 .. code-block:: python
 
-   from sympy import sqrt
-   from modello import InstanceDummy, Modello
+   opening = HoldingState("opening", quantity=3, cash=1000)
+   posted = FillPosting(
+       "buy", before=opening,
+       fill=Execution("execution", quantity=2, price=100, fee=1),
+   )
+   assert posted.after.quantity == 5
+   assert posted.after.cash == 799
 
-   class RightAngleTriangle(Modello):
-       a = InstanceDummy("a", real=True, positive=True)
-       b = InstanceDummy("b", real=True, positive=True)
-       c = sqrt(a**2 + b**2)
+The components are solved jointly. Supplying closing cash instead of execution
+price lets the same equations infer that price. The :doc:`nested-model guide
+<nesting>` develops composition, connected components, and symbolic inputs.
+The :doc:`portfolio walkthrough <examples/portfolio/index>` takes this pattern
+through nested transitions, reporting, and fitting a refined component from an
+outer constraint.
 
-   triangle = RightAngleTriangle("T", a=3, b=4)
-   assert triangle.c == 5
-
-   triangle = RightAngleTriangle("T", b=4, c=5)
-   assert triangle.a == 3
-
-Positive assumptions select the positive side length when solving the inverse
-problem. Distinct instances receive distinct bound symbols, even if they share
-a name. Values are solved at construction time; changing an attribute afterward
-does not recompute the model. When constraints are present, a solver result
-without exactly one solution raises :class:`ValueError`.
+Distinct instances receive distinct bound symbols, even if they share a name.
+Values are solved at construction time; changing an attribute afterward does
+not recompute the model. When constraints are present, a solver result without
+exactly one solution raises :class:`ValueError`.
 
 The `examples directory <https://github.com/Code0x58/modello/tree/master/examples>`_
 contains geometry, flow-scaling, and historical tax-model examples. Tax examples
 illustrate symbolic modeling with fixed historical rates.
 
 .. toctree::
+   :caption: Library
    :maxdepth: 2
 
    api
    nesting
+
+.. toctree::
+   :caption: Examples
+   :maxdepth: 1
+
+   examples/portfolio/index
+
+.. toctree::
+   :caption: Development
+   :maxdepth: 1
+
    contributing
 
 * :ref:`genindex`

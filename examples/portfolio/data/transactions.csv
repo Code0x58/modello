@@ -1,0 +1,6 @@
+id,account,at,recorded_at,kind,member,quantity,price,fee,amount,order_id
+fill-1,research,2026-01-07T09:06:00Z,2026-01-07T09:06:02Z,fill,aapl,4,105,0.5,,rebalance-1:aapl
+fill-2,research,2026-01-07T09:07:00Z,2026-01-07T09:07:02Z,fill,msft,-10,47.7,1,,rebalance-1:msft
+fill-3,research,2026-01-07T09:10:00Z,2026-01-07T09:10:02Z,fill,aapl,3,105.2,0.5,,rebalance-1:aapl
+deposit,research,2026-01-07T12:00:00Z,2026-01-07T12:00:00Z,flow,,,,,500,
+dividend,research,2026-01-08T12:00:00Z,2026-01-08T12:00:02Z,income,aapl,,,,8.5,

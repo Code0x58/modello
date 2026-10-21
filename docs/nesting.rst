@@ -77,6 +77,32 @@ True
 >>> box.base.a
 3
 
+Connect components through shared quantities
+--------------------------------------------
+
+A parent can also bind quantities in different children to each other. Build a
+two-segment path whose second line starts where the first ends:
+
+>>> class Path(Modello):
+...     first = component(Line)
+...     second = component(Line)
+...     x = second.start.x
+...     x = first.end.x
+...     y = second.start.y
+...     y = first.end.y
+...     length = first.length + second.length
+>>> path = Path(
+...     "path", first=line, second=Line("next", end=Point("end", x=6, y=8))
+... )
+>>> path.second.start.x, path.second.start.y, path.length
+(3, 4, 10)
+
+The first ``x`` assignment makes it an alias of ``second.start.x``. The second
+equates that quantity to ``first.end.x``; the ``y`` assignments do the same for
+the other coordinate. Each line keeps its length equation. The path supplies
+only the connections and the combined length, so the whole remains one
+symbolic model. Known values on either side can determine unknowns on the other.
+
 Work with symbolic inputs
 -------------------------
 

@@ -24,6 +24,35 @@ defines it. Format code with ``uv run --dev ruff format .``. Refresh dependencie
 with ``uv lock --upgrade`` and commit ``uv.lock``. Dependabot proposes grouped
 weekly dependency and GitHub Actions updates. Workflows do not schedule rebuilds.
 
+Tests follow the source layers. Core model tests and public typing contracts
+live in ``test_modello.py`` and ``typing_checks.py``. Example tests
+live under ``tests/examples/``: ``test_data.py`` covers the independent data
+helpers, ``test_symbolic.py`` covers numerical views, and
+``test_named_members.py`` covers bound declarations and projections.
+Financial tests live under ``portfolio/`` and follow its equation, valuation,
+source, account, decision, analytics, and reporting layers. Their ``conftest.py``
+shares the synthetic scenario; ``_data.py`` locates fixtures through the example
+package, independently of the tests' location. Cross-layer import checks live
+in ``tests/test_layer_boundaries.py``.
+
+Executable walkthroughs cover the examples' ordinary usage. Focus additional
+tests on distinct regressions, accounting and chronology invariants, and
+independent mathematical checks. Test shared validation and compilation behavior
+at their owning layer. Portfolio typing contracts are collected in
+``tests/examples/portfolio/typing_contracts.py`` and checked against installed
+packages as well as the checkout.
+
+Existing jobs and streaming checks retain their original locations alongside
+those examples. Example source modules retain their executable doctests.
+
+Run a subtree while working on one layer:
+
+.. code-block:: console
+
+   $ uv run --locked --dev pytest tests/examples/portfolio
+   $ uv run --locked --dev pytest tests/examples/test_data.py
+   $ uv run --locked --dev pytest test_modello.py
+
 Build and validate both distribution formats:
 
 .. code-block:: console
@@ -37,8 +66,18 @@ and one source distribution. Builds use the installed, locked backend. The
 distribution check installs locked runtime dependencies and the wheel in a fresh
 environment outside the checkout, checks metadata, forward/inverse solving, and
 the installed type annotations, then rebuilds the source distribution and repeats
-the checks. ``typing_checks.py`` includes valid calls and expected type errors;
-unused-ignore checks ensure mypy continues to catch those errors.
+the checks. It also selects the ``examples`` extra on both installed wheels,
+checks the packaged CSV fixtures, and runs the portfolio entry points,
+including HTML and JSON output. The core and generic-example typing contracts
+include valid calls and expected type errors; unused-ignore checks ensure mypy
+continues to catch those errors against the installed packages.
+
+The wheel bundles the ``examples`` modules and fixtures. ``modello[examples]``
+selects their optional runtime requirements; currently these are satisfied by
+the standard library and the core SymPy dependency, so the extra's requirement
+list is empty. Add future example-specific dependencies to this extra. Package
+selection and data files belong in the setuptools configuration, independently
+of dependency selection.
 
 Read the Docs
 -------------
@@ -53,6 +92,18 @@ The existing ``modello`` project on Read the Docs tracks ``master`` for its
 ``latest`` version and builds pull request previews. Enable version tags after
 they include the documentation configuration. Project connections and version
 activation are managed in Read the Docs service settings.
+
+Example guides live under ``docs/examples/<example>/`` beneath the Examples
+section. Keep each guide focused on the modelling idea it demonstrates.
+Portfolio modules and fixtures are grouped in ``examples/portfolio/``;
+``examples/data.py``, ``examples/named_members.py``, and ``examples/symbolic.py``
+hold experimental data, named-projection, and numerical-evaluation helpers.
+Keep example-specific behavior in those layers.
+
+Diagrams use the ``.. mermaid::`` directive from
+`sphinxcontrib-mermaid <https://sphinxcontrib-mermaid-demo.readthedocs.io/en/stable/>`_
+in reStructuredText pages. The documentation dependency group enables the
+extension for local, CI, and Read the Docs HTML builds.
 
 Publishing
 ----------
