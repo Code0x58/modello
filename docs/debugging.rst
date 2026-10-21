@@ -90,15 +90,19 @@ Check('conflict')
   c4: self.total = 6 [input 'total']
   reading: Reading
     c1: self.reading.squared = self.reading.x**2 [definition]
-    c2: self.reading.x = 2 [input 'reading']
-    c3: self.reading.squared = 4 [input 'reading']
+    c2: self.reading.x = 2 [observed in 'reading']
+    c3: self.reading.squared = 4 [inferred in 'reading']
 
 Here the child fixes ``x = 2``, so its square is 4 and the parent's total must
 be 5. Remove or correct the conflicting observation. Adding more observations
 cannot repair that contradiction.
 
-The snapshot uses ``self.`` paths for model fields and includes derived values
-copied from supplied components. Aliased fields share a quantity and may appear
+The snapshot uses ``self.`` paths for model fields. Copied component values
+retain whether they were supplied or inferred during construction: ``x = 2``
+was observed when building ``known``, while ``squared = 4`` was inferred.
+The distinction comes from the actual construction inputs, so solving a
+positive reading backwards from ``squared=4`` instead marks ``x`` as inferred.
+Aliased fields share a quantity and may appear
 under one representative path. The original identities remain available through
 ``problem.fields``, ``problem.aliases(field)``, and ``problem.uses(field)``.
 
@@ -188,8 +192,9 @@ True
 >>> tuple(c.path for c in reading.boundary_constraints)
 (('total',),)
 
-``reading.owned_constraints`` contains the subtree's definitions and copied
-observations. Its boundary includes the parent's total equation. This describes
+``reading.owned_constraints`` contains the subtree's definitions, copied
+observations, and inferred construction results. Its boundary includes the
+parent's total equation. This describes
 structure; a conflict can span individually valid layers, with no single guilty
 component.
 
@@ -223,7 +228,7 @@ Check('conflict'): inconsistent
     c0: self.total = self.reading.squared + 1 [definition]
     c4: self.total = 6 [input 'total']
     reading: Reading
-      c3: self.reading.squared = 4 [input 'reading']
+      c3: self.reading.squared = 4 [inferred in 'reading']
     Certificate: (-1)*c0 + (-1)*c3 + (1)*c4 gives -1 = 0.
   Input removals:
     reading: consistent

@@ -52,11 +52,16 @@ class ModelField:
 
 @dataclass(frozen=True)
 class ModelConstraint:
-    """An equation's origin, original sides, and optional constructor-input group."""
+    """An equation's origin, original sides, and optional constructor-input group.
+
+    Copied component values distinguish observations supplied during construction
+    from inferred results. ``input`` groups both under the component argument;
+    it does not mean that each copied value was supplied explicitly.
+    """
 
     index: int
     path: FieldPath
-    kind: Literal["definition", "observation"]
+    kind: Literal["definition", "observation", "inferred"]
     left: Symbol
     right: Basic
     input: str | None = None
@@ -268,7 +273,14 @@ class ModelProblem:
     def _constraint_lines(self, constraints: tuple[ModelConstraint, ...], indent: int = 2) -> list[str]:
         entries = []
         for c in constraints:
-            source = "definition" if c.kind == "definition" else f"input {c.input!r}"
+            if c.kind == "definition":
+                source = "definition"
+            elif c.kind == "inferred":
+                source = f"inferred in {c.input!r}"
+            elif len(c.path) > 1:
+                source = f"observed in {c.input!r}"
+            else:
+                source = f"input {c.input!r}"
             entries.append((c.path[:-1], f"c{c.index}: self.{'.'.join(c.path)} = {self.format(c.right)} [{source}]"))
         return self._tree_lines(tuple(entries), indent)
 

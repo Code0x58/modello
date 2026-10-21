@@ -237,6 +237,53 @@ def test_component_relaxations_remove_all_copied_values_together():
     assert not any(c.input == "reading" for c in p.without("reading").constraints)
 
 
+def test_copied_values_retain_construction_observations_in_both_solve_directions():
+    class Positive(Reading):
+        x = InstanceDummy("x", positive=True)
+        alias = x
+
+    for source, observed, inferred in (
+        (Positive("forward", x=2), "x", "squared"),
+        (Positive("backward", squared=4), "squared", "x"),
+        (Positive("alias", alias=2), "x", "squared"),
+    ):
+        p = inspect_model(Check, "copy", reading=source)
+        assert {(c.path[-1], c.kind) for c in p.constraints if c.input == "reading"} == {
+            (observed, "observation"),
+            (inferred, "inferred"),
+        }
+        assert f"self.reading.{inferred} = " in str(p)
+        assert "[inferred in 'reading']" in str(p)
+        assert "[observed in 'reading']" in str(p)
+
+        # Copying a populated descendant or the whole parent preserves the same
+        # distinction; it is not guessed from the field's declaration.
+        parent = Check("parent", reading=source)
+        descendant = inspect_model(Check, "descendant", reading=parent.reading)
+        assert [(c.path, c.kind) for c in descendant.constraints] == [(c.path, c.kind) for c in p.constraints]
+
+        class Envelope(Modello):
+            check = component(Check)
+
+        nested = inspect_model(Envelope, "nested", check=parent)
+        assert (
+            next(c for c in nested.constraints if c.input and c.path == ("check", "reading", observed)).kind
+            == "observation"
+        )
+        assert (
+            next(c for c in nested.constraints if c.input and c.path == ("check", "reading", inferred)).kind
+            == "inferred"
+        )
+        assert next(c for c in nested.constraints if c.path == ("check", "total") and c.input).kind == "inferred"
+
+    class PositiveCheck(Check):
+        reading = component(Positive)
+
+    joined = PositiveCheck("joint", total=5)
+    copied = inspect_model(Check, "copy_joint", reading=joined.reading)
+    assert {c.kind for c in copied.constraints if c.input == "reading"} == {"inferred"}
+
+
 def test_parameter_conditions_and_floats_are_not_generic_rank_proofs():
     parameter = Symbol("parameter", real=True)
 
