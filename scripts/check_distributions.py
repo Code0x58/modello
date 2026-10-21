@@ -28,6 +28,12 @@ assert distribution.metadata.get_all("License-File")
 assert distribution.metadata["Requires-Python"] == ">=3.10"
 assert Path(modello.__file__).with_name("py.typed").is_file()
 assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
+assert "gui" in distribution.metadata.get_all("Provides-Extra", ())
+assert "flask" not in sys.modules
+from modello.gui import Explorer
+for name in ("index.html", "explorer.css", "explorer.js"):
+    assert Path(modello.__file__).with_name("_gui").joinpath(name).is_file()
+assert "flask" not in sys.modules
 assert not any(str(path).startswith("tests/") for path in distribution.files or ())
 assert not any(name == "examples" or name.startswith("examples.") for name in sys.modules)
 namespace = {}
@@ -45,6 +51,7 @@ class RightAngleTriangle(modello.Modello):
     b = modello.InstanceDummy("b", real=True, positive=True)
     c = sqrt(a**2 + b**2)
 
+assert Explorer(RightAngleTriangle).snapshot(raw=True)["raw"]
 assert RightAngleTriangle("T", a=3, b=4).c == 5
 assert RightAngleTriangle("T", b=4, c=5).a == 3
 

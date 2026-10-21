@@ -60,6 +60,7 @@ illustrate symbolic modeling with fixed historical rates.
    nesting
    debugging
    diagnostics
+   gui
 
 .. toctree::
    :caption: Examples
