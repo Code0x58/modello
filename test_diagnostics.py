@@ -1,5 +1,6 @@
 """Diagnosis must distinguish proofs, witnessed feasibility, and lack of knowledge."""
 
+import json
 from dataclasses import FrozenInstanceError, replace
 from itertools import combinations, product
 
@@ -23,7 +24,20 @@ from sympy import (
 
 import modello
 import modello.diagnostics as diagnostics
-from modello import InstanceDummy, Modello, ModelSolveError, component, inspect_model
+from modello import (
+    ConstraintKind,
+    InstanceDummy,
+    ModelDefinitionError,
+    ModelInputError,
+    Modello,
+    ModelloError,
+    ModelSolveError,
+    ModelValidationError,
+    SolutionCountError,
+    SolverBackendError,
+    component,
+    inspect_model,
+)
 from modello.diagnostics import Candidate, FieldValue
 
 
@@ -254,7 +268,10 @@ def test_component_relaxations_remove_all_copied_values_together():
 
 def test_copied_values_retain_construction_inputs_in_both_solve_directions():
     direct = inspect_model(Reading, "direct", x=2)
-    assert direct.constraints[-1].kind == "input"
+    assert direct.constraints[-1].kind is ConstraintKind.INPUT
+    assert str(direct.constraints[-1].kind) == "input"
+    assert f"{direct.constraints[-1].kind:>7}" == "  input"
+    assert json.dumps(direct.constraints[-1].kind) == '"input"'
     assert "[input 'x']" in str(direct)
 
     class Positive(Reading):
@@ -366,30 +383,71 @@ def test_candidate_audits_cover_domains_undefined_values_and_case_identity():
     assert any(check.predicate == "defined" and check.actual is False for check in pole.deductions.assumptions)
 
 
-def test_constructor_failure_keeps_candidates_and_backend_cause(monkeypatch):
-    with pytest.raises(ModelSolveError) as caught:
+@pytest.mark.parametrize("backend_error", (NotImplementedError("unsupported solver"), ValueError("solver value error")))
+def test_constructor_failure_keeps_candidates_and_backend_cause(monkeypatch, backend_error):
+    with pytest.raises(SolutionCountError) as caught:
         Reading("ambiguous", squared=3)
+    assert isinstance(caught.value, ModelloError)
+    assert isinstance(caught.value, ValueError)
+    assert caught.value.solution_count == caught.value.returned_count == 2
+    match caught.value:
+        case SolutionCountError(2):
+            pass
+        case _:
+            pytest.fail("Candidate counts must be available for structural matching")
     problem = caught.value.problem
     assert len(problem.candidates) == 2
     assert all(problem.check(candidate).verdict == "satisfied" for candidate in problem.candidates)
     assert problem.analyse().status == "consistent"
 
     def unsupported(*args, **kwargs):
-        raise NotImplementedError("example unsupported solver")
+        raise backend_error
 
     monkeypatch.setattr(modello, "solve", unsupported)
     monkeypatch.setattr(diagnostics, "solve", unsupported)
     monkeypatch.setattr(diagnostics, "solveset", unsupported)
-    with pytest.raises(ModelSolveError) as caught:
+    with pytest.raises(SolverBackendError) as failed:
         Reading("unsupported", squared=3)
-    assert isinstance(caught.value.__cause__, NotImplementedError)
-    assert caught.value.solution_count is None
-    analysis = caught.value.problem.analyse()
+    assert failed.value.backend_error is failed.value.__cause__ is backend_error
+    assert failed.value.solution_count is None
+    match failed.value:
+        case SolverBackendError(backend_error=error):
+            assert error is backend_error
+        case _:
+            pytest.fail("Backend failures must retain the original exception")
+    analysis = failed.value.problem.analyse()
     assert analysis.status == "unknown"
-    assert "NotImplementedError" in analysis.reason
-    assert "NotImplementedError" in analysis.solution_sets[0].solver_errors[0]
+    assert type(backend_error).__name__ in analysis.reason
+    assert type(backend_error).__name__ in analysis.solution_sets[0].solver_errors[0]
     monkeypatch.setattr(diagnostics, "linear_eq_to_matrix", unsupported)
     assert inspect_model(Sum, "unsupported_linear", x=1, y=2, total=3).analyse().status == "unknown"
+
+
+def test_solution_count_distinguishes_returned_and_domain_rejected_candidates():
+    class Restricted(Reading):
+        positive = InstanceDummy("positive", positive=True)
+        positive = Reading.x - 10
+
+    with pytest.raises(SolutionCountError) as caught:
+        Restricted("outside_domain", squared=9)
+    assert caught.value.solution_count == 0
+    assert caught.value.returned_count == 2
+    assert len(caught.value.problem.candidates) == 2
+
+
+def test_modello_validation_errors_preserve_builtin_categories():
+    with pytest.raises(ModelInputError) as caught:
+        Check("bad_type", reading={"x": 2})
+    assert isinstance(caught.value, ModelloError) and isinstance(caught.value, TypeError)
+    with pytest.raises(ModelDefinitionError) as definition:
+
+        class Invalid(Check):
+            reading = InstanceDummy("replacement")
+
+    assert isinstance(definition.value, ModelValidationError)
+    assert isinstance(definition.value, ModelloError) and isinstance(definition.value, ValueError)
+    with pytest.raises(ModelValidationError):
+        inspect_model(Reading, "invalid_budget").analyse(max_checks=0)
 
 
 def test_exception_creation_and_printing_never_launch_analysis(monkeypatch):

@@ -23,6 +23,9 @@ observations can be useful for consistency checks. Distinguish these cases:
 Counts of inputs and equations alone cannot establish consistency or uniqueness.
 Solve failures raise ``ModelSolveError``, a subclass of ``ValueError`` carrying
 the recorded problem. A reported zero count alone is not an inconsistency proof.
+Its subclasses distinguish ``SolutionCountError`` from ``SolverBackendError``;
+the :ref:`error reference <errors>` describes their inspectable parameters and
+the common ``ModelloError`` base for library failures.
 The following small model illustrates how to investigate each case:
 
 >>> from modello import InstanceDummy, Modello, ModelSolveError, component, inspect_model
@@ -280,7 +283,8 @@ the :doc:`portfolio example <examples/portfolio/index>`. Reconstruct a model
 when changing observations; changing an attribute does not solve it again.
 
 Unknown field names, invalid scalar inputs, and incompatible component types
-raise ``TypeError`` before solving. Backend solver failures are chained as the
-``ModelSolveError`` cause, with the recorded problem still available. Keep that
+raise ``ModelInputError`` (a ``TypeError``) before solving. Backend failures
+raise ``SolverBackendError`` with the original ``backend_error`` also chained as
+the cause, with the recorded problem still available. Keep that
 cause when investigating unsupported mathematics. See :doc:`api` for input rules and
 :doc:`nesting` for component copying, scope, and refinement.

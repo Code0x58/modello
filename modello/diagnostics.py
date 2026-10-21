@@ -7,6 +7,7 @@ inconsistency requires an exact contradiction. Everything else is unknown.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
@@ -35,12 +36,37 @@ from sympy.core.function import AppliedUndef
 from sympy.printing.str import StrPrinter
 from sympy.solvers.solveset import NonlinearError
 
+from modello.errors import ModelInputError, ModelValidationError
+from modello.errors import ModelSolveError as ModelSolveError
+
+if sys.version_info >= (3, 11):
+    from enum import StrEnum as _StrEnum
+else:
+    from enum import Enum
+
+    class _StrEnum(str, Enum):
+        """String-enum behaviour for the supported Python 3.10 runtime."""
+
+        __str__ = str.__str__
+
+        def __format__(self, format_spec: str) -> str:
+            return str.__format__(self, format_spec)
+
+
 if TYPE_CHECKING:
     from modello import Modello, ScalarValue
 
 FieldPath = tuple[str, ...]
 Status = Literal["consistent", "inconsistent", "unknown"]
 Verdict = Literal["satisfied", "violated", "unknown"]
+
+
+class ConstraintKind(_StrEnum):
+    """A defining equation, supplied input, or inferred component result."""
+
+    DEFINITION = "definition"
+    INPUT = "input"
+    INFERRED = "inferred"
 
 
 @dataclass(frozen=True)
@@ -62,7 +88,7 @@ class ModelConstraint:
 
     index: int
     path: FieldPath
-    kind: Literal["definition", "input", "inferred"]
+    kind: ConstraintKind
     left: Symbol
     right: Basic
     input: str | None = None
@@ -84,9 +110,9 @@ class FieldValue:
         try:
             expression = value if isinstance(value, Expr) else sympify(value)
         except (SympifyError, TypeError) as error:
-            raise TypeError("A field value must be a SymPy-compatible scalar") from error
+            raise ModelInputError("A field value must be a SymPy-compatible scalar") from error
         if not isinstance(expression, Expr):
-            raise TypeError("A field value must be a SymPy-compatible scalar")
+            raise ModelInputError("A field value must be a SymPy-compatible scalar")
         object.__setattr__(self, "field", field)
         object.__setattr__(self, "value", expression)
 
@@ -103,7 +129,7 @@ class Candidate:
         if not matches:
             raise KeyError(".".join(field.path))
         if any(value != matches[0] for value in matches):
-            raise ValueError("Candidate contains conflicting values for aliases")
+            raise ModelValidationError("Candidate contains conflicting values for aliases")
         return matches[0]
 
 
@@ -294,9 +320,9 @@ class ModelProblem:
         entries = []
         printer = self._printer()
         for c in constraints:
-            if c.kind == "definition":
+            if c.kind is ConstraintKind.DEFINITION:
                 source = "definition"
-            elif c.kind == "inferred":
+            elif c.kind is ConstraintKind.INFERRED:
                 source = f"inferred in {c.input!r}"
             else:
                 source = f"{c.kind} {c.input!r}"
@@ -322,7 +348,7 @@ class ModelProblem:
 
     def _require_field(self, field: ModelField) -> None:
         if field not in self.fields:
-            raise ValueError("The field belongs to another problem")
+            raise ModelValidationError("The field belongs to another problem")
 
     def at(self, *path: str) -> ComponentView:
         """Inspect a component subtree and its boundary; this does not isolate a solve."""
@@ -357,19 +383,6 @@ class ModelProblem:
         complete constructor argument and require a validated closed witness.
         """
         return _Analyser(self, max_checks).run(conflicts, relaxations)
-
-
-class ModelSolveError(ValueError):
-    """A construction failure carrying the original problem and solver candidates."""
-
-    def __init__(self, problem: ModelProblem, count: int | None, candidates: tuple[Candidate, ...] = ()) -> None:
-        self.problem = replace(problem, candidates=candidates)
-        self.solution_count = count
-        prefix = "Solver failed" if count is None else f"{count} solutions reported"
-        super().__init__(
-            f"{prefix} for {problem.model.__name__}({problem.name!r})\n"
-            "Inspect .problem or call .problem.analyse() for an opt-in diagnostic report."
-        )
 
 
 @dataclass(frozen=True)
@@ -454,7 +467,7 @@ def _audit(problem: ModelProblem, constraints: tuple[ModelConstraint, ...], cand
     for item in candidate.values:
         problem._require_field(item.field)
         if item.field.symbol in bindings and bindings[item.field.symbol] != item.value:
-            raise ValueError("Candidate contains conflicting values for aliases")
+            raise ModelValidationError("Candidate contains conflicting values for aliases")
         bindings[item.field.symbol] = item.value
     residuals = []
     for c in constraints:
@@ -693,7 +706,7 @@ class _Analyser:
 
     def __init__(self, problem: ModelProblem, max_checks: int) -> None:
         if max_checks < 1:
-            raise ValueError("max_checks must be at least 1")
+            raise ModelValidationError("max_checks must be at least 1")
         self.problem = problem
         self.max_checks = max_checks
         self.cache: dict[tuple[ModelConstraint, ...], _Assessment] = {}

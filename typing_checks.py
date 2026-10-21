@@ -7,7 +7,18 @@ from fractions import Fraction
 
 from sympy import Symbol
 
-from modello import InstanceDummy, Modello, ModelProblem, ModelSolveError, ScalarValue, component, inspect_model
+from modello import (
+    ConstraintKind,
+    InstanceDummy,
+    Modello,
+    ModelProblem,
+    ModelSolveError,
+    ScalarValue,
+    SolutionCountError,
+    SolverBackendError,
+    component,
+    inspect_model,
+)
 from modello.diagnostics import ComponentView, FieldValue, ModelField, ProblemAnalysis, SolutionSet
 
 
@@ -77,11 +88,21 @@ def check_diagnostics() -> None:
     assert field in view.fields
     assert report.problem is problem
     assert all(result.field in problem.fields for result in sets)
+    kind: ConstraintKind = problem.constraints[0].kind
+    assert kind is ConstraintKind.DEFINITION
+    _invalid_kind: ConstraintKind = "input"  # type: ignore[assignment]
     try:
         Line("case", start=Point("start", x=1))
     except ModelSolveError as error:
         failure: ModelProblem = error.problem
         assert failure.model is Line
+        if isinstance(error, SolutionCountError):
+            count: int = error.solution_count
+            returned: int = error.returned_count
+            assert count >= 0 and returned >= 0
+        elif isinstance(error, SolverBackendError):
+            cause: Exception = error.backend_error
+            assert cause is error.__cause__
     inspect_model(Line, "case", start={"x": 1})  # type: ignore[arg-type]
     inspect_model(Line("instance"), "case")  # type: ignore[arg-type]
     FieldValue(field, {})  # type: ignore[arg-type]

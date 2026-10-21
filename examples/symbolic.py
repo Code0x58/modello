@@ -12,7 +12,7 @@ from typing import Generic, Literal, Protocol, TypeVar, cast, overload, runtime_
 from sympy import Expr, Float, Symbol, lambdify, sympify
 
 from examples.data import NamedMap, Series, Time
-from modello import FieldPath, Modello, SymbolicScalar
+from modello import ConstraintKind, FieldPath, Modello, SymbolicScalar
 
 
 class ScalarPlan:
@@ -142,7 +142,7 @@ def _copy_model(model: Model, values: dict[FieldPath, Expr], inputs: tuple[Expr,
             result._modello_bound_fields[dummy] = replace(
                 binding,
                 value=values[prefix + path],
-                kind="input" if expression in inputs else binding.copied_kind(expression),
+                kind=ConstraintKind.INPUT if expression in inputs else binding.copied_kind(expression),
             )
         for name in tuple(vars(result)):
             if isinstance(getattr(type(source), name, None), cached_property):

@@ -77,6 +77,10 @@ kinds under the supplied component argument for removal probes.
 If a field's value has changed since construction, copying it treats the new
 value as an input rather than attributing it to the original inference.
 Numerical views preserve this distinction for evaluated inputs and outputs too.
+Constraint kinds are ``ConstraintKind`` string-enum members: ``DEFINITION``,
+``INPUT``, and ``INFERRED``. They retain their lowercase string values in reports
+and JSON. Python 3.10 uses a compatible string-enum base; newer runtimes use
+the standard-library ``StrEnum``.
 
 Conflicts, probes, and costs
 ----------------------------
@@ -157,9 +161,10 @@ Recorded problems and reports
 .. autoclass:: ModelProblem
    :members:
 
-.. autoclass:: ModelSolveError
-
 .. autoclass:: ModelField
+
+.. autoclass:: ConstraintKind
+   :members:
 
 .. autoclass:: ModelConstraint
    :members: symbols
