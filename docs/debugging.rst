@@ -92,15 +92,19 @@ Check('conflict')
   c0: total = reading.squared + 1 [definition]
   c4: total = 6 [input 'total']
   reading: Reading
-    c1: reading.squared = reading.x**2 [definition]
-    c2: reading.x = 2 [input 'reading']
-    c3: reading.squared = 4 [inferred in 'reading']
+    c1: squared = x**2 [definition]
+    c2: x = 2 [input 'reading']
+    c3: squared = 4 [inferred in 'reading']
 
 Here the child fixes ``x = 2``, so its square is 4 and the parent's total must
 be 5. Remove or correct the conflicting observation. Adding more observations
 cannot repair that contradiction.
 
-The snapshot uses paths from the model root, such as ``reading.x``. External
+Within each component, equations omit the shared path prefix, so the reading's
+definition is simply ``squared = x**2``. When an equation crosses layers, both
+sides use paths from their nearest common ancestor; see the connection example
+below. ``problem.format(expression)`` uses full paths from the model root for
+standalone expressions. External
 parameters appear as ``external[name]``; distinct external symbols sharing a
 name are numbered. Copied component values
 retain whether they were supplied or inferred during construction: ``x = 2``
@@ -205,6 +209,34 @@ parent's total equation. This describes
 structure; a conflict can span individually valid layers, with no single guilty
 component.
 
+A copied symbolic input can reference a quantity in an enclosing component.
+For example, link the reading to its check's total, then inspect that check
+inside another layer:
+
+>>> class Audit(Modello):
+...     check = component(Check)
+>>> linked_reading = Reading("linked_reading", x=Audit.check.total - 1)
+>>> linked_check = Check("linked_check", reading=linked_reading)
+>>> linked = inspect_model(Audit, "linked", check=linked_check)
+>>> print(linked)
+Audit('linked')
+  check: Check
+    c0: total = reading.squared + 1 [definition]
+    c2: total = (total - 1)**2 + 1 [inferred in 'check']
+    reading: Reading
+      c1: squared = x**2 [definition]
+      c3: reading.x = total - 1 [input 'check']
+      c4: reading.squared = (total - 1)**2 [inferred in 'check']
+
+In ``c1``, both fields belong to ``reading``, so neither needs a prefix. In
+``c3``, ``total`` belongs to its parent ``check``. Both sides are therefore
+relative to ``check``: ``reading.x = total - 1``. The common ``check.`` prefix
+is omitted; keeping ``reading.`` on the left makes the cross-layer connection
+visible. Structured constraint paths remain complete:
+
+>>> linked.constraints[3].path
+('check', 'reading', 'x')
+
 An explicitly constructed child such as ``Reading("bad", x=2, squared=5)``
 raises before it can be passed to ``Check``. In that case, inspect the child's
 exception: the parent has not been constructed. A supplied child has therefore
@@ -235,7 +267,7 @@ Check('conflict'): inconsistent
     c0: total = reading.squared + 1 [definition]
     c4: total = 6 [input 'total']
     reading: Reading
-      c3: reading.squared = 4 [inferred in 'reading']
+      c3: squared = 4 [inferred in 'reading']
     Certificate: (-1)*c0 + (-1)*c3 + (1)*c4 gives -1 = 0.
   Input removals:
     reading: consistent

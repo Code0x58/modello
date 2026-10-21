@@ -111,6 +111,11 @@ Successful instances retain each field's bound symbol, construction value,
 and provenance together, so copies can distinguish original results from
 changed values. Reports label symbols through a printer without substituting
 into the algebra; field paths and external parameters remain distinguishable.
+Nested equations omit their longest common component prefix on both sides.
+An equation reaching outside its component is relative to the nearest common
+ancestor of the referenced fields. Aliases prefer a path within the displayed
+component where available. Structured paths and ``problem.format(expression)``
+retain paths from the model root.
 
 Research and SymPy foundations
 -------------------------------

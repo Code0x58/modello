@@ -96,7 +96,7 @@ def test_snapshot_preserves_aliases_origins_and_component_boundaries(monkeypatch
     assert all(field.symbol in c.symbols for c in p.uses(field))
     assert p.at().owned_constraints == p.constraints
     assert "ModelProblem(Joined" in repr(p)
-    assert "  left: Reading\n    c1: left.squared = alias**2 [definition]" in str(p)
+    assert "  left: Reading\n    c1: squared = x**2 [definition]" in str(p)
     assert {c.input for c in p.constraints if c.kind == "input"} == {"left", "gap"}
     with pytest.raises(FrozenInstanceError):
         p.name = "changed"
@@ -288,7 +288,7 @@ def test_copied_values_retain_construction_inputs_in_both_solve_directions():
             (supplied, "input"),
             (inferred, "inferred"),
         }
-        assert f"reading.{inferred} = " in str(p)
+        assert f"{inferred} = " in str(p)
         assert "[inferred in 'reading']" in str(p)
         assert "[input 'reading']" in str(p)
 
@@ -502,9 +502,14 @@ def test_solution_sets_preserve_infinite_families_and_unresolved_conditions():
         x = InstanceDummy("x", real=True)
         residual = cos(x) - x
 
-    report = inspect_model(Transcendental, "unresolved", residual=0).analyse()
+    class Envelope(Modello):
+        reading = component(Transcendental)
+        residual = reading.residual
+
+    report = inspect_model(Envelope, "unresolved", residual=0).analyse()
     assert report.solution_sets[0].values.has(ConditionSet)
     assert report.status == "unknown"
+    assert "reading: Transcendental\n      x in ConditionSet(x," in str(report)
 
 
 @pytest.mark.parametrize(
@@ -560,14 +565,46 @@ def test_nested_reports_show_component_types_and_equation_origins():
         total = check.total + 1
 
     p = inspect_model(Envelope, "nested", total=0)
-    assert "\n  check: Check\n    c1: check.total" in str(p)
-    assert "\n    reading: Reading\n      c2: check.reading.squared" in str(p)
+    assert "\n  check: Check\n    c1: total = reading.squared + 1" in str(p)
+    assert "\n    reading: Reading\n      c2: squared = x**2" in str(p)
     report = p.analyse(conflicts=True)
     assert report.status == "inconsistent"
     rendered = str(report)
-    assert "\n    check: Check\n      c1: check.total" in rendered
-    assert "\n      reading: Reading\n        c2: check.reading.squared" in rendered
+    assert "\n    check: Check\n      c1: total = reading.squared + 1" in rendered
+    assert "\n      reading: Reading\n        c2: squared = x**2" in rendered
     assert "reading: Reading" in rendered
+
+
+def test_cross_layer_equations_share_the_nearest_common_ancestor():
+    class Review(Modello):
+        check = component(Check)
+        peer = component(Reading)
+        x = InstanceDummy("x", real=True)
+
+    class Batch(Modello):
+        review = component(Review)
+        x = InstanceDummy("x", real=True)
+
+    def snapshot(expression):
+        source = Reading("source", x=expression)
+        check = Check("check", reading=source)
+        review = Review("review", check=check)
+        return inspect_model(Batch, "batch", review=review)
+
+    for expression, left, right, reference, offset in (
+        (Batch.review.check.total - 1, "reading.x", "total - 1", ("review", "check", "total"), -1),
+        (Batch.review.x + 1, "check.reading.x", "x + 1", ("review", "x"), 1),
+        (Batch.review.peer.x + 1, "check.reading.x", "peer.x + 1", ("review", "peer", "x"), 1),
+        (Batch.x + 1, "review.check.reading.x", "x + 1", ("x",), 1),
+    ):
+        problem = snapshot(expression)
+        rendered = str(problem)
+        assert f"{left} = {right} [input 'review']" in rendered
+        assert "squared = x**2 [definition]" in rendered
+        # Rendering changes neither recorded paths nor the expressions they identify.
+        copied = next(c for c in problem.constraints if c.path == ("review", "check", "reading", "x"))
+        assert copied.right == problem.field(*reference).symbol + offset
+        assert problem.format(copied.right) == f"{'.'.join(reference)} {'+' if offset > 0 else '-'} 1"
 
 
 @pytest.mark.parametrize("replacement", (9, S(9)))

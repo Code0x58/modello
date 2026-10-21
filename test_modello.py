@@ -390,11 +390,11 @@ def test_inconsistent_and_ambiguous_nested_systems_are_rejected():
     with pytest.raises(ModelSolveError, match="2 solutions") as error:
         Parent("P", total=5)
     assert "Parent('P')" in str(error.value)
-    assert "child.squared = child.x**2" in str(error.value.problem)
+    assert "child: Child\n    c1: squared = x**2" in str(error.value.problem)
     assert "total = 5" in str(error.value.problem)
     with pytest.raises(ModelSolveError, match="0 solutions") as error:
         Parent("P", child=Child("C", x=2), total=10)
-    assert "child.x = 2" in str(error.value.problem)
+    assert "x = 2" in str(error.value.problem)
     assert "total = 10" in str(error.value.problem)
 
 

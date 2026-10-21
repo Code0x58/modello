@@ -248,14 +248,37 @@ class Conflict:
     removal_checks: tuple[RemovalCheck, ...] = ()
 
 
+def _common_prefix(left: FieldPath, right: FieldPath) -> FieldPath:
+    for index, (a, b) in enumerate(zip(left, right)):
+        if a != b:
+            return left[:index]
+    return left[: min(len(left), len(right))]
+
+
 class _FieldPrinter(StrPrinter):
     """Label quantities without substitution, which could change the algebra."""
 
-    def __init__(self, fields: tuple[ModelField, ...], symbols: frozenset[Symbol]) -> None:
+    def __init__(
+        self,
+        fields: tuple[ModelField, ...],
+        symbols: frozenset[Symbol],
+        scope: FieldPath,
+        referenced: frozenset[Symbol],
+    ) -> None:
         super().__init__()
-        self.labels: dict[Symbol, str] = {}
+        paths: dict[Symbol, FieldPath] = {}
         for field in fields:
-            self.labels.setdefault(field.symbol, ".".join(field.path))
+            previous = paths.get(field.symbol)
+            # Prefer aliases in this component; ties keep the recorded order.
+            if previous is None or len(_common_prefix(scope, field.path[:-1])) > len(
+                _common_prefix(scope, previous[:-1])
+            ):
+                paths[field.symbol] = field.path
+        self.scope = scope
+        # Both sides share one scope, even when the right side reaches outside it.
+        for symbol in referenced & paths.keys():
+            self.scope = _common_prefix(self.scope, paths[symbol][:-1])
+        self.labels = {symbol: ".".join(path[len(self.scope) :]) for symbol, path in paths.items()}
         external: dict[str, list[Symbol]] = {}
         for symbol in sorted(
             symbols - self.labels.keys(),
@@ -291,14 +314,14 @@ class ModelProblem:
         )
 
     def format(self, expression: Basic) -> str:
-        """Render identities as field paths, retaining every original expression."""
+        """Render paths from the model root without changing the expression."""
         return str(self._printer(expression).doprint(expression))
 
-    def _printer(self, *expressions: Basic) -> _FieldPrinter:
-        symbols = frozenset().union(
-            *(c.symbols for c in self.constraints), *(expression.free_symbols for expression in expressions)
-        )
-        return _FieldPrinter(self.fields, symbols)
+    def _printer(self, *expressions: Basic, scope: FieldPath = ()) -> _FieldPrinter:
+        # Bound variables in a ConditionSet need the same labels as free symbols.
+        referenced: frozenset[Symbol] = frozenset().union(*(expression.atoms(Symbol) for expression in expressions))
+        symbols = frozenset().union(*(c.symbols for c in self.constraints), referenced)
+        return _FieldPrinter(self.fields, symbols, scope, referenced)
 
     def __str__(self) -> str:
         return "\n".join([f"{self.model.__name__}({self.name!r})", *self._constraint_lines(self.constraints)])
@@ -318,15 +341,16 @@ class ModelProblem:
 
     def _constraint_lines(self, constraints: tuple[ModelConstraint, ...], indent: int = 2) -> list[str]:
         entries = []
-        printer = self._printer()
         for c in constraints:
+            printer = self._printer(c.right, scope=c.path[:-1])
             if c.kind is ConstraintKind.DEFINITION:
                 source = "definition"
             elif c.kind is ConstraintKind.INFERRED:
                 source = f"inferred in {c.input!r}"
             else:
                 source = f"{c.kind} {c.input!r}"
-            entries.append((c.path[:-1], f"c{c.index}: {'.'.join(c.path)} = {printer.doprint(c.right)} [{source}]"))
+            path = ".".join(c.path[len(printer.scope) :])
+            entries.append((c.path[:-1], f"c{c.index}: {path} = {printer.doprint(c.right)} [{source}]"))
         return self._tree_lines(tuple(entries), indent)
 
     def field(self, *path: str) -> ModelField:
@@ -417,15 +441,18 @@ class ProblemAnalysis:
             )
         if self.solution_sets:
             lines.append("  Univariate solution sets (necessary conditions):")
-            entries = tuple(
-                (
-                    result.field.path[:-1],
-                    f"{result.field.path[-1]} in {self.problem.format(result.values)} "
-                    f"[domain: {result.domain}; " + ", ".join(f"c{c.index}" for c in result.constraints) + "]",
+            entries = []
+            for result in self.solution_sets:
+                printer = self.problem._printer(result.values, scope=result.field.path[:-1])
+                path = ".".join(result.field.path[len(printer.scope) :])
+                entries.append(
+                    (
+                        result.field.path[:-1],
+                        f"{path} in {printer.doprint(result.values)} "
+                        f"[domain: {result.domain}; " + ", ".join(f"c{c.index}" for c in result.constraints) + "]",
+                    )
                 )
-                for result in self.solution_sets
-            )
-            lines.extend(self.problem._tree_lines(entries, 4))
+            lines.extend(self.problem._tree_lines(tuple(entries), 4))
             for result in self.solution_sets:
                 lines.extend(f"    Solver: {error}" for error in result.solver_errors)
         if self.conflict is not None:
