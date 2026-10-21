@@ -43,8 +43,10 @@ outer constraint.
 
 Distinct instances receive distinct bound symbols, even if they share a name.
 Values are solved at construction time; changing an attribute afterward does
-not recompute the model. When constraints are present, a solver result without
-exactly one solution raises :class:`ValueError`.
+not recompute the model. Construction requires one retained solver candidate;
+zero or several candidates raise :class:`~modello.errors.SolutionCountError`.
+A candidate may still represent a symbolic family of answers. The
+:doc:`debugging guide <debugging>` explains these outcomes and how to inspect them.
 
 The `examples directory <https://github.com/Code0x58/modello/tree/master/examples>`_
 contains geometry, flow-scaling, and historical tax-model examples. Tax examples
