@@ -94,14 +94,14 @@ The [portfolio research example](https://modello.readthedocs.io/en/latest/exampl
 explores named holdings, market data, account replay, signals, analytics, and
 symbolic reports. Its code and fixtures live in [examples/portfolio](examples/portfolio/),
 with a separate documentation section. The
-[named-solving design note](https://modello.readthedocs.io/en/latest/design/named_solving.html)
+[named-member solving note](https://modello.readthedocs.io/en/latest/examples/portfolio/index.html#named-member-solving-as-a-general-feature)
 describes the general modeling feature being explored.
 
 Install and run the examples with their bundled synthetic data:
 
 ```sh
 pip install "modello[examples]"
-python -m examples.portfolio.demo --html account.html --json account.json
+python -m examples.portfolio --html account.html --json account.json
 ```
 
 ## Development

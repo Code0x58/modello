@@ -25,11 +25,12 @@ with ``uv lock --upgrade`` and commit ``uv.lock``. Dependabot proposes grouped
 weekly dependency and GitHub Actions updates. Workflows do not schedule rebuilds.
 
 Tests follow the source layers. Core model tests and public typing contracts
-live in ``tests/test_modello.py`` and ``tests/typing_checks.py``. Example tests
-live under ``tests/examples/``: generic data and expression helpers have a
-``compute/`` subtree, and financial modules have a ``portfolio/`` subtree.
-Portfolio tests are split by the corresponding account, source, signal,
-execution, analytics, utility, and reporting modules. Their ``conftest.py``
+live in ``test_modello.py`` and ``typing_checks.py``. Example tests
+live under ``tests/examples/``: ``test_data.py`` covers the independent data
+helpers, ``test_symbolic.py`` covers numerical views, and
+``test_named_members.py`` covers bound declarations and projections.
+Financial tests live under ``portfolio/`` and follow its equation, valuation,
+source, account, decision, analytics, and reporting layers. Their ``conftest.py``
 shares the synthetic scenario; ``_data.py`` locates fixtures through the example
 package, independently of the tests' location. Cross-layer import checks live
 in ``tests/test_layer_boundaries.py``.
@@ -41,17 +42,16 @@ at their owning layer. Portfolio typing contracts are collected in
 ``tests/examples/portfolio/typing_contracts.py`` and checked against installed
 packages as well as the checkout.
 
-Jobs and streaming tests also live under ``tests/examples/``. Example source
-modules retain their executable doctests; explicit test functions are collected
-from the test tree.
+Existing jobs and streaming checks retain their original locations alongside
+those examples. Example source modules retain their executable doctests.
 
 Run a subtree while working on one layer:
 
 .. code-block:: console
 
    $ uv run --locked --dev pytest tests/examples/portfolio
-   $ uv run --locked --dev pytest tests/examples/compute
-   $ uv run --locked --dev pytest tests/test_modello.py
+   $ uv run --locked --dev pytest tests/examples/test_data.py
+   $ uv run --locked --dev pytest test_modello.py
 
 Build and validate both distribution formats:
 
@@ -95,9 +95,9 @@ activation are managed in Read the Docs service settings.
 
 Example guides live under ``docs/examples/<example>/`` and have their own
 navigation beneath the Examples section. Portfolio modules and fixtures are
-grouped in ``examples/portfolio/``; ``examples/compute/`` holds experimental
+grouped in ``examples/portfolio/``; ``examples/data.py`` and ``examples/symbolic.py`` holds experimental
 data and expression-execution helpers. Keep example-specific behavior in those
-layers. The :doc:`named-solving design note <design/named_solving>` records the
+layers. The :ref:`named-member-solving` records the
 candidate general modeling feature.
 
 Diagrams use the ``.. mermaid::`` directive from

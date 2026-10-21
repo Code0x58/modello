@@ -7,13 +7,11 @@ from datetime import datetime, timedelta
 
 from sympy import S
 
-from examples.compute.named_map import NamedMap
-from examples.compute.series import utc_time
-from examples.model_plan import Known
+from examples.data import NamedMap, utc_time
 from examples.portfolio.models import PriceChange, Quote
 from examples.portfolio.signals import OrderIntent
 from examples.portfolio.sources import Fill, PriceHistory, TransactionLog
-from examples.symbolic import SymbolicModel
+from examples.symbolic import Known, SymbolicModel
 from modello import InstanceDummy, Modello, component
 
 

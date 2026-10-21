@@ -12,17 +12,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Generic, TypeVar
 
-from examples.compute.named_map import NamedMap
-from examples.compute.providers import Provider
-from examples.compute.series import Series
+from examples.data import NamedMap, Provider, Series
 from examples.named_members import MemberValues
 from examples.portfolio.account import Account, AccountPath, AccountSnapshot
-from examples.portfolio.basket import EquityHoldings, equity
+from examples.portfolio.analytics import Comparison, PerformanceIndex
 from examples.portfolio.execution import ExecutionBenchmark
-from examples.portfolio.explicit import Basket, EquityMembers, Portfolio
 from examples.portfolio.models import EquityPosition, USDCash
-from examples.portfolio.performance import Comparison, PerformanceIndex
-from examples.portfolio.reporting import AccountReport, OrderAttribution
+from examples.portfolio.reporting import AccountReport, CashUtility, OrderAttribution
 from examples.portfolio.signals import (
     MomentumSignals,
     OrderIntent,
@@ -31,10 +27,36 @@ from examples.portfolio.signals import (
 from examples.portfolio.sources import (
     CSVIndexSource,
     CSVTransactionSource,
+    DummyEquityProvider,
     TransactionLog,
     timestamp,
 )
-from examples.portfolio.utility import CashUtility
+from examples.portfolio.valuation import EquityBasket, EquityHoldings, NamedPortfolio, equity
+from modello import component
+
+
+class EquityMembers(EquityHoldings):
+    """A declared domain of two named equity positions."""
+
+    aapl = equity.component(DummyEquityProvider(symbol="AAPL"))
+    msft = equity.component(DummyEquityProvider(symbol="MSFT"))
+
+
+class Basket(EquityBasket[EquityMembers]):
+    """A declared equity basket with provider bindings and an explicit reduction."""
+
+    members = component(EquityMembers)
+    market_value = EquityBasket.total(members)
+
+
+class Portfolio(NamedPortfolio[EquityMembers]):
+    """A basket and cash valued in one joint symbolic model."""
+
+    basket = component(Basket)
+    cash = component(USDCash)
+    nav = basket.capital
+    nav = basket.market_value + cash.amount
+
 
 _Members = TypeVar("_Members", bound=EquityHoldings)
 

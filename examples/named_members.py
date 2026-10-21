@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from functools import cache
 from typing import Any, Callable, ClassVar, Generic, TypeVar, cast
 
-from examples.compute.named_map import NamedMap
+from examples.data import NamedMap
 from modello import Modello, ModelloMeta, ModelloMetaNamespace, ScalarValue, _ModelReference
 
 _Model = TypeVar("_Model", bound=Modello)

@@ -1,5 +1,5 @@
-6. Build signals, orders, and execution benchmarks
-==================================================
+4. Generate signals and assess execution
+========================================
 
 An account path describes what happened. A trading decision needs the account
 and observations available at its decision time, a rule producing targets,
@@ -7,17 +7,17 @@ and a model relating those targets to order quantities. We will build those
 pieces before examining the independently recorded fills.
 
 Continue with ``account``, ``market``, ``ledger``, ``times``, and ``age`` from
-chapter 5. To run this page independently, expand the same setup:
+chapter 3. To run this page independently, expand the same setup:
 
 .. raw:: html
 
-   <details><summary>Recreate the account inputs from chapter 5</summary>
+   <details><summary>Recreate the account inputs from chapter 3</summary>
 
 >>> from datetime import timedelta
 >>> from pathlib import Path
 >>> import examples.portfolio as portfolio_examples
->>> from examples.portfolio.explicit import Portfolio, Basket, EquityMembers
->>> from examples.portfolio.basket import equity
+>>> from examples.portfolio.demo import Portfolio, Basket, EquityMembers
+>>> from examples.portfolio.valuation import equity
 >>> from examples.portfolio.models import USDCash
 >>> from examples.portfolio.account import Account
 >>> from examples.portfolio.sources import CSVTransactionSource, timestamp
@@ -65,7 +65,7 @@ The snapshot keeps the evaluated portfolio's concrete member type. These member
 references can also select later order and execution views of this decision.
 
 Choose a feature grid with two prior closes and the decision observation.
-Sampling uses the publication-time rule built in chapter 4:
+Sampling uses the publication-time rule built in chapter 2:
 
 >>> feature_times = (*times[:2], decision_at)
 >>> prices = market.map(lambda history: history.sample(feature_times, max_age=age))
@@ -75,7 +75,7 @@ Sampling uses the publication-time rule built in chapter 4:
 Define the signal, then apply it to windows
 -------------------------------------------
 
-Momentum is the proportional return of the ``PriceChange`` model from chapter 5.
+Momentum is the proportional return of the ``PriceChange`` model from chapter 3.
 Bind its opening and closing quotes and expose that return as the signal:
 
 .. literalinclude:: ../../../examples/portfolio/signals.py
@@ -195,7 +195,7 @@ bindings when mapped. A holding with no order can be omitted:
    from collections.abc import Callable, Iterator
    from dataclasses import dataclass
    from typing import Generic, TypeVar
-   from examples.compute.named_map import NamedMap
+   from examples.data import NamedMap
    from modello import Modello
 
    _Model = TypeVar("_Model", bound=Modello)
@@ -375,5 +375,5 @@ A later change to targets may produce different intentions. It does not invent
 new fills or change this external ledger. That separation will also matter when
 attributing P&L to decisions.
 
-The :doc:`next chapter <performance>` evaluates the resulting account against
+The :doc:`next chapter <reporting>` evaluates the resulting account against
 an index and makes the short sample window visible before we build reports.

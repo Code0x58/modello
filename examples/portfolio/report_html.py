@@ -8,9 +8,8 @@ from html import escape
 
 from sympy import Expr, Symbol
 
-from examples.compute.named_map import NamedMap
-from examples.compute.series import Series
-from examples.portfolio.performance import Comparison
+from examples.data import NamedMap, Series
+from examples.portfolio.analytics import Comparison
 from examples.portfolio.reporting import AccountReport
 
 COLORS = ("#2563a6", "#db7927", "#7d58a3", "#238578", "#a44554", "#556578")

@@ -1,4 +1,4 @@
-9. Derive execution from a continuous model
+6. Derive execution from a continuous model
 ===========================================
 
 The earlier chapters reused scalar equations in several solving directions.
@@ -8,7 +8,7 @@ grid, and generate the equations for a schedule. The
 :doc:`following study <execution_calibration>` will use the same definition for
 calibration and liquidity reporting.
 
-Take the ten-share MSFT sell intention from chapter 6. The earlier execution
+Take the ten-share MSFT sell intention from chapter 4. The earlier execution
 benchmark describes its actual fills. Here we ask a different question: how
 would a model schedule those shares over four hours? We will use separate
 synthetic liquidity parameters, not infer them from the three account fills.
@@ -43,18 +43,18 @@ its economic equations:
    from modello import InstanceDummy, Modello, component
    from examples.symbolic import SymbolicModel
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: QuadraticImpact
    :language: python
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: InventoryRisk
    :language: python
 
 Compose the objective from those costs. The parameter aliases expose convenient
 names while retaining the component hierarchy for inspection and substitution:
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: ExecutionDensity
    :end-before:     def lagrangian
    :language: python
@@ -77,13 +77,13 @@ The units are explicit:
    * - ``impact``, ``variance``, ``risk``
      - USD/hour, USD²/hour, USD/hour
 
-Reuse the cash utility from chapter 8 to supply the preference parameter:
+Reuse the cash utility from chapter 5 to supply the preference parameter:
 
 >>> from sympy import Function, Rational, Symbol, diff, simplify, solve
 >>> from examples.portfolio.optimal_execution import ExecutionDensity
->>> from examples.portfolio.optimal_execution.model import QuadraticImpact, InventoryRisk
->>> from examples.portfolio.utility import CashUtility
->>> from examples.model_plan import Known, ModelPlan
+>>> from examples.portfolio.optimal_execution import QuadraticImpact, InventoryRisk
+>>> from examples.portfolio.reporting import CashUtility
+>>> from examples.symbolic import Known, ModelPlan
 >>> utility = CashUtility.cara(0.001)
 >>> gamma = utility.expressions["absolute_risk_aversion"]
 >>> model = ExecutionDensity(
@@ -106,7 +106,7 @@ Lift the scalar density to a variational problem
 The model's inventory and speed are still unknown independent symbols. Replace
 them with :math:`q(t)` and :math:`-q'(t)`:
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: ExecutionDensity.lagrangian
    :dedent: 4
    :language: python
@@ -114,7 +114,7 @@ them with :math:`q(t)` and :math:`-q'(t)`:
 Then let SymPy differentiate the functional using
 `euler_equations <https://docs.sympy.org/latest/modules/calculus/index.html#sympy.calculus.euler.euler_equations>`_:
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: ExecutionDensity.euler_equation
    :dedent: 4
    :language: python
@@ -131,7 +131,7 @@ For constant coefficients the generated equation is
 ``continuous_curve`` passes that equation and the two inventory boundary
 conditions to ``dsolve``; it stores no separately coded trajectory formula:
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: ExecutionDensity.continuous_curve
    :dedent: 4
    :language: python
@@ -157,7 +157,7 @@ of width :math:`h`, interpolate linearly from :math:`a` to :math:`b` and hold
 volume and coefficients constant. Substitute that path into the rates and let
 SymPy integrate them:
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: ExecutionDensity.interval
    :dedent: 4
    :language: python
@@ -181,17 +181,17 @@ to that mesh approximates the continuous optimisation problem.
 Sum interval objectives, differentiate with respect to interior inventories,
 and differentiate again for curvature:
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: ExecutionGrid.objective
    :dedent: 4
    :language: python
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: ExecutionGrid.gradient
    :dedent: 4
    :language: python
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: ExecutionGrid.hessian
    :dedent: 4
    :language: python
@@ -206,7 +206,7 @@ Here the stationarity equations are linear, even though the objective is
 quadratic. ``stationary`` extracts their coefficient matrix and solves it
 exactly. It uses ``nsolve`` with an explicit initial guess for nonlinear laws:
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: ExecutionGrid.stationary
    :dedent: 4
    :language: python
@@ -248,6 +248,6 @@ trades follow available volume-time:
 (12/5, 24/5, 24/5)
 
 Nothing in this study invents actual fills. Its schedule can inform order
-intentions; chapter 6's independent ledger and execution assessment still
+intentions; chapter 4's independent ledger and execution assessment still
 determine what happened. The :doc:`next study <execution_calibration>` turns the
 same functional into a calibration problem and a liquidity-cost report.

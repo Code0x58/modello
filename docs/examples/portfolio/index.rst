@@ -73,18 +73,81 @@ being developed at that step.
    :maxdepth: 1
 
    holdings
-   named_members
-   modelling
-   providers
+   data
    accounts
    signals
-   performance
    reporting
    optimal_execution
    execution_calibration
-   layers
 
 The reporting chapter assembles the complete scenario and links to the
-`interactive report <report.html>`_.
-The :doc:`implementation map <layers>` is an optional reference for finding the
-completed code, numerical timings, and further design questions.
+`interactive report <report.html>`_. The two execution studies reuse a
+continuous model for scheduling, calibration, and liquidity questions.
+
+Where the layers live
+----------------------
+
+.. mermaid::
+   :caption: Definitions, observations, evaluation, and reports
+   :alt: Models and named declarations supply compiled calculations. Providers supply observations and an external ledger. Replay connects both to decisions, analytics, and reports.
+
+   flowchart TD
+       models[Typed mathematical components] --> views[Compiled model views]
+       data[Providers and observations] --> replay[Chronological account replay]
+       views --> replay
+       replay --> decisions[Signals and execution assessment]
+       replay --> analytics[Performance and risk]
+       replay --> reports[Attribution and utility reports]
+       analytics --> reports
+       decisions --> reports
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Responsibility
+     - Modules under ``examples/``
+   * - Named data, causal series, provider requests
+     - ``data``; standard library only.
+   * - Declaration and numerical model adapters
+     - ``named_members``, ``symbolic``.
+   * - Financial equations and portfolio composition
+     - ``portfolio.models``, ``portfolio.valuation``.
+   * - External observations and chronological replay
+     - ``portfolio.sources``, ``portfolio.account``.
+   * - Decisions and execution assessment
+     - ``portfolio.signals``, ``portfolio.execution``.
+   * - Statistics, attribution, and presentation
+     - ``portfolio.analytics``, ``portfolio.reporting``, ``portfolio.report_html``.
+   * - Complete research case and continuous-model studies
+     - ``portfolio.demo``, ``portfolio.optimal_execution``.
+
+The account and execution studies are the runnable examples:
+
+.. code-block:: console
+
+   $ python -m examples.portfolio --html account.html --json account.json
+   $ python -m examples.portfolio.optimal_execution
+
+The wheel includes the CSV fixtures. Construction and compilation happen before
+repeated numerical evaluation; ``ModelPath`` retains columns and creates typed
+point models only when requested. Provider acquisition, event chronology,
+publication horizons, and reporting conventions stay explicit.
+
+.. _named-member-solving:
+
+Named-member solving as a general feature
+------------------------------------------
+
+The reusable Modello question explored here is how to project expressions from
+a declared domain of named, typed components and reduce them while retaining
+joint forward and inverse solving. ``component_members`` expands a declaration
+into ordinary scalar expressions; ``MemberValues`` associates application
+results with the actual members of their source case.
+
+This prototype adapts existing component metadata. It introduces no public
+map-valued solver input or time-series solving rule. A future core interface
+would need to define declaration, reflection, constraint, and error semantics,
+including how static types distinguish common member types from particular
+keys. Acquisition, chronology, execution backends, and financial conventions
+can remain consumers of the resulting expressions.

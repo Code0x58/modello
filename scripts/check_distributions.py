@@ -75,7 +75,7 @@ import sys
 
 import examples
 from examples.geometry import RightAngleTriangle
-from examples.compute.named_map import NamedMap
+from examples.data import NamedMap
 
 assert Path(examples.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
 assert Path(examples.__file__).with_name("py.typed").is_file()
@@ -114,12 +114,10 @@ def check_wheel(
     subprocess.run([str(python), "-I", "-c", EXAMPLES_SMOKE_TEST], cwd=directory, check=True)
     for module in (
         "examples.portfolio",
-        "examples.portfolio.named",
-        "examples.portfolio.demo",
         "examples.portfolio.optimal_execution",
     ):
         arguments = [str(python), "-I", "-m", module]
-        if module == "examples.portfolio.demo":
+        if module == "examples.portfolio":
             arguments.extend(["--json", str(directory / "report.json"), "--html", str(directory / "report.html")])
         subprocess.run(arguments, cwd=directory, check=True, stdout=subprocess.DEVNULL)
     assert json.loads((directory / "report.json").read_text())["snapshots"][-1]["nav"] == 3066.9
@@ -127,13 +125,10 @@ def check_wheel(
     print(f"Validated all installed portfolio runners from {wheel.name}", flush=True)
     typing_checks = []
     for path in (
-        "tests/typing_checks.py",
+        "typing_checks.py",
         "tests/examples/test_named_members.py",
-        "tests/examples/test_member_values.py",
-        "tests/examples/test_model_plan.py",
-        "tests/examples/test_model_data.py",
-        "tests/examples/compute/test_series.py",
-        "tests/examples/compute/test_providers.py",
+        "tests/examples/test_symbolic.py",
+        "tests/examples/test_data.py",
         "tests/examples/portfolio/typing_contracts.py",
     ):
         source = Path(__file__).resolve().parents[1] / path

@@ -1,18 +1,19 @@
-"""Symbolic P&L relationships and signal-sleeve attribution."""
+"""Signal attribution, accounting reconciliation, and wealth preferences."""
+
+from __future__ import annotations
 
 from dataclasses import replace
-from datetime import timedelta
+from datetime import date, timedelta
 
 import pytest
+from sympy import Rational, Symbol, exp, log
 
-from examples.compute.named_map import NamedMap
-from examples.compute.series import Series
+from examples.data import NamedMap, Series
 from examples.portfolio.account import Account, AccountEngine
-from examples.portfolio.basket import EquityBasket, EquityHoldings
 from examples.portfolio.models import MSFT, USDCash
-from examples.portfolio.reporting import AccountReport, OrderAttribution
+from examples.portfolio.reporting import AccountReport, CashUtility, OrderAttribution
 from examples.portfolio.sources import CashFlow, Fill, Income, TransactionLog, timestamp
-from examples.portfolio.valuation import NamedPortfolio
+from examples.portfolio.valuation import EquityBasket, EquityHoldings, NamedPortfolio
 
 
 def attribute(scenario, *, path=None, weights=None, signals=None, orders=None):
@@ -174,3 +175,51 @@ def test_reporting_derives_ledger_ids_and_supports_multiple_orders_per_member(sc
     assert sum(report.account["net"].values) == pytest.approx(66.9)
     with pytest.raises(ValueError, match="Duplicate member name"):
         AccountReport.from_account(scenario.account, (first, first), signals=NamedMap({}), utilities=NamedMap({}))
+
+
+def test_utility_derivatives_and_affine_invariance():
+    exponential = CashUtility.cara(0.001)
+    wealth = exponential.wealth
+    assert exponential.expressions["marginal_utility"] == exp(-wealth / 1000)
+    assert exponential.expressions["absolute_risk_aversion"] == Rational(1, 1000)
+    power = CashUtility.crra(2)
+    assert power.expressions["absolute_risk_aversion"] == 2 / power.wealth
+    assert power.expressions["relative_risk_aversion"] == 2
+    logarithmic = CashUtility.crra(1)
+    assert logarithmic.expression == log(logarithmic.wealth)
+    transformed = CashUtility("Scaled log", logarithmic.wealth, 5 * logarithmic.expression + 7)
+    for field in ("absolute_risk_aversion", "relative_risk_aversion"):
+        assert transformed.expressions[field] == logarithmic.expressions[field]
+    for utility in (CashUtility.cara(0), CashUtility.crra(0)):
+        assert utility.expressions["absolute_risk_aversion"] == 0
+        assert utility.expressions["relative_risk_aversion"] == 0
+
+
+def test_utility_reports_wealth_preferences_including_the_deposit(reporting):
+    assert reporting.utilities["cara"].values["absolute_risk_aversion"].values == (0.001,) * 4
+    assert reporting.utilities["crra"].values["relative_risk_aversion"].values == (2,) * 4
+    assert reporting.utilities["crra"].values["absolute_risk_aversion"].values == pytest.approx(
+        tuple(2 / value for value in reporting.path.nav.values)
+    )
+
+
+@pytest.mark.parametrize("coefficient", [-1, float("inf"), float("nan")])
+def test_invalid_risk_aversion_coefficients(coefficient):
+    for constructor in (CashUtility.cara, CashUtility.crra):
+        with pytest.raises(ValueError, match="finite and nonnegative"):
+            constructor(coefficient)
+
+
+def test_utility_domains_and_undefined_ratios():
+    times = (date(2025, 1, 1), date(2026, 1, 1))
+    with pytest.raises(ValueError, match="positive wealth"):
+        CashUtility.crra(2).over(Series(times, (0, 100)))
+    w = Symbol("wealth", positive=True)
+    with pytest.raises(ValueError, match="only free symbol"):
+        CashUtility("Unbound", w, w * Symbol("alpha"))
+    with pytest.raises(ValueError, match="vary with wealth"):
+        CashUtility("Constant", w, Rational(1))
+    with pytest.raises(ValueError, match="increasing"):
+        CashUtility("Decreasing", w, -w).over(Series(times, (100, 200)))
+    with pytest.raises(ValueError, match="finite"):
+        CashUtility("Singular", w, log(w - 100)).over(Series(times, (100, 200)))

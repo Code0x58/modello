@@ -1,5 +1,5 @@
-10. Fit impact and report liquidity from the same model
-=======================================================
+7. Fit impact and derive liquidity views
+========================================
 
 The preceding study derived a schedule. We will now ask inverse and reporting
 questions of the same functional: fit impact from trade buckets, infer a
@@ -14,7 +14,7 @@ permanent impact, and noise. A calibration bucket needs an independently
 estimated unaffected reference, market volume, and duration. Fees stay separate.
 Define that input and its fill adapter:
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/calibration.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: ImpactObservation
    :end-before:     def __post_init__
    :language: python
@@ -22,7 +22,7 @@ Define that input and its fill adapter:
 The constructor checks finite values and positive quantity, duration, and market
 volume. Its adapter aggregates same-side fills for one account and holding:
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/calibration.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: ImpactObservation.from_fills
    :dedent: 4
    :language: python
@@ -58,7 +58,7 @@ For each bucket, integrate the density along its constant-speed liquidation
 and subtract the observed cost. Fit only the impact component; the risk penalty
 is not an observed cash expense:
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: ExecutionDensity.fit_impact
    :dedent: 4
    :language: python
@@ -73,7 +73,7 @@ two-coefficient impact laws:
 
    <details><summary>Build the least-squares adapter from symbolic residuals</summary>
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/calibration.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: Calibration.fit
    :dedent: 4
    :language: python
@@ -114,7 +114,7 @@ inventories should satisfy the same first-order equations derived previously.
 Substituting observed inventories gives residuals in the remaining preference
 parameter:
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: ExecutionGrid.fit_policy
    :dedent: 4
    :language: python
@@ -171,7 +171,7 @@ stationarity system :math:`F(q,\gamma)=0` implicitly:
 The implementation solves that Hessian system; it does not maintain a separate
 sensitivity formula for a particular impact law:
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: ExecutionSolution.sensitivity
    :dedent: 4
    :language: python
@@ -220,14 +220,14 @@ Change the economics without rewriting its applications
 Make high participation more expensive by extending the impact component.
 Reuse the quadratic cost and add a quartic participation term:
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: CrowdedImpactCost
    :language: python
 
 Replace that component in the density. The objective, risk component, and all
 the mathematical transformations remain inherited:
 
-.. literalinclude:: ../../../examples/portfolio/optimal_execution/model.py
+.. literalinclude:: ../../../examples/portfolio/optimal_execution.py
    :pyobject: CrowdedImpact
    :language: python
 
@@ -237,7 +237,7 @@ discrete objective, and its cubic stationarity equations. The same solver
 adapter can evaluate a stationary point with an explicit starting guess:
 
 >>> from examples.portfolio.optimal_execution import CrowdedImpact
->>> from examples.compute.named_map import NamedMap
+>>> from examples.data import NamedMap
 >>> crowded = CrowdedImpact("crowded", eta=2, volume=100, sigma=3, gamma=Rational(1, 1000))
 >>> grid = crowded.discretize(10, (1, 1))
 >>> solution = grid.stationary(at=NamedMap({"beta": 200.0}), guess=(4,))

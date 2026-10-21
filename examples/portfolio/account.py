@@ -12,23 +12,28 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 
 from sympy import Symbol
 
-from examples.compute.named_map import NamedMap
-from examples.compute.series import Series, utc_time
-from examples.model_plan import Known
+from examples.data import NamedMap, Series, utc_time
 from examples.portfolio.analytics import NamedAnalytics, analyse
-from examples.portfolio.basket import EquityHoldings
-from examples.portfolio.models import Equity
-from examples.portfolio.pnl import AccountPnL, InstrumentPnL, Profit
-from examples.portfolio.postings import AccountFill, AccountPosting, AccountState, CapitalFlow, IncomePosting
+from examples.portfolio.models import (
+    AccountFill,
+    AccountPnL,
+    AccountPosting,
+    AccountState,
+    CapitalFlow,
+    Equity,
+    IncomePosting,
+    InstrumentPnL,
+    Profit,
+)
 from examples.portfolio.sources import CashFlow, Fill, Income, LedgerEvent, PriceHistory, TransactionLog, finite
-from examples.portfolio.valuation import MarketSnapshot, NamedPortfolio
+from examples.portfolio.valuation import EquityHoldings, MarketSnapshot, NamedPortfolio
+from examples.symbolic import Known
 
 if TYPE_CHECKING:
     from examples.named_members import MemberValues
     from examples.portfolio.models import EquityPosition
-    from examples.portfolio.reporting import AccountReport, OrderAttribution
+    from examples.portfolio.reporting import AccountReport, CashUtility, OrderAttribution
     from examples.portfolio.signals import OrderIntent, TargetWeights
-    from examples.portfolio.utility import CashUtility
 
 _Members = TypeVar("_Members", bound=EquityHoldings)
 

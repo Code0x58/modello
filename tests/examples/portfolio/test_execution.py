@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from examples.compute.named_map import NamedMap
+from examples.data import NamedMap
 from examples.portfolio.models import MSFT
 from examples.portfolio.sources import (
     Fill,

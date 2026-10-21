@@ -49,10 +49,9 @@ The `examples directory <https://github.com/Code0x58/modello/tree/master/example
 contains geometry, flow-scaling, and historical tax-model examples. Tax examples
 illustrate symbolic modeling with fixed historical rates.
 
-The :doc:`examples <examples/index>` include a separate portfolio research
-walkthrough. It explores possible application and computation layers above the
-core model API. The :doc:`named-solving design note <design/named_solving>`
-describes the general modeling feature being explored there.
+The :doc:`portfolio research walkthrough <examples/portfolio/index>` explores
+application and computation layers above the core API. Its
+:ref:`named-member-solving` note describes the general modeling feature.
 
 .. toctree::
    :caption: Library
@@ -65,13 +64,12 @@ describes the general modeling feature being explored there.
    :caption: Examples
    :maxdepth: 3
 
-   examples/index
+   examples/portfolio/index
 
 .. toctree::
    :caption: Development
    :maxdepth: 1
 
-   design/named_solving
    contributing
 
 * :ref:`genindex`

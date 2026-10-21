@@ -6,14 +6,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
-from examples.compute.named_map import NamedMap
-from examples.compute.series import Series, utc_time
-from examples.model_plan import Known
+from examples.data import NamedMap, Series, utc_time
 from examples.named_members import MemberValues, component_members
 from examples.portfolio.account import AccountSnapshot
 from examples.portfolio.models import AccountValue, Allocation, Equity, EquityPosition, PriceChange, Trade
 from examples.portfolio.sources import finite
-from examples.symbolic import SymbolicModel
+from examples.symbolic import Known, SymbolicModel
 from modello import component
 
 if TYPE_CHECKING:

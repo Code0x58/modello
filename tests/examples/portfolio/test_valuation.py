@@ -1,22 +1,34 @@
-"""Reusable valuation, exact domains, and typed portfolio views."""
+"""Typed portfolios, bound holdings, named valuation, and instrument identities."""
 
+from __future__ import annotations
+
+from dataclasses import replace
 from datetime import date, timedelta
 
 import pytest
+from sympy import Rational
 
-from examples.compute.named_map import NamedMap
+from examples.data import NamedMap
+from examples.named_members import bound_component
 from examples.portfolio.analytics import NamedPortfolioPath
-from examples.portfolio.basket import EquityBasket, EquityHoldings, equity
-from examples.portfolio.explicit import Basket, EquityMembers, Portfolio
-from examples.portfolio.models import EquityPosition, Quote, USDCash
-from examples.portfolio.named import ThreeEquityPortfolio
-from examples.portfolio.providers import DummyEquityProvider
-from examples.portfolio.sources import timestamp
-from examples.portfolio.valuation import MarketSnapshot, NamedMarketData, NamedPortfolio
+from examples.portfolio.demo import Basket, EquityMembers, Portfolio
+from examples.portfolio.models import AAPL, MSFT, EquityPosition, Quote, USDCash
+from examples.portfolio.sources import DummyEquityProvider, timestamp
+from examples.portfolio.valuation import (
+    EquityBasket,
+    EquityHoldings,
+    MarketSnapshot,
+    NamedMarketData,
+    NamedPortfolio,
+    equity,
+)
+from modello import BoundInstanceDummy, InstanceDummy, component
+
+from ._data import ThreeEquityPortfolio, fixed_portfolio, market_data
 
 
 def test_identified_quotes_evaluate_to_the_original_typed_portfolio():
-    book = Portfolio.example()
+    book = fixed_portfolio()
     pricer = book.pricer()
     at = timestamp("2026-01-05T16:01:00Z")
     snapshot = MarketSnapshot.sample(book.load_market(), at=at, max_price_age=timedelta(days=4))
@@ -153,3 +165,127 @@ def test_currency_needs_an_explicit_conversion_model():
     )
     with pytest.raises(ValueError, match="requires USD"):
         portfolio.pricer()
+
+
+def test_basket_owns_value_and_weights_without_per_member_formulas():
+    members = EquityMembers(
+        "members",
+        aapl=EquityPosition("apple", instrument=Quote("quote", price=100)),
+        msft=EquityPosition("microsoft", quantity=20, instrument=Quote("quote", price=50)),
+    )
+    source = Basket("basket", members=members)
+    portfolio = Portfolio("target", basket=source, cash=USDCash("cash", amount=100), nav=2100)
+    assert portfolio.basket.members.aapl.quantity == 10
+    assert isinstance(source.members.aapl.quantity, BoundInstanceDummy)
+    assert portfolio.basket.instruments == {"aapl": AAPL, "msft": MSFT}
+    assert type(portfolio.basket.members.aapl) is type(portfolio.basket.members.msft) is EquityPosition
+    assert portfolio.basket.market_value == 2000
+    assert portfolio.basket.capital == portfolio.nav == 2100
+    assert portfolio.basket.weight == Rational(20, 21)
+    assert portfolio.basket.weights == {"aapl": Rational(10, 21), "msft": Rational(10, 21)}
+    assert portfolio.basket.weight + portfolio.cash_weight == 1
+    assert sum(portfolio.basket.weights.values()) == portfolio.basket.weight
+    apple = portfolio.basket.positions["aapl"]
+    assert apple.model is portfolio.basket.members.aapl
+    assert apple.instrument.symbol == "AAPL"
+    assert apple.instrument.provider == "synthetic"
+    assert apple.provider == DummyEquityProvider(symbol="AAPL")
+    assert apple.quantity == 10 and apple.price == 100
+    assert apple.weight == Rational(10, 21)
+
+
+def test_basket_weight_can_constrain_an_inverse_solve():
+    basket = Basket(
+        "allocation",
+        capital=2000,
+        weight=Rational(1, 2),
+        members=EquityMembers(
+            "members",
+            aapl=EquityPosition("apple", instrument=Quote("quote", price=100)),
+            msft=EquityPosition("microsoft", quantity=0),
+        ),
+    )
+    assert basket.members.aapl.quantity == 10
+    assert basket.market_value == 1000
+    assert basket.weights == {"aapl": Rational(1, 2), "msft": 0}
+
+
+def test_binding_requires_the_declared_position_domain_and_type():
+    with pytest.raises(TypeError, match="EquityPosition component"):
+
+        class Mixed(EquityHoldings):
+            balance = bound_component(USDCash, DummyEquityProvider("AAPL"))
+
+    with pytest.raises(TypeError, match="only model components"):
+
+        class Scalars(EquityHoldings):
+            value = InstanceDummy("value")
+
+    with pytest.raises(TypeError, match="EquityProvider"):
+        equity.component(AAPL)
+    with pytest.raises(TypeError, match="EquityProvider bindings"):
+
+        class WrongBinding(EquityHoldings):
+            aapl = bound_component(EquityPosition, AAPL)
+
+    with pytest.raises(ValueError, match="Member names differ"):
+
+        class Missing(EquityHoldings):
+            aapl = component(EquityPosition)
+
+    with pytest.raises(TypeError, match="derive from the holding declarations"):
+
+        class SeparateBinding(EquityBasket[EquityMembers]):
+            members = component(EquityMembers)
+            providers = NamedMap({"aapl": DummyEquityProvider("MSFT"), "msft": DummyEquityProvider("AAPL")})
+            market_value = EquityBasket.total(members)
+
+
+def test_same_instrument_can_have_separate_holdings_and_weights():
+    class Sleeves(EquityHoldings):
+        growth = equity.component(DummyEquityProvider("AAPL"))
+        income = equity.component(DummyEquityProvider("AAPL"))
+
+    AppleBasket = EquityBasket.define(Sleeves)
+    portfolio = NamedPortfolio.define(AppleBasket)(
+        "two sleeves",
+        basket=AppleBasket(
+            "basket",
+            members=Sleeves(
+                "members", growth=EquityPosition("growth", quantity=1), income=EquityPosition("income", quantity=3)
+            ),
+        ),
+        cash=USDCash("cash", amount=100),
+    )
+    data = market_data().prices["aapl"]
+    path = NamedPortfolioPath.from_model(
+        portfolio.pricer().over(NamedMarketData(data.close.times, NamedMap({"income": data, "growth": data})))
+    )
+    assert path.nav.values[0] == 500
+    assert path.positions["growth"].weight.values[0] == pytest.approx(0.2)
+    assert path.positions["income"].weight.values[0] == pytest.approx(0.6)
+    assert path.positions["growth"].value.values != path.positions["income"].value.values
+
+
+def test_provider_and_currency_are_part_of_valuation_identity():
+    data = market_data()
+    portfolio = Portfolio(
+        "holdings",
+        basket=Basket(
+            "basket",
+            members=EquityMembers(
+                "members", aapl=EquityPosition("a", quantity=1), msft=EquityPosition("m", quantity=1)
+            ),
+        ),
+        cash=USDCash("cash", amount=100),
+    )
+    for identity in (replace(AAPL, provider="other"), replace(AAPL, currency="EUR")):
+        with pytest.raises(ValueError, match="Price instrument"):
+            NamedPortfolioPath.from_model(
+                portfolio.pricer().over(
+                    NamedMarketData(
+                        data.prices["aapl"].close.times,
+                        NamedMap({"aapl": replace(data.prices["aapl"], equity=identity), "msft": data.prices["msft"]}),
+                    )
+                )
+            )

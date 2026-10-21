@@ -4,8 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from examples.compute.named_map import NamedMap
-from examples.compute.series import Series
+from examples.data import NamedMap, Series
 from examples.portfolio.account import AccountEngine
 from examples.portfolio.models import AAPL, MSFT
 from examples.portfolio.signals import MomentumSignals, TargetWeights
@@ -54,8 +53,8 @@ def test_signal_targets_and_rebalance_quantities(scenario):
 def test_rebalance_model_can_solve_an_order_or_the_implied_target():
     from sympy import Rational, Symbol
 
-    from examples.model_plan import Known
     from examples.portfolio.signals import Rebalance
+    from examples.symbolic import Known
 
     forward = Rebalance("target", nav=1000, price=100, opening_quantity=3, target_weight=Rational(1, 2))
     fitted = Rebalance("fit", nav=1000, price=100, opening_quantity=3, order_quantity=2)

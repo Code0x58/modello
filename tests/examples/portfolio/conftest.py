@@ -3,8 +3,7 @@
 import pytest
 
 from examples.portfolio.account import Account, AccountEngine
-from examples.portfolio.demo import ResearchScenario
-from examples.portfolio.explicit import Basket, EquityMembers
+from examples.portfolio.demo import Basket, EquityMembers, ResearchScenario
 from examples.portfolio.models import EquityPosition, USDCash
 from examples.portfolio.sources import (
     CSVTransactionSource,

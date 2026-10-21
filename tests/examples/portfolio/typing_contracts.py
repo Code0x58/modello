@@ -4,18 +4,22 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from datetime import date
+    from datetime import date, datetime
 
-    from examples.compute.named_map import NamedMap
-    from examples.compute.providers import Provider
-    from examples.model_plan import ModelPath, ModelPlan
+    from examples.data import NamedMap, Provider
     from examples.named_members import MemberValues
     from examples.portfolio.account import AccountStep
-    from examples.portfolio.basket import EquityHolding, equity
-    from examples.portfolio.demo import ResearchRun
+    from examples.portfolio.demo import EquityMembers, Portfolio, ResearchRun
     from examples.portfolio.execution import ExecutionBenchmark
-    from examples.portfolio.explicit import EquityMembers, Portfolio
-    from examples.portfolio.models import Equity, EquityPosition, USDCash
+    from examples.portfolio.models import (
+        AccountFill,
+        AccountPosting,
+        AccountState,
+        Equity,
+        EquityPosition,
+        FillPosting,
+        USDCash,
+    )
     from examples.portfolio.optimal_execution import (
         Calibration,
         ExecutionDensity,
@@ -23,14 +27,13 @@ if TYPE_CHECKING:
         ExecutionSolution,
         ImpactObservation,
     )
-    from examples.portfolio.postings import AccountFill, AccountPosting, AccountState, FillPosting
-    from examples.portfolio.providers import EquityProvider
     from examples.portfolio.reporting import AccountReport
     from examples.portfolio.signals import OrderIntent
-    from examples.portfolio.sources import PriceHistory
-    from examples.portfolio.valuation import MarketSnapshot, NamedMarketData
+    from examples.portfolio.sources import EquityProvider, PriceHistory
+    from examples.portfolio.valuation import EquityHolding, MarketSnapshot, NamedMarketData, equity
+    from examples.symbolic import ModelPath, ModelPlan
 
-    def valuation(portfolio: Portfolio, quote: MarketSnapshot, observations: NamedMarketData) -> None:
+    def valuation(portfolio: Portfolio, quote: MarketSnapshot, observations: NamedMarketData[date]) -> None:
         view: ModelPlan[Portfolio] = portfolio.pricer()
         point: Portfolio = view.evaluate(quote)
         path: ModelPath[Portfolio, date] = view.over(observations)
@@ -66,6 +69,10 @@ if TYPE_CHECKING:
         result.execution.for_member(USDCash("cash"))  # type: ignore[arg-type]
         _wrong: OrderIntent = result.execution.for_member(members.aapl)  # type: ignore[assignment]
         result.execution["rebalance-1:aapl"]  # type: ignore[index]
+
+    def timestamp_prices(portfolio: Portfolio, observations: NamedMarketData[datetime]) -> None:
+        path: ModelPath[Portfolio, datetime] = portfolio.pricer().over(observations)
+        _wrong_clock: ModelPath[Portfolio, date] = path  # type: ignore[assignment]
 
     def execution(
         model: ExecutionDensity, observations: tuple[ImpactObservation, ...]

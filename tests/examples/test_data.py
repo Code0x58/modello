@@ -1,11 +1,56 @@
 # mypy: warn-unused-ignores
-"""Numeric observation axes, time operations, and validation."""
+"""Named data, observation axes, causal sampling, and provider request identity."""
 
+from __future__ import annotations
+
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from examples.compute.series import Series
+from examples.data import NamedMap, Provider, Series, load_providers
+
+
+def test_membership_is_owned_and_read_only():
+    source = {"left": 1, "right": 2}
+    members = NamedMap(source)
+    source["left"] = 99
+    source["new"] = 3
+    assert members == {"left": 1, "right": 2}
+    with pytest.raises(TypeError):
+        members["left"] = 10
+
+
+def test_projection_keeps_identity_and_declaration_order():
+    members = NamedMap({"second": 2, "first": 1})
+    projected = members.map(lambda value: str(value * 10))
+    assert tuple(projected) == ("second", "first")
+    assert projected == {"second": "20", "first": "10"}
+
+
+def test_combinations_align_by_name_not_position():
+    left = NamedMap({"a": 10, "b": 20})
+    right = NamedMap({"b": 2, "a": 1})
+    combined = left.combine(right, lambda first, second: first - second)
+    assert tuple(combined.items()) == (("a", 9), ("b", 18))
+    assert combined == {"b": 18, "a": 9}
+
+
+@pytest.mark.parametrize("other", [{"a": 1}, {"a": 1, "b": 2, "c": 3}, {"a": 1, "c": 3}])
+def test_combinations_require_the_same_domain(other):
+    with pytest.raises(ValueError, match="Member names differ"):
+        NamedMap({"a": 1, "b": 2}).combine(other, lambda a, b: a + b)
+
+
+@pytest.mark.parametrize("name", ["", 1, None])
+def test_member_names_are_nonempty_strings(name):
+    with pytest.raises(ValueError, match="nonempty strings"):
+        NamedMap([(name, 1)])
+
+
+def test_duplicate_names_are_not_silently_overwritten():
+    with pytest.raises(ValueError, match="Duplicate member name 'same'"):
+        NamedMap([("same", 1), ("same", 2)])
 
 
 @pytest.mark.parametrize(
@@ -100,8 +145,74 @@ def test_timestamp_axes_normalize_offsets_and_reject_naive_or_mixed_times():
         Series((date(2026, 1, 1), at), (1, 2))
 
 
-def _typing_contract(timestamps: Series[datetime], dates: Series[date]) -> None:
+def _series_typing_contract(timestamps: Series[datetime], dates: Series[date]) -> None:
     timestamp_axis: tuple[datetime, ...] = timestamps.times
     assert timestamp_axis
     _wrong_axis: tuple[datetime, ...] = dates.times  # type: ignore[assignment]
     timestamps.combine(dates, lambda a, b: a + b)  # type: ignore[arg-type]
+
+
+@dataclass(frozen=True)
+class TextProvider(Provider[str]):
+    text: str
+
+    def load(self) -> str:
+        return self.text
+
+
+def test_loading_reuses_equivalent_requests_and_preserves_member_names():
+    calls = []
+
+    @dataclass(frozen=True)
+    class RecordingProvider(TextProvider):
+        def load(self) -> str:
+            calls.append(self.text)
+            return super().load()
+
+    requests = NamedMap(
+        {
+            "first": RecordingProvider("same"),
+            "second": RecordingProvider("same"),
+            "third": RecordingProvider("different"),
+        }
+    )
+    assert load_providers(requests) == {"first": "same", "second": "same", "third": "different"}
+    assert calls == ["same", "different"]
+    assert load_providers(requests) == {"first": "same", "second": "same", "third": "different"}
+    assert calls == ["same", "different", "same", "different"]
+    assert load_providers(NamedMap({})) == {}
+
+
+def test_provider_type_is_part_of_request_equality():
+    class OtherProvider(TextProvider):
+        # Even permissive custom equality cannot conflate provider types.
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, TextProvider) and self.text == other.text
+
+        __hash__ = TextProvider.__hash__
+
+        def load(self) -> str:
+            return "other: " + self.text
+
+    one, two = TextProvider("id"), OtherProvider("id")
+    assert one == two
+    requests = NamedMap({"one": one, "two": two})
+    assert load_providers(requests) == {"one": "id", "two": "other: id"}
+
+
+def test_provider_errors_propagate_without_becoming_missing_data():
+    class FailedProvider(Provider[str]):
+        def load(self) -> str:
+            raise OSError("source unavailable")
+
+    with pytest.raises(OSError, match="source unavailable"):
+        load_providers(NamedMap({"one": FailedProvider()}))
+
+
+def _provider_typing_contract() -> None:
+    provider: Provider[str] = TextProvider("value")
+    result: str = provider.load()
+    results: NamedMap[str] = load_providers(NamedMap({"one": provider}))
+    assert result == results["one"]
+    _wrong_provider: Provider[int] = provider  # type: ignore[assignment]
+    _wrong_result: int = results["one"]  # type: ignore[assignment]

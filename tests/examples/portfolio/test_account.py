@@ -4,12 +4,10 @@ from datetime import timedelta
 
 import pytest
 
-from examples.compute.named_map import NamedMap
+from examples.data import NamedMap
 from examples.portfolio.account import Account, AccountEngine
-from examples.portfolio.demo import asdict_snapshot
-from examples.portfolio.explicit import Basket, EquityMembers
-from examples.portfolio.models import EquityPosition, Quote, USDCash
-from examples.portfolio.postings import AccountFill, CapitalFlow, IncomePosting
+from examples.portfolio.demo import Basket, EquityMembers, asdict_snapshot
+from examples.portfolio.models import AccountFill, CapitalFlow, EquityPosition, IncomePosting, Quote, USDCash
 from examples.portfolio.signals import TargetWeights
 from examples.portfolio.sources import (
     CashFlow,

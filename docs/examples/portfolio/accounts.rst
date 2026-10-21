@@ -1,4 +1,4 @@
-5. Replay an account from external transactions
+3. Replay an account from external transactions
 ===============================================
 
 So far, quantities and cash have stayed fixed while prices varied. An account
@@ -36,7 +36,7 @@ Model a fill and a capital movement
 A fill relates two instances of the same state: shares and settlement cash.
 First define that state, then the execution's economic terms:
 
-.. literalinclude:: ../../../examples/portfolio/postings.py
+.. literalinclude:: ../../../examples/portfolio/models.py
    :pyobject: HoldingState
    :language: python
 
@@ -47,7 +47,7 @@ An execution extends it with a settlement fee:
    :pyobject: Trade
    :language: python
 
-.. literalinclude:: ../../../examples/portfolio/postings.py
+.. literalinclude:: ../../../examples/portfolio/models.py
    :pyobject: Execution
    :language: python
 
@@ -55,11 +55,11 @@ The ledger's ``Fill`` record supplies identity and timestamps; ``Execution``
 supplies the scalar terms of the balance equations. Define those equations
 between typed ``before`` and ``after`` components:
 
-.. literalinclude:: ../../../examples/portfolio/postings.py
+.. literalinclude:: ../../../examples/portfolio/models.py
    :pyobject: FillPosting
    :language: python
 
->>> from examples.portfolio.postings import HoldingState, Execution, FillPosting
+>>> from examples.portfolio.models import HoldingState, Execution, FillPosting
 >>> before = HoldingState("opening", quantity=3, cash=1000)
 >>> posted = FillPosting(
 ...     "fill", before=before, fill=Execution("execution", quantity=2, price=100, fee=1)
@@ -96,29 +96,29 @@ price. Define a valued account state and a signed cash movement:
    :pyobject: AccountValue
    :language: python
 
-.. literalinclude:: ../../../examples/portfolio/postings.py
+.. literalinclude:: ../../../examples/portfolio/models.py
    :pyobject: AccountState
    :language: python
 
-.. literalinclude:: ../../../examples/portfolio/postings.py
+.. literalinclude:: ../../../examples/portfolio/models.py
    :pyobject: CashMovement
    :language: python
 
 All account events will share the same before/after state and expose their
 closing balances as the result. Define that common boundary first:
 
-.. literalinclude:: ../../../examples/portfolio/postings.py
+.. literalinclude:: ../../../examples/portfolio/models.py
    :pyobject: AccountTransition
    :language: python
 
 The capital transition supplies the equations connecting these states. A
 withdrawal redeems units through the same equations:
 
-.. literalinclude:: ../../../examples/portfolio/postings.py
+.. literalinclude:: ../../../examples/portfolio/models.py
    :pyobject: CapitalFlow
    :language: python
 
->>> from examples.portfolio.postings import AccountState, CashMovement, CapitalFlow
+>>> from examples.portfolio.models import AccountState, CashMovement, CapitalFlow
 >>> account_before = AccountState("opening", cash=1000, nav=2500, units=25)
 >>> deposit = CapitalFlow(
 ...     "deposit", before=account_before, flow=CashMovement("external", amount=500)
@@ -146,12 +146,12 @@ opening settlement cash to the account's opening cash. The change in NAV is the
 new shares valued at the current market quote, plus the settlement cash change.
 Participation units stay fixed, so execution costs affect investment return:
 
-.. literalinclude:: ../../../examples/portfolio/postings.py
+.. literalinclude:: ../../../examples/portfolio/models.py
    :pyobject: AccountFill
    :language: python
 
 >>> from examples.portfolio.models import Quote
->>> from examples.portfolio.postings import AccountFill, IncomePosting
+>>> from examples.portfolio.models import AccountFill, IncomePosting
 >>> bought = AccountFill(
 ...     "account_buy", before=account_before,
 ...     settlement=FillPosting(
@@ -166,7 +166,7 @@ Participation units stay fixed, so execution costs affect investment return:
 Income also changes both cash and NAV while preserving units. A negative amount
 books an expense through the same definition:
 
-.. literalinclude:: ../../../examples/portfolio/postings.py
+.. literalinclude:: ../../../examples/portfolio/models.py
    :pyobject: IncomePosting
    :language: python
 
@@ -244,37 +244,16 @@ event order, economic timestamps, and knowledge horizons. An observation axis
 can evaluate many such cases; it does not implicitly connect one row's state
 to the next. Signals needing a longer history will use explicit lagged series.
 
-Compile and reuse the typed transition
---------------------------------------
-
-The same ``SymbolicModel.plan()`` helper introduced in chapter 3 caches an
-unbound model view. Supply known values by field reference and read the result
-through its state components:
-
->>> from examples.model_plan import Known
->>> view = FillPosting.plan()
->>> model = view.source
->>> result = view.evaluate(
-...     Known(model.before.quantity, 3),
-...     Known(model.before.cash, 1000),
-...     Known(model.fill.quantity, 2),
-...     Known(model.fill.price, 100),
-...     Known(model.fill.fee, 1),
-... )
->>> type(result.after) is HoldingState, float(result.after.cash)
-(True, 799.0)
-
-Compilation keeps the before/event/after structure for traversal and display.
-Repeated numerical evaluation reuses the compiled expressions without solving
-again. An inverse case can use its own ``compile()`` view with observed closing
-state as input, just as in chapter 3.
+Numerical replay uses the cached ``plan()`` introduced in :doc:`data`.
+It supplies observations to these same components and retains the resulting
+model shape without solving again at each event.
 
 Separate profit from external capital
 -------------------------------------
 
 We also need a reconciliation identity. First define gross and net profit:
 
-.. literalinclude:: ../../../examples/portfolio/pnl.py
+.. literalinclude:: ../../../examples/portfolio/models.py
    :pyobject: Profit
    :end-before:     @staticmethod
    :language: python
@@ -283,7 +262,7 @@ We also need a reconciliation identity. First define gross and net profit:
 and ``net``. A reporting view contains this profit model and exposes its fields
 as convenient aliases. Both instrument and account views inherit that binding:
 
-.. literalinclude:: ../../../examples/portfolio/pnl.py
+.. literalinclude:: ../../../examples/portfolio/models.py
    :pyobject: ProfitView
    :language: python
 
@@ -291,7 +270,7 @@ For an interval we need two marked positions, the signed activity between them,
 and a price change. ``Position`` and ``Quote`` were defined in chapter 1; now
 define their interval counterparts:
 
-.. literalinclude:: ../../../examples/portfolio/pnl.py
+.. literalinclude:: ../../../examples/portfolio/models.py
    :pyobject: TradingActivity
    :language: python
 
@@ -301,7 +280,7 @@ define their interval counterparts:
 
 Connect those parts to each other and to the profit components:
 
-.. literalinclude:: ../../../examples/portfolio/pnl.py
+.. literalinclude:: ../../../examples/portfolio/models.py
    :pyobject: InstrumentPnL
    :language: python
 
@@ -315,7 +294,7 @@ model; the adapter only supplies observations from the external log.
 At account level, the identity is closing NAV minus opening NAV, less net profit
 and external capital. A zero residual reconciles the layers:
 
-.. literalinclude:: ../../../examples/portfolio/pnl.py
+.. literalinclude:: ../../../examples/portfolio/models.py
    :pyobject: AccountPnL
    :language: python
 
@@ -342,20 +321,8 @@ ledger used to produce them.
    :end-before:     @cached_property
    :language: python
 
-The account needs to vary prices, quantities, and cash. This compiled view of
-``NamedPortfolio`` selects exactly those inputs from an unbound instance:
-
-.. literalinclude:: ../../../examples/symbolic.py
-   :pyobject: SymbolicModel.plan
-   :dedent: 4
-   :language: python
-
-The cached factory compiles the case's remaining independent fields and keeps
-its full component schema:
-
-.. literalinclude:: ../../../examples/symbolic.py
-   :pyobject: _model_plan
-   :language: python
+A portfolio's cached plan varies prices, quantities, and cash while preserving
+the declared member type. Its equations remain on ``NamedPortfolio``.
 
 At a mark, the replay adapter obtains causal prices and supplies the current
 state to that plan. Its constructor validates the opening portfolio, records
@@ -436,8 +403,8 @@ account, start with ten shares of each equity and USD 1,000 cash:
 >>> from datetime import timedelta
 >>> from pathlib import Path
 >>> import examples.portfolio as portfolio_examples
->>> from examples.portfolio.explicit import Portfolio, Basket, EquityMembers
->>> from examples.portfolio.basket import equity
+>>> from examples.portfolio.demo import Portfolio, Basket, EquityMembers
+>>> from examples.portfolio.valuation import equity
 >>> from examples.portfolio.models import USDCash
 >>> from examples.portfolio.account import Account
 >>> from examples.portfolio.sources import CSVTransactionSource, timestamp
