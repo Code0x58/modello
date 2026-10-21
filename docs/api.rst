@@ -34,6 +34,12 @@ API reference
    undecided. Each explicitly constructed input model must have a valid solution
    before it can be passed to a parent.
 
+   Solver failures include the model type, instance name, equations, and supplied
+   values. ``self.`` paths identify model fields in the report. These are the
+   submitted relationships, not a minimal explanation of the failure. See
+   :doc:`debugging` for symbolic results, redundant observations, conflicting
+   constraints, and ambiguous solutions.
+
    **Component copies and methods**
 
    A parent copies the declared quantities of each supplied component and its

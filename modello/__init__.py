@@ -7,7 +7,7 @@ from decimal import Decimal
 from fractions import Fraction
 from typing import Any, ClassVar, MutableMapping, Protocol, TypeAlias, TypeVar, cast
 
-from sympy import Basic, Dummy, Eq, Expr, S, SympifyError, solve
+from sympy import Basic, Dummy, Eq, Expr, S, Symbol, SympifyError, solve
 from sympy.simplify.simplify import simplify
 
 FieldPath = tuple[str, ...]
@@ -227,7 +227,21 @@ class Modello(metaclass=ModelloMeta):
         """Accept scalar values and compatible child model instances."""
         bindings = {d: d.bound(name) for d in dict.fromkeys(self._modello_fields.values())}
         fields = {path: bindings[d] for path, d in self._modello_fields.items()}
-        constraints = [Eq(bindings[d], expr.xreplace(bindings)) for d, expr in self._modello_class_constraints]
+        relations = [(bindings[d], expr.xreplace(bindings)) for d, expr in self._modello_class_constraints]
+        constraints = [Eq(left, right) for left, right in relations]
+
+        def solve_error(count: int) -> ValueError:
+            """Retain the original relationships even when simplification gives False."""
+            labels: dict[InstanceDummy, Symbol] = {}
+            for path, dummy in fields.items():
+                labels.setdefault(dummy, Symbol("self." + ".".join(path), **dummy.assumptions0))
+            details = "\n".join(
+                f"  {left.xreplace(labels)} = {right.xreplace(labels)}" for left, right in dict.fromkeys(relations)
+            )
+            return ValueError(
+                f"{count} solutions for {type(self).__name__}({name!r})\n"
+                f"Equations and supplied values (self.* are model fields):\n{details}"
+            )
 
         def add_value(path: FieldPath, raw: object, scope: dict[InstanceDummy, BoundInstanceDummy]) -> None:
             """Translate a supplied scalar into the shared instance scope."""
@@ -238,6 +252,7 @@ class Modello(metaclass=ModelloMeta):
             if not isinstance(value, Expr):
                 raise TypeError(f"{'.'.join(path)} must be a SymPy-compatible scalar")
             value = value.xreplace(scope)
+            relations.append((fields[path], value))
             constraints.append(Eq(fields[path], value))
 
         for attr, value in value_map.items():
@@ -269,7 +284,7 @@ class Modello(metaclass=ModelloMeta):
                     scalar = getattr(scalar, part)
                 add_value((attr, *path), scalar, scope)
         if S.false in constraints:
-            raise ValueError("0 solutions (inconsistent constraints)")
+            raise solve_error(0)
         constraints = [eq for eq in constraints if eq is not S.true]
         # Expand directed definitions first. Otherwise a general solver may use
         # an output as a free parameter and unnecessarily solve for its inputs.
@@ -284,7 +299,7 @@ class Modello(metaclass=ModelloMeta):
                 del pending[dummy]
         equations = [eq.xreplace(expressions) for eq in constraints]
         if S.false in equations:
-            raise ValueError("0 solutions (inconsistent constraints)")
+            raise solve_error(0)
         equations = [eq for eq in equations if eq is not S.true]
         symbols = list(dict.fromkeys([*pending, *bindings.values()]))
         solutions = solve(equations, symbols, dict=True) if equations else [{}]
@@ -300,7 +315,7 @@ class Modello(metaclass=ModelloMeta):
             ):
                 candidates.append(resolved)
         if len(candidates) != 1:
-            raise ValueError(f"{len(candidates)} solutions")
+            raise solve_error(len(candidates))
         solution = candidates[0]
 
         def populate(instance: Modello, model: type[Modello], prefix: FieldPath) -> None:

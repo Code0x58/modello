@@ -368,8 +368,10 @@ def test_scalar_aliases_keep_all_supplied_constraints():
 
     parent = Parent("P", alias=3)
     assert (parent.child.x, parent.child.alias, parent.alias) == (3, 3, 3)
-    with pytest.raises(ValueError, match="0 solutions"):
+    with pytest.raises(ValueError, match="0 solutions") as error:
         Child("C", x=1, alias=2)
+    assert "self.x = 1" in str(error.value)
+    assert "self.x = 2" in str(error.value)
     with pytest.raises(ValueError, match="0 solutions"):
         Parent("P", child=Child("C", x=1), alias=2)
 
@@ -385,10 +387,29 @@ def test_inconsistent_and_ambiguous_nested_systems_are_rejected():
         child = Child
         total = child.squared + 1
 
-    with pytest.raises(ValueError, match="2 solutions"):
+    with pytest.raises(ValueError, match="2 solutions") as error:
         Parent("P", total=5)
-    with pytest.raises(ValueError, match="0 solutions"):
+    assert "Parent('P')" in str(error.value)
+    assert "self.child.squared = self.child.x**2" in str(error.value)
+    assert "self.total = 5" in str(error.value)
+    with pytest.raises(ValueError, match="0 solutions") as error:
         Parent("P", child=Child("C", x=2), total=10)
+    assert "self.child.x = 2" in str(error.value)
+    assert "self.total = 10" in str(error.value)
+
+
+def test_error_labels_preserve_noncommutative_relationships():
+    """Readable names must not turn an ordered product difference into zero."""
+
+    class Ordered(Modello):
+        scale = InstanceDummy("scale", positive=True)
+        x = InstanceDummy("x", commutative=False)
+        y = InstanceDummy("y", commutative=False)
+        commutator = x * y - y * x
+
+    with pytest.raises(ValueError, match="0 solutions") as error:
+        Ordered("O", scale=0)
+    assert "self.commutator = self.x*self.y - self.y*self.x" in str(error.value)
 
 
 def test_overriding_a_child_rebinds_inherited_expressions():
@@ -555,8 +576,10 @@ def test_undefined_derived_values_are_not_solutions():
         child = component(Child)
         x = child.x
 
-    with pytest.raises(ValueError, match="0 solutions"):
+    with pytest.raises(ValueError, match="0 solutions") as error:
         Parent("P", x=0)
+    assert "1/self.x" in str(error.value)
+    assert "self.x = 0" in str(error.value)
 
 
 def test_cyclic_definitions_are_solved_as_simultaneous_equations():

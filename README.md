@@ -89,6 +89,8 @@ for more examples of composition and symbolic inputs. The
 [examples directory](examples/) includes geometry, flow, portfolio analytics, and
 tax models. The [API reference](https://modello.readthedocs.io/en/latest/api.html)
 describes the available classes and functions.
+The [debugging guide](https://modello.readthedocs.io/en/latest/debugging.html)
+explains symbolic results, conflicting observations, and ambiguous solutions.
 
 The [portfolio research example](https://modello.readthedocs.io/en/latest/examples/portfolio/index.html)
 develops this pattern in one short walkthrough: nest transitions, join a
