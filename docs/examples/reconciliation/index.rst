@@ -1,9 +1,10 @@
 Investigate a trade PnL break
 =============================
 
-Use one pricing model to calculate PnL, check alternative source data, and infer
-suspect inputs from a trusted output. This one-period CDS example keeps the
-same equations throughout; the reusable mutation API is described in :doc:`framework`.
+One pricing model can calculate PnL, test alternative source data, and infer
+suspect inputs from a trusted output. Its symbolic equations also provide the
+pricing formula for inspection. This one-period CDS example keeps those
+equations fixed throughout; :doc:`framework` adds configurable entry-error checks.
 
 .. code-block:: console
 
@@ -56,6 +57,28 @@ calibration, and settlement conventions. See the `ISDA specifications
 <https://www.cdsmodel.com/documentation.html>`_. This example isolates the
 reconciliation workflow using explicit simplified cashflows.
 
+Read the formula
+----------------
+
+Derive the pricing expression from the model used for valuation and
+reconciliation. A reviewer can read the formula that drives the checks:
+
+>>> from examples.reconciliation import CDSMark
+>>> from modello import inspect_model
+>>> pricing = inspect_model(CDSMark, "formula")
+>>> expression = pricing.solutions().expression(pricing.field("value"))
+>>> print(pricing.format(expression))
+-discount*red.survival*terms.coupon_bps*terms.signed_notional*year_fraction/10000 + discount*terms.signed_notional*(1 - red.recovery)*(1 - red.survival)
+
+``pricing.format(expression)`` renders quantities as component paths;
+``sympy.latex`` can typeset the expression. Printing a prepared problem shows
+its nested equations and observations. The :doc:`framework contract <framework>`
+covers exact inputs, copied results, and undecided trials.
+
+A numerical pricer can supply intermediate factors, but the displayed algebra
+then explains valuation conditional on those factors. Inferring a maturity,
+date, or curve input requires modelling or recalculating its dependencies too.
+
 Find the break
 --------------
 
@@ -66,8 +89,9 @@ isolate a market change without time decay. The cash posting is a separate fee;
 no premium or protection payment occurs between marks, and trade terms stay
 unchanged.
 
-Prepare the conflicting observations without invoking construction. Removing
-the PnL observation first shows the recorded trade's calculated result:
+``sample_problem()`` prepares the conflicting observations for inspection.
+Removing only the trusted PnL lets the same model calculate PnL from the recorded
+inputs:
 
 >>> from examples.reconciliation import sample_problem
 >>> problem = sample_problem()
@@ -100,15 +124,16 @@ observations remain fixed. Each replacement is bound before analysis starts:
 >>> corrected.opening.value, corrected.closing.value, corrected.pnl
 (22000, 83000, 51000)
 
-The notional correction has a checked witness. It suggests checking the source
-entry; it does not establish the true cause or modify the record.
+Changing notional to 10m satisfies all retained observations and domains.
+Check this possible explanation against the original trade record.
 
 Infer inputs and add evidence
 -----------------------------
 
-If the catalogue has no confirmed match, ``study.infer(field)`` releases one
-suspect observation and returns a solution family. To show why matching PnL
-alone is insufficient, explicitly broaden the investigation here:
+If the configured checks find no match, ``study.infer(field)`` releases one
+suspect observation and returns the possible values as a solution family.
+Here we deliberately broaden the investigation to compare explanations that
+fit the same PnL:
 
 >>> names = ("signed_notional", "coupon_bps", "recovery", "cashflow")
 >>> broader = Reconciliation(problem, [Suspect(problem.field(name)) for name in names])
@@ -122,25 +147,27 @@ cashflow {44900}
 
 A 550% annual coupon or a different cash posting also fits this PnL; recovery
 alone cannot explain it within [0, 1]. Suppose an independent opening valuation
-is known to be 22,000. That evidence distinguishes the three feasible trials:
+is known to be 22,000. Add that observation to each family to distinguish the
+three feasible explanations:
 
 >>> from modello import FieldValue
 >>> opening_value = FieldValue(problem.field("opening", "value"), 22_000)
 >>> for name in ("signed_notional", "coupon_bps", "cashflow"):
 ...     family = broader.infer(problem.field(name)).observe(opening_value)
-...     print(name, family.is_empty)
-signed_notional False
-coupon_bps True
-cashflow True
+...     print(name, family.values(problem.field(name)))
+signed_notional {10000000}
+coupon_bps EmptySet
+cashflow EmptySet
 
 Only notional survives these individual-release trials. Compare the suggestion
 with independent trade records before changing an entry. An inferred family
 can also retain several or unresolved states; see :doc:`/solutions`.
+For uncertain outputs, explore :doc:`bounded observations <../solution_families/index>`.
 
 .. _cds-red-data:
 
-Compare RED data
-----------------
+Compare source components
+--------------------------
 
 Related observations from one source make a useful component. Here ``REDData``
 bundles credit assumptions associated with a RED entity–obligation pair. Swap
@@ -168,6 +195,10 @@ parameters, with the confirmed 10m notional and other observations fixed:
 previous 20500 inconsistent
 current 51000 consistent
 
+The current parameters fit the trusted PnL; the previous parameters do not.
+Both evaluations use the same trade terms, market factors, cashflow, and
+pricing equations. Only the closing RED data component changes.
+
 All values are shown here and are synthetic. The ``DEMO:`` names label the
 examples; they are not RED codes or symbolic constraints. Changing a label
 alone cannot change the price, and matching PnL is a hypothesis to confirm
@@ -181,24 +212,3 @@ different 2003 and 2014 ISDA definitions (`ESRB report, section 3.3
 <https://www.esrb.europa.eu/pub/pdf/reports/esrb.report250411_creditdefaultswaps.en.pdf>`_).
 Check the contract and source date independently. This example does not model
 those legal payoff differences or assume an automatic RED change.
-
-Read the formula
-----------------
-
-The pricing expression comes from the same equations used in the marks:
-
->>> from examples.reconciliation import CDSMark
->>> from modello import inspect_model
->>> pricing = inspect_model(CDSMark, "formula")
->>> expression = pricing.solutions().expression(pricing.field("value"))
->>> print(pricing.format(expression))
--discount*red.survival*terms.coupon_bps*terms.signed_notional*year_fraction/10000 + discount*terms.signed_notional*(1 - red.recovery)*(1 - red.survival)
-
-``print(problem)`` shows nested equations and observations; ``sympy.latex`` can
-typeset an expression. The :doc:`framework contract <framework>` covers exact
-inputs, copied results, and undecided trials. For uncertain outputs, explore
-:doc:`bounded observations <../solution_families/index>` separately.
-
-A numerical pricer can supply intermediate factors, but the displayed algebra
-then explains valuation conditional on those factors. Inferring a maturity,
-date, or curve input requires modelling or recalculating its dependencies too.

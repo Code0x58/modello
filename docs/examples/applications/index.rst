@@ -1,9 +1,9 @@
 Practical component models
 ==========================
 
-A component owns a recognisable relationship; its parent connects parts and
-combined results. The observations determine which quantities are inferred.
-Run all three applications with:
+Write each relationship once, then use the same composed model to calculate
+outputs or infer missing inputs from observations. Named components retain
+their Python model types throughout the hierarchy. Run these applications with:
 
 .. code-block:: console
 
@@ -12,7 +12,8 @@ Run all three applications with:
 Invoice reconciliation
 ----------------------
 
-An invoice contains an item group and named parts and labour lines:
+Calculate an invoice total from line prices, or recover a missing nested price
+from a confirmed total. The invoice groups parts and labour into named components:
 
 .. literalinclude:: ../../../examples/applications.py
    :start-at: class InvoiceLine
@@ -43,6 +44,8 @@ three levels, while the original partial component stays symbolic:
 ... )
 >>> reconciled.items.parts.unit_price
 12
+>>> isinstance(reconciled.items.parts, InvoiceLine)
+True
 >>> bool(partial.unit_price.free_symbols)
 True
 
@@ -54,8 +57,9 @@ explanations.
 Material requirements and yield
 -------------------------------
 
-A batch owns mass balance; packaging owns pack count and size. The parent
-connects saleable output to packed mass:
+Work backwards from a packaging target to the feed required, or use measured
+feed to infer yield. A batch owns mass balance; packaging owns pack count and
+size. The parent equates saleable output with packed mass:
 
 .. literalinclude:: ../../../examples/applications.py
    :start-at: class Batch
@@ -84,8 +88,9 @@ relationships.
 Circuit measurements
 --------------------
 
-Each ideal resistor owns Ohm's law and power. The series circuit supplies a
-shared current and sums voltage drops:
+Predict current from known resistances, or infer a missing resistance from
+voltage and current measurements. Each resistor keeps its Ohm's law and power
+equations; the parent supplies a shared current and sums voltage drops:
 
 .. literalinclude:: ../../../examples/applications.py
    :start-at: class Resistor
@@ -122,8 +127,8 @@ Related observations from one source also make a useful component boundary.
 Swap that component to compare alternative source assumptions against the same
 trusted output, as in the :ref:`CDS source comparison <cds-red-data>`.
 
-Keep units, signs, rounding, and external data conventions explicit. Modello
-solves the supplied equations; it does not automatically supply those rules or
-recalculate after attribute mutation. For reconciliation, copied inferred
-results remain constraints too. Prepare from original observations with
-symbolic dependent values, as in the :doc:`CDS example <../reconciliation/index>`.
+Declare units, signs, rounding, and external data conventions explicitly.
+Construct a new problem for changed observations; assigning an attribute does
+not recalculate the model. Copied inferred results remain constraints too.
+Start from original observations with symbolic dependent values when those
+results should be recalculated, as in the :doc:`CDS example <../reconciliation/index>`.

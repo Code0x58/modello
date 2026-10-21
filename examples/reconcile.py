@@ -2,7 +2,7 @@
 
 Try configured entry-error hypotheses before explicitly releasing an input.
 Every trial starts from the same immutable snapshot and changes one scalar
-observation. Diagnostic witnesses establish feasibility, never the true cause.
+observation. Keep every fitting or undecided hypothesis for further inspection.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ class Suspect:
 
 @dataclass(frozen=True)
 class MutationTrial(Generic[Model]):
-    """One proposed value, its possible explanations, and the full checked trial."""
+    """A proposed value, its explanation labels, and its inspectable trial problem."""
 
     field: ModelField
     original: Expr
@@ -78,7 +78,7 @@ class MutationReport(Generic[Model]):
 
     @property
     def matches(self) -> tuple[MutationTrial[Model], ...]:
-        """Proposals admitting an independently checked, closed witness."""
+        """Trials with a complete solution checked against every retained constraint."""
         return tuple(trial for trial in self.trials if trial.analysis.status == "consistent")
 
     @property
@@ -137,8 +137,9 @@ class Reconciliation(Generic[Model]):
     def scan(self) -> MutationReport[Model]:
         """Check concrete mutations individually, without solving backwards.
 
-        An already witnessed baseline returns no proposed changes. Otherwise
-        each distinct replacement is bound before diagnostic analysis starts.
+        If the original inputs have a complete checked solution, return no
+        proposed changes. Otherwise bind each distinct replacement before
+        checking it against the retained equations and domains.
         Declaration order is preserved; it does not rank likelihood or cost.
         """
         baseline = self.problem.analyse()

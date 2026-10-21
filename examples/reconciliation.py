@@ -89,12 +89,12 @@ def main() -> None:
     print("Pricing formula:", pricing.format(expression))
     problem = sample_problem()
     recorded = problem.without("pnl").solutions().one()
-    print("Recorded PnL:", recorded.pnl)
+    print("Calculated PnL from recorded inputs:", recorded.pnl)
     print("Trusted PnL:", 51_000)
     print("Break (recorded - trusted):", recorded.pnl - 51_000)
     study = Reconciliation(problem, tuple(Suspect(problem.field(name)) for name in ("signed_notional", "coupon_bps")))
     report = study.scan()
-    print("Common entry mistakes, one field at a time:")
+    print("Common entry mistakes (one field per trial):")
     for match in report.matches:
         print(f"  {'.'.join(match.field.path)}: {match.original} -> {match.proposed}")
         print("    Possible explanations:", "; ".join(mutation.label for mutation in match.mutations))
@@ -110,12 +110,12 @@ def main() -> None:
     for match in report.matches:
         checked = match.problem.solutions().observe(opening_value)
         print(f"  {'.'.join(match.field.path)}: {checked.values(match.field)}")
-    print("Alternatives explain the number; confirm any correction against independent records.")
+    print("Each match is a possible explanation to check against the trade record.")
 
     # Synthetic credit parameters associated with previous/current RED pairs.
     previous = REDData("DEMO:PAIR:OLD", recovery=Rational(2, 5), survival=Rational(39, 40))
     current = REDData("DEMO:PAIR:CURRENT", recovery=Rational(2, 5), survival=Rational(97, 100))
-    print("Compare RED data components (synthetic parameters):")
+    print("Compare source assumptions (synthetic RED parameters):")
     for label, data in (("previous", previous), ("current", current)):
         source_trial = inspect_model(
             CDSPnL,
@@ -130,7 +130,7 @@ def main() -> None:
         )
         calculated = source_trial.without("pnl").solutions().one()
         print(f"  {label}: PnL={calculated.pnl}, {source_trial.analyse().status}")
-    print("  Trade terms and trusted PnL stayed fixed. Confirm the source independently before accepting it.")
+    print("  Only the RED component changed; trade terms and trusted PnL stayed fixed.")
 
 
 if __name__ == "__main__":
