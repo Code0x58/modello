@@ -3,7 +3,7 @@
 import pytest
 from sympy import FiniteSet, Rational, S
 
-from examples.reconciliation import CDSMark, CDSPnL, CDSTerms, CreditPeriod, sample_problem
+from examples.reconciliation import CDSMark, CDSPnL, CDSTerms, REDData, sample_problem
 from modello import FieldValue, ModelSolveError, UnresolvedSolutionError, inspect_model
 
 
@@ -39,9 +39,9 @@ def test_each_alternative_keeps_the_other_observations(released, expected):
             assert getattr(case, name) == original
     assert case.opening.terms.signed_notional == case.closing.terms.signed_notional == case.signed_notional
     assert case.opening.terms.coupon_bps == case.closing.terms.coupon_bps == case.coupon_bps
-    assert case.opening.terms.recovery == case.closing.terms.recovery == case.recovery
-    assert case.opening.market.survival == Rational(98, 100)
-    assert case.closing.market.survival == Rational(97, 100)
+    assert case.opening.red.recovery == case.closing.red.recovery == case.recovery
+    assert case.opening.red.survival == Rational(98, 100)
+    assert case.closing.red.survival == Rational(97, 100)
     assert all(c in trial.constraints for c in problem.constraints if c.input != released)
     assert any(c.input == released for c in problem.constraints)  # The source was not edited.
 
@@ -71,25 +71,27 @@ def test_releasing_several_inputs_can_leave_a_family():
         family.one()
 
 
-@pytest.mark.parametrize(
-    ("model", "knowns"), [(CDSTerms, {"recovery": Rational(11, 10)}), (CreditPeriod, {"survival": Rational(11, 10)})]
-)
-def test_probability_and_recovery_bounds_are_real_constraints(model, knowns):
+@pytest.mark.parametrize("field", ["recovery", "survival"])
+def test_probability_and_recovery_bounds_are_real_constraints(field):
     with pytest.raises(ModelSolveError):
-        model("outside domain", **knowns)
+        REDData("outside domain", **{field: Rational(11, 10)})
 
 
 def test_formula_is_the_same_for_both_protection_sides():
-    market = CreditPeriod("market", discount=1, survival=Rational(97, 100), year_fraction=1)
+    data = REDData("credit inputs", recovery=Rational(2, 5), survival=Rational(97, 100))
     buyer = CDSMark(
         "buyer",
-        market=market,
-        terms=CDSTerms("buyer terms", signed_notional=10_000_000, coupon_bps=100, recovery=Rational(2, 5)),
+        red=data,
+        discount=1,
+        year_fraction=1,
+        terms=CDSTerms("buyer terms", signed_notional=10_000_000, coupon_bps=100),
     )
     seller = CDSMark(
         "seller",
-        market=market,
-        terms=CDSTerms("seller terms", signed_notional=-10_000_000, coupon_bps=100, recovery=Rational(2, 5)),
+        red=data,
+        discount=1,
+        year_fraction=1,
+        terms=CDSTerms("seller terms", signed_notional=-10_000_000, coupon_bps=100),
     )
     assert buyer.value == -seller.value == 83_000
     p = inspect_model(CDSMark, "formula")
@@ -99,10 +101,10 @@ def test_formula_is_the_same_for_both_protection_sides():
 
     expected = (
         field("terms", "signed_notional")
-        * field("market", "discount")
+        * field("discount")
         * (
-            (1 - field("terms", "recovery")) * (1 - field("market", "survival"))
-            - field("terms", "coupon_bps") / 10000 * field("market", "year_fraction") * field("market", "survival")
+            (1 - field("red", "recovery")) * (1 - field("red", "survival"))
+            - field("terms", "coupon_bps") / 10000 * field("year_fraction") * field("red", "survival")
         )
     )
     assert (p.solutions().expression(p.field("value")) - expected).simplify() == S.Zero

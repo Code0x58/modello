@@ -120,7 +120,7 @@ hierarchy can increase symbolic solver cost. See :doc:`/nesting`.
 
 Related observations from one source also make a useful component boundary.
 Swap that component to compare alternative source assumptions against the same
-trusted output, as in the :doc:`CDS source comparison <../reconciliation/reference_data>`.
+trusted output, as in the :ref:`CDS source comparison <cds-red-data>`.
 
 Keep units, signs, rounding, and external data conventions explicit. Modello
 solves the supplied equations; it does not automatically supply those rules or

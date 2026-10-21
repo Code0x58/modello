@@ -133,20 +133,15 @@ selecting concrete model states.
 
 The [practical applications](docs/examples/applications/index.rst) demonstrate
 invoice reconciliation, production planning, and circuit measurement checks.
-The [CDS PnL reconciliation example](docs/examples/reconciliation/index.rst)
-keeps a trusted output fixed and tries common entry mistakes before inferring
-individual inputs, using a small, fully visible pricing model. The reusable
+
+One symbolic model can support both pricing and reconciliation, saving time
+spent manually substituting parameters or rearranging formulas for each check.
+The [CDS PnL example](docs/examples/reconciliation/index.rst)
+shows this by holding trusted PnL fixed, comparing source components, and
+investigating suspect inputs. The reusable
 [reconciliation framework](docs/examples/reconciliation/framework.rst) tests
-decimal shifts and configured quote-unit, lot-size, or sign corrections:
-
-```sh
-python -m examples.applications
-python -m examples.reconciliation
-```
-
-The [reference-data scenario](docs/examples/reconciliation/reference_data.rst)
-bundles each source's assumptions into a market component, then swaps components
-to test a previous RED pair's inputs against trusted PnL with trade terms fixed.
+decimal shifts and configured quote-unit, lot-size, or sign corrections before
+solving backwards for individual inputs.
 
 The [portfolio research example](https://modello.readthedocs.io/en/latest/examples/portfolio/index.html)
 develops this pattern in one short walkthrough: nest transitions, join a

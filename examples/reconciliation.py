@@ -6,8 +6,6 @@ It omits accrual on default, schedules, curve calibration, and settlement
 conventions. See the documentation for the precise scope and sign conventions.
 """
 
-from datetime import date
-
 from sympy import Rational, S
 
 from examples.reconcile import Reconciliation, Suspect
@@ -19,37 +17,36 @@ class CDSTerms(Modello):
 
     signed_notional = InstanceDummy("signed_notional", real=True, nonzero=True)
     coupon_bps = InstanceDummy("coupon_bps", nonnegative=True)
+
+
+class REDData(Modello):
+    """Simplified credit assumptions associated with a RED pair."""
+
     recovery = InstanceDummy("recovery", nonnegative=True)
     loss_fraction = InstanceDummy("loss_fraction", nonnegative=True)
     loss_fraction = S.One - recovery
-
-
-class CreditPeriod(Modello):
-    """One-period market assumptions, with survival constrained to [0, 1]."""
-
-    discount = InstanceDummy("discount", positive=True)
     survival = InstanceDummy("survival", nonnegative=True)
     default_probability = InstanceDummy("default_probability", nonnegative=True)
     default_probability = S.One - survival
-    year_fraction = InstanceDummy("year_fraction", positive=True)
-    risky_annuity = discount * survival * year_fraction
-    default_factor = discount * default_probability
 
 
 class CDSMark(Modello):
     """Signed contract PV in notional currency under the one-period model."""
 
     terms = component(CDSTerms)
-    market = component(CreditPeriod)
-    protection = terms.signed_notional * terms.loss_fraction * market.default_factor
-    premium = terms.signed_notional * terms.coupon_bps / 10000 * market.risky_annuity
+    red = component(REDData)
+    discount = InstanceDummy("discount", positive=True)
+    year_fraction = InstanceDummy("year_fraction", positive=True)
+    risky_annuity = discount * red.survival * year_fraction
+    protection = terms.signed_notional * red.loss_fraction * discount * red.default_probability
+    premium = terms.signed_notional * terms.coupon_bps / 10000 * risky_annuity
     value = protection - premium
 
 
 class CDSPnL(Modello):
     """Unchanged trade at two marks, plus net cash received over the interval.
 
-    Top-level aliases expose the original trade observations individually.
+    Top-level aliases expose the original observations individually.
     The marks are connected by equations, rather than by object identity.
     """
 
@@ -59,8 +56,8 @@ class CDSPnL(Modello):
     signed_notional = opening.terms.signed_notional
     coupon_bps = closing.terms.coupon_bps
     coupon_bps = opening.terms.coupon_bps
-    recovery = closing.terms.recovery
-    recovery = opening.terms.recovery
+    recovery = closing.red.recovery
+    recovery = opening.red.recovery
     cashflow = InstanceDummy("cashflow", real=True)
     pnl = closing.value - opening.value + cashflow
 
@@ -75,69 +72,9 @@ def sample_problem() -> ModelProblem[CDSPnL]:
     return inspect_model(
         CDSPnL,
         "PnL break",
-        opening=CDSMark(
-            "opening", market=CreditPeriod("opening market", discount=1, survival=Rational(98, 100), year_fraction=1)
-        ),
-        closing=CDSMark(
-            "closing", market=CreditPeriod("closing market", discount=1, survival=Rational(97, 100), year_fraction=1)
-        ),
+        opening=CDSMark("opening", red=REDData("opening", survival=Rational(98, 100)), discount=1, year_fraction=1),
+        closing=CDSMark("closing", red=REDData("closing", survival=Rational(97, 100)), discount=1, year_fraction=1),
         signed_notional=1_000_000,
-        coupon_bps=100,
-        recovery=Rational(2, 5),
-        cashflow=-10_000,
-        pnl=51_000,
-    )
-
-
-class PreviousREDMarket(CreditPeriod):
-    """Synthetic source snapshot: pricing assumptions and their provenance.
-
-    DEMO identifiers are placeholders, not licensed RED codes. Strings and
-    dates are ordinary class metadata; numerical assumptions are equations.
-    """
-
-    entity_code = "DEMO:ENTITY"
-    pair_code = "DEMO:PAIR:OLD"
-    as_of = date(2026, 1, 2)
-    currency = "USD"
-    definitions = "2014"
-    seniority = "senior"
-    restructuring = "CR"
-    maturity = date(2027, 1, 5)
-    discount = S.One
-    survival = Rational(39, 40)
-    year_fraction = S.One
-
-
-class CurrentREDMarket(PreviousREDMarket):
-    """Alternative source snapshot for the same entity and another RED pair."""
-
-    pair_code = "DEMO:PAIR:CURRENT"
-    as_of = date(2026, 1, 5)
-    survival = Rational(97, 100)
-
-
-def reference_problem(market_model: type[CreditPeriod]) -> ModelProblem[CDSPnL]:
-    """Swap the closing source component; retain trade terms and trusted PnL.
-
-    Refine the component declarations so the chosen source's equations and
-    class metadata remain available throughout the composed model.
-    """
-
-    class ClosingMark(CDSMark):
-        market = component(market_model)
-
-    class ReferencePnL(CDSPnL):
-        closing = component(ClosingMark)
-
-    return inspect_model(
-        ReferencePnL,
-        "reference-data break",
-        opening=CDSMark(
-            "opening",
-            market=CreditPeriod("opening market", discount=1, survival=Rational(98, 100), year_fraction=1),
-        ),
-        signed_notional=10_000_000,
         coupon_bps=100,
         recovery=Rational(2, 5),
         cashflow=-10_000,
@@ -175,11 +112,24 @@ def main() -> None:
         print(f"  {'.'.join(match.field.path)}: {checked.values(match.field)}")
     print("Alternatives explain the number; confirm any correction against independent records.")
 
-    print("Alternative source components (synthetic identifiers):")
-    for market in (PreviousREDMarket, CurrentREDMarket):
-        source_trial = reference_problem(market)
+    # Synthetic credit parameters associated with previous/current RED pairs.
+    previous = REDData("DEMO:PAIR:OLD", recovery=Rational(2, 5), survival=Rational(39, 40))
+    current = REDData("DEMO:PAIR:CURRENT", recovery=Rational(2, 5), survival=Rational(97, 100))
+    print("Compare RED data components (synthetic parameters):")
+    for label, data in (("previous", previous), ("current", current)):
+        source_trial = inspect_model(
+            CDSPnL,
+            "RED comparison",
+            opening=CDSMark("opening", red=REDData("opening", survival=Rational(98, 100)), discount=1, year_fraction=1),
+            closing=CDSMark("closing", red=data, discount=1, year_fraction=1),
+            signed_notional=10_000_000,
+            coupon_bps=100,
+            recovery=Rational(2, 5),
+            cashflow=-10_000,
+            pnl=51_000,
+        )
         calculated = source_trial.without("pnl").solutions().one()
-        print(f"  {market.pair_code}, as of {market.as_of}: PnL={calculated.pnl}, {source_trial.analyse().status}")
+        print(f"  {label}: PnL={calculated.pnl}, {source_trial.analyse().status}")
     print("  Trade terms and trusted PnL stayed fixed. Confirm the source independently before accepting it.")
 
 

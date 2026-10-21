@@ -1,11 +1,9 @@
 Investigate a trade PnL break
 =============================
 
-Keep a trusted output fixed, try common entry mistakes on selected fields, then
-use inverse solving if those hypotheses do not explain the break. This example
-uses a one-period CDS model; the reusable API is described in :doc:`framework`.
-The :doc:`source-component scenario <reference_data>` swaps market assumptions
-from a previous RED pair for an alternative component, with trade terms fixed.
+Use one pricing model to calculate PnL, check alternative source data, and infer
+suspect inputs from a trusted output. This one-period CDS example keeps the
+same equations throughout; the reusable mutation API is described in :doc:`framework`.
 
 .. code-block:: console
 
@@ -15,7 +13,6 @@ from a previous RED pair for an alternative component, with trade terms fixed.
    :maxdepth: 1
 
    framework
-   reference_data
 
 The model and its conventions
 -----------------------------
@@ -30,7 +27,8 @@ both at period end, with no accrual on default. All amounts use one currency:
 Here :math:`N` is signed notional (positive buys protection), :math:`C` the annual
 coupon in basis points, :math:`R` recovery, :math:`S` survival probability,
 :math:`D` the discount factor, and :math:`\tau` the year fraction. The parent
-connects identical terms at two marks and adds net cash received:
+connects identical trade terms and recovery assumptions at two marks, then adds
+net cash received:
 
 .. math::
 
@@ -43,7 +41,7 @@ connects identical terms at two marks and adds net cash received:
 
 Recovery plus loss fraction, and survival plus default probability, are each
 nonnegative and sum to one. These domains remain constraints during trials.
-Parent aliases expose each original trade observation separately.
+Parent aliases expose notional, coupon, and recovery separately.
 
 ``risky_annuity`` is :math:`A=D S\tau`. At fixed market inputs, increasing the
 coupon by 1bp changes the buyer's value by :math:`-N A/10000`. For the corrected
@@ -139,6 +137,51 @@ Only notional survives these individual-release trials. Compare the suggestion
 with independent trade records before changing an entry. An inferred family
 can also retain several or unresolved states; see :doc:`/solutions`.
 
+.. _cds-red-data:
+
+Compare RED data
+----------------
+
+Related observations from one source make a useful component. Here ``REDData``
+bundles credit assumptions associated with a RED entity–obligation pair. Swap
+the component to check whether the break comes from using the previous pair's
+parameters, with the confirmed 10m notional and other observations fixed:
+
+>>> from sympy import Rational
+>>> from examples.reconciliation import CDSMark, CDSPnL, REDData
+>>> from modello import inspect_model
+>>> previous = REDData("DEMO:PAIR:OLD", recovery=Rational(2, 5), survival=Rational(39, 40))
+>>> current = REDData("DEMO:PAIR:CURRENT", recovery=Rational(2, 5), survival=Rational(97, 100))
+>>> for label, data in (("previous", previous), ("current", current)):
+...     trial = inspect_model(
+...         CDSPnL, "RED comparison",
+...         opening=CDSMark(
+...             "opening", red=REDData("opening", survival=Rational(98, 100)),
+...             discount=1, year_fraction=1,
+...         ),
+...         closing=CDSMark("closing", red=data, discount=1, year_fraction=1),
+...         signed_notional=10_000_000, coupon_bps=100, recovery=Rational(2, 5),
+...         cashflow=-10_000, pnl=51_000,
+...     )
+...     calculated = trial.without("pnl").solutions().one()
+...     print(label, calculated.pnl, trial.analyse().status)
+previous 20500 inconsistent
+current 51000 consistent
+
+All values are shown here and are synthetic. The ``DEMO:`` names label the
+examples; they are not RED codes or symbolic constraints. Changing a label
+alone cannot change the price, and matching PnL is a hypothesis to confirm
+against independent records.
+
+RED distinguishes entity codes from entity–obligation pair codes; a pair can
+change while the entity stays the same (see `Markit's identifier description
+<https://www.esma.europa.eu/sites/default/files/1-Markit_1.pdf>`_). An unchanged
+code is not a complete contract description either: sovereign CDS can have
+different 2003 and 2014 ISDA definitions (`ESRB report, section 3.3
+<https://www.esrb.europa.eu/pub/pdf/reports/esrb.report250411_creditdefaultswaps.en.pdf>`_).
+Check the contract and source date independently. This example does not model
+those legal payoff differences or assume an automatic RED change.
+
 Read the formula
 ----------------
 
@@ -149,7 +192,7 @@ The pricing expression comes from the same equations used in the marks:
 >>> pricing = inspect_model(CDSMark, "formula")
 >>> expression = pricing.solutions().expression(pricing.field("value"))
 >>> print(pricing.format(expression))
--market.discount*market.survival*market.year_fraction*terms.coupon_bps*terms.signed_notional/10000 + market.discount*terms.signed_notional*(1 - market.survival)*(1 - terms.recovery)
+-discount*red.survival*terms.coupon_bps*terms.signed_notional*year_fraction/10000 + discount*terms.signed_notional*(1 - red.recovery)*(1 - red.survival)
 
 ``print(problem)`` shows nested equations and observations; ``sympy.latex`` can
 typeset an expression. The :doc:`framework contract <framework>` covers exact

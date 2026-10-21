@@ -1,95 +1,78 @@
-"""Compare source components with trusted PnL while retaining trade terms."""
+"""Compare inline RED parameter components with trusted PnL."""
 
 from sympy import Rational
 
 from examples.reconcile import Reconciliation, Suspect
-from examples.reconciliation import CurrentREDMarket, PreviousREDMarket, reference_problem
+from examples.reconciliation import CDSMark, CDSPnL, CDSTerms, REDData
+from modello import ModelProblem, inspect_model
 
 
-def test_swapping_source_component_explains_break_without_changing_trade_terms():
-    stale_problem = reference_problem(PreviousREDMarket)
+def pnl_problem(data: REDData) -> ModelProblem[CDSPnL]:
+    return inspect_model(
+        CDSPnL,
+        "RED comparison",
+        opening=CDSMark("opening", red=REDData("opening", survival=Rational(98, 100)), discount=1, year_fraction=1),
+        closing=CDSMark("closing", red=data, discount=1, year_fraction=1),
+        signed_notional=10_000_000,
+        coupon_bps=100,
+        recovery=Rational(2, 5),
+        cashflow=-10_000,
+        pnl=51_000,
+    )
+
+
+def test_swapping_red_component_explains_break_without_changing_trade_terms():
+    previous = REDData("previous", recovery=Rational(2, 5), survival=Rational(39, 40))
+    current = REDData("current", recovery=Rational(2, 5), survival=Rational(97, 100))
+    stale_problem = pnl_problem(previous)
     stale = stale_problem.without("pnl").solutions().one()
     assert (stale.opening.value, stale.closing.value, stale.pnl) == (22_000, 52_500, 20_500)
     assert stale_problem.analyse().status == "inconsistent"
 
-    current_problem = reference_problem(CurrentREDMarket)
-    assert current_problem.analyse().status == "consistent"
-    refreshed = current_problem.solutions().one()
+    refreshed_problem = pnl_problem(current)
+    assert refreshed_problem.analyse().status == "consistent"
+    refreshed = refreshed_problem.solutions().one()
     assert (refreshed.opening.value, refreshed.closing.value, refreshed.pnl) == (22_000, 83_000, 51_000)
     for name in ("signed_notional", "coupon_bps", "recovery", "cashflow"):
         assert getattr(refreshed, name) == getattr(stale, name)
-    assert stale.closing.market.survival == Rational(39, 40)
-    assert refreshed.closing.market.survival == Rational(97, 100)
+    assert previous.survival == stale.closing.red.survival == Rational(39, 40)
+    assert current.survival == refreshed.closing.red.survival == Rational(97, 100)
     assert stale_problem.without("pnl").solutions().one().pnl == 20_500
 
 
-def test_source_type_and_provenance_survive_composition():
-    stale = reference_problem(PreviousREDMarket).without("pnl").solutions().one().closing.market
-    current = reference_problem(CurrentREDMarket).solutions().one().closing.market
-    assert type(stale) is PreviousREDMarket
-    assert type(current) is CurrentREDMarket
-    assert stale.entity_code == current.entity_code == "DEMO:ENTITY"
-    assert (stale.pair_code, current.pair_code) == ("DEMO:PAIR:OLD", "DEMO:PAIR:CURRENT")
-    assert stale.as_of < current.as_of
+def test_component_values_and_domains_survive_copying():
+    data = REDData("source", survival=Rational(97, 100))
+    result = pnl_problem(data).solutions().one()
+    assert isinstance(result.closing.red, REDData)
+    assert result.closing.red is not data
+    assert result.closing.red.recovery == Rational(2, 5)
+    assert result.closing.red.loss_fraction == Rational(3, 5)
+    assert result.closing.red.default_probability == Rational(3, 100)
+    assert data.recovery.free_symbols  # Completing the parent leaves the source symbolic.
 
 
 def test_relabelling_old_inputs_does_not_change_the_price():
-    class RelabelledMarket(PreviousREDMarket):
-        pair_code = CurrentREDMarket.pair_code
-        as_of = CurrentREDMarket.as_of
-
-    problem = reference_problem(RelabelledMarket)
-    assert problem.analyse().status == "inconsistent"
-    assert problem.without("pnl").solutions().one().pnl == 20_500
-
-
-def test_same_codes_and_date_can_still_have_wrong_parameters():
-    class WrongParameters(CurrentREDMarket):
-        survival = Rational(39, 40)
-
-    assert WrongParameters.pair_code == CurrentREDMarket.pair_code
-    assert WrongParameters.as_of == CurrentREDMarket.as_of
-    assert reference_problem(WrongParameters).analyse().status == "inconsistent"
-
-
-def test_contract_definitions_are_metadata_not_a_model_of_legal_payoffs():
-    class LegacyMarket(CurrentREDMarket):
-        definitions = "2003"
-
-    legacy = reference_problem(LegacyMarket).solutions().one()
-    current = reference_problem(CurrentREDMarket).solutions().one()
-    assert legacy.closing.market.definitions == "2003"
-    assert current.closing.market.definitions == "2014"
-    assert legacy.pnl == current.pnl  # No payoff difference is modelled here.
+    for label in ("DEMO:PAIR:OLD", "DEMO:PAIR:CURRENT"):
+        data = REDData(label, recovery=Rational(2, 5), survival=Rational(39, 40))
+        problem = pnl_problem(data)
+        assert problem.analyse().status == "inconsistent"
+        assert problem.without("pnl").solutions().one().pnl == 20_500
 
 
 def test_inverse_notional_could_fit_pnl_while_hiding_bad_reference_data():
-    problem = reference_problem(PreviousREDMarket)
+    previous = REDData("previous", recovery=Rational(2, 5), survival=Rational(39, 40))
+    problem = pnl_problem(previous)
     notional = problem.field("signed_notional")
     hypothetical = Reconciliation(problem, [Suspect(notional)]).infer(notional).one()
     assert hypothetical.signed_notional == 20_000_000
     assert hypothetical.pnl == 51_000
-    assert reference_problem(CurrentREDMarket).solutions().one().signed_notional == 10_000_000
 
 
-def test_swapping_component_uses_all_of_its_pricing_assumptions():
-    class OtherMarket(CurrentREDMarket):
-        discount = Rational(99, 100)
-        year_fraction = Rational(9, 10)
-
-    repriced = reference_problem(OtherMarket).without("pnl").solutions().one()
-    assert repriced.closing.market.discount == Rational(99, 100)
-    assert repriced.closing.market.year_fraction == Rational(9, 10)
-    assert repriced.closing.market.survival == Rational(97, 100)
-    assert repriced.pnl == 59_773
-    assert repriced.signed_notional == 10_000_000
-
-
-def test_different_parameter_components_can_both_fit_the_same_pnl():
-    class AnotherFit(CurrentREDMarket):
-        survival = Rational(969, 1000)
-        discount = Rational(830, 891)
-
-    for market in (CurrentREDMarket, AnotherFit):
-        assert reference_problem(market).analyse().status == "consistent"
-        assert reference_problem(market).solutions().one().pnl == 51_000
+def test_swapping_red_component_uses_both_recovery_and_survival():
+    previous = REDData("previous", recovery=Rational(2, 5), survival=Rational(39, 40))
+    current = REDData("current", recovery=Rational(3, 10), survival=Rational(97, 100))
+    terms = CDSTerms("trade", signed_notional=10_000_000, coupon_bps=100)
+    old_mark = CDSMark("old", terms=terms, red=previous, discount=1, year_fraction=1)
+    new_mark = CDSMark("new", terms=terms, red=current, discount=1, year_fraction=1)
+    assert (old_mark.protection, old_mark.premium, old_mark.value) == (150_000, 97_500, 52_500)
+    assert (new_mark.protection, new_mark.premium, new_mark.value) == (210_000, 97_000, 113_000)
