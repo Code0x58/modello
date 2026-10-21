@@ -135,3 +135,5 @@ False
 Models are solved when they are constructed. Create a new model to solve with
 different inputs; changing an attribute later does not recalculate other values.
 See the :doc:`API reference <api>` for input types, inheritance, and model methods.
+The :doc:`debugging guide <debugging>` covers unresolved quantities, conflicting
+constraints, and multiple possible solutions.

@@ -28,11 +28,23 @@ API reference
    component paths. Other SymPy symbols remain external parameters.
 
    Unknown keyword names, invalid scalar values, and incompatible component
-   types raise :class:`TypeError`. Inconsistent equations and multiple discrete
-   solutions raise :class:`ValueError`. Symbol assumptions help select valid
+   types raise :class:`modello.errors.ModelInputError`, also a :class:`TypeError`.
+   No accepted solver candidates or multiple candidates raise
+   :class:`modello.errors.SolutionCountError`; a backend exception raises
+   :class:`modello.errors.SolverBackendError`. Both are
+   :class:`modello.errors.ModelSolveError` and :class:`ValueError` subclasses.
+   Symbol assumptions help select valid
    solutions; assumptions about external symbolic parameters may remain
    undecided. Each explicitly constructed input model must have a valid solution
    before it can be passed to a parent.
+
+   Solve failures retain a frozen ``problem`` snapshot with actual symbol
+   identities, aliases, origins, equations, inputs, and solver candidates.
+   Backend solver exceptions are chained as the cause. Diagnostic analysis runs
+   only when explicitly invoked. A zero candidate count is not itself a proof
+   of inconsistency. See
+   :doc:`debugging` for symbolic results, redundant observations, conflicting
+   constraints, and ambiguous solutions.
 
    **Component copies and methods**
 
@@ -56,6 +68,12 @@ API reference
    When multiple model bases define the same quantity, the later base supplies
    that quantity. Methods follow Python's normal method resolution order.
 
+.. autofunction:: inspect_model
+
+   Supply the same typed inputs as construction. No solver runs during
+   preparation; explicitly constructed component inputs must already be valid.
+   See :doc:`diagnostics` for the structured snapshot, report types, and guarantees.
+
 .. autofunction:: component
 
    Use ``child = component(Child)`` in a model class body, then supply a
@@ -75,3 +93,58 @@ API reference
 .. autoclass:: BoundInstanceDummy
 
 .. autoclass:: SymbolicScalar
+
+.. _errors:
+
+Errors
+------
+
+Catch ``ModelloError`` for Modello's validation and construction failures, or
+``ModelSolveError`` for failed solves. These classes are available from
+``modello`` and ``modello.errors``. Existing ``TypeError`` and ``ValueError``
+handlers still apply. Ordinary key and attribute lookups retain their Python
+``KeyError`` and ``AttributeError`` behaviour.
+
+.. code-block:: text
+
+   ModelloError
+   ├── ModelInputError (also TypeError)
+   ├── ModelValidationError (also ValueError)
+   │   └── ModelDefinitionError
+   └── ModelSolveError (also ValueError)
+       ├── SolutionCountError
+       └── SolverBackendError
+
+``SolutionCountError.solution_count`` is the number of retained solver
+candidates. ``returned_count`` counts the captured candidates before domain
+filtering; these are available through ``problem.candidates``. Either count can
+refer to symbolic families, rather than individual numerical points. A zero
+retained count alone is not a proof of inconsistency.
+
+``SolverBackendError.backend_error`` retains the original exception, also
+available as ``__cause__``; ``solution_count`` is ``None``. The recorded problem
+is available for both failure types. No counts or categories are extracted by
+parsing exception messages, and constructing or printing an error does not
+launch diagnostic analysis.
+
+For example, ``case SolutionCountError(solution_count=0)`` selects a zero-count
+failure. Positional ``case SolutionCountError(0)`` is supported too.
+``case SolverBackendError(backend_error=NotImplementedError())`` selects a
+particular backend exception type. See :doc:`debugging` for a complete workflow.
+
+.. currentmodule:: modello.errors
+
+.. autoclass:: ModelloError
+
+.. autoclass:: ModelInputError
+
+.. autoclass:: ModelValidationError
+
+.. autoclass:: ModelDefinitionError
+
+.. autoclass:: ModelSolveError
+
+.. autoclass:: SolutionCountError
+   :members: returned_count
+
+.. autoclass:: SolverBackendError

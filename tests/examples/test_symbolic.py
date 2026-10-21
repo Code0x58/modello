@@ -13,7 +13,7 @@ from sympy import Symbol
 
 from examples.data import NamedMap, Provider, Series
 from examples.symbolic import Known, ModelData, ModelPath, ModelPlan, ModelSeries, ScalarPlan, SymbolicModel
-from modello import InstanceDummy, Modello, component
+from modello import InstanceDummy, Modello, component, inspect_model
 
 
 class Reading(Modello):
@@ -29,6 +29,10 @@ class Sensor(SymbolicModel):
     @cached_property
     def doubled(self):
         return self.adjusted * 2
+
+
+class Group(Modello):
+    sensor = component(Sensor)
 
 
 def test_evaluation_keeps_component_types_aliases_and_source_case(monkeypatch):
@@ -52,6 +56,10 @@ def test_evaluation_keeps_component_types_aliases_and_source_case(monkeypatch):
     assert fields[("reading", "value")].value == 3
     assert fields[("scale",)].role == "known"
     assert fields[("adjusted",)].role == "derived"
+    copied = inspect_model(Group, "copy", sensor=result)
+    kinds = {c.path: c.kind for c in copied.constraints if c.input}
+    assert kinds[("sensor", "reading", "value")] == "input"
+    assert kinds[("sensor", "adjusted")] == kinds[("sensor", "alias")] == "inferred"
 
 
 def test_columns_preserve_model_references_and_materialize_only_requested_points(monkeypatch):
@@ -216,6 +224,10 @@ def test_inverse_cases_use_the_same_data_protocol():
     source = Sensor("inverse", scale=2, adjusted=Symbol("observation", positive=True))
     result = source.compile().evaluate(AdjustedMeasurement(12))
     assert float(result.reading.value) == 6
+    copied = inspect_model(Group, "inverse_copy", sensor=result)
+    kinds = {c.path: c.kind for c in copied.constraints if c.input}
+    assert kinds[("sensor", "adjusted")] == "input"
+    assert kinds[("sensor", "reading", "value")] == "inferred"
 
 
 if TYPE_CHECKING:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from copy import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache, cached_property
 from math import isfinite
 from typing import Generic, Literal, Protocol, TypeVar, cast, overload, runtime_checkable
@@ -12,7 +12,7 @@ from typing import Generic, Literal, Protocol, TypeVar, cast, overload, runtime_
 from sympy import Expr, Float, Symbol, lambdify, sympify
 
 from examples.data import NamedMap, Series, Time
-from modello import FieldPath, Modello, SymbolicScalar
+from modello import ConstraintKind, FieldPath, Modello, SymbolicScalar
 
 
 class ScalarPlan:
@@ -125,7 +125,7 @@ def _check_column(symbol: Expr, values: tuple[float, ...]) -> None:
         raise ValueError("A column violates its model assumptions")
 
 
-def _copy_model(model: Model, values: dict[FieldPath, Expr]) -> Model:
+def _copy_model(model: Model, values: dict[FieldPath, Expr], inputs: tuple[Expr, ...] = ()) -> Model:
     """Populate a copy without solving again or changing the source case.
 
     Like the named-member adapter, this is isolated access to core metadata.
@@ -135,7 +135,15 @@ def _copy_model(model: Model, values: dict[FieldPath, Expr]) -> Model:
 
     def populate(source: Modello, prefix: FieldPath) -> Modello:
         result = copy(source)
-        result._modello_instance_dummies = dict(source._modello_instance_dummies)
+        result._modello_bound_fields = {}
+        for path, dummy in type(source)._modello_fields.items():
+            binding = source._modello_bound_fields[dummy]
+            expression = _get_field(source, path)
+            result._modello_bound_fields[dummy] = replace(
+                binding,
+                value=values[prefix + path],
+                kind=ConstraintKind.INPUT if expression in inputs else binding.copied_kind(expression),
+            )
         for name in tuple(vars(result)):
             if isinstance(getattr(type(source), name, None), cached_property):
                 delattr(result, name)
@@ -220,7 +228,7 @@ class ModelPlan(Generic[Model]):
                 for assumption, expected in dummy.assumptions0.items()
             ):
                 raise ValueError(f"Evaluated field {'.'.join(path)} violates its model assumptions")
-        return _copy_model(self.source, fields)
+        return _copy_model(self.source, fields, self._inputs)
 
     def evaluate(self, *knowns: Known[float] | ModelData[Model, float]) -> Model:
         """Evaluate once and return a fresh numeric case with the same component types."""

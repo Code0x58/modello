@@ -56,6 +56,8 @@ illustrate symbolic modeling with fixed historical rates.
 
    api
    nesting
+   debugging
+   diagnostics
 
 .. toctree::
    :caption: Examples

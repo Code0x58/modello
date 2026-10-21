@@ -7,7 +7,19 @@ from fractions import Fraction
 
 from sympy import Symbol
 
-from modello import InstanceDummy, Modello, ScalarValue, component
+from modello import (
+    ConstraintKind,
+    InstanceDummy,
+    Modello,
+    ModelProblem,
+    ModelSolveError,
+    ScalarValue,
+    SolutionCountError,
+    SolverBackendError,
+    component,
+    inspect_model,
+)
+from modello.diagnostics import ComponentView, FieldValue, ModelField, ProblemAnalysis, SolutionSet
 
 
 class Point(Modello):
@@ -63,3 +75,35 @@ def check_inputs() -> None:
     Point("P", x=None)  # type: ignore[arg-type]
     drawing.line.start = Box("B")  # type: ignore[assignment]
     _point_class: type[Point] = drawing.line.start  # type: ignore[assignment]
+
+
+def check_diagnostics() -> None:
+    """Debugging uses typed records and the same typed constructor boundary."""
+    problem: ModelProblem = inspect_model(Drawing, "case", line=Line("line"))
+    field: ModelField = problem.field("line", "start", "x")
+    view: ComponentView = problem.at("line")
+    report: ProblemAnalysis = problem.analyse(max_checks=1)
+    sets: tuple[SolutionSet, ...] = report.solution_sets
+    FieldValue(field, 3)
+    assert field in view.fields
+    assert report.problem is problem
+    assert all(result.field in problem.fields for result in sets)
+    kind: ConstraintKind = problem.constraints[0].kind
+    assert kind is ConstraintKind.DEFINITION
+    _invalid_kind: ConstraintKind = "input"  # type: ignore[assignment]
+    try:
+        Line("case", start=Point("start", x=1))
+    except ModelSolveError as error:
+        failure: ModelProblem = error.problem
+        assert failure.model is Line
+        if isinstance(error, SolutionCountError):
+            count: int = error.solution_count
+            returned: int = error.returned_count
+            assert count >= 0 and returned >= 0
+        elif isinstance(error, SolverBackendError):
+            cause: Exception = error.backend_error
+            assert cause is error.__cause__
+    inspect_model(Line, "case", start={"x": 1})  # type: ignore[arg-type]
+    inspect_model(Line("instance"), "case")  # type: ignore[arg-type]
+    FieldValue(field, {})  # type: ignore[arg-type]
+    problem.name = "changed"  # type: ignore[misc]

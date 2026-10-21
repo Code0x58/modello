@@ -10,7 +10,30 @@ from typing import Any, ClassVar, MutableMapping, Protocol, TypeAlias, TypeVar, 
 from sympy import Basic, Dummy, Eq, Expr, S, SympifyError, solve
 from sympy.simplify.simplify import simplify
 
-FieldPath = tuple[str, ...]
+from modello.diagnostics import (
+    Candidate,
+    ConstraintKind,
+    FieldPath,
+    FieldValue,
+    ModelConstraint,
+    ModelField,
+    ModelProblem,
+)
+from modello.errors import (
+    ModelDefinitionError,
+    ModelInputError,
+    SolutionCountError,
+    SolverBackendError,
+)
+from modello.errors import (
+    ModelloError as ModelloError,
+)
+from modello.errors import (
+    ModelSolveError as ModelSolveError,
+)
+from modello.errors import (
+    ModelValidationError as ModelValidationError,
+)
 
 
 # A structural protocol keeps untyped SymPy imports out of the input union.
@@ -41,6 +64,19 @@ class InstanceDummy(Dummy):
 
 class BoundInstanceDummy(InstanceDummy):
     """A symbol belonging to a particular model instance."""
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundField:
+    """Keep a quantity's identity, construction value, and provenance together."""
+
+    symbol: BoundInstanceDummy
+    value: Basic
+    kind: ConstraintKind
+
+    def copied_kind(self, value: object) -> ConstraintKind:
+        """An overwritten construction result becomes a supplied input."""
+        return self.kind if isinstance(value, Basic) and value == self.value else ConstraintKind.INPUT
 
 
 @dataclass(frozen=True)
@@ -93,7 +129,9 @@ class ModelloMetaNamespace(dict):
                 self.nested_models.keys() & parent.dummies.keys()
             )
             if conflicts:
-                raise ValueError(f"Cannot merge scalar and nested model fields: {', '.join(sorted(conflicts))}")
+                raise ModelDefinitionError(
+                    f"Cannot merge scalar and nested model fields: {', '.join(sorted(conflicts))}"
+                )
             replacements = {self.dummies[key]: dummy for key, dummy in parent.dummies.items() if key in self.dummies}
             for key, child in parent.nested_models.items():
                 replacements.update(self._child_replacements(key, child))
@@ -143,10 +181,10 @@ class ModelloMetaNamespace(dict):
         """Record expressions or create a scoped reference for a model class."""
         is_model = isinstance(value, ModelloMeta)
         if (isinstance(value, Basic) or is_model) and key.startswith("_modello_"):
-            raise ValueError("The _modello_ prefix is reserved for model metadata")
+            raise ModelDefinitionError("The _modello_ prefix is reserved for model metadata")
         if isinstance(value, Basic):
             if key in self.nested_models:
-                raise ValueError(f"Cannot replace nested model {self.name}.{key} with a scalar")
+                raise ModelDefinitionError(f"Cannot replace nested model {self.name}.{key} with a scalar")
             expr = simplify(value).xreplace(self._replacements)
             dummy = expr if isinstance(expr, InstanceDummy) else self.dummies.get(key)
             if dummy is None:
@@ -158,7 +196,7 @@ class ModelloMetaNamespace(dict):
             value = dummy
         elif is_model:
             if key in self.dummies:
-                raise ValueError(f"Cannot replace scalar {self.name}.{key} with a nested model")
+                raise ModelDefinitionError(f"Cannot replace scalar {self.name}.{key} with a nested model")
             child = _ModelReference._modello_create(cast(type[Modello], value), key)
             replacements = self._child_replacements(key, child)
             if replacements:
@@ -166,9 +204,9 @@ class ModelloMetaNamespace(dict):
             self.nested_models[key] = child
             value = child
         elif isinstance(value, _ModelReference):
-            raise TypeError("Declare a component using its model class, not another component reference")
+            raise ModelInputError("Declare a component using its model class, not another component reference")
         elif key in self.dummies or key in self.nested_models:
-            raise ValueError(f"Cannot assign {self.name}.{key} to a non-model value")
+            raise ModelDefinitionError(f"Cannot assign {self.name}.{key} to a non-model value")
         super().__setitem__(key, value)
 
     def fields(self) -> dict[FieldPath, InstanceDummy]:
@@ -198,20 +236,27 @@ class ModelloMeta(type):
             for attr, expr in meta_namespace.attrs.items()
             if expr != meta_namespace.dummies[attr]
         ]
-        for child in meta_namespace.nested_models.values():
+        paths: list[FieldPath] = [
+            (attr,) for attr, expr in meta_namespace.attrs.items() if expr != meta_namespace.dummies[attr]
+        ]
+        for attr, child in meta_namespace.nested_models.items():
             model = child._modello_model
             replacements = {d: child._modello_fields[path] for path, d in model._modello_fields.items()}
             constraints.extend(
                 (replacements[d], expr.xreplace(replacements).xreplace(meta_namespace._replacements))
                 for d, expr in model._modello_class_constraints
             )
+            paths.extend((attr, *path) for path in model._modello_constraint_paths)
         expressions = [*meta_namespace.attrs.values(), *(expr for _, expr in constraints)]
         used = set().union(*(expr.free_symbols for expr in expressions))
         for dummy in used & meta_namespace._missing.keys():
-            raise ValueError(f"{name} references removed or ambiguous child field {meta_namespace._missing[dummy]}")
+            raise ModelDefinitionError(
+                f"{name} references removed or ambiguous child field {meta_namespace._missing[dummy]}"
+            )
         namespace["_modello_namespace"] = meta_namespace
         namespace["_modello_fields"] = meta_namespace.fields()
         namespace["_modello_class_constraints"] = tuple(constraints)
+        namespace["_modello_constraint_paths"] = tuple(paths)
         return super().__new__(mcs, name, bases, namespace)
 
 
@@ -221,55 +266,17 @@ class Modello(metaclass=ModelloMeta):
     _modello_namespace: ClassVar[ModelloMetaNamespace] = ModelloMetaNamespace("", ())
     _modello_fields: ClassVar[dict[FieldPath, InstanceDummy]] = {}
     _modello_class_constraints: ClassVar[tuple[tuple[InstanceDummy, Basic], ...]] = ()
-    _modello_instance_dummies: dict[InstanceDummy, BoundInstanceDummy]
+    _modello_constraint_paths: ClassVar[tuple[FieldPath, ...]] = ()
+    _modello_bound_fields: dict[InstanceDummy, _BoundField]
 
     def __init__(self, name: str, **value_map: ScalarValue | Modello) -> None:
         """Accept scalar values and compatible child model instances."""
-        bindings = {d: d.bound(name) for d in dict.fromkeys(self._modello_fields.values())}
-        fields = {path: bindings[d] for path, d in self._modello_fields.items()}
-        constraints = [Eq(bindings[d], expr.xreplace(bindings)) for d, expr in self._modello_class_constraints]
-
-        def add_value(path: FieldPath, raw: object, scope: dict[InstanceDummy, BoundInstanceDummy]) -> None:
-            """Translate a supplied scalar into the shared instance scope."""
-            try:
-                value = simplify(raw)
-            except (SympifyError, TypeError, AttributeError) as error:
-                raise TypeError(f"{'.'.join(path)} must be a SymPy-compatible scalar") from error
-            if not isinstance(value, Expr):
-                raise TypeError(f"{'.'.join(path)} must be a SymPy-compatible scalar")
-            value = value.xreplace(scope)
-            constraints.append(Eq(fields[path], value))
-
-        for attr, value in value_map.items():
-            if attr in self._modello_namespace.dummies:
-                add_value((attr,), value, bindings)
-                continue
-            child = self._modello_namespace.nested_models.get(attr)
-            if child is None:
-                raise TypeError(f"Unknown model attribute {attr!r}")
-            model = child._modello_model
-            if not isinstance(value, model):
-                raise TypeError(f"{attr} must be a {model.__name__} instance")
-            prefix = (attr,)
-            source_fields = type(value)._modello_fields
-            for path in model._modello_fields:
-                if path not in source_fields:
-                    raise TypeError(f"Child instance is missing {'.'.join((attr, *path))}")
-            scope = {
-                **bindings,
-                **{d: fields[prefix + path] for path, d in model._modello_fields.items()},
-                **{
-                    value._modello_instance_dummies[source_fields[path]]: fields[prefix + path]
-                    for path in model._modello_fields
-                },
-            }
-            for path in model._modello_fields:
-                scalar: object = value
-                for part in path:
-                    scalar = getattr(scalar, part)
-                add_value((attr, *path), scalar, scope)
+        problem = inspect_model(type(self), name, **value_map)
+        fields = {field.path: cast(BoundInstanceDummy, field.symbol) for field in problem.fields}
+        bindings = {dummy: fields[path] for path, dummy in self._modello_fields.items()}
+        constraints = [Eq(c.left, c.right) for c in problem.constraints]
         if S.false in constraints:
-            raise ValueError("0 solutions (inconsistent constraints)")
+            raise SolutionCountError(problem, 0)
         constraints = [eq for eq in constraints if eq is not S.true]
         # Expand directed definitions first. Otherwise a general solver may use
         # an output as a free parameter and unnecessarily solve for its inputs.
@@ -284,13 +291,18 @@ class Modello(metaclass=ModelloMeta):
                 del pending[dummy]
         equations = [eq.xreplace(expressions) for eq in constraints]
         if S.false in equations:
-            raise ValueError("0 solutions (inconsistent constraints)")
+            raise SolutionCountError(problem, 0)
         equations = [eq for eq in equations if eq is not S.true]
         symbols = list(dict.fromkeys([*pending, *bindings.values()]))
-        solutions = solve(equations, symbols, dict=True) if equations else [{}]
+        try:
+            solutions = solve(equations, symbols, dict=True) if equations else [{}]
+        except Exception as error:
+            raise SolverBackendError(problem, error) from error
         candidates = []
+        reported = []
         for result in solutions:
             resolved = {d: expr.xreplace(result) for d, expr in expressions.items()}
+            reported.append(resolved)
             if any(value.has(S.NaN, S.ComplexInfinity) for value in resolved.values()):
                 continue
             if all(
@@ -300,12 +312,23 @@ class Modello(metaclass=ModelloMeta):
             ):
                 candidates.append(resolved)
         if len(candidates) != 1:
-            raise ValueError(f"{len(candidates)} solutions")
+            snapshots = tuple(
+                Candidate(tuple(FieldValue(field, values[field.symbol]) for field in problem.fields))
+                for values in reported
+            )
+            raise SolutionCountError(problem, len(candidates), snapshots)
         solution = candidates[0]
+        input_symbols = {c.left for c in problem.constraints if c.kind is ConstraintKind.INPUT}
 
         def populate(instance: Modello, model: type[Modello], prefix: FieldPath) -> None:
             """Materialize descendants directly from the one shared solution."""
-            instance._modello_instance_dummies = {d: fields[prefix + path] for path, d in model._modello_fields.items()}
+            bound_fields = {d: fields[prefix + path] for path, d in model._modello_fields.items()}
+            instance._modello_bound_fields = {
+                d: _BoundField(
+                    bound, solution[bound], ConstraintKind.INPUT if bound in input_symbols else ConstraintKind.INFERRED
+                )
+                for d, bound in bound_fields.items()
+            }
             for attr in model._modello_namespace.dummies:
                 bound = fields[prefix + (attr,)]
                 setattr(instance, attr, solution[bound])
@@ -329,3 +352,76 @@ def component(model: type[_ModelT]) -> _ModelT:
     # The class namespace turns this declaration into a scoped reference;
     # populated models expose an instance of this type instead.
     return cast(_ModelT, model)
+
+
+def inspect_model(model: type[Modello], name: str, /, **value_map: ScalarValue | Modello) -> ModelProblem:
+    """Prepare the constructor's actual problem without invoking the solver.
+
+    Supply the same scalar values and typed component instances as a normal
+    construction. The snapshot retains all aliases, constraint origins, and
+    whole-argument observation groups, including copied component values.
+    """
+    if not isinstance(model, ModelloMeta):
+        raise ModelInputError("inspect_model requires a Modello class and constructor inputs")
+    bindings = {d: d.bound(name) for d in dict.fromkeys(model._modello_fields.values())}
+    fields = {path: bindings[d] for path, d in model._modello_fields.items()}
+    constraints = [
+        ModelConstraint(i, path, ConstraintKind.DEFINITION, bindings[d], expr.xreplace(bindings))
+        for i, (path, (d, expr)) in enumerate(
+            zip(model._modello_constraint_paths, model._modello_class_constraints, strict=True)
+        )
+    ]
+
+    def add_value(
+        path: FieldPath,
+        raw: object,
+        scope: dict[InstanceDummy, BoundInstanceDummy],
+        group: str,
+        source: _BoundField | None = None,
+    ) -> None:
+        try:
+            value = simplify(raw)
+        except (SympifyError, TypeError, AttributeError) as error:
+            raise ModelInputError(f"{'.'.join(path)} must be a SymPy-compatible scalar") from error
+        if not isinstance(value, Expr):
+            raise ModelInputError(f"{'.'.join(path)} must be a SymPy-compatible scalar")
+        kind = ConstraintKind.INPUT if source is None else source.copied_kind(raw)
+        constraints.append(ModelConstraint(len(constraints), path, kind, fields[path], value.xreplace(scope), group))
+
+    for attr, value in value_map.items():
+        if attr in model._modello_namespace.dummies:
+            add_value((attr,), value, bindings, attr)
+            continue
+        child = model._modello_namespace.nested_models.get(attr)
+        if child is None:
+            raise ModelInputError(f"Unknown model attribute {attr!r}")
+        child_model = child._modello_model
+        if not isinstance(value, child_model):
+            raise ModelInputError(f"{attr} must be a {child_model.__name__} instance")
+        prefix = (attr,)
+        source_fields = type(value)._modello_fields
+        for path in child_model._modello_fields:
+            if path not in source_fields:
+                raise ModelInputError(f"Child instance is missing {'.'.join((attr, *path))}")
+        scope = {
+            **bindings,
+            **{d: fields[prefix + path] for path, d in child_model._modello_fields.items()},
+            **{
+                value._modello_bound_fields[source_fields[path]].symbol: fields[prefix + path]
+                for path in child_model._modello_fields
+            },
+        }
+        for path in child_model._modello_fields:
+            scalar: object = value
+            for part in path:
+                scalar = getattr(scalar, part)
+            add_value(
+                (attr, *path),
+                scalar,
+                scope,
+                attr,
+                value._modello_bound_fields[source_fields[path]],
+            )
+    return ModelProblem(
+        model, name, tuple(ModelField(path, symbol) for path, symbol in fields.items()), tuple(constraints)
+    )

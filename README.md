@@ -84,11 +84,49 @@ and further composition. A posting is itself a holding state: its `quantity`
 and `cash` describe the result. Declare another posting as its `before`
 component to nest the operations and retain their complete equations.
 
+## Inspect a failed solve
+
+Conflicting observations, ambiguous candidates, and backend failures raise
+`ModelSolveError` with a snapshot of the problem. Match the failure to decide
+when to request a detailed report:
+
+```python
+from modello import ModelSolveError, SolutionCountError, SolverBackendError
+
+try:
+    FillPosting(
+        "reconcile",
+        before=opening,
+        fill=Execution("execution", quantity=2, price=100, fee=1),
+        after=HoldingState("closing", cash=800),
+    )
+except ModelSolveError as error:
+    match error:
+        case SolutionCountError(solution_count=0):
+            print(error.problem.analyse(conflicts=True))
+        case SolverBackendError(backend_error=cause):
+            print(f"Solver failed: {cause}")
+        case _:
+            print(error)
+```
+
+`SolutionCountError` exposes `solution_count` for retained candidates and
+`returned_count` before domain checks. Counts can describe symbolic families.
+A zero count alone does not prove a contradiction. Analysis looks for checked
+evidence and runs only when you ask
+for it. `print(error.problem)` shows the nested equations without running analysis.
+
+Catch `ModelloError` to handle Modello's validation and solve failures together,
+or use the specific classes in the
+[error reference](https://modello.readthedocs.io/en/latest/api.html#errors).
+
 Follow the [nested-model guide](https://modello.readthedocs.io/en/latest/nesting.html)
 for more examples of composition and symbolic inputs. The
 [examples directory](examples/) includes geometry, flow, portfolio analytics, and
 tax models. The [API reference](https://modello.readthedocs.io/en/latest/api.html)
 describes the available classes and functions.
+The [debugging guide](https://modello.readthedocs.io/en/latest/debugging.html)
+explains symbolic results, conflicting observations, and ambiguous solutions.
 
 The [portfolio research example](https://modello.readthedocs.io/en/latest/examples/portfolio/index.html)
 develops this pattern in one short walkthrough: nest transitions, join a
