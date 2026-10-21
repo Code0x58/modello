@@ -138,6 +138,7 @@ def check_wheel(
         "tests/examples/test_named_members.py",
         "tests/examples/test_symbolic.py",
         "tests/examples/test_data.py",
+        "tests/examples/reconcile_typing.py",
         "tests/examples/portfolio/typing_contracts.py",
     ):
         source = Path(__file__).resolve().parents[1] / path

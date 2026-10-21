@@ -7,6 +7,7 @@ observation. Diagnostic witnesses establish feasibility, never the true cause.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Generic, TypeVar, cast
 
@@ -41,12 +42,19 @@ DECIMAL_SHIFTS = (
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class Suspect:
     """An actual problem field and the hypotheses permitted for that field."""
 
     field: ModelField
-    mutations: tuple[Scale, ...] = DECIMAL_SHIFTS
+    mutations: tuple[Scale, ...]
+
+    def __init__(self, field: ModelField, mutations: Iterable[Scale] = DECIMAL_SHIFTS) -> None:
+        selected = tuple(mutations)
+        if not all(isinstance(mutation, Scale) for mutation in selected):
+            raise TypeError("Supply Scale hypotheses for each suspect field")
+        object.__setattr__(self, "field", field)
+        object.__setattr__(self, "mutations", selected)
 
 
 @dataclass(frozen=True)
@@ -57,12 +65,8 @@ class MutationTrial(Generic[Model]):
     original: Expr
     proposed: Expr
     mutations: tuple[Scale, ...]
+    problem: ModelProblem[Model]
     analysis: ProblemAnalysis
-
-    @property
-    def problem(self) -> ModelProblem[Model]:
-        """The modified snapshot, retaining all other constraints and domains."""
-        return self.analysis.problem
 
 
 @dataclass(frozen=True)
@@ -83,7 +87,7 @@ class MutationReport(Generic[Model]):
         return tuple(trial for trial in self.trials if trial.analysis.status == "unknown")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class Reconciliation(Generic[Model]):
     """An explicit suspect list; all other recorded observations stay fixed.
 
@@ -96,7 +100,12 @@ class Reconciliation(Generic[Model]):
     problem: ModelProblem[Model]
     suspects: tuple[Suspect, ...]
 
-    def __post_init__(self) -> None:
+    def __init__(self, problem: ModelProblem[Model], suspects: Iterable[Suspect]) -> None:
+        selected = tuple(suspects)
+        if not all(isinstance(suspect, Suspect) for suspect in selected):
+            raise TypeError("Supply Suspect records for this problem")
+        object.__setattr__(self, "problem", problem)
+        object.__setattr__(self, "suspects", selected)
         symbols = [suspect.field.symbol for suspect in self.suspects]
         if len(set(symbols)) != len(symbols):
             raise ValueError("Declare each suspect quantity once, including its aliases")
@@ -112,8 +121,6 @@ class Reconciliation(Generic[Model]):
                 or value.is_finite is not True
             ):
                 raise ValueError("Suspect inputs must be exact, finite real observations; use Rational for decimals")
-            if not all(isinstance(mutation, Scale) for mutation in suspect.mutations):
-                raise TypeError("Supply Scale hypotheses for each suspect field")
 
     def _observation(self, field: ModelField) -> ModelConstraint:
         if field not in self.problem.fields:
@@ -157,7 +164,9 @@ class Reconciliation(Generic[Model]):
                     ),
                     candidates=(),
                 )
-                trials.append(MutationTrial(suspect.field, original, proposed, tuple(mutations), trial.analyse()))
+                trials.append(
+                    MutationTrial(suspect.field, original, proposed, tuple(mutations), trial, trial.analyse())
+                )
         return MutationReport(baseline, tuple(trials))
 
     def infer(self, field: ModelField) -> SolutionFamily[Model]:

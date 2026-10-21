@@ -1,80 +1,26 @@
 Practical component models
-===========================
+==========================
 
-Component models are useful when the same relationships need to answer several
-questions: calculate a total, infer a missing input, check a measurement, or
-explain a discrepancy. The hierarchy supplies ownership and readable paths;
-the equations connect the parts. The observations determine the solving
-direction.
-
-The runnable examples below use only Modello and SymPy:
+A component owns a recognisable relationship; its parent connects parts and
+combined results. The observations determine which quantities are inferred.
+Run all three applications with:
 
 .. code-block:: console
 
    $ python -m examples.applications
 
-Choosing a useful boundary
---------------------------
+Invoice reconciliation
+----------------------
 
-A component should own a recognisable piece of mathematics: an invoice line,
-a production batch, or a resistor. A parent owns the connections and the
-combined result. These boundaries make both the original formulas and the
-location of an inferred value understandable.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 22 38 40
-
-   * - Application
-     - Components and connections
-     - Useful questions
-   * - Billing and procurement
-     - Lines, charges, and an invoice total
-     - What should the bill be? Which price would explain the received total?
-   * - Manufacturing
-     - Batch output connected to packaged mass
-     - How much feed is needed? What yield does measured output imply?
-   * - Electrical checks
-     - Resistors connected by shared current and summed voltage
-     - What current is expected? What resistance explains the measurements?
-   * - Inventory reconciliation
-     - Opening stock, receipts, shipments, and closing stock
-     - What missing receipt or shipment explains a physical count?
-   * - Energy accounting
-     - Equipment demand, operating time, and metered supply
-     - What operating time or efficiency explains the bill?
-   * - Loan schedules
-     - Balance, interest accrual, and payment periods
-     - What payment, rate, or missing posting explains the closing balance?
-   * - Trade reconciliation
-     - Contract terms, market marks, cashflows, and PnL
-     - Which input changes could explain a trusted result? See
-       :doc:`../reconciliation/index`.
-
-The first three applications are implemented here. The other rows suggest
-extensions of the same pattern; each needs its own explicit conventions.
-
-Invoice reconciliation through three levels
---------------------------------------------
-
-An invoice contains an item group, which contains separately named parts and
-labour lines. Each line owns its quantity-price relationship:
+An invoice contains an item group and named parts and labour lines:
 
 .. literalinclude:: ../../../examples/applications.py
-   :pyobject: InvoiceLine
+   :start-at: class InvoiceLine
+   :end-before: class Batch
    :language: python
 
-.. literalinclude:: ../../../examples/applications.py
-   :pyobject: InvoiceItems
-   :language: python
-
-.. literalinclude:: ../../../examples/applications.py
-   :pyobject: Invoice
-   :language: python
-
-All amounts use one currency. The synthetic tax applies to both items and
-shipping, with no rounding. This is a modelling example, rather than a statement
-of any jurisdiction's tax rules.
+All amounts use one currency. The synthetic tax rate applies to items and
+shipping, with no rounding or jurisdiction-specific rules.
 
 >>> from sympy import Rational
 >>> from examples.applications import Invoice, InvoiceItems, InvoiceLine
@@ -87,8 +33,8 @@ of any jurisdiction's tax rules.
 >>> billed.items.subtotal, billed.tax, billed.total
 (180, 37, 222)
 
-Now trust the received total and omit a suspect unit price. The constraint
-travels from the invoice through the item group into the parts line:
+Trust the total and omit a suspect price. The constraint reaches through all
+three levels, while the original partial component stays symbolic:
 
 >>> partial = InvoiceLine("parts", quantity=10)
 >>> reconciled = Invoice(
@@ -100,36 +46,24 @@ travels from the invoice through the item group into the parts line:
 >>> bool(partial.unit_price.free_symbols)
 True
 
-The inferred price is an explanation conditional on the other observations.
-If both the quantity and price are suspect, the total alone generally cannot
-identify which was wrong. The original component remains unchanged.
+The :doc:`reconciliation framework <../reconciliation/framework>` first tries
+common entry errors. Its examples check GBX/GBP price units and a 25-item lot
+size. If both quantity and price are suspect, a total alone may admit several
+explanations.
 
-Before freely inferring a price, the :doc:`reconciliation framework
-<../reconciliation/framework>` can try common decimal shifts and configured
-quote-unit corrections. The runnable application also demonstrates a GBX/GBP
-price hypothesis and a 25-item lot-size hypothesis for quantity.
+Material requirements and yield
+-------------------------------
 
-Material requirements and measured yield
------------------------------------------
-
-Production and packaging can be separate models, connected by conservation of
-saleable material. The nonnegative waste field constrains yield to at most one:
+A batch owns mass balance; packaging owns pack count and size. The parent
+connects saleable output to packed mass:
 
 .. literalinclude:: ../../../examples/applications.py
-   :pyobject: Batch
+   :start-at: class Batch
+   :end-before: class Resistor
    :language: python
 
-.. literalinclude:: ../../../examples/applications.py
-   :pyobject: Packaging
-   :language: python
-
-.. literalinclude:: ../../../examples/applications.py
-   :pyobject: ProductionOrder
-   :language: python
-
-The first ``packed_mass`` assignment aliases the packaging output. The second
-equates it with the batch's good mass. There is no leftover material in this
-model; add an explicit inventory component if there can be leftovers.
+The first ``packed_mass`` assignment aliases the packaging output; the second
+equates it with batch output. There is no leftover saleable material.
 
 >>> from examples.applications import Batch, Packaging, ProductionOrder
 >>> packs = Packaging("packs", units=180, mass_per_unit=Rational(1, 2))
@@ -142,23 +76,20 @@ model; add an explicit inventory component if there can be leftovers.
 >>> measured.batch.yield_fraction
 9/10
 
-Masses are in kg. Packaging uses a positive integer count: an implied fractional
-pack fails the model rather than being silently rounded. Output exceeding feed
-also fails because it requires negative waste. Procurement minimums and
-discrete purchasing choices would need additional constraints or an optimiser.
+Masses are in kg. Nonnegative waste limits yield to at most one; packaging
+requires an integer number of units. Output exceeding feed or a fractional
+pack count fails the model. Leftovers or procurement minimums need additional
+relationships.
 
-Circuit design and measurement checks
---------------------------------------
+Circuit measurements
+--------------------
 
-A resistor owns Ohm's law and its power equation. The circuit supplies the
-series connection:
-
-.. literalinclude:: ../../../examples/applications.py
-   :pyobject: Resistor
-   :language: python
+Each ideal resistor owns Ohm's law and power. The series circuit supplies a
+shared current and sums voltage drops:
 
 .. literalinclude:: ../../../examples/applications.py
-   :pyobject: SeriesCircuit
+   :start-at: class Resistor
+   :end-before: def main
    :language: python
 
 >>> from examples.applications import Resistor, SeriesCircuit
@@ -174,34 +105,21 @@ series connection:
 >>> measured.second.resistance
 200
 
-The units are amperes, volts, ohms, and watts. These are ideal, steady DC
-relationships. Measurement uncertainty can be represented with bounded
-observations using the :doc:`solution-family API </solutions>`; a statistical
-calibration needs a defined error model and fitting criterion.
+Units are amperes, volts, ohms, and watts under steady DC assumptions.
+:doc:`Solution families </solutions>` can retain bounded measurements;
+statistical calibration needs an explicit error model.
 
-What the approach provides, and what to add
--------------------------------------------
+Choosing model boundaries
+-------------------------
 
-The strongest fit is a modest, auditable system of algebraic relationships
-whose observations change between tasks. Nested components retain their types,
-names, equations, and symbolic dependencies. Shared quantities require explicit
-equations: supplying the same instance twice copies its values into independent
-component scopes. The :doc:`nesting guide </nesting>` explains those mechanics.
+The same pattern suits stock balances, metered energy, and loan-payment
+reconciliation: define the parts' equations, then connect them in a parent.
+Quantities need explicit connections; reusing an instance copies its values
+into independent scopes. All components are solved jointly, so a larger
+hierarchy can increase symbolic solver cost. See :doc:`/nesting`.
 
-Component boundaries do not partition the solve into independent subproblems.
-The whole hierarchy is solved jointly, so expanding it can increase symbolic
-solver cost. Keep external data loading, calendars, and reporting separate from
-the equations, as the :doc:`portfolio example <../portfolio/index>` does.
-
-Declare domains deliberately, keep units and sign conventions explicit, and
-use exact values such as ``Rational`` when exploring solution families. The
-library does not automatically check dimensions, convert currencies, apply
-business rounding, optimise an objective, or assign probabilities to possible
-answers. Mutation also does not recalculate a model.
-
-For reconciliation, distinguish original observations from copied results.
-Supplying a solved component retains its inferred values as constraints.
-Removing one original scalar from elsewhere does not remove those constraints.
-Rebuild from the original observations, or expose scalar observation aliases on
-a parent with otherwise symbolic children. The next example uses that second
-approach to make individual release trials precise.
+Keep units, signs, rounding, and external data conventions explicit. Modello
+solves the supplied equations; it does not automatically supply those rules or
+recalculate after attribute mutation. For reconciliation, copied inferred
+results remain constraints too. Prepare from original observations with
+symbolic dependent values, as in the :doc:`CDS example <../reconciliation/index>`.

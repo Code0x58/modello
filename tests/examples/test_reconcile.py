@@ -44,6 +44,21 @@ def test_cds_common_error_scan_does_not_use_inverse_solution_families(monkeypatc
     assert match.analysis.witness.candidate.value(problem.field("pnl")) == 51_000
 
 
+@pytest.mark.parametrize("as_iterator", [False, True])
+def test_configuration_is_captured_once_and_does_not_follow_caller_changes(as_iterator):
+    problem = sample_problem()
+    mutations = [Scale("x10", 10)]
+    rules = iter(mutations) if as_iterator else mutations
+    suspects = [Suspect(problem.field("signed_notional"), rules)]
+    study = Reconciliation(problem, iter(suspects) if as_iterator else suspects)
+    mutations.clear()
+    suspects.clear()
+    for _ in range(2):
+        (match,) = study.scan().matches
+        assert match.proposed == 10_000_000
+        assert match.problem is match.analysis.problem
+
+
 def test_nested_scalar_trial_keeps_sibling_observations_and_source_snapshot():
     problem = trade_problem()
     quantity = problem.field("terms", "quantity")
