@@ -128,6 +128,7 @@ def check_solution_families() -> None:
     condition: SymbolicCondition = symbols.extent > 0
     family.where(condition, True)
     family.observe(line=Line("line", start=Point("start", x=2)))
+    _section: SolutionFamily[Drawing] = family.section(start.x, through=case)
     family.observe(line={"start": {"x": 2}})  # type: ignore[arg-type]
     family.observe(extent=[])  # type: ignore[arg-type]
     problem.solutions("line.start.x")  # type: ignore[arg-type]
@@ -137,7 +138,11 @@ def check_solution_families() -> None:
     family.where([True])  # type: ignore[arg-type]
     family.where("extent > 0")  # type: ignore[arg-type]
     family.where(1)  # type: ignore[arg-type]
+    family.section("line.start.x", through=case)  # type: ignore[arg-type]
+    family.section(start.x, through=Line("line"))  # type: ignore[arg-type]
+    family.section(start.x, through={})  # type: ignore[arg-type]
     _wrong_symbols: Line = problem.symbols  # type: ignore[assignment]
     _wrong_component: Box = family.symbols.line.start  # type: ignore[assignment]
     _unknown = symbols.line.start.missing  # type: ignore[attr-defined]
     _wrong: Line = family.one()  # type: ignore[assignment]
+    _wrong_section: SolutionFamily[Line] = family.section(start.x, through=case)  # type: ignore[assignment]

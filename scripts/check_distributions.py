@@ -124,6 +124,7 @@ def check_wheel(
         "examples.portfolio",
         "examples.portfolio.optimal_execution",
         "examples.solution_families",
+        "examples.solution_views",
     ):
         arguments = [str(python), "-I", "-m", module]
         if module == "examples.portfolio":

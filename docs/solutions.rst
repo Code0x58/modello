@@ -107,6 +107,30 @@ The :doc:`impact calibration example <examples/solution_families/index>` uses a
 bounded measurement to constrain a parameter and predict another trade's cost.
 Such sets describe possibilities, without assigning probabilities to them.
 
+Take a section through a reference
+----------------------------------
+
+``section(..., through=case)`` lets selected current coordinates vary and fixes
+the others at a checked model instance. Derived outputs follow the model's
+equations. With no selected coordinates, the result is the reference point:
+
+>>> point = family.section(through=chosen)
+>>> point.values(check.reading.x, check.total)
+{(2, 5)}
+
+Pass symbols such as ``check.reading.x`` to let those coordinates vary. Aliases
+of the same coordinate are counted once. Selecting every current coordinate
+returns the original family after checking the reference. Use ``values(...)``
+to project all remaining states onto outputs; a section instead restricts the
+states by fixing omitted coordinates.
+
+The reference must satisfy the original equations, declared domains, and added
+conditions. A proven violation raises ``ModelValidationError``; an undecided
+check raises ``UnresolvedSolutionError`` with the candidate audit. A section can
+still be discrete or coupled, so the number of selected coordinates does not
+certify its dimension. The example also explores small combinations of controls
+and their response plots.
+
 Continue after an exception
 ----------------------------
 
@@ -202,6 +226,8 @@ Reference
 .. automethod:: SolutionFamily.where
 
 .. automethod:: SolutionFamily.observe
+
+.. automethod:: SolutionFamily.section
 
 .. automethod:: SolutionFamily.cases
 

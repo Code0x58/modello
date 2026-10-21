@@ -47,11 +47,13 @@ from sympy.solvers.solveset import NonlinearError
 
 from modello.diagnostics import (
     Candidate,
+    CandidateCheck,
     ConstraintKind,
     FieldValue,
     ModelField,
     ModelProblem,
     ModelT,
+    Verdict,
     _canonical_fields,
     _domain,
     _FieldPrinter,
@@ -59,7 +61,7 @@ from modello.diagnostics import (
 from modello.errors import ModelInputError, ModelValidationError, SolutionSelectionError, UnresolvedSolutionError
 
 if TYPE_CHECKING:
-    from modello import Modello, ScalarValue, SymbolicCondition
+    from modello import Modello, ScalarValue, SymbolicCondition, SymbolicScalar
 
 
 @dataclass(frozen=True)
@@ -439,6 +441,57 @@ class SolutionFamily(Generic[ModelT]):
             self._scalar(constraint.right)
         return self._prepare(problem, self._preferred, self.conditions)
 
+    def _check_state(self, candidate: Candidate) -> tuple[CandidateCheck, Verdict]:
+        """Combine the original model audit with the family's added relations."""
+        check = self.problem.check(candidate)
+        assignment = {value.field.symbol: value.value for value in candidate.values}
+        conditions = tuple(_evaluate_predicates(condition.xreplace(assignment)) for condition in self.conditions)
+        if check.verdict == "violated" or any(condition is S.false for condition in conditions):
+            return check, "violated"
+        if check.verdict == "satisfied" and all(condition is S.true for condition in conditions):
+            return check, "satisfied"
+        return check, "unknown"
+
+    def section(self, *controls: SymbolicScalar, through: ModelT) -> SolutionFamily[ModelT]:
+        """Vary chosen coordinates and fix all other coordinates at a checked case.
+
+        Outputs follow the original equations. A section can remain coupled or
+        discrete: the number of selected coordinates is not its dimension.
+        """
+        fields = {field.symbol: field for field in self.parameters}
+        selected = []
+        for control in controls:
+            if not isinstance(control, Symbol):
+                raise ModelInputError("Section controls must be remaining coordinate symbols")
+            field = fields.get(control)
+            if field is None:
+                if not any(field.symbol == control for field in self.problem.fields):
+                    raise ModelValidationError("The coordinate belongs to another model problem; use family.symbols")
+                raise ModelInputError(
+                    "Section controls must be remaining coordinates; dependent outputs follow the model"
+                )
+            if field not in selected:
+                selected.append(field)
+        if not isinstance(through, self.problem.model):
+            raise ModelInputError(f"The reference state must be a {self.problem.model.__name__} instance")
+        values = []
+        for field in self.problem.fields:
+            value: object = through
+            try:
+                for part in field.path:
+                    value = getattr(value, part)
+            except AttributeError as error:
+                raise ModelInputError(f"The reference state is missing {'.'.join(field.path)}") from error
+            values.append(FieldValue(field, _exact_scalar(value)))
+        candidate = Candidate(tuple(values))
+        check, verdict = self._check_state(candidate)
+        if verdict == "violated":
+            raise ModelValidationError("The reference state must satisfy the model and all family observations")
+        if verdict != "satisfied":
+            raise UnresolvedSolutionError(self, "The reference state could not be verified.", check)
+        fixed = tuple(Eq(field.symbol, candidate.value(field)) for field in self.parameters if field not in selected)
+        return self._prepare(self.problem, tuple(selected), (*self.conditions, *fixed)) if fixed else self
+
     def cases(self) -> tuple[ModelT, ...]:
         """Materialize a finite family as independently bound, checked models.
 
@@ -462,11 +515,8 @@ class SolutionFamily(Generic[ModelT]):
                 FieldValue(binding.field, binding.expression.xreplace(replacements)) for binding in self._bindings
             )
             candidate = Candidate(values)
-            check = self.problem.check(candidate)
-            assignment = {value.field.symbol: value.value for value in values}
-            if check.verdict != "satisfied" or any(
-                _evaluate_predicates(condition.xreplace(assignment)) is not S.true for condition in self.conditions
-            ):
+            check, verdict = self._check_state(candidate)
+            if verdict != "satisfied":
                 raise UnresolvedSolutionError(self, "A state could not be verified against the original model.", check)
             fresh = inspect_model(self.problem.model, self.problem.name)
             fields = {field.path: field.symbol for field in fresh.fields}

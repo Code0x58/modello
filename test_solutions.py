@@ -94,6 +94,13 @@ def test_continuous_and_empty_families_retain_selection_error_context():
     with pytest.raises(SolutionSelectionError) as no_point:
         empty.one()
     assert no_point.value.solution_count == 0
+    reference = Check("reference", reading=Reading("reading", x=2))
+    assert band.section(through=reference).one().total == 5
+    with pytest.raises(ModelValidationError):
+        band.section(through=Check("outside the band", reading=Reading("reading", x=3)))
+    reference.total = 6
+    with pytest.raises(ModelValidationError):
+        band.section(through=reference)
 
 
 def test_typed_symbol_tree_and_nested_observations_share_constructor_provenance():
@@ -129,6 +136,9 @@ def test_typed_symbol_tree_and_nested_observations_share_constructor_provenance(
     assert family.observe(alias=3).cases() == ()
     with pytest.raises(ModelInputError, match="Check instance"):
         family.observe(left={"reading": {"x": 2}})
+    section = problem.solutions().section(symbols.alias, symbols.left.reading.x, through=case)
+    assert tuple(field.symbol for field in section.parameters) == (symbols.left.reading.x,)
+    assert section.expression(symbols.left.total) == symbols.left.reading.x**2 + 1
 
 
 def test_affine_joining_equations_and_preferred_coordinates():
@@ -167,6 +177,8 @@ def test_inconsistent_affine_observations_produce_an_empty_joint_family():
 
 
 def test_multivariate_fallback_keeps_the_joint_relation():
+    from examples.solution_views import ModelViews
+
     class Circle(Modello):
         x = InstanceDummy("x", real=True)
         y = InstanceDummy("y", real=True)
@@ -182,6 +194,48 @@ def test_multivariate_fallback_keeps_the_joint_relation():
     assert joint.contains(Tuple(0, 1)) is S.true
     assert joint.contains(Tuple(0, 0)) is S.false
     assert family.observe(x=0, y=1).one().squared_radius == 1
+    reference = Circle("reference", x=1, y=0)
+    section = family.section(x, through=reference)
+    assert {case.x for case in section.cases()} == {-1, 1}
+    views = tuple(ModelViews(family, through=reference).sections())
+    whole = next(view for view in views if len(view.controls) == 2)
+    assert whole.control_dimension is None
+    assert whole.image_dimension(x, y) is None
+    discrete = next(view for view in views if view.controls == (p.field("x"),))
+    assert discrete.control_dimension == discrete.image_dimension(x) == 0
+
+
+def test_model_views_follow_dependencies_and_measure_images_without_pointwise_rank():
+    from itertools import combinations
+
+    from sympy import diff
+
+    from examples.solution_families import Execution
+    from examples.solution_views import ModelViews
+
+    problem = inspect_model(Execution, "views", reference=100)
+    execution = problem.symbols
+    quantity, impact, fee = execution.quantity, execution.impact, execution.fee
+    controls = (quantity, impact, fee)
+    family = problem.solutions(*controls)
+    reference = Execution("reference", quantity=5, reference=100, impact=Rational(1, 2), fee=1)
+    views = tuple(ModelViews(family, through=reference).sections())
+    assert {tuple(field.symbol for field in view.controls) for view in views} == {
+        selected for size in range(1, 4) for selected in combinations(controls, size)
+    }
+    whole = next(view for view in views if len(view.controls) == 3)
+    cost = whole.family.expression(execution.cost)
+    assert diff(cost, fee) == 1
+    assert diff(cost, impact) == quantity**2
+    assert whole.control_dimension == 3
+    assert whole.image_dimension(execution.price, execution.cost) == 2
+    assert whole.image_dimension(execution.price, execution.price, execution.reference) == 1
+    assert whole.image_dimension(execution.reference) == 0
+    reading = inspect_model(Reading, "stationary reference")
+    x = reading.symbols.x
+    bounded = reading.solutions().where(x >= -1, x <= 1)
+    view = next(ModelViews(bounded, through=Reading("zero", x=0)).sections())
+    assert view.control_dimension == view.image_dimension(reading.symbols.squared) == 1
 
 
 @pytest.mark.parametrize(
@@ -308,6 +362,7 @@ def test_materialisation_does_not_accept_an_undecided_candidate_audit(monkeypatc
     from modello import ModelProblem
 
     p = inspect_model(Reading, "point", x=2)
+    reference = Reading("reference", x=2)
     check = ModelProblem.check
 
     def undecided(self, candidate):
@@ -319,6 +374,10 @@ def test_materialisation_does_not_accept_an_undecided_candidate_audit(monkeypatc
         family.one()
     assert caught.value.check.verdict == "unknown"
     assert caught.value.family is family
+    with pytest.raises(UnresolvedSolutionError) as section:
+        family.section(through=reference)
+    assert section.value.check.verdict == "unknown"
+    assert section.value.family is family
 
 
 def test_unsupported_expression_kinds_fail_with_owned_input_errors():
@@ -347,12 +406,14 @@ def test_inputs_use_owned_fields_and_exact_scalars():
     p = inspect_model(Reading, "case")
     family = p.solutions()
     other = inspect_model(Reading, "case").symbols.x
+    reference = Reading("reference", x=2)
     for operation in (
         lambda: p.solutions(other),
         lambda: family.values(other),
         lambda: family.observe(x=other),
         lambda: family.expression(other),
         lambda: family.where(other > 0),
+        lambda: family.section(other, through=reference),
     ):
         with pytest.raises(ModelValidationError, match="another model problem"):
             operation()
@@ -370,6 +431,10 @@ def test_inputs_use_owned_fields_and_exact_scalars():
         family.values()
     with pytest.raises(ModelInputError, match="field symbols"):
         p.solutions(p.symbols.x + 1)
+    with pytest.raises(ModelInputError):
+        family.section(p.symbols.squared, through=reference)
+    with pytest.raises(ModelInputError):
+        family.section(p.symbols.x, through=Check("other type", reading=reference))
     with pytest.raises(ModelInputError, match="relations"):
         family.where(p.symbols.x + 1)
     for operation in (family.expression, family.values, family.where):
