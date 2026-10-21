@@ -145,8 +145,8 @@ python -m examples.reconciliation
 ```
 
 The [reference-data scenario](docs/examples/reconciliation/reference_data.rst)
-checks a previous RED pair's cached inputs against confirmed contract terms
-and the requested market-data date before changing trade fields.
+bundles each source's assumptions into a market component, then swaps components
+to test a previous RED pair's inputs against trusted PnL with trade terms fixed.
 
 The [portfolio research example](https://modello.readthedocs.io/en/latest/examples/portfolio/index.html)
 develops this pattern in one short walkthrough: nest transitions, join a

@@ -6,13 +6,12 @@ It omits accrual on default, schedules, curve calibration, and settlement
 conventions. See the documentation for the precise scope and sign conventions.
 """
 
-from dataclasses import dataclass, fields, replace
 from datetime import date
 
 from sympy import Rational, S
 
 from examples.reconcile import Reconciliation, Suspect
-from modello import FieldValue, InstanceDummy, Modello, ModelProblem, ScalarValue, component, inspect_model
+from modello import FieldValue, InstanceDummy, Modello, ModelProblem, component, inspect_model
 
 
 class CDSTerms(Modello):
@@ -26,7 +25,7 @@ class CDSTerms(Modello):
 
 
 class CreditPeriod(Modello):
-    """Trusted one-period market inputs, with survival constrained to [0, 1]."""
+    """One-period market assumptions, with survival constrained to [0, 1]."""
 
     discount = InstanceDummy("discount", positive=True)
     survival = InstanceDummy("survival", nonnegative=True)
@@ -90,94 +89,60 @@ def sample_problem() -> ModelProblem[CDSPnL]:
     )
 
 
-@dataclass(frozen=True)
-class CDSKey:
-    """Example market-data key; RED identifiers alone are not a full contract."""
+class PreviousREDMarket(CreditPeriod):
+    """Synthetic source snapshot: pricing assumptions and their provenance.
 
-    entity_code: str
-    pair_code: str
-    currency: str
-    definitions: str
-    seniority: str
-    restructuring: str
-    maturity: date
-
-
-@dataclass(frozen=True)
-class CDSParameters:
-    """One dated source bundle; identifiers stay outside the symbolic algebra."""
-
-    key: CDSKey
-    as_of: date
-    survival: ScalarValue
-    discount: ScalarValue = 1
-    year_fraction: ScalarValue = 1
-
-    def market(self) -> CreditPeriod:
-        """Build fresh pricing inputs from this entire bundle."""
-        return CreditPeriod(
-            "source market", survival=self.survival, discount=self.discount, year_fraction=self.year_fraction
-        )
-
-
-@dataclass(frozen=True)
-class ReferenceCase:
-    """Confirmed lookup coordinates, loaded inputs, and available source rows."""
-
-    confirmed: CDSKey
-    as_of: date
-    loaded: CDSParameters
-    available: tuple[CDSParameters, ...]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "available", tuple(self.available))
-
-    @property
-    def mismatches(self) -> tuple[str, ...]:
-        """Compare provenance with independently confirmed lookup coordinates."""
-        names = tuple(
-            field.name
-            for field in fields(CDSKey)
-            if getattr(self.loaded.key, field.name) != getattr(self.confirmed, field.name)
-        )
-        return (*names, "as_of") if self.loaded.as_of != self.as_of else names
-
-    def select(self) -> CDSParameters:
-        """Require one complete-key and date match; never select by matching PnL."""
-        matches = tuple(row for row in self.available if row.key == self.confirmed and row.as_of == self.as_of)
-        if len(matches) != 1:
-            raise ValueError(f"Expected one parameter bundle for the confirmed key and date, found {len(matches)}")
-        return matches[0]
-
-    def problem(self, parameters: CDSParameters) -> ModelProblem[CDSPnL]:
-        """Reprice this fixture with fixed trade terms and a chosen source bundle."""
-        return inspect_model(
-            CDSPnL,
-            "reference-data break",
-            opening=CDSMark(
-                "opening",
-                market=CreditPeriod("opening market", discount=1, survival=Rational(98, 100), year_fraction=1),
-            ),
-            closing=CDSMark("closing", market=parameters.market()),
-            signed_notional=10_000_000,
-            coupon_bps=100,
-            recovery=Rational(2, 5),
-            cashflow=-10_000,
-            pnl=51_000,
-        )
-
-
-def stale_reference_case() -> ReferenceCase:
-    """Synthetic sovereign: same entity, different pair, and an old cached row.
-
-    DEMO identifiers are placeholders, not licensed RED codes. The new pair is
-    supplied by the confirmed reference mapping, not inferred from the PnL.
-    A pair change itself has no pricing effect; the stale numerical inputs do.
+    DEMO identifiers are placeholders, not licensed RED codes. Strings and
+    dates are ordinary class metadata; numerical assumptions are equations.
     """
-    confirmed = CDSKey("DEMO:ENTITY", "DEMO:PAIR:CURRENT", "USD", "2014", "senior", "CR", date(2027, 1, 5))
-    loaded = CDSParameters(replace(confirmed, pair_code="DEMO:PAIR:OLD"), date(2026, 1, 2), Rational(39, 40))
-    current = CDSParameters(confirmed, date(2026, 1, 5), Rational(97, 100))
-    return ReferenceCase(confirmed, current.as_of, loaded, (loaded, current))
+
+    entity_code = "DEMO:ENTITY"
+    pair_code = "DEMO:PAIR:OLD"
+    as_of = date(2026, 1, 2)
+    currency = "USD"
+    definitions = "2014"
+    seniority = "senior"
+    restructuring = "CR"
+    maturity = date(2027, 1, 5)
+    discount = S.One
+    survival = Rational(39, 40)
+    year_fraction = S.One
+
+
+class CurrentREDMarket(PreviousREDMarket):
+    """Alternative source snapshot for the same entity and another RED pair."""
+
+    pair_code = "DEMO:PAIR:CURRENT"
+    as_of = date(2026, 1, 5)
+    survival = Rational(97, 100)
+
+
+def reference_problem(market_model: type[CreditPeriod]) -> ModelProblem[CDSPnL]:
+    """Swap the closing source component; retain trade terms and trusted PnL.
+
+    Refine the component declarations so the chosen source's equations and
+    class metadata remain available throughout the composed model.
+    """
+
+    class ClosingMark(CDSMark):
+        market = component(market_model)
+
+    class ReferencePnL(CDSPnL):
+        closing = component(ClosingMark)
+
+    return inspect_model(
+        ReferencePnL,
+        "reference-data break",
+        opening=CDSMark(
+            "opening",
+            market=CreditPeriod("opening market", discount=1, survival=Rational(98, 100), year_fraction=1),
+        ),
+        signed_notional=10_000_000,
+        coupon_bps=100,
+        recovery=Rational(2, 5),
+        cashflow=-10_000,
+        pnl=51_000,
+    )
 
 
 def main() -> None:
@@ -210,15 +175,12 @@ def main() -> None:
         print(f"  {'.'.join(match.field.path)}: {checked.values(match.field)}")
     print("Alternatives explain the number; confirm any correction against independent records.")
 
-    reference = stale_reference_case()
-    stale = reference.problem(reference.loaded).without("pnl").solutions().one()
-    selected = reference.select()
-    refreshed = reference.problem(selected).solutions().one()
-    print("Stale reference-data example (synthetic identifiers):")
-    print("  Mismatched source fields:", ", ".join(reference.mismatches))
-    print(f"  Loaded: {reference.loaded.key.pair_code}, as of {reference.loaded.as_of}, PnL={stale.pnl}")
-    print(f"  Confirmed: {selected.key.pair_code}, as of {selected.as_of}, PnL={refreshed.pnl}")
-    print("  Rebuilt the market-input bundle; trade terms and trusted PnL stayed fixed.")
+    print("Alternative source components (synthetic identifiers):")
+    for market in (PreviousREDMarket, CurrentREDMarket):
+        source_trial = reference_problem(market)
+        calculated = source_trial.without("pnl").solutions().one()
+        print(f"  {market.pair_code}, as of {market.as_of}: PnL={calculated.pnl}, {source_trial.analyse().status}")
+    print("  Trade terms and trusted PnL stayed fixed. Confirm the source independently before accepting it.")
 
 
 if __name__ == "__main__":

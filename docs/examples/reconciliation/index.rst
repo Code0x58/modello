@@ -4,8 +4,8 @@ Investigate a trade PnL break
 Keep a trusted output fixed, try common entry mistakes on selected fields, then
 use inverse solving if those hypotheses do not explain the break. This example
 uses a one-period CDS model; the reusable API is described in :doc:`framework`.
-The :doc:`reference-data scenario <reference_data>` shows a stale parameter
-bundle selected through a previous RED pair, with confirmed trade terms fixed.
+The :doc:`source-component scenario <reference_data>` swaps market assumptions
+from a previous RED pair for an alternative component, with trade terms fixed.
 
 .. code-block:: console
 
