@@ -90,7 +90,7 @@ Check('conflict')
   c4: self.total = 6 [input 'total']
   reading: Reading
     c1: self.reading.squared = self.reading.x**2 [definition]
-    c2: self.reading.x = 2 [observed in 'reading']
+    c2: self.reading.x = 2 [input 'reading']
     c3: self.reading.squared = 4 [inferred in 'reading']
 
 Here the child fixes ``x = 2``, so its square is 4 and the parent's total must
@@ -99,7 +99,9 @@ cannot repair that contradiction.
 
 The snapshot uses ``self.`` paths for model fields. Copied component values
 retain whether they were supplied or inferred during construction: ``x = 2``
-was observed when building ``known``, while ``squared = 4`` was inferred.
+was an input when building ``known``, while ``squared = 4`` was inferred.
+Supplying ``known`` as ``reading`` to ``Check`` preserves that distinction:
+``x`` remains an input, grouped under the ``reading`` argument.
 The distinction comes from the actual construction inputs, so solving a
 positive reading backwards from ``squared=4`` instead marks ``x`` as inferred.
 Aliased fields share a quantity and may appear

@@ -64,7 +64,7 @@ Exact checks do not infer domain restrictions erased before capture by Python,
 SymPy, or model-definition simplification. Declare requirements such as a
 nonzero denominator explicitly when they belong to the mathematical model.
 
-Copied component values retain a construction-time distinction: ``observation``
+Copied component values retain a construction-time distinction: ``input``
 means the quantity was explicitly supplied, while ``inferred`` means it was a
 construction result. Those results can still be symbolic. This is recorded
 from actual constructor observations, including aliases and nested components;
@@ -97,7 +97,7 @@ solve expressions, so this is not a wall-clock timeout. Field queries,
 component views, snapshot formatting, and ordinary exception formatting do not
 run analysis. Preparation is shared with construction rather than rebuilding
 an approximate diagnostic model. Numeric model results are unchanged by analysis.
-Successful instances retain the observed field identities needed to preserve
+Successful instances retain the input field identities needed to preserve
 this distinction when their values are copied into another model.
 
 Research and SymPy foundations

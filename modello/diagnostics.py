@@ -54,14 +54,14 @@ class ModelField:
 class ModelConstraint:
     """An equation's origin, original sides, and optional constructor-input group.
 
-    Copied component values distinguish observations supplied during construction
-    from inferred results. ``input`` groups both under the component argument;
+    Copied component values distinguish supplied inputs from inferred results.
+    ``input`` groups both under the component argument;
     it does not mean that each copied value was supplied explicitly.
     """
 
     index: int
     path: FieldPath
-    kind: Literal["definition", "observation", "inferred"]
+    kind: Literal["definition", "input", "inferred"]
     left: Symbol
     right: Basic
     input: str | None = None
@@ -277,10 +277,8 @@ class ModelProblem:
                 source = "definition"
             elif c.kind == "inferred":
                 source = f"inferred in {c.input!r}"
-            elif len(c.path) > 1:
-                source = f"observed in {c.input!r}"
             else:
-                source = f"input {c.input!r}"
+                source = f"{c.kind} {c.input!r}"
             entries.append((c.path[:-1], f"c{c.index}: self.{'.'.join(c.path)} = {self.format(c.right)} [{source}]"))
         return self._tree_lines(tuple(entries), indent)
 

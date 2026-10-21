@@ -236,7 +236,7 @@ class Modello(metaclass=ModelloMeta):
     _modello_class_constraints: ClassVar[tuple[tuple[InstanceDummy, Basic], ...]] = ()
     _modello_constraint_paths: ClassVar[tuple[FieldPath, ...]] = ()
     _modello_instance_dummies: dict[InstanceDummy, BoundInstanceDummy]
-    _modello_observed_fields: frozenset[InstanceDummy]
+    _modello_input_fields: frozenset[InstanceDummy]
 
     def __init__(self, name: str, **value_map: ScalarValue | Modello) -> None:
         """Accept scalar values and compatible child model instances."""
@@ -287,13 +287,13 @@ class Modello(metaclass=ModelloMeta):
             )
             raise ModelSolveError(problem, len(candidates), snapshots)
         solution = candidates[0]
-        observed = {c.left for c in problem.constraints if c.kind == "observation"}
+        input_symbols = {c.left for c in problem.constraints if c.kind == "input"}
 
         def populate(instance: Modello, model: type[Modello], prefix: FieldPath) -> None:
             """Materialize descendants directly from the one shared solution."""
             instance._modello_instance_dummies = {d: fields[prefix + path] for path, d in model._modello_fields.items()}
-            instance._modello_observed_fields = frozenset(
-                d for path, d in model._modello_fields.items() if fields[prefix + path] in observed
+            instance._modello_input_fields = frozenset(
+                d for d, bound in instance._modello_instance_dummies.items() if bound in input_symbols
             )
             for attr in model._modello_namespace.dummies:
                 bound = fields[prefix + (attr,)]
@@ -343,7 +343,7 @@ def inspect_model(model: type[Modello], name: str, /, **value_map: ScalarValue |
         raw: object,
         scope: dict[InstanceDummy, BoundInstanceDummy],
         group: str,
-        kind: Literal["observation", "inferred"] = "observation",
+        kind: Literal["input", "inferred"] = "input",
     ) -> None:
         try:
             value = simplify(raw)
@@ -380,10 +380,13 @@ def inspect_model(model: type[Modello], name: str, /, **value_map: ScalarValue |
             scalar: object = value
             for part in path:
                 scalar = getattr(scalar, part)
-            kind: Literal["observation", "inferred"] = (
-                "observation" if source_fields[path] in value._modello_observed_fields else "inferred"
+            add_value(
+                (attr, *path),
+                scalar,
+                scope,
+                attr,
+                "input" if source_fields[path] in value._modello_input_fields else "inferred",
             )
-            add_value((attr, *path), scalar, scope, attr, kind)
     return ModelProblem(
         model, name, tuple(ModelField(path, symbol) for path, symbol in fields.items()), tuple(constraints)
     )

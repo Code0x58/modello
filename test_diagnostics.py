@@ -68,7 +68,7 @@ def test_snapshot_preserves_aliases_origins_and_component_boundaries(monkeypatch
     assert p.at().owned_constraints == p.constraints
     assert "ModelProblem(Joined" in repr(p)
     assert "  left: Reading\n    c1: self.left.squared = self.alias**2 [definition]" in str(p)
-    assert {c.input for c in p.constraints if c.kind == "observation"} == {"left", "gap"}
+    assert {c.input for c in p.constraints if c.kind == "input"} == {"left", "gap"}
     with pytest.raises(FrozenInstanceError):
         p.name = "changed"
     with pytest.raises(KeyError):
@@ -237,24 +237,28 @@ def test_component_relaxations_remove_all_copied_values_together():
     assert not any(c.input == "reading" for c in p.without("reading").constraints)
 
 
-def test_copied_values_retain_construction_observations_in_both_solve_directions():
+def test_copied_values_retain_construction_inputs_in_both_solve_directions():
+    direct = inspect_model(Reading, "direct", x=2)
+    assert direct.constraints[-1].kind == "input"
+    assert "[input 'x']" in str(direct)
+
     class Positive(Reading):
         x = InstanceDummy("x", positive=True)
         alias = x
 
-    for source, observed, inferred in (
+    for source, supplied, inferred in (
         (Positive("forward", x=2), "x", "squared"),
         (Positive("backward", squared=4), "squared", "x"),
         (Positive("alias", alias=2), "x", "squared"),
     ):
         p = inspect_model(Check, "copy", reading=source)
         assert {(c.path[-1], c.kind) for c in p.constraints if c.input == "reading"} == {
-            (observed, "observation"),
+            (supplied, "input"),
             (inferred, "inferred"),
         }
         assert f"self.reading.{inferred} = " in str(p)
         assert "[inferred in 'reading']" in str(p)
-        assert "[observed in 'reading']" in str(p)
+        assert "[input 'reading']" in str(p)
 
         # Copying a populated descendant or the whole parent preserves the same
         # distinction; it is not guessed from the field's declaration.
@@ -267,8 +271,7 @@ def test_copied_values_retain_construction_observations_in_both_solve_directions
 
         nested = inspect_model(Envelope, "nested", check=parent)
         assert (
-            next(c for c in nested.constraints if c.input and c.path == ("check", "reading", observed)).kind
-            == "observation"
+            next(c for c in nested.constraints if c.input and c.path == ("check", "reading", supplied)).kind == "input"
         )
         assert (
             next(c for c in nested.constraints if c.input and c.path == ("check", "reading", inferred)).kind
