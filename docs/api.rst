@@ -73,6 +73,8 @@ API reference
    Supply the same typed inputs as construction. No solver runs during
    preparation; explicitly constructed component inputs must already be valid.
    See :doc:`diagnostics` for the structured snapshot, report types, and guarantees.
+   ``problem.symbols`` exposes a read-only symbol tree with the model's component
+   types. Use its attributes to write conditions and select outputs when
    ``problem.solutions()`` explores a joint solution family; see :doc:`solutions`.
 
 .. autofunction:: component

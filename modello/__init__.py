@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from fractions import Fraction
 from typing import Any, ClassVar, MutableMapping, Protocol, TypeAlias, TypeVar, cast
@@ -385,6 +385,20 @@ def inspect_model(model: type[_ModelT], name: str, /, **value_map: ScalarValue |
             zip(model._modello_constraint_paths, model._modello_class_constraints, strict=True)
         )
     ]
+    problem = ModelProblem(
+        model, name, tuple(ModelField(path, symbol) for path, symbol in fields.items()), tuple(constraints)
+    )
+    return _with_inputs(problem, value_map)
+
+
+def _with_inputs(problem: ModelProblem[_ModelT], value_map: dict[str, ScalarValue | Modello]) -> ModelProblem[_ModelT]:
+    """Capture constructor inputs against the snapshot's existing identities."""
+    if not value_map:
+        return problem
+    model = problem.model
+    fields = {field.path: field.symbol for field in problem.fields}
+    bindings = {dummy: fields[path] for path, dummy in model._modello_fields.items()}
+    constraints = list(problem.constraints)
 
     def add_value(
         path: FieldPath,
@@ -436,6 +450,4 @@ def inspect_model(model: type[_ModelT], name: str, /, **value_map: ScalarValue |
                 attr,
                 value._modello_bound_fields[source_fields[path]],
             )
-    return ModelProblem(
-        model, name, tuple(ModelField(path, symbol) for path, symbol in fields.items()), tuple(constraints)
-    )
+    return replace(problem, constraints=tuple(constraints), candidates=())

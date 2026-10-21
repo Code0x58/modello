@@ -121,8 +121,18 @@ def check_solution_families() -> None:
     assert point.label() == "point"
     assert all(field in problem.fields for field in coordinates)
     assert all(isinstance(value, Drawing) for value in cases)
-    family.observe(FieldValue(problem.field("line", "start", "x"), 2))
-    family.observe({"x": 2})  # type: ignore[arg-type]
-    family.project("line.start.x")  # type: ignore[arg-type]
-    family.image({"x": 2})  # type: ignore[arg-type]
+    symbols: Drawing = problem.symbols
+    start: Point = family.symbols.line.start
+    problem.solutions(start.x)
+    family.expression(symbols.extent)
+    family.values(start.x, symbols.extent)
+    family.observe(line=Line("line", start=Point("start", x=2)))
+    family.observe(line={"start": {"x": 2}})  # type: ignore[arg-type]
+    family.observe(extent=[])  # type: ignore[arg-type]
+    problem.solutions("line.start.x")  # type: ignore[arg-type]
+    family.values({"x": 2})  # type: ignore[arg-type]
+    family.expression({"x": 2})  # type: ignore[arg-type]
+    _wrong_symbols: Line = problem.symbols  # type: ignore[assignment]
+    _wrong_component: Box = family.symbols.line.start  # type: ignore[assignment]
+    _unknown = symbols.line.start.missing  # type: ignore[attr-defined]
     _wrong: Line = family.one()  # type: ignore[assignment]

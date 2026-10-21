@@ -55,18 +55,17 @@ class ImpactStudy(Modello):
     def calibrated(cls) -> SolutionFamily[ImpactStudy]:
         """Retain every impact consistent with a bounded cost observation."""
         problem = cls.prepare()
-        cost = problem.field("recorded", "cost")
-        return problem.solutions(problem.field("impact")).where(cost.symbol >= 200, cost.symbol <= 202)
+        study = problem.symbols
+        return problem.solutions(study.impact).where(study.recorded.cost >= 200, study.recorded.cost <= 202)
 
     @staticmethod
     def plot(family: SolutionFamily[ImpactStudy], destination: Path) -> None:
         """Plot the symbolic cost expression on its admissible impact interval."""
         from sympy.plotting import plot
 
-        impact = family.problem.field("impact")
-        cost = family.problem.field("planned", "cost")
-        domain = family.values(impact)
-        costs = family.values(cost)
+        study = family.symbols
+        domain = family.values(study.impact)
+        costs = family.values(study.planned.cost)
         if (
             not isinstance(domain, Interval)
             or not isinstance(costs, Interval)
@@ -74,8 +73,8 @@ class ImpactStudy(Modello):
         ):
             raise UnresolvedSolutionError(family, "This plot needs bounded impact and cost intervals.")
         chart = plot(
-            family.expression(cost),
-            (impact.symbol, domain.start, domain.end),
+            family.expression(study.planned.cost),
+            (study.impact, domain.start, domain.end),
             show=False,
             xlabel="Impact coefficient",
             ylabel="Planned execution cost",
@@ -91,9 +90,9 @@ def main() -> None:
     parser.add_argument("--plot", type=Path)
     arguments = parser.parse_args()
     family = ImpactStudy.calibrated()
-    problem = family.problem
-    print("Impact:", family.values(problem.field("impact")))
-    print("Planned cost:", family.values(problem.field("planned", "cost")))
+    study = family.symbols
+    print("Impact:", family.values(study.impact))
+    print("Planned cost:", family.values(study.planned.cost))
     if arguments.plot:
         ImpactStudy.plot(family, arguments.plot)
 
