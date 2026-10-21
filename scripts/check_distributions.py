@@ -48,6 +48,12 @@ class RightAngleTriangle(modello.Modello):
 assert RightAngleTriangle("T", a=3, b=4).c == 5
 assert RightAngleTriangle("T", b=4, c=5).a == 3
 
+problem = modello.inspect_model(RightAngleTriangle, "family", b=4)
+family = problem.solutions()
+point = family.observe(modello.FieldValue(problem.field("c"), 5)).one()
+assert isinstance(point, RightAngleTriangle)
+assert (point.a, point.b, point.c) == (3, 4, 5)
+
 class Box(modello.Modello):
     base = modello.component(RightAngleTriangle)
     height = modello.InstanceDummy("height", positive=True)
@@ -115,6 +121,7 @@ def check_wheel(
     for module in (
         "examples.portfolio",
         "examples.portfolio.optimal_execution",
+        "examples.solution_families",
     ):
         arguments = [str(python), "-I", "-m", module]
         if module == "examples.portfolio":

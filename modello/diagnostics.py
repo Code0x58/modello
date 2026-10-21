@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 
 from sympy import (
     Basic,
@@ -55,6 +55,9 @@ else:
 
 if TYPE_CHECKING:
     from modello import Modello, ScalarValue
+    from modello.solutions import SolutionFamily
+
+ModelT = TypeVar("ModelT", bound="Modello")
 
 FieldPath = tuple[str, ...]
 Status = Literal["consistent", "inconsistent", "unknown"]
@@ -298,10 +301,10 @@ class _FieldPrinter(StrPrinter):
 
 
 @dataclass(frozen=True, repr=False)
-class ModelProblem:
+class ModelProblem(Generic[ModelT]):
     """A frozen snapshot shared by preparation, construction, and failure handling."""
 
-    model: type[Modello]
+    model: type[ModelT]
     name: str
     fields: tuple[ModelField, ...]
     constraints: tuple[ModelConstraint, ...]
@@ -376,7 +379,7 @@ class ModelProblem:
 
     def at(self, *path: str) -> ComponentView:
         """Inspect a component subtree and its boundary; this does not isolate a solve."""
-        model = self.model
+        model: type[Modello] = self.model
         for part in path:
             child = model._modello_namespace.nested_models.get(part)
             if child is None:
@@ -388,7 +391,7 @@ class ModelProblem:
         boundary = tuple(c for c in self.constraints if c not in owned and c.symbols & symbols)
         return ComponentView(path, model, fields, owned, boundary)
 
-    def without(self, *inputs: str) -> ModelProblem:
+    def without(self, *inputs: str) -> ModelProblem[ModelT]:
         """Remove whole recorded constructor inputs, keeping definitions and domains."""
         existing = {c.input for c in self.constraints if c.input is not None}
         if set(inputs) - existing:
@@ -407,6 +410,16 @@ class ModelProblem:
         complete constructor argument and require a validated closed witness.
         """
         return _Analyser(self, max_checks).run(conflicts, relaxations)
+
+    def solutions(self, *parameters: ModelField) -> SolutionFamily[ModelT]:
+        """Explore the joint family, optionally retaining chosen parameter fields.
+
+        This explicit operation can invoke exact symbolic solvers. It preserves
+        unresolved conditions rather than choosing a candidate or branch.
+        """
+        from modello.solutions import SolutionFamily
+
+        return SolutionFamily._prepare(self, parameters)
 
 
 @dataclass(frozen=True)

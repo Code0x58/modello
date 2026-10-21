@@ -15,6 +15,7 @@ from modello import (
     ModelSolveError,
     ScalarValue,
     SolutionCountError,
+    SolutionFamily,
     SolverBackendError,
     component,
     inspect_model,
@@ -107,3 +108,21 @@ def check_diagnostics() -> None:
     inspect_model(Line("instance"), "case")  # type: ignore[arg-type]
     FieldValue(field, {})  # type: ignore[arg-type]
     problem.name = "changed"  # type: ignore[misc]
+
+
+def check_solution_families() -> None:
+    """Family selection retains the model type, including nested components."""
+    problem: ModelProblem[Drawing] = inspect_model(Drawing, "family")
+    family: SolutionFamily[Drawing] = problem.solutions()
+    coordinates: tuple[ModelField, ...] = family.parameters
+    cases: tuple[Drawing, ...] = family.cases()
+    case: Drawing = family.one()
+    point: Point = case.line.start
+    assert point.label() == "point"
+    assert all(field in problem.fields for field in coordinates)
+    assert all(isinstance(value, Drawing) for value in cases)
+    family.observe(FieldValue(problem.field("line", "start", "x"), 2))
+    family.observe({"x": 2})  # type: ignore[arg-type]
+    family.project("line.start.x")  # type: ignore[arg-type]
+    family.image({"x": 2})  # type: ignore[arg-type]
+    _wrong: Line = family.one()  # type: ignore[assignment]

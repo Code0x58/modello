@@ -7,7 +7,7 @@ from decimal import Decimal
 from fractions import Fraction
 from typing import Any, ClassVar, MutableMapping, Protocol, TypeAlias, TypeVar, cast
 
-from sympy import Basic, Dummy, Eq, Expr, S, SympifyError, solve
+from sympy import Basic, Dummy, Eq, Expr, S, Symbol, SympifyError, solve
 from sympy.simplify.simplify import simplify
 
 from modello.diagnostics import (
@@ -34,6 +34,14 @@ from modello.errors import (
 from modello.errors import (
     ModelValidationError as ModelValidationError,
 )
+from modello.errors import (
+    SolutionSelectionError as SolutionSelectionError,
+)
+from modello.errors import (
+    UnresolvedSolutionError as UnresolvedSolutionError,
+)
+from modello.solutions import SolutionFamily as SolutionFamily
+from modello.solutions import SolutionIssue as SolutionIssue
 
 
 # A structural protocol keeps untyped SymPy imports out of the input union.
@@ -318,26 +326,32 @@ class Modello(metaclass=ModelloMeta):
             )
             raise SolutionCountError(problem, len(candidates), snapshots)
         solution = candidates[0]
-        input_symbols = {c.left for c in problem.constraints if c.kind is ConstraintKind.INPUT}
+        _populate(self, problem, solution)
 
-        def populate(instance: Modello, model: type[Modello], prefix: FieldPath) -> None:
-            """Materialize descendants directly from the one shared solution."""
-            bound_fields = {d: fields[prefix + path] for path, d in model._modello_fields.items()}
-            instance._modello_bound_fields = {
-                d: _BoundField(
-                    bound, solution[bound], ConstraintKind.INPUT if bound in input_symbols else ConstraintKind.INFERRED
-                )
-                for d, bound in bound_fields.items()
-            }
-            for attr in model._modello_namespace.dummies:
-                bound = fields[prefix + (attr,)]
-                setattr(instance, attr, solution[bound])
-            for attr, child in model._modello_namespace.nested_models.items():
-                child_instance = object.__new__(child._modello_model)
-                populate(child_instance, child._modello_model, (*prefix, attr))
-                setattr(instance, attr, child_instance)
 
-        populate(self, type(self), ())
+def _populate(
+    instance: Modello, problem: ModelProblem, solution: dict[Symbol, Expr], inputs: frozenset[Symbol] = frozenset()
+) -> None:
+    """Materialize the model tree from one shared solution, without solving."""
+    fields = {field.path: cast(BoundInstanceDummy, field.symbol) for field in problem.fields}
+    input_symbols = inputs | {c.left for c in problem.constraints if c.kind is ConstraintKind.INPUT}
+
+    def populate(instance: Modello, model: type[Modello], prefix: FieldPath) -> None:
+        bound_fields = {d: fields[prefix + path] for path, d in model._modello_fields.items()}
+        instance._modello_bound_fields = {
+            d: _BoundField(
+                bound, solution[bound], ConstraintKind.INPUT if bound in input_symbols else ConstraintKind.INFERRED
+            )
+            for d, bound in bound_fields.items()
+        }
+        for attr in model._modello_namespace.dummies:
+            setattr(instance, attr, solution[fields[prefix + (attr,)]])
+        for attr, child in model._modello_namespace.nested_models.items():
+            child_instance = object.__new__(child._modello_model)
+            populate(child_instance, child._modello_model, (*prefix, attr))
+            setattr(instance, attr, child_instance)
+
+    populate(instance, type(instance), ())
 
 
 _ModelT = TypeVar("_ModelT", bound=Modello)
@@ -354,7 +368,7 @@ def component(model: type[_ModelT]) -> _ModelT:
     return cast(_ModelT, model)
 
 
-def inspect_model(model: type[Modello], name: str, /, **value_map: ScalarValue | Modello) -> ModelProblem:
+def inspect_model(model: type[_ModelT], name: str, /, **value_map: ScalarValue | Modello) -> ModelProblem[_ModelT]:
     """Prepare the constructor's actual problem without invoking the solver.
 
     Supply the same scalar values and typed component instances as a normal

@@ -73,6 +73,7 @@ API reference
    Supply the same typed inputs as construction. No solver runs during
    preparation; explicitly constructed component inputs must already be valid.
    See :doc:`diagnostics` for the structured snapshot, report types, and guarantees.
+   ``problem.solutions()`` explores a joint solution family; see :doc:`solutions`.
 
 .. autofunction:: component
 
@@ -110,7 +111,9 @@ handlers still apply. Ordinary key and attribute lookups retain their Python
    ModelloError
    ├── ModelInputError (also TypeError)
    ├── ModelValidationError (also ValueError)
-   │   └── ModelDefinitionError
+   │   ├── ModelDefinitionError
+   │   ├── SolutionSelectionError
+   │   └── UnresolvedSolutionError
    └── ModelSolveError (also ValueError)
        ├── SolutionCountError
        └── SolverBackendError
@@ -131,6 +134,8 @@ For example, ``case SolutionCountError(solution_count=0)`` selects a zero-count
 failure. Positional ``case SolutionCountError(0)`` is supported too.
 ``case SolverBackendError(backend_error=NotImplementedError())`` selects a
 particular backend exception type. See :doc:`debugging` for a complete workflow.
+The :doc:`solution-family guide <solutions>` describes the selection errors and
+their retained families, counts, and candidate checks.
 
 .. currentmodule:: modello.errors
 
