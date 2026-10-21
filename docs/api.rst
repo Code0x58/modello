@@ -97,6 +97,8 @@ API reference
 
 .. autoclass:: SymbolicScalar
 
+.. autoclass:: SymbolicCondition
+
 .. _errors:
 
 Errors

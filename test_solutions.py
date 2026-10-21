@@ -11,6 +11,7 @@ from sympy import (
     Function,
     ImageSet,
     Interval,
+    MatrixSymbol,
     Rational,
     S,
     Symbol,
@@ -92,6 +93,9 @@ def test_joint_family_refines_to_checked_typed_cases_without_running_legacy_solv
     assert {c.input for c in observed.problem.constraints if c.input is not None} == {"total"}
     assert observed.symbols.total == total
     assert observed.observe(total=6).is_empty is True
+    monkeypatch.setattr(SolutionFamily, "_prepare", forbidden)
+    assert observed.observe() is observed
+    assert observed.where() is observed
 
 
 def test_exception_to_family_and_continuous_interval_observations():
@@ -356,6 +360,14 @@ def test_unsupported_expression_kinds_fail_with_owned_input_errors():
         inspect_model(Operators, "operators").solutions()
     with pytest.raises(ModelInputError, match="bound-variable"):
         inspect_model(Unevaluated, "derivative").solutions()
+    family = inspect_model(Reading, "scalar").solutions()
+    for value in (MatrixSymbol("matrix", 2, 2), Symbol("operator", commutative=False)):
+        with pytest.raises(ModelInputError, match="commutative scalar"):
+            inspect_model(Reading, "unsupported input", x=value).solutions()
+        with pytest.raises(ModelInputError, match="commutative scalar"):
+            family.values(value)
+        with pytest.raises(ModelInputError, match="commutative scalar"):
+            family.observe(x=value)
 
 
 def test_inputs_use_owned_fields_and_exact_scalars():

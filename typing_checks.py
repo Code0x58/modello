@@ -17,6 +17,7 @@ from modello import (
     SolutionCountError,
     SolutionFamily,
     SolverBackendError,
+    SymbolicCondition,
     component,
     inspect_model,
 )
@@ -126,12 +127,18 @@ def check_solution_families() -> None:
     problem.solutions(start.x)
     family.expression(symbols.extent)
     family.values(start.x, symbols.extent)
+    condition: SymbolicCondition = symbols.extent > 0
+    family.where(condition, True)
     family.observe(line=Line("line", start=Point("start", x=2)))
     family.observe(line={"start": {"x": 2}})  # type: ignore[arg-type]
     family.observe(extent=[])  # type: ignore[arg-type]
     problem.solutions("line.start.x")  # type: ignore[arg-type]
     family.values({"x": 2})  # type: ignore[arg-type]
     family.expression({"x": 2})  # type: ignore[arg-type]
+    family.where({"extent": 2})  # type: ignore[arg-type]
+    family.where([True])  # type: ignore[arg-type]
+    family.where("extent > 0")  # type: ignore[arg-type]
+    family.where(1)  # type: ignore[arg-type]
     _wrong_symbols: Line = problem.symbols  # type: ignore[assignment]
     _wrong_component: Box = family.symbols.line.start  # type: ignore[assignment]
     _unknown = symbols.line.start.missing  # type: ignore[attr-defined]

@@ -59,6 +59,19 @@ class SymbolicScalar(Protocol):
         ...
 
 
+class SymbolicCondition(Protocol):
+    """A symbolic relation or Boolean accepted by solution-family refinement."""
+
+    @property
+    def free_symbols(self) -> set[Any]:
+        """Return the condition's free symbols."""
+        ...
+
+    def as_set(self) -> object:
+        """Return the condition's set representation, when available."""
+        ...
+
+
 ScalarValue: TypeAlias = SymbolicScalar | int | float | complex | str | Decimal | Fraction
 
 

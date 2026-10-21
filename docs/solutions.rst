@@ -76,6 +76,8 @@ and the added conditions before being returned. Components and methods retain
 their model types. Materialisation uses the same population mechanism as solved
 components; custom constructor hooks are not invoked. The source problem and
 earlier families stay unchanged.
+Calling ``observe()`` or ``where()`` without arguments returns the same family
+without repeating symbolic reduction.
 
 Observations accumulate; supplying a different value adds a constraint rather
 than overwriting the earlier one. Typed component observations use the same
@@ -164,6 +166,9 @@ The ``parameters`` field records remain available for path and alias inspection.
 The exploratory API requires exact expressions: use ``Rational`` for decimal
 observations. Evaluate bound-variable expressions such as integrals and
 derivatives before exploring. Other model-construction behaviour is unchanged.
+Scalar queries and observations follow the same commutative-scalar scope as
+model fields. ``where(...)`` accepts symbolic relations and Python booleans;
+the ``SymbolicCondition`` protocol keeps this boundary visible to type checkers.
 Unsupported domain predicates raise ``ModelInputError`` instead of being omitted.
 These limits keep unsupported operations explicit while the WIP develops.
 

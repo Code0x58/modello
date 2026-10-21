@@ -59,7 +59,7 @@ from modello.diagnostics import (
 from modello.errors import ModelInputError, ModelValidationError, SolutionSelectionError, UnresolvedSolutionError
 
 if TYPE_CHECKING:
-    from modello import Modello, ScalarValue
+    from modello import Modello, ScalarValue, SymbolicCondition
 
 
 @dataclass(frozen=True)
@@ -79,11 +79,27 @@ class _FamilyField:
     expression: Expr
 
 
-def _has_binders(expression: Basic) -> bool:
-    return any(
+def _require_exact(*expressions: Basic) -> None:
+    """Share exactness and binder checks across scalars and Boolean conditions."""
+    if any(expression.has(Float) for expression in expressions):
+        raise ModelInputError("Solution families require exact expressions; use Rational for decimal values")
+    if any(
         isinstance(node, Derivative) or bool(getattr(node, "bound_symbols", ()))
+        for expression in expressions
         for node in preorder_traversal(expression)
-    )
+    ):
+        raise ModelInputError("Evaluate bound-variable expressions, such as integrals and derivatives, first")
+
+
+def _exact_scalar(value: object) -> Expr:
+    try:
+        expression = sympify(value)
+    except (TypeError, ValueError, AttributeError) as error:
+        raise ModelInputError("Expected a commutative scalar expression") from error
+    if not isinstance(expression, Expr) or expression.is_commutative is not True:
+        raise ModelInputError("Expected a commutative scalar expression")
+    _require_exact(expression)
+    return expression
 
 
 def _field_domain(symbol: Symbol) -> Set:
@@ -209,11 +225,9 @@ class SolutionFamily(Generic[ModelT]):
         fields = _canonical_fields(problem)
         if any(field.symbol.is_commutative is not True for field in fields):
             raise ModelInputError("Solution families currently require commutative scalar fields")
-        original = [c.right for c in problem.constraints] + list(conditions)
-        if any(not isinstance(c.right, Expr) for c in problem.constraints) or any(expr.has(Float) for expr in original):
-            raise ModelInputError("Solution families require exact scalar expressions; use Rational for decimal values")
-        if any(_has_binders(expression) for expression in original):
-            raise ModelInputError("Evaluate bound-variable expressions, such as integrals and derivatives, first")
+        for constraint in problem.constraints:
+            _exact_scalar(constraint.right)
+        _require_exact(*conditions)
         domains = tuple(_field_domain(field.symbol) for field in fields)
         # Work symbols explicitly carry the finite-scalar universe, in addition
         # to the model's assumptions. Those assumptions remain in explicit sets.
@@ -354,37 +368,33 @@ class SolutionFamily(Generic[ModelT]):
 
     def expression(self, expression: ScalarValue) -> Expr:
         """Express a scalar in the remaining coordinates, using public symbols."""
-        reduced = self._chart_expression(expression)
+        (reduced,) = self._chart_expressions(expression)
         reverse = {binding.symbol: binding.field.symbol for binding in self._bindings}
         return cast(Expr, reduced.xreplace(reverse))
 
     def _scalar(self, value: object) -> Expr:
+        expression = _exact_scalar(value)
+        self._require_symbols(expression)
+        return expression
+
+    def _require_symbols(self, expression: Basic) -> None:
         from modello import InstanceDummy
 
-        try:
-            expression = sympify(value)
-        except (TypeError, ValueError, AttributeError) as error:
-            raise ModelInputError("Expected a scalar expression") from error
-        if not isinstance(expression, Expr) or expression.has(Float):
-            raise ModelInputError("Expected an exact scalar expression")
-        if _has_binders(expression):
-            raise ModelInputError("Evaluate bound-variable expressions, such as integrals and derivatives, first")
         allowed = {field.symbol for field in self.problem.fields} | set().union(
             *(c.symbols for c in self.problem.constraints)
         )
         if any(isinstance(symbol, InstanceDummy) and symbol not in allowed for symbol in expression.free_symbols):
             raise ModelValidationError("The expression refers to another model problem; use family.symbols")
-        return expression
 
-    def _chart_expression(self, expression: ScalarValue) -> Expr:
+    def _chart_expressions(self, *expressions: ScalarValue) -> tuple[Expr, ...]:
         bindings = {binding.field.symbol: binding.expression for binding in self._bindings}
-        return cast(Expr, self._scalar(expression).xreplace(bindings))
+        return tuple(self._scalar(expression).xreplace(bindings) for expression in expressions)
 
     def values(self, *expressions: ScalarValue) -> Set:
         """Return possible scalar values, or coupled tuples for multiple outputs."""
         if not expressions:
             raise ModelInputError("Select at least one output expression")
-        outputs = tuple(self._chart_expression(expr) for expr in expressions)
+        outputs = self._chart_expressions(*expressions)
         output = outputs[0] if len(outputs) == 1 else Tuple(*outputs)
         parameters = self._coordinates
         if not parameters:
@@ -397,8 +407,10 @@ class SolutionFamily(Generic[ModelT]):
         except (NotImplementedError, ValueError):
             return ImageSet(Lambda(signature, output), self.parameter_domain)
 
-    def where(self, *conditions: Boolean | bool) -> SolutionFamily[ModelT]:
+    def where(self, *conditions: SymbolicCondition | bool) -> SolutionFamily[ModelT]:
         """Retain further symbolic conditions; use Eq for equality observations."""
+        if not conditions:
+            return self
         checked = []
         for condition in conditions:
             try:
@@ -407,11 +419,8 @@ class SolutionFamily(Generic[ModelT]):
                 raise ModelInputError("Conditions must be relations or booleans; use Eq for equality") from error
             if not isinstance(value, Boolean) or isinstance(value, Expr):
                 raise ModelInputError("Conditions must be relations or booleans; use Eq for equality")
-            if value.has(Float):
-                raise ModelInputError("Conditions require exact values; use Rational for decimals")
-            # Validate identities using each scalar atom in a relation.
-            for symbol in value.free_symbols:
-                self._scalar(symbol)
+            _require_exact(value)
+            self._require_symbols(value)
             checked.append(value)
         return self._prepare(self.problem, self._preferred, (*self.conditions, *checked))
 
@@ -423,6 +432,8 @@ class SolutionFamily(Generic[ModelT]):
         """
         from modello import _with_inputs
 
+        if not inputs:
+            return self
         problem = _with_inputs(self.problem, inputs)
         for constraint in problem.constraints[len(self.problem.constraints) :]:
             self._scalar(constraint.right)
@@ -441,6 +452,8 @@ class SolutionFamily(Generic[ModelT]):
         if not isinstance(self.parameter_domain, FiniteSet):
             raise UnresolvedSolutionError(self, "The coordinate domain is not an explicit finite set.")
         parameters = self._coordinates
+        input_symbols = {c.left for c in self.problem.constraints if c.kind is ConstraintKind.INPUT}
+        input_paths = tuple(binding.field.path for binding in self._bindings if binding.field.symbol in input_symbols)
         cases = []
         for point in self.parameter_domain:
             coordinates = (point,) if len(parameters) == 1 else tuple(point)
@@ -456,13 +469,9 @@ class SolutionFamily(Generic[ModelT]):
             ):
                 raise UnresolvedSolutionError(self, "A state could not be verified against the original model.", check)
             fresh = inspect_model(self.problem.model, self.problem.name)
-            solution = {fresh.field(*value.field.path).symbol: value.value for value in values}
-            input_symbols = {c.left for c in self.problem.constraints if c.kind is ConstraintKind.INPUT}
-            inputs = frozenset(
-                fresh.field(*binding.field.path).symbol
-                for binding in self._bindings
-                if binding.field.symbol in input_symbols
-            )
+            fields = {field.path: field.symbol for field in fresh.fields}
+            solution = {fields[value.field.path]: value.value for value in values}
+            inputs = frozenset(fields[path] for path in input_paths)
             instance = object.__new__(self.problem.model)
             _populate(instance, fresh, solution, inputs)
             cases.append(instance)
