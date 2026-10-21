@@ -28,15 +28,18 @@ API reference
    component paths. Other SymPy symbols remain external parameters.
 
    Unknown keyword names, invalid scalar values, and incompatible component
-   types raise :class:`TypeError`. Inconsistent equations and multiple discrete
-   solutions raise :class:`ValueError`. Symbol assumptions help select valid
+   types raise :class:`TypeError`. No accepted solver candidates or multiple
+   candidates raise :class:`modello.diagnostics.ModelSolveError`, a subclass of
+   :class:`ValueError`. Symbol assumptions help select valid
    solutions; assumptions about external symbolic parameters may remain
    undecided. Each explicitly constructed input model must have a valid solution
    before it can be passed to a parent.
 
-   Solver failures include the model type, instance name, equations, and supplied
-   values. ``self.`` paths identify model fields in the report. These are the
-   submitted relationships, not a minimal explanation of the failure. See
+   Solve failures retain a frozen ``problem`` snapshot with actual symbol
+   identities, aliases, origins, equations, inputs, and solver candidates.
+   Backend solver exceptions are chained as the cause. Diagnostic analysis runs
+   only when explicitly invoked. A zero candidate count is not itself a proof
+   of inconsistency. See
    :doc:`debugging` for symbolic results, redundant observations, conflicting
    constraints, and ambiguous solutions.
 
@@ -61,6 +64,12 @@ API reference
 
    When multiple model bases define the same quantity, the later base supplies
    that quantity. Methods follow Python's normal method resolution order.
+
+.. autofunction:: inspect_model
+
+   Supply the same typed inputs as construction. No solver runs during
+   preparation; explicitly constructed component inputs must already be valid.
+   See :doc:`diagnostics` for the structured snapshot, report types, and guarantees.
 
 .. autofunction:: component
 

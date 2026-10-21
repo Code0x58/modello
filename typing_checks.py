@@ -7,7 +7,8 @@ from fractions import Fraction
 
 from sympy import Symbol
 
-from modello import InstanceDummy, Modello, ScalarValue, component
+from modello import InstanceDummy, Modello, ModelProblem, ModelSolveError, ScalarValue, component, inspect_model
+from modello.diagnostics import ComponentView, FieldValue, ModelField, ProblemAnalysis
 
 
 class Point(Modello):
@@ -63,3 +64,23 @@ def check_inputs() -> None:
     Point("P", x=None)  # type: ignore[arg-type]
     drawing.line.start = Box("B")  # type: ignore[assignment]
     _point_class: type[Point] = drawing.line.start  # type: ignore[assignment]
+
+
+def check_diagnostics() -> None:
+    """Debugging uses typed records and the same typed constructor boundary."""
+    problem: ModelProblem = inspect_model(Drawing, "case", line=Line("line"))
+    field: ModelField = problem.field("line", "start", "x")
+    view: ComponentView = problem.at("line")
+    report: ProblemAnalysis = problem.analyse(max_checks=1)
+    FieldValue(field, 3)
+    assert field in view.fields
+    assert report.problem is problem
+    try:
+        Line("case", start=Point("start", x=1))
+    except ModelSolveError as error:
+        failure: ModelProblem = error.problem
+        assert failure.model is Line
+    inspect_model(Line, "case", start={"x": 1})  # type: ignore[arg-type]
+    inspect_model(Line("instance"), "case")  # type: ignore[arg-type]
+    FieldValue(field, {})  # type: ignore[arg-type]
+    problem.name = "changed"  # type: ignore[misc]
