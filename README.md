@@ -144,6 +144,10 @@ python -m examples.applications
 python -m examples.reconciliation
 ```
 
+The [reference-data scenario](docs/examples/reconciliation/reference_data.rst)
+checks a previous RED pair's cached inputs against confirmed contract terms
+and the requested market-data date before changing trade fields.
+
 The [portfolio research example](https://modello.readthedocs.io/en/latest/examples/portfolio/index.html)
 develops this pattern in one short walkthrough: nest transitions, join a
 reporting layer, then refine an execution model and fit it through an outer
