@@ -93,12 +93,12 @@ The existing ``modello`` project on Read the Docs tracks ``master`` for its
 they include the documentation configuration. Project connections and version
 activation are managed in Read the Docs service settings.
 
-Example guides live under ``docs/examples/<example>/`` and have their own
-navigation beneath the Examples section. Portfolio modules and fixtures are
-grouped in ``examples/portfolio/``; ``examples/data.py`` and ``examples/symbolic.py`` holds experimental
-data and expression-execution helpers. Keep example-specific behavior in those
-layers. The :ref:`named-member-solving` records the
-candidate general modeling feature.
+Example guides live under ``docs/examples/<example>/`` beneath the Examples
+section. Keep each guide focused on the modelling idea it demonstrates.
+Portfolio modules and fixtures are grouped in ``examples/portfolio/``;
+``examples/data.py``, ``examples/named_members.py``, and ``examples/symbolic.py``
+hold experimental data, named-projection, and numerical-evaluation helpers.
+Keep example-specific behavior in those layers.
 
 Diagrams use the ``.. mermaid::`` directive from
 `sphinxcontrib-mermaid <https://sphinxcontrib-mermaid-demo.readthedocs.io/en/stable/>`_

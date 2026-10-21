@@ -91,11 +91,10 @@ tax models. The [API reference](https://modello.readthedocs.io/en/latest/api.htm
 describes the available classes and functions.
 
 The [portfolio research example](https://modello.readthedocs.io/en/latest/examples/portfolio/index.html)
-explores named holdings, market data, account replay, signals, analytics, and
-symbolic reports. Its code and fixtures live in [examples/portfolio](examples/portfolio/),
-with a separate documentation section. The
-[named-member solving note](https://modello.readthedocs.io/en/latest/examples/portfolio/index.html#named-member-solving-as-a-general-feature)
-describes the general modeling feature being explored.
+develops this pattern in one short walkthrough: nest transitions, join a
+reporting layer, then refine an execution model and fit it through an outer
+constraint. A richer exploratory implementation and its synthetic fixtures live
+in [examples/portfolio](examples/portfolio/).
 
 Install and run the examples with their bundled synthetic data:
 

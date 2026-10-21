@@ -37,8 +37,9 @@ the same pattern. Supply typed instances with the values you know:
 The components are solved jointly. Supplying closing cash instead of execution
 price lets the same equations infer that price. The :doc:`nested-model guide
 <nesting>` develops composition, connected components, and symbolic inputs.
-The :doc:`portfolio walkthrough <examples/portfolio/index>` builds this accounting
-example into a larger system.
+The :doc:`portfolio walkthrough <examples/portfolio/index>` takes this pattern
+through nested transitions, reporting, and fitting a refined component from an
+outer constraint.
 
 Distinct instances receive distinct bound symbols, even if they share a name.
 Values are solved at construction time; changing an attribute afterward does
@@ -49,10 +50,6 @@ The `examples directory <https://github.com/Code0x58/modello/tree/master/example
 contains geometry, flow-scaling, and historical tax-model examples. Tax examples
 illustrate symbolic modeling with fixed historical rates.
 
-The :doc:`portfolio research walkthrough <examples/portfolio/index>` explores
-application and computation layers above the core API. Its
-:ref:`named-member-solving` note describes the general modeling feature.
-
 .. toctree::
    :caption: Library
    :maxdepth: 2
@@ -62,7 +59,7 @@ application and computation layers above the core API. Its
 
 .. toctree::
    :caption: Examples
-   :maxdepth: 3
+   :maxdepth: 1
 
    examples/portfolio/index
 

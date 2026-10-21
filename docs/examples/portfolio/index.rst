@@ -1,153 +1,192 @@
-Build a portfolio research system
-=================================
+A portfolio in connected models
+===============================
 
-This walkthrough is an exploration of ideas for symbolic computing, using a
-portfolio research system as a worked example. It is a working proof of concept
-with rough edges and open design questions. Its interfaces, abstractions, and
-organisation are still evolving. Read it as a collection of ideas to examine,
-adapt, and improve.
+A trade changes shares and cash. That small idea is enough to explore a larger
+one: build a system from typed components, connect their equations, then change
+the question you ask of the whole. This is an exploration of modelling ideas;
+the portfolio supplies the setting.
 
-The central question is how much of a system we can build from shared
-mathematical definitions. A position has a value, a trade changes a state, and
-an account relates investment profit to changes in wealth. Connecting those
-definitions gives us opportunities to reuse the same mathematics for valuation,
-inference, calibration, and reporting.
+The examples below use only ``modello`` and its SymPy dependency. Run them in
+order in a Python session.
 
-Ideas to look for
------------------
+Connect before, fill, and after
+-------------------------------
 
-* **Build systems by connecting typed components.** Each component owns its
-  equations. A parent connects their quantities, and operations can themselves
-  become inputs to larger operations. The resulting structure remains available
-  for traversal, debugging, and display.
-* **Ask different questions of the same model.** Changing knowns, unknowns, and
-  fitted parameters lets one definition calculate a result or infer an input.
-  Compiled views reuse those expressions over numerical observations.
-* **Let the algebra generate other applications.** The final execution studies
-  use SymPy to derive differential equations, integrate a continuous cost model
-  onto a discrete grid, fit parameters, and calculate sensitivities. This is
-  where a shared symbolic definition can save substantial duplicated mathematics.
+Define the state of a holding and the terms of a filled trade. Positive trade
+quantities buy shares; negative quantities sell them:
 
-The portfolio gives these ideas something concrete to work on: external prices,
-a transaction log, positions and cash, signals and orders, performance measures,
-and account and instrument reports. Some of the supporting code may prove useful
-more generally; some may be simplified or replaced as the experiment develops.
+>>> from modello import InstanceDummy, Modello, component
+>>> class HoldingState(Modello):
+...     quantity = InstanceDummy("quantity", real=True)
+...     cash = InstanceDummy("cash", real=True)
+>>> class Execution(Modello):
+...     quantity = InstanceDummy("quantity", real=True)
+...     price = InstanceDummy("price", positive=True)
+...     fee = InstanceDummy("fee", nonnegative=True)
+...     notional = quantity * price
 
-Scope of the experiment
------------------------
+A posting connects two states through those execution terms:
 
-The core :doc:`model API </api>` and :doc:`typed components </nesting>` supply
-symbolic composition and solving. The acquisition, numerical, time-series,
-accounting, and reporting helpers developed here live separately under
-``examples/``. Their design can evolve independently, and some may eventually
-belong in separate modules or libraries.
+>>> class FillPosting(HoldingState):
+...     before = component(HoldingState)
+...     fill = component(Execution)
+...     after = component(HoldingState)
+...
+...     quantity = after.quantity
+...     quantity = before.quantity + fill.quantity
+...     cash = after.cash
+...     cash = before.cash - fill.notional - fill.fee
 
-The worked account uses synthetic USD data, funded long positions, and a small
-illustrative allocation policy. Its reports explain accounting and analytical
-relationships; the short sample provides no evidence of a strategy's investment
-performance. Financial conventions and data-handling choices are made explicit
-as they become relevant.
+Repeating a field assignment declares an equality. Here ``quantity`` aliases
+``after.quantity`` and equates it to the opening quantity plus the trade.
+``Execution`` owns its notional equation; ``FillPosting`` owns the connections
+and balance equations.
 
-Work through the example
-------------------------
+Supply an opening state and a buy to solve forwards:
 
-Start with the value of one holding, then add the tools needed to follow an
-account through time. The chapters build model definitions, named projections,
-numerical evaluation, data acquisition, ledger replay, decisions, and reporting
-in that order. Each chapter explains a new requirement before introducing its
-helper.
+>>> opening = HoldingState("opening", quantity=3, cash=1000)
+>>> bought = FillPosting(
+...     "buy", before=opening,
+...     fill=Execution("execution", quantity=2, price=100, fee=1),
+... )
+>>> bought.after.quantity, bought.after.cash
+(5, 799)
 
-Install the runnable examples with Python 3.10 or newer:
+The result retains typed ``before``, ``fill``, and ``after`` components. The
+opening instance stays unchanged; the completed posting can join another model.
+
+Make the result another input
+------------------------------
+
+A ``FillPosting`` is itself a ``HoldingState``: its top-level quantity and cash
+describe the closing state. Refine its input to accept a previous posting,
+retaining that posting's components and equations:
+
+>>> class FollowingFill(FillPosting):
+...     before = component(FillPosting)
+
+.. mermaid::
+   :alt: Two successive fills share their intermediate state.
+
+   flowchart LR
+       previous["State T-1"] --> first["Fill"] --> middle["State T"]
+       middle --> second["Fill"] --> next["State T+1"]
+
+Now observe the cash after selling one share, leaving the sale price unknown:
+
+>>> sale = FollowingFill(
+...     "buy_then_sell", before=bought,
+...     fill=Execution("sale", quantity=-1, fee=1),
+...     after=HoldingState("observed", cash=908),
+... )
+>>> sale.quantity, sale.cash, sale.fill.price
+(4, 908, 110)
+>>> sale.before.fill.price
+100
+
+The same balance equations have solved backwards. ``before`` and ``after``
+describe time order, not a required calculation order. Nesting the operations
+connects their states without writing a separate two-trade calculation. Use
+``bought.after`` when only its completed state is needed; declare the full
+posting type when its inner equations must remain part of the joint model.
+
+Add a view by joining components
+--------------------------------
+
+To report wealth at a market price, extend a holding with one valuation rule:
+
+>>> class Valuation(HoldingState):
+...     price = InstanceDummy("price", positive=True)
+...     value = cash + quantity * price
+
+A review layer joins that valuation to the posting's result:
+
+>>> class Review(Modello):
+...     posting = component(FillPosting)
+...     marked = component(Valuation)
+...
+...     quantity = marked.quantity
+...     quantity = posting.quantity
+...     cash = marked.cash
+...     cash = posting.cash
+...     value = marked.value
+>>> review = Review("review", posting=bought, marked=Valuation("market", price=110))
+>>> review.value
+1349
+
+The review supplies only the glue. Settlement and valuation each keep their own
+mathematics, while a constraint on ``review.value`` can reach unknowns inside
+either component. The typed paths also show where each result came from.
+
+Refine a component, then fit it from the outside
+------------------------------------------------
+
+Suppose execution price depends on order size. Add a deliberately simple impact
+law, then select this richer component through the existing layers:
+
+>>> class ImpactExecution(Execution):
+...     reference = InstanceDummy("reference", positive=True)
+...     impact = InstanceDummy("impact", nonnegative=True)
+...     price = reference + impact * quantity
+>>> class ImpactPosting(FillPosting):
+...     fill = component(ImpactExecution)
+>>> class ImpactReview(Review):
+...     posting = component(ImpactPosting)
+
+Keep the opening state and known trade size, but constrain the total value at
+the review layer. The system infers the impact coefficient through valuation,
+settlement, and execution:
+
+>>> fitted = ImpactReview(
+...     "calibration",
+...     posting=ImpactPosting(
+...         "buy", before=opening,
+...         fill=ImpactExecution("execution", quantity=2, reference=99, fee=1),
+...     ),
+...     marked=Valuation("market", price=110),
+...     value=1349,
+... )
+>>> fitted.posting.fill.impact, fitted.posting.fill.price, fitted.posting.after.cash
+(1/2, 100, 799)
+
+No settlement or valuation formula changed. Changing the component declaration
+preserved those relationships and added the impact law. Fitting here means
+solving for one unknown coefficient from an observation; a statistical fit to
+noisy data would need an explicit residual model and fitting criterion.
+
+Leaving the inputs symbolic also gives SymPy the complete expression to
+differentiate. Here the sensitivity of wealth to impact follows through all
+three layers:
+
+>>> from sympy import diff
+>>> symbolic = ImpactReview("sensitivity")
+>>> diff(symbolic.value, symbolic.posting.fill.impact) == -symbolic.posting.fill.quantity**2
+True
+
+Explore further
+----------------
+
+The pattern extends to other state transitions and reporting layers: define
+each part's mathematics, connect the parts in a parent, and supply observations
+where the question belongs. The :doc:`nested-model guide </nesting>` and
+:doc:`API reference </api>` cover the core mechanics.
+
+The larger `portfolio prototype
+<https://github.com/Code0x58/modello/tree/master/examples/portfolio>`_ explores
+named baskets, external data, account timelines, and reports. Its
+`continuous execution study
+<https://github.com/Code0x58/modello/blob/master/examples/portfolio/optimal_execution.py>`_
+uses SymPy to derive differential equations, integrate onto a discrete grid,
+and fit parameters from the same underlying model. These experimental helpers
+live under ``examples/``, separately from the core library.
+
+To run the richer prototype with its bundled synthetic data:
 
 .. code-block:: console
 
    $ pip install "modello[examples]"
-
-Begin with :doc:`valuing a holding <holdings>`, which uses only core Modello,
-and follow the chapters in order when building your own version. Each page's
-executable examples also include the imports and setup needed to run it on its
-own. Code included directly from a module is the implementation of the helper
-being developed at that step.
-
-.. toctree::
-   :maxdepth: 1
-
-   holdings
-   data
-   accounts
-   signals
-   reporting
-   optimal_execution
-   execution_calibration
-
-The reporting chapter assembles the complete scenario and links to the
-`interactive report <report.html>`_. The two execution studies reuse a
-continuous model for scheduling, calibration, and liquidity questions.
-
-Where the layers live
-----------------------
-
-.. mermaid::
-   :caption: Definitions, observations, evaluation, and reports
-   :alt: Models and named declarations supply compiled calculations. Providers supply observations and an external ledger. Replay connects both to decisions, analytics, and reports.
-
-   flowchart TD
-       models[Typed mathematical components] --> views[Compiled model views]
-       data[Providers and observations] --> replay[Chronological account replay]
-       views --> replay
-       replay --> decisions[Signals and execution assessment]
-       replay --> analytics[Performance and risk]
-       replay --> reports[Attribution and utility reports]
-       analytics --> reports
-       decisions --> reports
-
-.. list-table::
-   :header-rows: 1
-   :widths: 35 65
-
-   * - Responsibility
-     - Modules under ``examples/``
-   * - Named data, causal series, provider requests
-     - ``data``; standard library only.
-   * - Declaration and numerical model adapters
-     - ``named_members``, ``symbolic``.
-   * - Financial equations and portfolio composition
-     - ``portfolio.models``, ``portfolio.valuation``.
-   * - External observations and chronological replay
-     - ``portfolio.sources``, ``portfolio.account``.
-   * - Decisions and execution assessment
-     - ``portfolio.signals``, ``portfolio.execution``.
-   * - Statistics, attribution, and presentation
-     - ``portfolio.analytics``, ``portfolio.reporting``, ``portfolio.report_html``.
-   * - Complete research case and continuous-model studies
-     - ``portfolio.demo``, ``portfolio.optimal_execution``.
-
-The account and execution studies are the runnable examples:
-
-.. code-block:: console
-
    $ python -m examples.portfolio --html account.html --json account.json
    $ python -m examples.portfolio.optimal_execution
 
-The wheel includes the CSV fixtures. Construction and compilation happen before
-repeated numerical evaluation; ``ModelPath`` retains columns and creates typed
-point models only when requested. Provider acquisition, event chronology,
-publication horizons, and reporting conventions stay explicit.
-
-.. _named-member-solving:
-
-Named-member solving as a general feature
-------------------------------------------
-
-The reusable Modello question explored here is how to project expressions from
-a declared domain of named, typed components and reduce them while retaining
-joint forward and inverse solving. ``component_members`` expands a declaration
-into ordinary scalar expressions; ``MemberValues`` associates application
-results with the actual members of their source case.
-
-This prototype adapts existing component metadata. It introduces no public
-map-valued solver input or time-series solving rule. A future core interface
-would need to define declaration, reflection, constraint, and error semantics,
-including how static types distinguish common member types from particular
-keys. Acquisition, chronology, execution backends, and financial conventions
-can remain consumers of the resulting expressions.
+An `interactive sample report <report.html>`_ is also available. The toy account
+illustrates modelling and accounting, rather than evidence of investment skill.
