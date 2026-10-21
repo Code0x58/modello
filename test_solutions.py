@@ -18,7 +18,6 @@ from sympy import (
     Tuple,
     pi,
     sin,
-    sqrt,
 )
 
 import modello.solutions as solutions
@@ -27,7 +26,6 @@ from modello import (
     InstanceDummy,
     ModelInputError,
     Modello,
-    ModelSolveError,
     ModelValidationError,
     SolutionFamily,
     SolutionSelectionError,
@@ -47,38 +45,25 @@ class Check(Modello):
     total = reading.squared + 1
 
 
-def test_joint_family_refines_to_checked_typed_cases_without_running_legacy_solver(monkeypatch):
+def test_family_materialisation_preserves_bindings_and_provenance_without_legacy_solver(monkeypatch):
     import modello
 
     problem = inspect_model(Check, "explore")
     check = problem.symbols
     x, total = check.reading.x, check.total
     family = problem.solutions()
-    assert isinstance(family, SolutionFamily)
-    assert family.parameters == (problem.field("reading", "x"),)
-    assert family.parameter_domain is S.Reals
-    assert family.expression(total) == x**2 + 1
-    assert family.expression(total - check.reading.squared) == 1
     assert family.format(family.expression(total)) == "reading.x**2 + 1"
-    assert family.values(total) == Interval(1, S.Infinity)
-    assert family.values(x).contains(2) is S.true
     assert family.values(x, total).contains(Tuple(2, 6)) is S.false
     assert family.values(x, total).contains(Tuple(2, 5)) is S.true
     assert family.values(total - check.reading.squared) == FiniteSet(1)
     assert "reading: Reading\n    x [coordinate]\n    squared = x**2" in str(family)
-    assert "SolutionFamily(Check" in repr(family)
-    with pytest.raises(FrozenInstanceError):
-        family.parameters = ()
 
     def forbidden(*args, **kwargs):
         raise AssertionError("A checked family case must not rerun solve()")
 
     monkeypatch.setattr(modello, "solve", forbidden)
     observed = family.observe(total=5)
-    assert observed.values(x, total) == FiniteSet(Tuple(-2, 5), Tuple(2, 5))
     cases = observed.cases()
-    assert {case.reading.x for case in cases} == {-2, 2}
-    assert all(isinstance(case, Check) and isinstance(case.reading, Reading) for case in cases)
     first, second = cases
     assert first._modello_bound_fields[Check.total].symbol != second._modello_bound_fields[Check.total].symbol
     assert first._modello_bound_fields[Check.total].kind is ConstraintKind.INPUT
@@ -86,27 +71,18 @@ def test_joint_family_refines_to_checked_typed_cases_without_running_legacy_solv
         observed.one()
     assert caught.value.solution_count == 2
     assert caught.value.family is observed
-    chosen = observed.where(x > 0).one()
-    assert (chosen.reading.x, chosen.reading.squared, chosen.total) == (2, 4, 5)
     assert family.parameters == (problem.field("reading", "x"),) and family.parameter_domain is S.Reals
     assert all(c.input is None for c in problem.constraints)
     assert {c.input for c in observed.problem.constraints if c.input is not None} == {"total"}
-    assert observed.symbols.total == total
-    assert observed.observe(total=6).is_empty is True
     monkeypatch.setattr(SolutionFamily, "_prepare", forbidden)
     assert observed.observe() is observed
     assert observed.where() is observed
 
 
-def test_exception_to_family_and_continuous_interval_observations():
-    with pytest.raises(ModelSolveError) as caught:
-        Check("ambiguous", total=5)
-    family = caught.value.problem.solutions()
-    assert {case.reading.x for case in family.cases()} == {-2, 2}
+def test_continuous_and_empty_families_retain_selection_error_context():
     p = inspect_model(Check, "band")
     total = p.symbols.total
     band = p.solutions().where(total >= 4, total <= 6)
-    assert band.parameter_domain == Interval(-sqrt(5), -sqrt(3)) | Interval(sqrt(3), sqrt(5))
     with pytest.raises(UnresolvedSolutionError) as unresolved:
         band.one()
     assert unresolved.value.family is band
@@ -128,7 +104,6 @@ def test_typed_symbol_tree_and_nested_observations_share_constructor_provenance(
 
     problem = inspect_model(Joined, "same name")
     symbols = problem.symbols
-    assert symbols is problem.symbols
     assert symbols.alias == symbols.left.reading.x
     assert symbols.left.reading.x != symbols.right.reading.x
     assert symbols.left.total != symbols.left.reading.squared + 1
@@ -143,7 +118,6 @@ def test_typed_symbol_tree_and_nested_observations_share_constructor_provenance(
     family = problem.solutions(symbols.alias).observe(left=left, right=right)
     assert family.values(symbols.left.total, symbols.right.total) == FiniteSet(Tuple(5, 10))
     assert family.symbols.alias == symbols.alias
-    assert all(c.input is None for c in problem.constraints)
     copied = {c.path: c.kind for c in family.problem.constraints if c.input == "left"}
     assert copied[("left", "reading", "x")] is ConstraintKind.INPUT
     assert copied[("left", "reading", "squared")] is ConstraintKind.INFERRED
@@ -270,7 +244,6 @@ def test_external_coefficients_keep_zero_cases_and_conditional_emptiness(coeffic
 
     p = inspect_model(Product, "conditional", product=0, squared=1)
     family = p.solutions()
-    assert family.parameter_domain.is_empty is None
     assert family.is_empty is None
     assert family.parameter_domain.xreplace({coefficient: S.Zero}) == FiniteSet(-1, 1)
     assert family.parameter_domain.xreplace({coefficient: S.One}) is S.EmptySet

@@ -33,27 +33,31 @@ observed interval, then ask what that means for the planned trade:
 >>> calibrated = family.where(study.recorded.cost >= 200, study.recorded.cost <= 202)
 >>> calibrated.values(study.impact)
 Interval(1/4, 3/4)
->>> calibrated.values(study.planned.cost)
-Interval(1026, 1076)
->>> calibrated.expression(study.planned.cost) == 100 * study.impact + 1001
-True
 
 The joining model carries the calibration into the prediction through one
 shared quantity. ``ImpactStudy.calibrated()`` packages these preparation and
-observation steps. There is no statistical confidence level attached to this
-interval; it follows from the specified bounds and the model's assumptions.
+observation steps into a prediction that is ready to query:
+
+>>> prediction = ImpactStudy.calibrated()
+>>> prediction.values(prediction.symbols.planned.cost)
+Interval(1026, 1076)
+>>> prediction.expression(prediction.symbols.planned.cost) == 100 * prediction.symbols.impact + 1001
+True
+
+There is no statistical confidence level attached to this interval; it follows
+from the specified bounds and the model's assumptions.
 
 Select a particular impact to obtain a normal typed model:
 
 >>> from sympy import Rational
->>> case = calibrated.observe(impact=Rational(1, 2)).one()
+>>> case = prediction.observe(impact=Rational(1, 2)).one()
 >>> case.recorded.cost, case.planned.cost
 (201, 1051)
 >>> case.recorded.impact == case.planned.impact
 True
 
 Plot the same expression over its admissible interval with
-``ImpactStudy.plot(calibrated, Path("cost.png"))``. From a checkout, the
+``ImpactStudy.plot(prediction, Path("cost.png"))``. From a checkout, the
 notebook dependency group supplies the optional Matplotlib backend:
 
 .. code-block:: console

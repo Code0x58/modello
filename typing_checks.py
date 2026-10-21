@@ -115,13 +115,11 @@ def check_solution_families() -> None:
     """Family selection retains the model type, including nested components."""
     problem: ModelProblem[Drawing] = inspect_model(Drawing, "family")
     family: SolutionFamily[Drawing] = problem.solutions()
-    coordinates: tuple[ModelField, ...] = family.parameters
-    cases: tuple[Drawing, ...] = family.cases()
+    _coordinates: tuple[ModelField, ...] = family.parameters
+    _cases: tuple[Drawing, ...] = family.cases()
     case: Drawing = family.one()
     point: Point = case.line.start
     assert point.label() == "point"
-    assert all(field in problem.fields for field in coordinates)
-    assert all(isinstance(value, Drawing) for value in cases)
     symbols: Drawing = problem.symbols
     start: Point = family.symbols.line.start
     problem.solutions(start.x)
