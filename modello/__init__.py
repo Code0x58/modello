@@ -51,6 +51,19 @@ class BoundInstanceDummy(InstanceDummy):
     """A symbol belonging to a particular model instance."""
 
 
+@dataclass(frozen=True, slots=True)
+class _BoundField:
+    """Keep a quantity's identity, construction value, and provenance together."""
+
+    symbol: BoundInstanceDummy
+    value: Basic
+    kind: Literal["input", "inferred"]
+
+    def copied_kind(self, value: object) -> Literal["input", "inferred"]:
+        """An overwritten construction result becomes a supplied input."""
+        return self.kind if isinstance(value, Basic) and value == self.value else "input"
+
+
 @dataclass(frozen=True)
 class _ModelReference:
     """Expose a child's complete field tree during class definition."""
@@ -235,8 +248,7 @@ class Modello(metaclass=ModelloMeta):
     _modello_fields: ClassVar[dict[FieldPath, InstanceDummy]] = {}
     _modello_class_constraints: ClassVar[tuple[tuple[InstanceDummy, Basic], ...]] = ()
     _modello_constraint_paths: ClassVar[tuple[FieldPath, ...]] = ()
-    _modello_instance_dummies: dict[InstanceDummy, BoundInstanceDummy]
-    _modello_input_fields: frozenset[InstanceDummy]
+    _modello_bound_fields: dict[InstanceDummy, _BoundField]
 
     def __init__(self, name: str, **value_map: ScalarValue | Modello) -> None:
         """Accept scalar values and compatible child model instances."""
@@ -291,10 +303,11 @@ class Modello(metaclass=ModelloMeta):
 
         def populate(instance: Modello, model: type[Modello], prefix: FieldPath) -> None:
             """Materialize descendants directly from the one shared solution."""
-            instance._modello_instance_dummies = {d: fields[prefix + path] for path, d in model._modello_fields.items()}
-            instance._modello_input_fields = frozenset(
-                d for d, bound in instance._modello_instance_dummies.items() if bound in input_symbols
-            )
+            bound_fields = {d: fields[prefix + path] for path, d in model._modello_fields.items()}
+            instance._modello_bound_fields = {
+                d: _BoundField(bound, solution[bound], "input" if bound in input_symbols else "inferred")
+                for d, bound in bound_fields.items()
+            }
             for attr in model._modello_namespace.dummies:
                 bound = fields[prefix + (attr,)]
                 setattr(instance, attr, solution[bound])
@@ -343,7 +356,7 @@ def inspect_model(model: type[Modello], name: str, /, **value_map: ScalarValue |
         raw: object,
         scope: dict[InstanceDummy, BoundInstanceDummy],
         group: str,
-        kind: Literal["input", "inferred"] = "input",
+        source: _BoundField | None = None,
     ) -> None:
         try:
             value = simplify(raw)
@@ -351,6 +364,7 @@ def inspect_model(model: type[Modello], name: str, /, **value_map: ScalarValue |
             raise TypeError(f"{'.'.join(path)} must be a SymPy-compatible scalar") from error
         if not isinstance(value, Expr):
             raise TypeError(f"{'.'.join(path)} must be a SymPy-compatible scalar")
+        kind = "input" if source is None else source.copied_kind(raw)
         constraints.append(ModelConstraint(len(constraints), path, kind, fields[path], value.xreplace(scope), group))
 
     for attr, value in value_map.items():
@@ -372,7 +386,7 @@ def inspect_model(model: type[Modello], name: str, /, **value_map: ScalarValue |
             **bindings,
             **{d: fields[prefix + path] for path, d in child_model._modello_fields.items()},
             **{
-                value._modello_instance_dummies[source_fields[path]]: fields[prefix + path]
+                value._modello_bound_fields[source_fields[path]].symbol: fields[prefix + path]
                 for path in child_model._modello_fields
             },
         }
@@ -385,7 +399,7 @@ def inspect_model(model: type[Modello], name: str, /, **value_map: ScalarValue |
                 scalar,
                 scope,
                 attr,
-                "input" if source_fields[path] in value._modello_input_fields else "inferred",
+                value._modello_bound_fields[source_fields[path]],
             )
     return ModelProblem(
         model, name, tuple(ModelField(path, symbol) for path, symbol in fields.items()), tuple(constraints)

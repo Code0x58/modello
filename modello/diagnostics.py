@@ -31,6 +31,7 @@ from sympy import (
     sqrt,
     sympify,
 )
+from sympy.core.function import AppliedUndef
 from sympy.printing.str import StrPrinter
 from sympy.solvers.solveset import NonlinearError
 
@@ -224,11 +225,24 @@ class Conflict:
 class _FieldPrinter(StrPrinter):
     """Label quantities without substitution, which could change the algebra."""
 
-    def __init__(self, fields: tuple[ModelField, ...]) -> None:
+    def __init__(self, fields: tuple[ModelField, ...], symbols: frozenset[Symbol]) -> None:
         super().__init__()
         self.labels: dict[Symbol, str] = {}
         for field in fields:
-            self.labels.setdefault(field.symbol, "self." + ".".join(field.path))
+            self.labels.setdefault(field.symbol, ".".join(field.path))
+        external: dict[str, list[Symbol]] = {}
+        for symbol in sorted(
+            symbols - self.labels.keys(),
+            key=lambda s: (s.name, str(sorted(s.assumptions0.items())), getattr(s, "dummy_index", -1)),
+        ):
+            external.setdefault(symbol.name, []).append(symbol)
+        for name, group in external.items():
+            for index, symbol in enumerate(group, 1):
+                suffix = f"#{index}" if len(group) > 1 else ""
+                self.labels[symbol] = f"external[{name}{suffix}]"
+
+    def _print_Symbol(self, expression: Symbol) -> str:
+        return self.labels.get(expression, super()._print_Symbol(expression))
 
     def _print_Dummy(self, expression: Symbol) -> str:
         return self.labels.get(expression, super()._print_Dummy(expression))
@@ -252,7 +266,13 @@ class ModelProblem:
 
     def format(self, expression: Basic) -> str:
         """Render identities as field paths, retaining every original expression."""
-        return str(_FieldPrinter(self.fields).doprint(expression))
+        return str(self._printer(expression).doprint(expression))
+
+    def _printer(self, *expressions: Basic) -> _FieldPrinter:
+        symbols = frozenset().union(
+            *(c.symbols for c in self.constraints), *(expression.free_symbols for expression in expressions)
+        )
+        return _FieldPrinter(self.fields, symbols)
 
     def __str__(self) -> str:
         return "\n".join([f"{self.model.__name__}({self.name!r})", *self._constraint_lines(self.constraints)])
@@ -272,6 +292,7 @@ class ModelProblem:
 
     def _constraint_lines(self, constraints: tuple[ModelConstraint, ...], indent: int = 2) -> list[str]:
         entries = []
+        printer = self._printer()
         for c in constraints:
             if c.kind == "definition":
                 source = "definition"
@@ -279,7 +300,7 @@ class ModelProblem:
                 source = f"inferred in {c.input!r}"
             else:
                 source = f"{c.kind} {c.input!r}"
-            entries.append((c.path[:-1], f"c{c.index}: self.{'.'.join(c.path)} = {self.format(c.right)} [{source}]"))
+            entries.append((c.path[:-1], f"c{c.index}: {'.'.join(c.path)} = {printer.doprint(c.right)} [{source}]"))
         return self._tree_lines(tuple(entries), indent)
 
     def field(self, *path: str) -> ModelField:
@@ -638,7 +659,14 @@ def _solution_sets(
         errors = []
         for c, residual in equations:
             try:
-                values &= solveset(residual, symbol, domain)
+                # An unevaluated function can hide an external coefficient even
+                # when free_symbols contains only the model field. A generic
+                # solve may silently discard the coefficient's zero case.
+                values &= (
+                    ConditionSet(symbol, Eq(residual, 0), domain)
+                    if residual.has(AppliedUndef)
+                    else solveset(residual, symbol, domain)
+                )
             except Exception as error:
                 values &= ConditionSet(symbol, Eq(residual, 0), domain)
                 errors.append(f"c{c.index}: {type(error).__name__}: {error}")

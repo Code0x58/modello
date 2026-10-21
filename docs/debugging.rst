@@ -86,18 +86,20 @@ Inspect .problem or call .problem.analyse() for an opt-in diagnostic report.
 ModelProblem(Check, 'conflict', fields=3, constraints=5)
 >>> print(problem)
 Check('conflict')
-  c0: self.total = self.reading.squared + 1 [definition]
-  c4: self.total = 6 [input 'total']
+  c0: total = reading.squared + 1 [definition]
+  c4: total = 6 [input 'total']
   reading: Reading
-    c1: self.reading.squared = self.reading.x**2 [definition]
-    c2: self.reading.x = 2 [input 'reading']
-    c3: self.reading.squared = 4 [inferred in 'reading']
+    c1: reading.squared = reading.x**2 [definition]
+    c2: reading.x = 2 [input 'reading']
+    c3: reading.squared = 4 [inferred in 'reading']
 
 Here the child fixes ``x = 2``, so its square is 4 and the parent's total must
 be 5. Remove or correct the conflicting observation. Adding more observations
 cannot repair that contradiction.
 
-The snapshot uses ``self.`` paths for model fields. Copied component values
+The snapshot uses paths from the model root, such as ``reading.x``. External
+parameters appear as ``external[name]``; distinct external symbols sharing a
+name are numbered. Copied component values
 retain whether they were supplied or inferred during construction: ``x = 2``
 was an input when building ``known``, while ``squared = 4`` was inferred.
 Supplying ``known`` as ``reading`` to ``Check`` preserves that distinction:
@@ -227,10 +229,10 @@ Check('conflict'): inconsistent
   An exact linear combination proves a contradiction.
   Exact equality rank 3; augmented rank 4; nullity 0 (affine subset only, domains excluded).
   Proven conflict (irreducible; declared domains retained):
-    c0: self.total = self.reading.squared + 1 [definition]
-    c4: self.total = 6 [input 'total']
+    c0: total = reading.squared + 1 [definition]
+    c4: total = 6 [input 'total']
     reading: Reading
-      c3: self.reading.squared = 4 [inferred in 'reading']
+      c3: reading.squared = 4 [inferred in 'reading']
     Certificate: (-1)*c0 + (-1)*c3 + (1)*c4 gives -1 = 0.
   Input removals:
     reading: consistent

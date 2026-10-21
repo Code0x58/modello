@@ -51,6 +51,9 @@ alone proves neither whole-model consistency nor uniqueness. An empty set proves
 inconsistency because the domain contains all permitted finite scalar values.
 Finite roots are audited as witness proposals against the original problem;
 unresolved sets and solver exceptions do not become inconsistency proofs.
+Unevaluated functions remain conditional, including opaque coefficients such as
+``f(1)``: these can hide a zero-coefficient case without appearing as free
+symbols. Generic solver roots are not treated as exhaustive in that case.
 
 ``LinearAnalysis`` reports only the rational affine part. Its ``complete`` flag
 states whether that part includes every recorded equation. Rank and nullity
@@ -71,6 +74,9 @@ from actual constructor observations, including aliases and nested components;
 it is not guessed from whether the field has a defining expression, and does
 not reconstruct the solver's derivation. The constraint's ``input`` groups both
 kinds under the supplied component argument for removal probes.
+If a field's value has changed since construction, copying it treats the new
+value as an input rather than attributing it to the original inference.
+Numerical views preserve this distinction for evaluated inputs and outputs too.
 
 Conflicts, probes, and costs
 ----------------------------
@@ -97,8 +103,10 @@ solve expressions, so this is not a wall-clock timeout. Field queries,
 component views, snapshot formatting, and ordinary exception formatting do not
 run analysis. Preparation is shared with construction rather than rebuilding
 an approximate diagnostic model. Numeric model results are unchanged by analysis.
-Successful instances retain the input field identities needed to preserve
-this distinction when their values are copied into another model.
+Successful instances retain each field's bound symbol, construction value,
+and provenance together, so copies can distinguish original results from
+changed values. Reports label symbols through a printer without substituting
+into the algebra; field paths and external parameters remain distinguishable.
 
 Research and SymPy foundations
 -------------------------------

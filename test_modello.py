@@ -370,8 +370,8 @@ def test_scalar_aliases_keep_all_supplied_constraints():
     assert (parent.child.x, parent.child.alias, parent.alias) == (3, 3, 3)
     with pytest.raises(ModelSolveError, match="0 solutions") as error:
         Child("C", x=1, alias=2)
-    assert "self.x = 1" in str(error.value.problem)
-    assert "self.alias = 2" in str(error.value.problem)
+    assert "x = 1" in str(error.value.problem)
+    assert "alias = 2" in str(error.value.problem)
     with pytest.raises(ValueError, match="0 solutions"):
         Parent("P", child=Child("C", x=1), alias=2)
 
@@ -390,12 +390,12 @@ def test_inconsistent_and_ambiguous_nested_systems_are_rejected():
     with pytest.raises(ModelSolveError, match="2 solutions") as error:
         Parent("P", total=5)
     assert "Parent('P')" in str(error.value)
-    assert "self.child.squared = self.child.x**2" in str(error.value.problem)
-    assert "self.total = 5" in str(error.value.problem)
+    assert "child.squared = child.x**2" in str(error.value.problem)
+    assert "total = 5" in str(error.value.problem)
     with pytest.raises(ModelSolveError, match="0 solutions") as error:
         Parent("P", child=Child("C", x=2), total=10)
-    assert "self.child.x = 2" in str(error.value.problem)
-    assert "self.total = 10" in str(error.value.problem)
+    assert "child.x = 2" in str(error.value.problem)
+    assert "total = 10" in str(error.value.problem)
 
 
 def test_error_labels_preserve_noncommutative_relationships():
@@ -409,7 +409,7 @@ def test_error_labels_preserve_noncommutative_relationships():
 
     with pytest.raises(ModelSolveError, match="0 solutions") as error:
         Ordered("O", scale=0)
-    assert "self.commutator = self.x*self.y - self.y*self.x" in str(error.value.problem)
+    assert "commutator = x*y - y*x" in str(error.value.problem)
 
 
 def test_overriding_a_child_rebinds_inherited_expressions():
@@ -578,8 +578,8 @@ def test_undefined_derived_values_are_not_solutions():
 
     with pytest.raises(ModelSolveError, match="0 solutions") as error:
         Parent("P", x=0)
-    assert "1/self.x" in str(error.value.problem)
-    assert "self.x = 0" in str(error.value.problem)
+    assert "1/x" in str(error.value.problem)
+    assert "x = 0" in str(error.value.problem)
 
 
 def test_cyclic_definitions_are_solved_as_simultaneous_equations():

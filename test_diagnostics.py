@@ -4,7 +4,22 @@ from dataclasses import FrozenInstanceError, replace
 from itertools import combinations, product
 
 import pytest
-from sympy import ConditionSet, Eq, FiniteSet, Function, ImageSet, S, Symbol, cos, expand, linsolve, pi, sin, sqrt
+from sympy import (
+    ConditionSet,
+    Dummy,
+    Eq,
+    FiniteSet,
+    Function,
+    ImageSet,
+    S,
+    Symbol,
+    cos,
+    expand,
+    linsolve,
+    pi,
+    sin,
+    sqrt,
+)
 
 import modello
 import modello.diagnostics as diagnostics
@@ -67,7 +82,7 @@ def test_snapshot_preserves_aliases_origins_and_component_boundaries(monkeypatch
     assert all(field.symbol in c.symbols for c in p.uses(field))
     assert p.at().owned_constraints == p.constraints
     assert "ModelProblem(Joined" in repr(p)
-    assert "  left: Reading\n    c1: self.left.squared = self.alias**2 [definition]" in str(p)
+    assert "  left: Reading\n    c1: left.squared = alias**2 [definition]" in str(p)
     assert {c.input for c in p.constraints if c.kind == "input"} == {"left", "gap"}
     with pytest.raises(FrozenInstanceError):
         p.name = "changed"
@@ -256,7 +271,7 @@ def test_copied_values_retain_construction_inputs_in_both_solve_directions():
             (supplied, "input"),
             (inferred, "inferred"),
         }
-        assert f"self.reading.{inferred} = " in str(p)
+        assert f"reading.{inferred} = " in str(p)
         assert "[inferred in 'reading']" in str(p)
         assert "[input 'reading']" in str(p)
 
@@ -300,6 +315,22 @@ def test_parameter_conditions_and_floats_are_not_generic_rank_proofs():
     assert result.linear.complete is False
     assert parameter in p.constraints[0].symbols
     assert inspect_model(Reading, "float", x=1.0, squared=1.0).analyse().status == "unknown"
+
+    coefficient = Function("coefficient")(1)
+
+    class Opaque(Reading):
+        product = coefficient * Reading.x
+
+    p = inspect_model(Opaque, "opaque_coefficient", product=0, squared=1)
+    report = p.analyse()
+    assert report.status == "unknown"
+    assert report.solution_sets[0].values.has(ConditionSet)
+    # The zero coefficient admits a checked solution, so the opaque system
+    # cannot unconditionally be declared inconsistent.
+    concrete = replace(
+        p, constraints=tuple(replace(c, right=c.right.xreplace({coefficient: S.Zero})) for c in p.constraints)
+    )
+    assert_witness(concrete, concrete.analyse().witness)
 
 
 def test_candidate_audits_cover_domains_undefined_values_and_case_identity():
@@ -369,7 +400,7 @@ def test_exception_creation_and_printing_never_launch_analysis(monkeypatch):
     with pytest.raises(ModelSolveError) as caught:
         Sum("plain_failure", x=1, y=2, total=4)
     assert "0 solutions reported" in str(caught.value)
-    assert "self.total = self.x + self.y [definition]" in str(caught.value.problem)
+    assert "total = x + y [definition]" in str(caught.value.problem)
 
 
 def test_unevaluated_function_values_are_not_numeric_witnesses():
@@ -387,7 +418,7 @@ def test_noncommutative_algebra_remains_inspectable_without_scalar_proofs():
         commutator = x * y - y * x
 
     p = inspect_model(Operators, "operators")
-    assert "self.x*self.y - self.y*self.x" in str(p)
+    assert "x*y - y*x" in str(p)
     assert p.analyse().status == "unknown"
 
 
@@ -471,11 +502,45 @@ def test_nested_reports_show_component_types_and_equation_origins():
         total = check.total + 1
 
     p = inspect_model(Envelope, "nested", total=0)
-    assert "\n  check: Check\n    c1: self.check.total" in str(p)
-    assert "\n    reading: Reading\n      c2: self.check.reading.squared" in str(p)
+    assert "\n  check: Check\n    c1: check.total" in str(p)
+    assert "\n    reading: Reading\n      c2: check.reading.squared" in str(p)
     report = p.analyse(conflicts=True)
     assert report.status == "inconsistent"
     rendered = str(report)
-    assert "\n    check: Check\n      c1: self.check.total" in rendered
-    assert "\n      reading: Reading\n        c2: self.check.reading.squared" in rendered
+    assert "\n    check: Check\n      c1: check.total" in rendered
+    assert "\n      reading: Reading\n        c2: check.reading.squared" in rendered
     assert "reading: Reading" in rendered
+
+
+@pytest.mark.parametrize("replacement", (9, S(9)))
+def test_changed_component_results_are_inputs_instead_of_stale_inferences(replacement):
+    source = Reading("source", x=2)
+    source.squared = replacement
+    p = inspect_model(Check, "changed", reading=source)
+    copied = next(c for c in p.constraints if c.input and c.path == ("reading", "squared"))
+    assert copied.kind == "input"
+    assert copied.right == 9
+    assert p.analyse().status == "inconsistent"
+
+
+def test_bare_field_paths_cannot_be_confused_with_external_symbol_identities():
+    positive = Symbol("x", positive=True)
+    negative = Symbol("x", negative=True)
+    independent = Dummy("x", real=True)
+    dotted = Symbol("reading.x", real=True)
+
+    class Names(Modello):
+        x = InstanceDummy("x", real=True)
+        reading = component(Reading)
+        total = x + positive - negative + independent + dotted
+
+    p = inspect_model(Names, "names")
+    assert p.format(p.field("x").symbol) == "x"
+    assert p.format(p.field("reading", "x").symbol) == "reading.x"
+    assert p.format(dotted) == "external[reading.x]"
+    labels = {p.format(symbol) for symbol in (positive, negative, independent)}
+    assert labels == {"external[x#1]", "external[x#2]", "external[x#3]"}
+    rendered = str(p)
+    assert all(label in rendered for label in labels)
+    assert "self." not in rendered
+    assert p.constraints[0].right == p.field("x").symbol + positive - negative + independent + dotted
