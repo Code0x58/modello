@@ -64,6 +64,8 @@ illustrate symbolic modeling with fixed historical rates.
    :caption: Examples
    :maxdepth: 1
 
+   examples/applications/index
+   examples/reconciliation/index
    examples/portfolio/index
    examples/solution_families/index
 

@@ -131,6 +131,17 @@ The [solution-family guide](https://modello.readthedocs.io/en/latest/solutions.h
 explores remaining freedom, bounded observations, and possible outputs before
 selecting concrete model states.
 
+The [practical applications](docs/examples/applications/index.rst) demonstrate
+invoice reconciliation, production planning, and circuit measurement checks.
+The [CDS PnL reconciliation example](docs/examples/reconciliation/index.rst)
+keeps a trusted output fixed and releases individual recorded inputs to show
+the corrections they would imply, using a small, fully visible pricing model:
+
+```sh
+python -m examples.applications
+python -m examples.reconciliation
+```
+
 The [portfolio research example](https://modello.readthedocs.io/en/latest/examples/portfolio/index.html)
 develops this pattern in one short walkthrough: nest transitions, join a
 reporting layer, then refine an execution model and fit it through an outer

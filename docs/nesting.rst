@@ -137,3 +137,8 @@ different inputs; changing an attribute later does not recalculate other values.
 See the :doc:`API reference <api>` for input types, inheritance, and model methods.
 The :doc:`debugging guide <debugging>` covers unresolved quantities, conflicting
 constraints, and multiple possible solutions.
+
+The :doc:`practical applications <examples/applications/index>` apply the same
+pattern to invoices, production yield, and connected circuits. The
+:doc:`trade reconciliation example <examples/reconciliation/index>` keeps a
+trusted PnL fixed and releases individual observations to investigate a break.
