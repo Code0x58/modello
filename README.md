@@ -153,5 +153,6 @@ is described in [notebooks/README.md](notebooks/README.md).
 Install `modello[gui]` for the optional local browser explorer. Run
 `python -m examples.gui` and open <http://127.0.0.1:5058> to explore nested
 quantities, edit or release inputs, inspect domains and provenance, and browse
-raw MathML equations. The [GUI guide](docs/gui.rst) covers metadata, hidden
+typeset MathML equations. The portfolio demo starts with a free stock–bond
+allocation and also solves for a return target. The [GUI guide](docs/gui.rst) covers metadata, hidden
 inputs, validation, and the prototype's scope. The base install remains SymPy only.

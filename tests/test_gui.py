@@ -12,7 +12,7 @@ from modello import InstanceDummy, Modello, component, inspect_model
 from modello._gui.inputs import parse_scalar
 from modello.diagnostics import ConstraintKind
 from modello.errors import ModelInputError
-from modello.gui import BindingError, Explorer, FieldInfo, ModelInfo, create_app
+from modello.gui import BindingError, Explorer, FieldInfo, ModelInfo, Scenario, create_app
 
 
 class Panel(Modello):
@@ -61,7 +61,8 @@ def test_partial_binding_and_hidden_input():
     bound = explorer.snapshot({"panel.height": 3})
     assert bound["status"] == "checked"
     assert rows(bound)["total"]["value"] == "60"
-    assert rows(bound)["total"]["kind"] == "fixed"
+    assert rows(bound)["total"]["kind"] == "derived"
+    assert rows(bound)["total"]["value_state"] == "numeric"
     assert rows(explorer.snapshot())["panel.height"]["kind"] == "free"
 
 
@@ -165,6 +166,9 @@ def test_mathml_is_valid_xml_and_escapes_metadata():
     "text, value",
     [
         ("1.25", Rational(5, 4)),
+        ("70%", Rational(7, 10)),
+        (" 6 % ", Rational(3, 50)),
+        ("1/2%", Rational(1, 200)),
         ("3/2", Rational(3, 2)),
         ("sqrt(2)", sqrt(2)),
         ("pi", pi),
@@ -179,6 +183,9 @@ def test_exact_arithmetic(text, value):
 @pytest.mark.parametrize(
     "text",
     [
+        "%",
+        "10%%",
+        "1%2",
         "True",
         "1/0",
         "float('inf')",
@@ -313,14 +320,19 @@ def test_model_info_rejects_ambiguous_declarations():
         Explorer(EmptyPath)
 
 
-def test_field_provenance_distinguishes_fixed_results_from_copied_observations():
+def test_field_provenance_distinguishes_calculations_from_recorded_observations():
     ordinary = rows(Explorer(Panel, inputs={"width": 2, "height": 3}).snapshot())
     assert ordinary["width"]["provenance"] == "Supplied input"
-    assert ordinary["area"]["kind"] == "fixed" and ordinary["area"]["provenance"] == "Model definition"
+    assert (
+        ordinary["area"]["kind"] == "derived" and ordinary["area"]["provenance"] == "Calculated from a model definition"
+    )
     inverse = rows(Explorer(Panel, inputs={"area": 6, "height": 3}).snapshot())
-    assert inverse["width"]["kind"] == "fixed" and inverse["width"]["provenance"] == "Inferred from equations"
+    assert (
+        inverse["width"]["kind"] == "derived"
+        and inverse["width"]["provenance"] == "Inferred from the other observations"
+    )
     copied = rows(Explorer(inspect_model(Estimate, "copy", panel=Panel("source", width=2, height=3))).snapshot())
-    assert copied["panel.area"]["provenance"] == "Copied component result"
+    assert copied["panel.area"]["provenance"] == "Recorded component result"
     assert not copied["panel.area"]["editable"]
 
 
@@ -340,3 +352,114 @@ def test_empty_components_remain_in_the_raw_model_structure():
 def test_python_implementation_is_not_served_as_a_frontend_asset():
     client = create_app(Panel).test_client()
     assert client.get("/assets/inputs.py").status_code == 404
+
+
+def test_typeset_values_constraints_and_exact_units():
+    explorer = Explorer(Panel, inputs={"height": 3}, metadata={"area": FieldInfo(symbol="A", unit="m²")})
+    partial = rows(explorer.snapshot())
+    assert partial["area"]["value_state"] == "symbolic"
+    assert partial["area"]["depends_on"] == [{"path": "width", "title": "width"}]
+    bound = rows(explorer.snapshot({"width": 2}))
+    assert bound["area"]["display_value"] == "6" and bound["area"]["unit"] == "m²"
+    assert not bound["area"]["approximate"]
+    for name in ("symbol_mathml", "value_mathml", "exact_mathml"):
+        ElementTree.fromstring(bound["area"][name])
+    for constraint in bound["area"]["constraints"]:
+        ElementTree.fromstring(constraint["mathml"])
+
+
+def test_percent_editor_roundtrip_and_highlighted_target():
+    class Rate(Modello):
+        value = InstanceDummy("value", real=True)
+        doubled = 2 * value
+        __gui__ = ModelInfo(
+            initial_field="value",
+            highlights=("doubled",),
+            fields={"value": FieldInfo(number_format="percent"), "doubled": FieldInfo(number_format="percent")},
+            scenarios=(Scenario("Set 3%", "Apply a known rate.", {"value": Rational(3, 100)}, select="doubled"),),
+        )
+
+    client = create_app(Rate).test_client()
+    initial = client.post("/api/explore", json={}).json
+    scenario = initial["scenarios"][0]
+    assert scenario["bindings"] == {"value": "3%"}
+    data = client.post("/api/explore", json={"bindings": scenario["bindings"]}).json
+    assert data["initial_field"] == "value" and data["highlights"] == ["doubled"]
+    assert rows(data)["value"]["input"] == "3%"
+    assert rows(data)["doubled"]["display_value"] == "6%"
+    assert rows(data)["doubled"]["kind"] == "derived"
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"highlights": ("unknown",)},
+        {"initial_field": "unknown"},
+        {"scenarios": (Scenario("Hidden", "Cannot change background data.", {"price": 2}),)},
+        {"scenarios": (Scenario("Unknown selection", "Bad field.", select="unknown"),)},
+        {"highlights": ("price",)},
+    ],
+)
+def test_model_navigation_validates_paths_and_hidden_policy(options):
+    class Invalid(Estimate):
+        __gui__ = ModelInfo(fields={"price": FieldInfo(hidden=True)}, **options)
+
+    with pytest.raises(ModelInputError):
+        Explorer(Invalid)
+
+
+def test_percent_math_groups_the_whole_expression():
+    class Rate(Modello):
+        weight = InstanceDummy("weight", real=True)
+        result = weight / 20 + Rational(3, 100)
+
+    data = rows(Explorer(Rate, metadata={"result": FieldInfo(number_format="percent")}).snapshot())
+    markup = data["result"]["value_mathml"]
+    assert "<mo>(</mo>" in markup and "<mo>)</mo>" in markup
+    ElementTree.fromstring(markup)
+
+
+def test_numeric_formatting_retains_exact_values_and_marks_rounding():
+    from modello._gui.formatting import display_number
+
+    assert display_number(Rational(6500)) == ("6,500", False)
+    assert display_number(Rational(13, 2), percent=True) == ("6.5%", False)
+    assert display_number(sqrt(793) / 2, percent=True) == ("14.08%", True)
+    assert display_number(Rational(1, 10000)) == ("0.0001", False)
+    assert display_number(Symbol("x")) == ("", False)
+    assert display_number(Rational(10) ** 1000)[1]
+
+
+def test_portfolio_demo_starts_open_and_can_solve_forward_or_inverse():
+    from examples.gui import DEMO_INPUTS, Portfolio
+
+    explorer = Explorer(Portfolio, inputs=DEMO_INPUTS)
+    initial = explorer.snapshot()
+    assert initial["hidden_inputs"] == 2
+    assert rows(initial)["allocation.equity"]["kind"] == "free"
+    assert rows(initial)["expected_return"]["value_state"] == "symbolic"
+    assert not any(field["kind"] == "fixed" for field in initial["fields"])
+    split = explorer.snapshot({"allocation.equity": Rational(7, 10)})
+    assert split["status"] == "checked"
+    assert rows(split)["expected_return"]["value"] == "13/200"
+    assert rows(split)["expected_gain"]["display_value"] == "6,500"
+    assert rows(split)["volatility"]["display_value"] == "14.08%"
+    assert rows(split)["volatility"]["approximate"]
+    assert rows(split)["expected_return"]["kind"] == "derived"
+    inverse = explorer.snapshot({"expected_return": Rational(6, 100)})
+    assert inverse["status"] == "checked"
+    assert rows(inverse)["expected_return"]["kind"] == "input"
+    assert rows(inverse)["allocation.equity"]["display_value"] == "60%"
+    assert rows(inverse)["allocation.bonds"]["display_value"] == "40%"
+    with pytest.raises(BindingError):
+        explorer.snapshot({"allocation.equity": Rational(6, 5)})
+    assert rows(explorer.snapshot())["allocation.equity"]["kind"] == "free"
+
+
+def test_invalid_portfolio_edit_identifies_both_input_and_derived_domain():
+    from examples.gui import DEMO_INPUTS, Portfolio
+
+    client = create_app(Portfolio, inputs=DEMO_INPUTS).test_client()
+    response = client.post("/api/explore", json={"bindings": {"allocation.equity": "120%"}})
+    assert response.status_code == 422
+    assert set(response.json["paths"]) == {"allocation.equity", "allocation.bonds"}

@@ -8,19 +8,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any, Literal, Mapping
 
-from sympy import Expr, S, Symbol
+from sympy import Expr, S, Symbol, factor_terms
 
 from modello import Modello, ScalarValue, _solve_problem, inspect_model
+from modello._gui.formatting import display_number
 from modello._gui.inputs import parse_scalar
+from modello._gui.mathml import EquationPrinter
 from modello.diagnostics import Candidate, ConstraintKind, FieldValue, ModelConstraint, ModelField, ModelProblem
 from modello.errors import ModelInputError, ModelValidationError, SolverBackendError
 
 if TYPE_CHECKING:
     from flask import Flask
 
-__all__ = ["BindingError", "Explorer", "FieldInfo", "ModelInfo", "create_app"]
+__all__ = ["BindingError", "Explorer", "FieldInfo", "ModelInfo", "Scenario", "create_app"]
 
 
 @dataclass(frozen=True)
@@ -29,7 +31,8 @@ class FieldInfo:
 
     ``symbol`` is literal MathML text, not LaTeX. ``hidden`` removes the editor
     and observation value while retaining its inputs. Calculated outputs can
-    still reveal input values; hiding is a presentation choice.
+    still reveal input values; hiding is a presentation choice. ``unit`` is a
+    display label; ``number_format='percent'`` renders fractions as percentages.
     """
 
     title: str = ""
@@ -37,6 +40,22 @@ class FieldInfo:
     info: str = ""
     symbol: str = ""
     hidden: bool = False
+    unit: str = ""
+    number_format: Literal["number", "percent"] = "number"
+
+
+@dataclass(frozen=True)
+class Scenario:
+    """A named exploration that restores initial inputs, then applies bindings.
+
+    Only visible, editable quantities may be bound. ``select`` opens a field
+    in the inspector; it need not be the quantity being observed.
+    """
+
+    title: str
+    description: str
+    bindings: Mapping[str, ScalarValue | None] = dataclass_field(default_factory=dict)
+    select: str = ""
 
 
 @dataclass(frozen=True)
@@ -45,12 +64,26 @@ class ModelInfo:
 
     Field keys are relative dotted paths. Component classes supply their own
     declarations; a parent's ``fields`` can override them by full path.
+    ``highlights`` selects result cards, ``initial_field`` opens an inspector,
+    and ``scenarios`` supplies named explorations from the initial inputs.
     """
 
     title: str = ""
     description: str = ""
     info: str = ""
     fields: Mapping[str, FieldInfo] = dataclass_field(default_factory=dict)
+    highlights: tuple[str, ...] = ()
+    initial_field: str = ""
+    scenarios: tuple[Scenario, ...] = ()
+
+
+@dataclass(frozen=True)
+class _Snapshot:
+    problem: ModelProblem
+    printer: EquationPrinter
+    supplied: Mapping[Symbol, Expr]
+    definitions: Mapping[Symbol, Expr]
+    constraints: Mapping[Symbol, list[dict[str, str]]]
 
 
 class BindingError(ModelValidationError):
@@ -117,7 +150,7 @@ def _preview(problem: ModelProblem) -> tuple[dict[Symbol, Expr], str]:
         message = (
             "Multiple solutions remain. Add an observation to select a unique preview."
             if accepted
-            else "No valid preview was established. Check equations, inputs, and declared domains."
+            else "The model could not validate this case. Check the highlighted values and assumptions."
         )
         raise BindingError(message, tuple(sorted(rejected_paths)))
     return accepted[0]
@@ -168,7 +201,10 @@ class Explorer:
                     if getattr(value, f"is_{key}", None) not in (None, expected)
                 ]
                 if value.is_finite is False or value.has(S.NaN, S.ComplexInfinity) or bad:
-                    raise BindingError(f"{path}: value violates {', '.join(bad) or 'finite scalar'}.", (path,))
+                    requirements = self._layout.assumptions[field.symbol] or ["finite"]
+                    requirement = " and ".join(requirements).replace("nonnegative", "zero or greater").replace("_", " ")
+                    title = self._layout.metadata[path].title or path
+                    raise BindingError(f"{title} must be {requirement}.", (path,))
             changes[field.symbol] = (field, value)
         constraints = [c for c in initial.constraints if c.kind is not ConstraintKind.INPUT or c.left not in changes]
         constraints.extend(
@@ -207,6 +243,7 @@ class Explorer:
         values, verdict = ({}, "raw") if raw else _preview(problem)
         definitions = {c.left: c.right for c in problem.constraints if c.kind is ConstraintKind.DEFINITION}
         supplied = {c.left: c.right for c in problem.constraints if c.kind is ConstraintKind.INPUT}
+        printer = self._layout.printer()
         constraints: dict[Symbol, list[dict[str, str]]] = {}
         for c in problem.constraints:
             if ".".join(c.path) in self._layout.hidden:
@@ -215,14 +252,16 @@ class Explorer:
                 "kind": str(c.kind),
                 "path": ".".join(c.path),
                 "text": f"{problem.format(c.left)} = {problem.format(c.right)}",
+                "mathml": printer.equation(c.left, c.right),
             }
             for symbol in c.symbols:
                 constraints.setdefault(symbol, []).append(entry)
+        context = _Snapshot(problem, printer, supplied, definitions, constraints)
         rows: list[dict[str, Any]] = []
         symbols: list[dict[str, Any]] = []
         for path, field in self._layout.fields.items():
             expression = definitions.get(field.symbol, field.symbol) if raw else values[field.symbol]
-            row = self._field_view(path, expression, supplied, definitions, constraints, problem)
+            row = self._field_view(path, expression, context)
             (symbols if path in self._layout.hidden else rows).append(row)
         status, message = _preview_status(raw, verdict)
         root = self._layout.metadata[""]
@@ -246,35 +285,51 @@ class Explorer:
             "equations": [dict(equation) for equation in self._layout.equations],
             "status": status,
             "condition": message,
+            "highlights": list(self._layout.model_info.highlights),
+            "initial_field": self._layout.model_info.initial_field,
+            "scenarios": [
+                {
+                    "title": scenario.title,
+                    "description": scenario.description,
+                    "select": scenario.select,
+                    "bindings": {
+                        path: None
+                        if value is None
+                        else self._input_text(path, FieldValue(self._layout.field(path), value).value)
+                        for path, value in scenario.bindings.items()
+                    },
+                }
+                for scenario in self._layout.model_info.scenarios
+            ],
             "hidden_inputs": sum(
                 c.kind is ConstraintKind.INPUT and ".".join(c.path) in self._layout.hidden for c in problem.constraints
             ),
         }
 
-    def _field_view(
-        self,
-        path: str,
-        expression: Expr,
-        supplied: Mapping[Symbol, Expr],
-        definitions: Mapping[Symbol, Expr],
-        constraints: Mapping[Symbol, list[dict[str, str]]],
-        problem: ModelProblem,
-    ) -> dict[str, Any]:
+    def _input_text(self, path: str, value: Expr) -> str:
+        if self._layout.metadata[path].number_format == "percent":
+            return self.problem.format(value * 100) + "%"
+        return self.problem.format(value)
+
+    def _field_view(self, path: str, expression: Expr, context: _Snapshot) -> dict[str, Any]:
         field = self._layout.fields[path]
         symbol = field.symbol
         info = self._layout.metadata[path]
         hidden = path in self._layout.hidden
-        kind = _field_kind(symbol, expression, supplied, self._layout.copied)
-        if symbol in supplied:
+        kind = _field_kind(symbol, expression, context.supplied, self._layout.copied)
+        if symbol in context.supplied:
             provenance = "Supplied input"
         elif symbol in self._layout.copied:
-            provenance = "Copied component result"
-        elif symbol in definitions:
-            provenance = "Model definition"
+            provenance = "Recorded component result"
+        elif symbol in context.definitions:
+            provenance = "Calculated from a model definition"
         elif kind == "free":
-            provenance = "Free quantity"
+            provenance = "Free input"
         else:
-            provenance = "Inferred from equations"
+            provenance = "Inferred from the other observations"
+        scaled = factor_terms(expression * 100 if info.number_format == "percent" else expression)
+        parenthesize = info.number_format == "percent" and scaled.is_Add
+        number, approximate = ("", False) if hidden else display_number(scaled, percent=info.number_format == "percent")
         return {
             "path": path,
             "name": field.path[-1],
@@ -285,23 +340,49 @@ class Explorer:
             "symbol": info.symbol or path,
             "kind": kind,
             "provenance": provenance,
-            "value": ("Hidden input" if symbol in supplied else "Hidden quantity")
+            "unit": info.unit,
+            "number_format": info.number_format,
+            "value": ("Hidden input" if symbol in context.supplied else "Hidden quantity")
             if hidden
-            else problem.format(expression),
-            "input": problem.format(supplied[symbol]) if symbol in supplied and not hidden else "",
+            else context.problem.format(expression),
+            "value_state": "hidden"
+            if hidden
+            else "free"
+            if kind == "free"
+            else "numeric"
+            if expression.is_number is True
+            else "symbolic",
+            "display_value": number,
+            "approximate": approximate,
+            "value_mathml": "" if hidden else context.printer.expression(scaled, parenthesize=parenthesize),
+            "exact_mathml": "" if hidden else context.printer.expression(scaled, parenthesize=parenthesize),
+            "symbol_mathml": context.printer.expression(symbol),
+            "input": self._input_text(path, context.supplied[symbol])
+            if symbol in context.supplied and not hidden
+            else "",
             "editable": path in self._layout.editable,
             "assumptions": list(self._layout.assumptions[symbol]),
-            "constraints": [] if hidden else list(constraints.get(symbol, ())),
+            "constraints": [] if hidden else list(context.constraints.get(symbol, ())),
             "aliases": []
             if hidden
             else [alias for alias in self._layout.aliases[symbol] if alias not in self._layout.hidden],
+            "depends_on": []
+            if hidden
+            else [
+                {"path": name, "title": self._layout.metadata[name].title or item.path[-1].replace("_", " ")}
+                for name, item in self._layout.fields.items()
+                if item.symbol in expression.free_symbols
+                and name not in self._layout.hidden
+                and item.symbol != symbol
+                and name == self._layout.aliases[item.symbol][0]
+            ],
         }
 
 
 def _field_kind(symbol: Symbol, value: Expr, supplied: Mapping[Symbol, Expr], copied: frozenset[Symbol]) -> str:
     if symbol in supplied:
         return "input"
-    if symbol in copied or not value.free_symbols:
+    if symbol in copied:
         return "fixed"
     return "free" if value == symbol else "derived"
 
@@ -351,7 +432,7 @@ def create_app(
         try:
             return jsonify(explorer.snapshot(explorer._browser_bindings(bindings), raw=raw))
         except BindingError as error:
-            return jsonify(error=str(error), paths=list(error.paths or bindings)), 422
+            return jsonify(error=str(error), paths=list(dict.fromkeys([*bindings, *error.paths]))), 422
         except (ModelInputError, ModelValidationError) as error:
             return jsonify(error=str(error), paths=list(bindings)), 422
 

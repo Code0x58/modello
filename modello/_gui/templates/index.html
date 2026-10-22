@@ -15,76 +15,146 @@
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="/">m<span>modello</span></a
-      ><span class="edition">MODEL EXPLORER <span class="wip">WIP</span></span
-      ><span class="local">● Local session</span>
+      <a class="brand" href="/" aria-label="modello home"
+        ><span class="brand-mark">m</span>modello</a
+      ><span class="app-label">MODEL EXPLORER <span class="wip">WIP</span></span
+      ><span class="local"><i></i>Local workspace</span>
     </header>
     <main>
-      <div class="eyebrow">INTERACTIVE WORKSPACE</div>
+      <div class="eyebrow">INTERACTIVE MODELLING</div>
       <div class="heading">
         <div>
           <h1 id="title">Model explorer</h1>
           <p id="description"></p>
         </div>
-        <span class="model-name" id="model-name"></span>
+        <span id="model-name" class="model-name"></span>
       </div>
-      <div id="model-info" class="model-info" hidden></div>
+      <details id="about" class="about" hidden>
+        <summary>About this model <span>Assumptions & context</span></summary>
+        <p id="model-info"></p>
+      </details>
+      <section
+        id="scenarios"
+        class="scenarios"
+        aria-label="Guided explorations"
+        hidden
+      >
+        <div class="scenario-heading">Explore a question</div>
+        <div id="scenario-buttons"></div>
+        <p id="scenario-description" aria-live="polite"></p>
+      </section>
       <div class="toolbar">
         <nav aria-label="Model views">
-          <button class="tab active" id="explore-tab" aria-pressed="true">
-            Explore model</button
-          ><button class="tab" id="formula-tab" aria-pressed="false">
+          <button id="explore-tab" class="tab active" aria-pressed="true">
+            Explore</button
+          ><button id="equations-tab" class="tab" aria-pressed="false">
             Equations
           </button>
         </nav>
         <div class="view-controls">
-          <label><input id="raw" type="checkbox" /> Raw model</label
-          ><button id="reset" class="subtle">Reset inputs ↺</button>
+          <label><input id="raw" type="checkbox" />Raw model</label
+          ><button id="reset" class="ghost">
+            Reset inputs <span aria-hidden="true">↺</span>
+          </button>
         </div>
       </div>
+      <div id="message" class="message" role="alert" hidden></div>
       <div class="workspace">
-        <section class="canvas" aria-label="Model quantities">
+        <section id="canvas" class="canvas" aria-label="Model quantities">
           <div class="canvas-head">
             <div>
-              <span class="eyebrow" id="view-label">MODEL STRUCTURE</span>
-              <h2 id="view-title">Quantities & relationships</h2>
+              <span id="view-label" class="eyebrow">MODEL STRUCTURE</span>
+              <h2 id="view-title">Inputs & relationships</h2>
             </div>
-            <span id="status" class="status">Loading</span>
+            <span class="help" data-help
+              ><button id="status" class="status" aria-describedby="tip-status">
+                Loading</button
+              ><span
+                id="tip-status"
+                class="tooltip"
+                role="tooltip"
+                hidden
+              ></span
+            ></span>
           </div>
-          <div class="legend">
-            <span><i class="input-dot"></i>Input</span
-            ><span><i class="fixed-dot"></i>Fixed</span
-            ><span><i class="derived-dot"></i>Derived</span
-            ><span><i class="free-dot"></i>Free</span>
+          <div class="legend" aria-label="Colour key">
+            <span class="help" data-help
+              ><button class="legend-key" aria-describedby="tip-input">
+                <i class="dot input"></i>Input
+                <span aria-hidden="true">ⓘ</span></button
+              ><span id="tip-input" class="tooltip" role="tooltip" hidden
+                >A value you supplied. Edit it, or release it to let the
+                equations determine the quantity.</span
+              ></span
+            >
+            <span class="help" data-help
+              ><button class="legend-key" aria-describedby="tip-free">
+                <i class="dot free"></i>Free
+                <span aria-hidden="true">ⓘ</span></button
+              ><span id="tip-free" class="tooltip" role="tooltip" hidden
+                >An input that is still open. Set a value to calculate a case,
+                or leave it free to explore symbolic relationships.</span
+              ></span
+            >
+            <span class="help" data-help
+              ><button class="legend-key" aria-describedby="tip-derived">
+                <i class="dot derived"></i>Calculated
+                <span aria-hidden="true">ⓘ</span></button
+              ><span id="tip-derived" class="tooltip" role="tooltip" hidden
+                >A result determined by the equations. It recalculates when
+                inputs change and may be a number or a symbolic expression. You
+                can also observe a result as a target.</span
+              ></span
+            >
+            <span class="help" data-help
+              ><button class="legend-key" aria-describedby="tip-fixed">
+                <i class="dot fixed"></i>Recorded
+                <span aria-hidden="true">ⓘ</span></button
+              ><span id="tip-fixed" class="tooltip" role="tooltip" hidden
+                >A copied result retained in a recorded problem. It is held as
+                an observation here. Reopen the original model instance to
+                recompute it from its inputs.</span
+              ></span
+            >
           </div>
-          <div id="message" role="alert" hidden></div>
-          <div id="tree"></div>
+          <div id="exploration">
+            <div id="highlights" class="highlights" hidden></div>
+            <div class="table-heading">
+              <span>QUANTITY</span><span>VALUE / EXPRESSION</span
+              ><span>SOURCE</span><span></span>
+            </div>
+            <div id="tree"></div>
+          </div>
           <div id="equations" hidden>
-            <p class="formula-intro">
-              The original definitions, before binding. Select a symbol to
-              explore its meaning.
+            <p class="equation-intro">
+              The original equations, before observations are substituted.
+              Select a symbol to explore its meaning.
             </p>
             <div id="equation-list"></div>
           </div>
           <div class="canvas-foot">
-            <span id="summary"></span><span>Exact arithmetic · SymPy</span>
+            <span id="summary"></span><span id="background"></span>
           </div>
         </section>
-        <aside id="inspector" aria-label="Field details">
-          <div class="eyebrow">FIELD INSPECTOR</div>
-          <h2 id="field-title">Explore a quantity</h2>
-          <code id="field-path"></code>
+        <aside id="inspector" class="inspector" aria-label="Field details">
+          <div class="inspector-head">
+            <span class="eyebrow">QUANTITY DETAILS</span
+            ><button id="back" class="mobile-back">Back to model ↑</button>
+          </div>
+          <div class="field-heading">
+            <span id="field-symbol"></span>
+            <h2 id="field-title">Choose a quantity</h2>
+          </div>
+          <div id="field-path" class="breadcrumb"></div>
           <p id="field-description">
-            Select a field or an equation symbol to see its meaning and
-            relationships.
+            Select a quantity or an equation symbol to inspect it.
           </p>
-          <div id="field-info" class="info-note" hidden></div>
           <div id="field-detail"></div>
         </aside>
       </div>
       <footer>
-        <span>Edit an input and press Enter. Clear it to explore freely.</span
-        ><span id="condition"></span>
+        <span>Choose what you know. Let the model explain the rest.</span
+        ><span id="condition" role="status" aria-live="polite"></span>
       </footer>
     </main>
   </body>

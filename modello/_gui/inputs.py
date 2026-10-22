@@ -15,8 +15,10 @@ def parse_scalar(text: str) -> Expr:
     """Read a deliberately small arithmetic language, never eval/sympify text."""
     if not text.strip() or len(text) > 160:
         raise ModelInputError("Enter a number or a short exact arithmetic expression.")
+    percent = text.rstrip().endswith("%")
+    text = text.strip()[:-1].strip() if percent else text.strip()
     try:
-        tree = ast.parse(text.strip(), mode="eval")
+        tree = ast.parse(text, mode="eval")
     except (SyntaxError, ValueError) as error:
         raise ModelInputError("Use numbers, +, -, *, /, **, sqrt, pi, E, or I.") from error
     if sum(1 for _ in ast.walk(tree)) > 64:
@@ -70,4 +72,4 @@ def parse_scalar(text: str) -> Expr:
         raise ModelInputError(str(error)) from error
     if result.is_finite is not True:
         raise ModelInputError("Inputs must be finite scalar values.")
-    return result
+    return result / 100 if percent else result

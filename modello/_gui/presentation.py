@@ -9,7 +9,7 @@ from sympy import Symbol
 from modello._gui.mathml import EquationPrinter
 from modello.diagnostics import ConstraintKind, ModelField, ModelProblem
 from modello.errors import ModelInputError
-from modello.gui import FieldInfo, ModelInfo
+from modello.gui import FieldInfo, ModelInfo, Scenario
 
 if TYPE_CHECKING:
     from modello import Modello
@@ -44,7 +44,9 @@ class Layout:
             self.aliases.setdefault(field.symbol, []).append(path)
             labels.setdefault(field.symbol, (path, self.metadata[path].symbol or path))
         self.assumptions = {symbol: _assumptions(symbol) for symbol in self.aliases}
-        printer = EquationPrinter(labels)
+        self._labels = labels
+        self._validate_navigation()
+        printer = self.printer()
         self.equations = tuple(
             {
                 "path": ".".join(c.path),
@@ -60,6 +62,8 @@ class Layout:
         declaration = getattr(model, "__gui__", ModelInfo())
         if not isinstance(declaration, ModelInfo):
             raise ModelInputError(f"{model.__name__}.__gui__ must be a ModelInfo declaration")
+        if not prefix:
+            self.model_info = declaration
         self.metadata[path] = FieldInfo(
             title=declaration.title, description=declaration.description or model.__doc__ or "", info=declaration.info
         )
@@ -76,7 +80,29 @@ class Layout:
     def _set_info(self, path: str, info: FieldInfo) -> None:
         if path not in self.metadata or not isinstance(info, FieldInfo):
             raise ModelInputError(f"Invalid GUI metadata at {path!r}")
+        if info.number_format not in {"number", "percent"}:
+            raise ModelInputError(f"Invalid numeric format at {path!r}")
         self.metadata[path] = info
+
+    def printer(self) -> EquationPrinter:
+        """Give each render its own printer context, including concurrent requests."""
+        return EquationPrinter(self._labels)
+
+    def _validate_navigation(self) -> None:
+        for path in self.model_info.highlights:
+            self.field(path)
+            if path in self.hidden:
+                raise ModelInputError("A hidden quantity cannot be highlighted")
+        if self.model_info.initial_field:
+            self.field(self.model_info.initial_field)
+        for scenario in self.model_info.scenarios:
+            if not isinstance(scenario, Scenario):
+                raise ModelInputError("Model scenarios must be Scenario declarations")
+            if scenario.select:
+                self.field(scenario.select)
+            for path in scenario.bindings:
+                if path not in self.editable:
+                    raise ModelInputError(f"Scenario cannot edit {path!r}")
 
     def field(self, path: str) -> ModelField:
         """Resolve a leaf; component paths cannot be used as scalar inputs."""

@@ -30,17 +30,25 @@ class EquationPrinter(MathMLPresentationPrinter):
         if path:
             node.setAttribute("data-path", path)
             node.setAttribute("tabindex", "0")
+            node.setAttribute("role", "button")
+            node.setAttribute("aria-label", f"Inspect {path}")
         return node
 
     _print_Dummy = _print_Symbol
     _print_InstanceDummy = _print_Symbol
     _print_BoundInstanceDummy = _print_Symbol
 
+    def expression(self, expression: Basic, *, display: bool = False, parenthesize: bool = False) -> str:
+        """Render a value or formula as standalone, XML-compatible MathML."""
+        markup = re.sub(r"&([A-Za-z][A-Za-z0-9]+);", _xml_entity, self.doprint(expression))
+        if parenthesize:
+            markup = f"<mrow><mo>(</mo>{markup}<mo>)</mo></mrow>"
+        mode = "block" if display else "inline"
+        return f'<math xmlns="http://www.w3.org/1998/Math/MathML" display="{mode}">{markup}</math>'
+
     def equation(self, left: Basic, right: Basic) -> str:
-        """Return a standalone equation with XML-compatible entity references."""
-        markup = self.doprint(Eq(left, right, evaluate=False))
-        markup = re.sub(r"&([A-Za-z][A-Za-z0-9]+);", _xml_entity, markup)
-        return f'<math xmlns="http://www.w3.org/1998/Math/MathML" display="block">{markup}</math>'
+        """Keep both original sides, including equations that could simplify."""
+        return self.expression(Eq(left, right, evaluate=False), display=True)
 
 
 def _xml_entity(match: re.Match[str]) -> str:

@@ -2,9 +2,7 @@ Interactive model explorer (WIP)
 ================================
 
 The optional :mod:`modello.gui` module renders nested models in a local browser.
-It is a prototype for exploring quantities, changing observations, and tracing
-relationships. Install its separate extra; the base library still depends only
-on SymPy:
+Install its separate extra; the base library still depends only on SymPy:
 
 .. code-block:: console
 
@@ -12,171 +10,230 @@ on SymPy:
    $ python -m examples.gui
 
 From a checkout, use ``uv run --extra gui python -m examples.gui``. Open
-http://127.0.0.1:5058. The example models a room's geometry, material allowance,
-and estimated cost. It uses exact numbers throughout.
+http://127.0.0.1:5058.
+
+A portfolio to explore
+----------------------
+
+The demo is a familiar two-asset mean–variance portfolio. Equity and bond
+assumptions live in nested components, and allocation weights must be
+non-negative and sum to 100%. It starts with the equity allocation **free**,
+so the results remain expressions in that unknown.
+
+The illustrative annual inputs are 8% equity return with 20% volatility and
+3% bond return with 5% volatility, on USD 100,000 of starting capital.
+Zero return correlation and a 2% risk-free rate are retained as background
+inputs. These are supplied assumptions, not estimates from market data.
+
+For equity weight :math:`w` and bond weight :math:`b`, the model relates:
+
+.. math::
+
+   b &= 1-w, \\
+   \mu_p &= w\mu_e + b\mu_b, \\
+   \sigma_p &= \sqrt{w^2\sigma_e^2+b^2\sigma_b^2+2wb\rho\sigma_e\sigma_b}, \\
+   G &= C\mu_p, \qquad S = \frac{\mu_p-r_f}{\sigma_p}.
+
+The weighted mean and covariance-based variance follow the standard
+`mean–variance formulation in the CVX short course
+<https://www.cvxgrp.org/cvx_short_course/docs/applications/notebooks/portfolio_optimization.html>`_.
+The demo evaluates and inverts these relationships; it does not optimise an
+allocation or estimate return statistics.
+
+.. image:: _static/gui/partial.png
+   :alt: An open equity allocation drives typeset symbolic portfolio results.
+
+Use the guided questions to see different ways to bind the same model:
+
+* **Explore freely** retains the assumptions and leaves the allocation open.
+* **70 / 30 split** supplies a 70% equity allocation. The expected return is
+  6.5%, volatility is approximately 14.08%, and expected gain is USD 6,500.
+* **Target 6% return** observes a result instead of an input. The equations
+  infer a 60% equity / 40% bond mix and USD 6,000 expected gain.
+
+Each question restores the initial inputs before applying its observations.
+Subsequent edits are marked as a custom exploration. Inspect a quantity,
+enter a value, and choose **Apply value** or press Enter. **Release input**
+removes a supplied observation; clearing the editor does the same.
+Try a 120% equity allocation to see the derived bond weight violate its
+non-negative domain. The change is rejected and the previous results remain.
 
 .. image:: _static/gui/explore.png
-   :alt: Nested model quantities, provenance badges, input editors, and a field inspector.
+   :alt: A checked 70/30 case with calculated outputs and a mathematical risk definition in the inspector.
+
+.. image:: _static/gui/inverse.png
+   :alt: A return target is marked as an input while the allocation is inferred.
+
+Understanding the interface
+---------------------------
+
+The colour key describes the **source** of a quantity, independently of whether
+its current value is numeric or symbolic:
+
+* **Input** is a supplied observation. It can be edited or released.
+* **Free** is an open quantity still represented by its own symbol.
+* **Calculated** follows from the model's equations. A numeric result stays
+  calculated and updates when its inputs change. A result can also be observed
+  as a target, making it an input instead.
+* **Recorded** is a copied component result retained in a recorded problem.
+  Its editor is disabled because that observation is held in the snapshot.
+
+Hover or focus a colour key to read its explanation. Touch users can tap a key;
+tap elsewhere or press Escape to dismiss it. The case-status key also explains
+the distinction between a symbolic preview and a checked numerical case.
+Colour is accompanied by text labels throughout.
+
+.. image:: _static/gui/legend.png
+   :alt: The Calculated colour key explains that results recompute and may remain symbolic.
+
+The inspector shows descriptions, units, source, domain chips, mathematical
+definitions, and links to connected quantities. Expressions use native MathML
+instead of printed Python or diagnostic constraint lines. Open **View in
+equations** for a definition that needs more room. Numeric displays use compact
+rounded values; an approximation sign marks rounding, and **Exact value**
+retains the underlying expression in the displayed units.
+
+**Raw model** shows definitions without invoking the solver, retaining recorded
+inputs in the editor. **Equations** shows the original defining equations before
+observations are substituted. Hover, focus, or tap a symbol to inspect its path
+and description. Tab, Enter, and Space support keyboard exploration.
+
+On narrow screens the inspector moves below the model. Selecting a quantity
+brings its details into view; **Back to model** returns to the quantities.
+Tooltip placement is clamped to the viewport.
+
+.. image:: _static/gui/equations.png
+   :alt: Original portfolio definitions rendered as MathML with a field inspector.
+
+.. image:: _static/gui/mobile.png
+   :width: 260px
+   :alt: The portfolio demo and guided questions in a narrow mobile viewport.
+
+.. image:: _static/gui/mobile-inspector.png
+   :width: 260px
+   :alt: The mobile inspector shows a percentage editor, domain, and connected quantities.
 
 Starting from your model
 ------------------------
 
 ``create_app`` accepts a model class, an existing instance, or a recorded
-:class:`~modello.diagnostics.ModelProblem`. Initial ``inputs`` use full dotted
-paths, including nested quantities:
+:class:`~modello.diagnostics.ModelProblem`. Initial inputs use full dotted paths:
 
 .. code-block:: python
 
    from modello.gui import create_app
-   from examples.gui import Studio
-   from sympy import Rational
+   from examples.gui import Portfolio, DEMO_INPUTS
 
-   app = create_app(
-       Studio, "my renovation",
-       inputs={"room.width": 4, "room.length": 5,
-               "unit_cost": 32, "waste": Rational(1, 10)},
-   )
+   app = create_app(Portfolio, "My portfolio", inputs=DEMO_INPUTS)
    app.run(host="127.0.0.1", port=5058, debug=False)
 
-With an instance, original supplied inputs are reopened as observations. Solved
-outputs are recomputed when an input changes, rather than accidentally becoming
-fixed observations. An overwritten instance field becomes an input, as with
-component copies. The original instance is never changed. With a recorded
-problem, all of its constraints are retained, including inferred observations
-copied from a supplied component. Those copied results are fixed and have no
-editor; editing a related input can therefore introduce a contradiction. Use
-an instance to reopen its original inputs instead.
+With an instance, original inputs are reopened as observations and solved
+outputs are recomputed when inputs change. An overwritten instance field
+becomes an input, as with component copies. The source instance is never
+mutated. With a recorded problem, all its constraints remain, including
+inferred component observations. Those are labelled Recorded and held fixed.
+Reopen the instance when you want its outputs to recompute from original inputs.
+Each browser holds its own edits and cannot change another browser's state.
 
-Edit a field and press Enter to apply an observation. Clear it and press Enter
-to release the observation. You can also constrain an output and let the joint
-model infer an input. Indentation and collapsible component headings retain
-nested paths. The badges distinguish:
+Descriptions, units, and guided questions
+-----------------------------------------
 
-* **input**: an explicit supplied observation, including hidden inputs;
-* **fixed**: a result that has become constant, or an inferred component
-  observation retained from a recorded problem;
-* **derived**: an expression in remaining symbolic quantities;
-* **free**: an unbound quantity still represented by its own symbol.
-
-Definitions, observations, and domain assumptions appear in quieter text and
-in the inspector. The original constraint kinds remain available there, so a
-fixed numeric result can still be traced to its definition. The inspector
-names its source explicitly: supplied input, model definition, inferred value,
-or copied component result. A fixed value is determined by the current
-observations and can still change when inputs change. Aliases share an identity
-and one editable observation across their alternate paths.
-
-.. image:: _static/gui/partial.png
-   :alt: A released room length remains free and the cost becomes a symbolic expression.
-
-``Raw model`` shows definitions without invoking the solver. Existing inputs
-remain identified in their editors and inspector. ``Reset inputs`` restores the
-initial observations. Each browser holds its own edits; requests cannot change
-another browser's state.
-
-Descriptions, information, and hidden inputs
---------------------------------------------
-
-Declare model-level text with ``ModelInfo`` and scalar or component labels
-with ``FieldInfo``. Component classes supply their own declarations; a parent's
-``fields`` and the ``metadata=`` argument can override labels by full dotted
-path. Class docstrings provide default model and component descriptions.
-Presentation metadata does not change the algebra:
+Declare model-level text and exploration hints with ``ModelInfo``. ``FieldInfo``
+labels scalars and components. Component classes supply their own declarations;
+a parent's ``fields`` or the ``metadata=`` argument can override labels by full
+path. Class docstrings supply default model and component descriptions.
+Presentation metadata never changes the algebra.
 
 .. code-block:: python
 
-   from modello.gui import FieldInfo, ModelInfo
+   from sympy import Rational
+   from modello.gui import FieldInfo, ModelInfo, Scenario
 
    # Inside a Modello class body:
    __gui__ = ModelInfo(
-       title="Material estimate",
-       description="A first estimate.",
-       info="Prices exclude labour and tax.",
+       title="Portfolio lab",
+       description="Explore a stock–bond mix.",
+       info="Annual arithmetic returns and covariance-based risk.",
+       initial_field="allocation.equity",
+       highlights=("expected_return", "volatility"),
+       scenarios=(Scenario(
+           "70 / 30 split", "Supply an allocation and calculate a case.",
+           {"allocation.equity": Rational(7, 10)}, select="volatility",
+       ),),
        fields={
-           "room.width": FieldInfo(description="Clear internal width, in metres.",
-                                   symbol="w"),
-           "waste": FieldInfo(symbol="r", hidden=True),
+           "allocation.equity": FieldInfo(
+               title="Equity allocation", symbol="w", number_format="percent",
+               description="The fraction invested in equities, from 0% to 100%.",
+           ),
+           "capital": FieldInfo(title="Starting capital", symbol="C", unit="USD"),
+           "market.risk_free_rate": FieldInfo(symbol="rᶠ", hidden=True),
        },
    )
 
-Model-level labels are separate from field paths. The parent can set a
-component's title with ``FieldInfo`` at that component path, while the
-component's quantities retain their own descriptions. The complete declaration
-and initial observations are shown in :mod:`examples.gui`.
+``highlights`` makes selected quantities prominent as result cards.
+``initial_field`` chooses the first inspector selection. A ``Scenario`` contains
+trusted scalar observations and an optional field to select. Paths and edit
+permissions are validated; a scenario cannot change hidden or Recorded values.
+Its observations still pass through the same validation as manual edits.
 
-A hidden field or component has no quantity row or editor. Its original inputs
-remain in every solve, and the browser cannot replace or release them. Hidden
-observation values are omitted from the browser response. Its symbol and
-public description can still be explored in equations. This is a presentation
-choice, not a secrecy boundary: calculated outputs can reveal input values.
+``symbol`` is literal text, including Unicode, rather than LaTeX. ``unit`` is a
+display label without automatic unit conversion or dimensional analysis.
+``number_format="percent"`` displays fractional values in percent and seeds
+the editor with percentage notation. Numeric summaries do not change exact
+values or loosen validation.
+
+A hidden field or component has no row or editor. Its original inputs remain
+in every solve, and the browser cannot replace or release them, including
+through aliases. Hidden observation values are omitted from the browser
+response; their public symbols and descriptions remain inspectable in formulas.
+This is presentation rather than a secrecy boundary: derived outputs and
+public model notes can reveal inputs.
 
 Exact edits and validation
 --------------------------
 
-The browser accepts numbers and a small arithmetic language: ``+``, ``-``,
-``*``, ``/``, ``**``, ``sqrt(...)``, ``pi``, ``E``, and ``I``. For example,
-``1.25`` is the exact rational ``5/4``. Powers, literal size, arithmetic result
-size, and expression length are bounded. Text is parsed with Python's syntax
-tree without executing Python or SymPy expression strings. Arbitrary functions,
-attribute access, and new external parameter names are not accepted in editors.
-The trusted Python API accepts the usual symbolic scalar inputs.
+Editors accept numbers, ``+``, ``-``, ``*``, ``/``, ``**``, ``sqrt(...)``, ``pi``,
+``E``, and ``I``. A trailing ``%`` divides the whole expression by 100:
+``70%`` and ``7/10`` are the same exact value. ``1.25`` is exactly ``5/4``.
+Input length, literal and arithmetic sizes, and powers are bounded. The parser
+uses Python's syntax tree without evaluating Python or SymPy expression strings.
+Arbitrary functions, attribute access, and new parameter names are not accepted.
+The trusted Python API continues to accept normal symbolic scalar inputs.
 
-A submitted value that violates a declared domain is rejected. The resulting
-preview is also checked against the original equations and every field's
-assumptions, including domains of derived quantities. The offending fields
-are highlighted; the last successful results stay visible. Contradictions,
-backend failures, and multiple surviving candidates block the edit. No arbitrary
-branch or sampled point is chosen.
+The proposed case is checked against original equations and all declared
+assumptions, including domains of calculated and hidden quantities. Invalid
+edits identify both the edited fields and any derived domain failures, while
+retaining the last successful model. No arbitrary branch or sampled point is
+chosen when several solutions remain.
 
 .. image:: _static/gui/validation.png
-   :alt: A negative width is highlighted as an error while the previous valid cost remains visible.
+   :alt: An invalid allocation is rejected while the previous return and risk remain visible.
 
-A unique symbolic proposal is labelled **Conditional** when the existing
-candidate audit cannot establish a fully checked numeric state. This includes
-partially bound models and unresolved external parameters. It is an exploratory
-preview, not a proof that every remaining parameter value is admissible.
-Only a closed candidate satisfying every audit is labelled **Checked model**.
-An empty solver answer is reported as failure to establish a preview, not as a
-proof of inconsistency.
-
-Equations and mobile exploration
---------------------------------
-
-``Equations`` presents the original defining equations as a simultaneous
-system using native presentation MathML. Inputs are not substituted into this
-view. ``FieldInfo.symbol`` provides literal symbol text, including Unicode;
-it is not interpreted as LaTeX. Symbols retain actual field identities even
-when displayed names coincide. Hover, focus, or tap a symbol to see its full
-path and description in a stable inspector. Keyboard users can tab between
-symbols and press Enter or Space. On narrow screens, the inspector moves below
-the equations rather than relying on a hover-only tooltip.
-
-.. image:: _static/gui/equations.png
-   :alt: Native MathML equations with a width symbol selected in the inspector.
-
-.. image:: _static/gui/mobile.png
-   :width: 320px
-   :alt: Mobile layout with nested inputs and field details below the model.
+A unique symbolic proposal is labelled **Exploring** when its audit cannot
+establish a fully checked numeric case. This includes partially bound models
+and unresolved external parameters. It is not a claim that every remaining
+parameter value is admissible. **Checked case** requires a closed candidate
+satisfying every audit. Failure to produce a solver candidate is reported as
+failure to validate a case, not as proof of inconsistency.
 
 Scope of this draft
 -------------------
 
 The interface serves bundled HTML, CSS, JavaScript, and MathML without a CDN or
-JavaScript build step. The local Flask development server is intended for small,
-trusted models on loopback. Symbolic work is synchronous: arithmetic limits are
-not a solver timeout. There is no deployment, authentication, persistence,
-multi-branch selection, or model-instance export flow in this draft. Browser
-edits update the preview; they do not mutate the source Python model.
+JavaScript build. The local Flask server is intended for small trusted models
+on loopback. Symbolic work is synchronous; arithmetic limits are not a solver
+timeout. There is no deployment, authentication, persistence, multi-branch
+selection, or model-instance export flow.
 
 Construction and the preview share directed-definition expansion and candidate
-generation. The preview applies the existing diagnostic audit, while ordinary
-construction retains its original candidate filtering. Input parsing and MathML
-printing are separate from the compiled presentation layout and HTTP adapter. Python
-users can also call ``Explorer(...).snapshot(raw=True)`` for a solver-free,
-JSON-ready view without installing Flask.
+generation. The preview uses the diagnostic audit while construction retains
+its original filtering. Python users can call ``Explorer(...).snapshot(raw=True)``
+for a solver-free, JSON-ready view without installing Flask. Snapshot ``kind``
+uses ``derived`` for both numeric and symbolic calculations and ``fixed`` only
+for recorded component observations; ``value_state`` describes the display form.
 
 API
 ---
 
 .. automodule:: modello.gui
-   :members: ModelInfo, FieldInfo, Explorer, BindingError, create_app
+   :members: ModelInfo, FieldInfo, Scenario, Explorer, BindingError, create_app
