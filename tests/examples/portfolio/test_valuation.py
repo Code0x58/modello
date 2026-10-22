@@ -137,18 +137,7 @@ def test_every_price_vector_uses_the_declared_date_axis():
 def test_invalid_compilation_inputs():
     with pytest.raises(ValueError, match="unspecified inputs"):
         NamedPortfolio.define(Basket)("missing").pricer()
-    portfolio = NamedPortfolio.define(Basket)(
-        "known prices",
-        basket=Basket(
-            "basket",
-            members=EquityMembers(
-                "equities",
-                aapl=EquityPosition("apple", quantity=10, instrument=Quote("quote", price=100)),
-                msft=EquityPosition("microsoft", quantity=20, instrument=Quote("quote", price=50)),
-            ),
-        ),
-        cash=USDCash("cash", amount=100),
-    )
+    portfolio = fixed_portfolio(prices=(100, 50))
     with pytest.raises(ValueError, match="independent symbolic fields"):
         portfolio.pricer()
 
@@ -269,16 +258,7 @@ def test_same_instrument_can_have_separate_holdings_and_weights():
 
 def test_provider_and_currency_are_part_of_valuation_identity():
     data = market_data()
-    portfolio = Portfolio(
-        "holdings",
-        basket=Basket(
-            "basket",
-            members=EquityMembers(
-                "members", aapl=EquityPosition("a", quantity=1), msft=EquityPosition("m", quantity=1)
-            ),
-        ),
-        cash=USDCash("cash", amount=100),
-    )
+    portfolio = fixed_portfolio(quantities=(1, 1))
     for identity in (replace(AAPL, provider="other"), replace(AAPL, currency="EUR")):
         with pytest.raises(ValueError, match="Price instrument"):
             NamedPortfolioPath.from_model(

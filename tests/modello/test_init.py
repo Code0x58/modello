@@ -13,6 +13,8 @@ from modello import (
     component,
 )
 
+from ._models import Pair, PairParent, Reading
+
 
 def test_no_constraints():
     """A model with no constraints just has dummy attributes."""
@@ -66,17 +68,8 @@ def test_constructor_candidate_selection(positive_problem, values, retained, exp
 def test_missing_nested_inputs_remain_shared_parameters():
     """Underdetermined trees retain free inputs rather than choosing zeroes."""
 
-    class Child(Modello):
-        a = InstanceDummy("a")
-        b = InstanceDummy("b")
-        total = a + b
-
-    class Parent(Modello):
-        child = Child
-        total = child.total + 1
-
-    first = Parent("P", child=Child("C", a=2))
-    second = Parent("P", child=Child("C", a=2))
+    first = PairParent("P", child=Pair("C", a=2))
+    second = PairParent("P", child=Pair("C", a=2))
     assert isinstance(first.child.b, BoundInstanceDummy)
     assert first.child.b != second.child.b
     assert first.child.total == first.child.b + 2
@@ -103,21 +96,17 @@ def test_external_symbols_are_parameters_not_solver_unknowns():
 def test_inconsistent_and_ambiguous_nested_systems_are_rejected():
     """Nested constraints retain assumptions and the unique-solution requirement."""
 
-    class Child(Modello):
-        x = InstanceDummy("x", real=True)
-        squared = x**2
-
     class Parent(Modello):
-        child = Child
+        child = Reading
         total = child.squared + 1
 
     with pytest.raises(ModelSolveError, match="2 solutions") as error:
         Parent("P", total=5)
     assert "Parent('P')" in str(error.value)
-    assert "child: Child\n    c1: squared = x**2" in str(error.value.problem)
+    assert "child: Reading\n    c1: squared = x**2" in str(error.value.problem)
     assert "total = 5" in str(error.value.problem)
     with pytest.raises(ModelSolveError, match="0 solutions") as error:
-        Parent("P", child=Child("C", x=2), total=10)
+        Parent("P", child=Reading("C", x=2), total=10)
     assert "x = 2" in str(error.value.problem)
     assert "total = 10" in str(error.value.problem)
 

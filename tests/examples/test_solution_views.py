@@ -6,15 +6,11 @@ from sympy import Rational, diff
 
 from examples.solution_families import Execution
 from examples.solution_views import ModelViews
-from modello import InstanceDummy, Modello, inspect_model
+from modello import inspect_model
+from tests.modello._models import Circle, Reading
 
 
 def test_model_views_preserve_unknown_dimensions_for_nonlinear_relations():
-    class Circle(Modello):
-        x = InstanceDummy("x", real=True)
-        y = InstanceDummy("y", real=True)
-        squared_radius = x**2 + y**2
-
     p = inspect_model(Circle, "circle", squared_radius=1)
     family = p.solutions()
     x, y = p.symbols.x, p.symbols.y
@@ -28,10 +24,6 @@ def test_model_views_preserve_unknown_dimensions_for_nonlinear_relations():
 
 
 def test_model_views_follow_dependencies_and_measure_images_without_pointwise_rank():
-    class Reading(Modello):
-        x = InstanceDummy("x", real=True)
-        squared = x**2
-
     problem = inspect_model(Execution, "views", reference=100)
     execution = problem.symbols
     quantity, impact, fee = execution.quantity, execution.impact, execution.fee

@@ -1,6 +1,49 @@
 """Small declarations shared by snapshot, diagnosis, and solution tests."""
 
+from sympy import sin
+
 from modello import InstanceDummy, Modello, component
+
+
+class Scalar(Modello):
+    x = InstanceDummy("x")
+
+
+class ScalarComponent(Modello):
+    child = component(Scalar)
+
+
+class Increment(Modello):
+    x = InstanceDummy("x")
+    y = x + 1
+
+
+class Pair(Modello):
+    a = InstanceDummy("a")
+    b = InstanceDummy("b")
+    total = a + b
+
+
+class PairParent(Modello):
+    child = component(Pair)
+    total = child.total + 1
+
+
+class Operators(Modello):
+    x = InstanceDummy("x", commutative=False)
+    y = InstanceDummy("y", commutative=False)
+    commutator = x * y - y * x
+
+
+class Wave(Modello):
+    angle = InstanceDummy("angle", real=True)
+    sine = sin(angle)
+
+
+class Circle(Modello):
+    x = InstanceDummy("x", real=True)
+    y = InstanceDummy("y", real=True)
+    squared_radius = x**2 + y**2
 
 
 class Reading(Modello):

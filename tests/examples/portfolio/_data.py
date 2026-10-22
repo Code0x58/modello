@@ -6,7 +6,7 @@ from pathlib import Path
 import examples.portfolio
 from examples.data import NamedMap, Series
 from examples.portfolio.demo import Basket, EquityMembers, Portfolio
-from examples.portfolio.models import AAPL, GOOGL, MSFT, EquityPrices, USDCash
+from examples.portfolio.models import AAPL, GOOGL, MSFT, EquityPrices, Quote, USDCash
 from examples.portfolio.sources import DummyEquityProvider, timestamp
 from examples.portfolio.valuation import EquityBasket, NamedMarketData, NamedPortfolio, equity
 from modello import component
@@ -19,14 +19,28 @@ ARRIVAL = timestamp("2026-01-07T09:05:00Z")
 ASSESSMENT = timestamp("2026-01-07T09:15:00Z")
 
 
-def fixed_portfolio() -> Portfolio:
+def fixed_portfolio(
+    *, quantities: tuple[int, int] = (10, 20), cash: int = 100, prices: tuple[int, int] | None = None
+) -> Portfolio:
     return Portfolio(
         "fixed",
         basket=Basket(
             "basket",
-            members=EquityMembers("equities", aapl=equity("apple", quantity=10), msft=equity("microsoft", quantity=20)),
+            members=EquityMembers(
+                "equities",
+                aapl=equity(
+                    "apple",
+                    quantity=quantities[0],
+                    **({} if prices is None else {"instrument": Quote("a", price=prices[0])}),
+                ),
+                msft=equity(
+                    "microsoft",
+                    quantity=quantities[1],
+                    **({} if prices is None else {"instrument": Quote("m", price=prices[1])}),
+                ),
+            ),
         ),
-        cash=USDCash("cash", amount=100),
+        cash=USDCash("cash", amount=cash),
     )
 
 

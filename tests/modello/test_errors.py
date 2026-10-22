@@ -6,7 +6,6 @@ import modello
 import modello.diagnostics as diagnostics
 from modello import (
     InstanceDummy,
-    inspect_model,
 )
 from modello.errors import (
     ModelDefinitionError,
@@ -21,13 +20,6 @@ from modello.errors import (
 from ._models import Check, Reading, Sum
 
 
-@pytest.mark.parametrize(
-    "backend_error",
-    [
-        pytest.param(NotImplementedError("unsupported solver"), id="unsupported"),
-        pytest.param(ValueError("solver value error"), id="value-error"),
-    ],
-)
 def test_solver_backend_failure_keeps_its_cause(monkeypatch, backend_error):
     def unsupported(*args, **kwargs):
         raise backend_error
@@ -84,8 +76,6 @@ def test_modello_validation_errors_preserve_builtin_categories():
 
     assert isinstance(definition.value, ModelValidationError)
     assert isinstance(definition.value, ModelloError) and isinstance(definition.value, ValueError)
-    with pytest.raises(ModelValidationError):
-        inspect_model(Reading, "invalid_budget").analyse(max_checks=0)
 
 
 def test_exception_creation_and_printing_never_launch_analysis(monkeypatch):

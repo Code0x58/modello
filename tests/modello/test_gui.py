@@ -14,6 +14,8 @@ from modello.errors import ModelDefinitionError, ModelInputError
 from modello.gui import BindingError, Explorer, FieldInfo, ModelInfo, Scenario, create_app, gui
 from tests.modello._gui_models import Estimate, Panel, rows
 
+from ._models import Reading
+
 
 def test_raw_never_solves(monkeypatch):
     def unexpected(*args, **kwargs):
@@ -46,14 +48,6 @@ def test_partial_binding_and_hidden_input():
     assert rows(explorer.snapshot())["panel.height"]["kind"] == "free"
 
 
-def test_release_initial_input():
-    explorer = Explorer(Panel, inputs={"width": 4, "height": 5})
-    data = explorer.snapshot({"height": None})
-    assert rows(data)["height"]["kind"] == "free"
-    assert rows(data)["area"]["value"] == "4*height"
-    assert rows(explorer.snapshot())["area"]["value"] == "20"
-
-
 def test_override_drop_and_restore_individual_inputs():
     explorer = Explorer(Panel, inputs={"width": 4, "height": 5})
     initial = rows(explorer.snapshot())
@@ -70,6 +64,7 @@ def test_override_drop_and_restore_individual_inputs():
     assert restored["width"]["input_state"] == "initial"
     assert restored["height"]["input_state"] == "dropped"
     assert restored["area"]["value"] == "4*height"
+    assert rows(explorer.snapshot())["area"]["value"] == "20"
 
 
 def test_drop_input_and_observe_output_as_one_case():
@@ -120,8 +115,8 @@ def test_reopen_instance_uses_inputs_not_solved_outputs():
     assert rows(changed)["total"]["value"] == "400"
 
 
-def test_snapshot_keeps_inferred_component_observations():
-    problem = inspect_model(Estimate, "snapshot", panel=Panel("source", width=4, height=5), price=10)
+def test_snapshot_keeps_inferred_component_observations(copied_estimate_problem):
+    problem = copied_estimate_problem
     data = Explorer(problem).snapshot()
     assert not rows(data)["panel.area"]["editable"]
     with pytest.raises(BindingError):
@@ -179,12 +174,8 @@ def test_validation_is_atomic_and_reports_indirect_domain_errors():
 
 
 def test_multiple_solutions_are_not_selected():
-    class Square(Modello):
-        x = InstanceDummy("x", real=True)
-        squared = x**2
-
     with pytest.raises(BindingError, match="Multiple solutions"):
-        Explorer(Square, inputs={"squared": 4}).snapshot()
+        Explorer(Reading, inputs={"squared": 4}).snapshot()
 
 
 def test_external_parameters_stay_conditional():
@@ -199,9 +190,13 @@ def test_external_parameters_stay_conditional():
 
 def test_app_updates_are_isolated_and_invalid_edits_preserve_previous_model():
     client = create_app(Estimate, inputs={"panel.width": 4, "panel.height": 5, "price": 10}).test_client()
-    assert client.get("/").status_code == 200
-    assert client.get("/assets/explorer.js").status_code == 200
-    assert client.get("/assets/explorer.css").status_code == 200
+    for path, status in (
+        ("/", 200),
+        ("/assets/explorer.js", 200),
+        ("/assets/explorer.css", 200),
+        ("/assets/inputs.py", 404),
+    ):
+        assert client.get(path).status_code == status
     response = client.post("/api/explore", json={"bindings": {"panel.width": "6"}})
     assert response.status_code == 200
     assert rows(response.json)["total"]["value"] == "300"
@@ -218,20 +213,20 @@ def test_app_updates_are_isolated_and_invalid_edits_preserve_previous_model():
 
 
 @pytest.mark.parametrize(
-    "payload",
+    "options, status",
     [
-        [],
-        {"x": 1},
-        {"raw": "yes"},
-        {"bindings": []},
-        {"bindings": {"width": 2}},
-        {"bindings": {"width": "__import__('os')"}},
+        pytest.param({"json": []}, 400, id="array-body"),
+        pytest.param({"json": {"x": 1}}, 400, id="unknown-option"),
+        pytest.param({"json": {"raw": "yes"}}, 400, id="non-boolean-raw"),
+        pytest.param({"json": {"bindings": []}}, 400, id="non-mapping-bindings"),
+        pytest.param({"json": {"bindings": {"width": 2}}}, 422, id="non-text-binding"),
+        pytest.param({"json": {"bindings": {"width": "__import__('os')"}}}, 422, id="invalid-arithmetic"),
+        pytest.param({"data": "not json"}, 400, id="invalid-json"),
     ],
 )
-def test_app_rejects_malformed_requests(payload):
+def test_app_rejects_malformed_requests(options, status):
     client = create_app(Panel).test_client()
-    assert client.post("/api/explore", json=payload).status_code in (400, 422)
-    assert client.post("/api/explore", data="not json").status_code == 400
+    assert client.post("/api/explore", **options).status_code == status
 
 
 def test_import_does_not_load_gui_runtime():
@@ -255,8 +250,8 @@ def test_hidden_alias_cannot_release_or_overwrite_an_input():
         assert client.post("/api/explore", json={"bindings": {"other": value}}).status_code == 422
 
 
-def test_browser_cannot_edit_a_copied_inferred_observation():
-    problem = inspect_model(Estimate, "snapshot", panel=Panel("source", width=4, height=5), price=10)
+def test_browser_cannot_edit_a_copied_inferred_observation(copied_estimate_problem):
+    problem = copied_estimate_problem
     client = create_app(problem).test_client()
     response = client.post("/api/explore", json={"bindings": {"panel.area": "20"}})
     assert response.status_code == 422
@@ -337,7 +332,7 @@ def test_inline_gui_hidden_metadata_still_protects_all_aliases():
         assert client.post("/api/explore", json={"bindings": {path: None}}).status_code == 422
 
 
-def test_field_provenance_distinguishes_calculations_from_recorded_observations():
+def test_field_provenance_distinguishes_calculations_from_recorded_observations(copied_estimate_problem):
     ordinary = rows(Explorer(Panel, inputs={"width": 2, "height": 3}).snapshot())
     assert ordinary["width"]["provenance"] == "Supplied input"
     assert (
@@ -348,14 +343,9 @@ def test_field_provenance_distinguishes_calculations_from_recorded_observations(
         inverse["width"]["kind"] == "derived"
         and inverse["width"]["provenance"] == "Inferred from the other observations"
     )
-    copied = rows(Explorer(inspect_model(Estimate, "copy", panel=Panel("source", width=2, height=3))).snapshot())
+    copied = rows(Explorer(copied_estimate_problem).snapshot())
     assert copied["panel.area"]["provenance"] == "Recorded component result"
     assert not copied["panel.area"]["editable"]
-
-
-def test_python_implementation_is_not_served_as_a_frontend_asset():
-    client = create_app(Panel).test_client()
-    assert client.get("/assets/inputs.py").status_code == 404
 
 
 def test_typeset_values_constraints_and_exact_units():

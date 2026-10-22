@@ -17,7 +17,6 @@ from sympy import (
     Symbol,
     Tuple,
     pi,
-    sin,
 )
 
 import modello
@@ -36,7 +35,7 @@ from modello import (
     inspect_model,
 )
 
-from ._models import Check, Reading, Sum
+from ._models import Check, Circle, Operators, Reading, Sum, Wave
 
 
 def test_affine_joining_equations_and_preferred_coordinates():
@@ -70,11 +69,6 @@ def test_inconsistent_affine_observations_produce_an_empty_joint_family():
 
 
 def test_multivariate_fallback_keeps_the_joint_relation():
-    class Circle(Modello):
-        x = InstanceDummy("x", real=True)
-        y = InstanceDummy("y", real=True)
-        squared_radius = x**2 + y**2
-
     p = inspect_model(Circle, "circle", squared_radius=1)
     family = p.solutions()
     x, y = p.symbols.x, p.symbols.y
@@ -186,10 +180,6 @@ def test_solver_failure_keeps_conditions_and_the_original_backend_error(monkeypa
 
 
 def test_periodic_family_can_be_bounded_then_materialised():
-    class Wave(Modello):
-        angle = InstanceDummy("angle", real=True)
-        sine = sin(angle)
-
     p = inspect_model(Wave, "wave")
     angle, sine = p.symbols.angle, p.symbols.sine
     family = p.solutions().where(Eq(sine, 0))
@@ -359,9 +349,6 @@ def test_materialisation_does_not_accept_an_undecided_candidate_audit(monkeypatc
     ],
 )
 def test_unsupported_expression_kinds_fail_with_owned_input_errors(kind, message):
-    class Operators(Modello):
-        x = InstanceDummy("x", commutative=False)
-
     class Unevaluated(Modello):
         x = InstanceDummy("x", real=True)
         value = Derivative(Function("f")(x), x)
@@ -372,10 +359,11 @@ def test_unsupported_expression_kinds_fail_with_owned_input_errors(kind, message
 
 
 @pytest.mark.parametrize(
-    "value",
+    "value, message",
     [
-        pytest.param(MatrixSymbol("matrix", 2, 2), id="matrix"),
-        pytest.param(Symbol("operator", commutative=False), id="noncommutative-symbol"),
+        pytest.param(0.1, "exact", id="inexact-float"),
+        pytest.param(MatrixSymbol("matrix", 2, 2), "commutative scalar", id="matrix"),
+        pytest.param(Symbol("operator", commutative=False), "commutative scalar", id="noncommutative-symbol"),
     ],
 )
 @pytest.mark.parametrize(
@@ -384,10 +372,11 @@ def test_unsupported_expression_kinds_fail_with_owned_input_errors(kind, message
         pytest.param(lambda p, value: inspect_model(p.model, p.name, x=value).solutions(), id="prepare"),
         pytest.param(lambda p, value: p.solutions().values(value), id="values"),
         pytest.param(lambda p, value: p.solutions().observe(x=value), id="observe"),
+        pytest.param(lambda p, value: p.solutions().expression(value), id="expression"),
     ],
 )
-def test_family_scalar_boundaries_require_commutative_expressions(reading_problem, value, operation):
-    with pytest.raises(ModelInputError, match="commutative scalar"):
+def test_family_scalar_boundaries_require_exact_commutative_expressions(reading_problem, value, message, operation):
+    with pytest.raises(ModelInputError, match=message):
         operation(reading_problem, value)
 
 
@@ -406,20 +395,6 @@ def test_family_operations_reject_fields_from_another_problem(reading_problem, o
     other = inspect_model(Reading, reading_problem.name).symbols.x
     with pytest.raises(ModelValidationError, match="another model problem"):
         operation(reading_problem.solutions(), other)
-
-
-@pytest.mark.parametrize(
-    "operation",
-    [
-        pytest.param(lambda p: inspect_model(p.model, p.name, x=0.1).solutions(), id="prepare"),
-        pytest.param(lambda p: p.solutions().values(0.1), id="values"),
-        pytest.param(lambda p: p.solutions().observe(x=0.1), id="observe"),
-        pytest.param(lambda p: p.solutions().expression(0.1), id="expression"),
-    ],
-)
-def test_family_operations_require_exact_scalars(reading_problem, operation):
-    with pytest.raises(ModelInputError, match="exact"):
-        operation(reading_problem)
 
 
 @pytest.mark.parametrize(

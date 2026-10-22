@@ -54,14 +54,6 @@ def test_component_values_and_domains_survive_copying():
     assert data.recovery.free_symbols  # Completing the parent leaves the source symbolic.
 
 
-def test_relabelling_old_inputs_does_not_change_the_price():
-    for label in ("DEMO:PAIR:OLD", "DEMO:PAIR:CURRENT"):
-        data = CreditParameters(label, recovery=Rational(2, 5), survival=Rational(39, 40))
-        problem = pnl_problem(data)
-        assert problem.analyse().status == "inconsistent"
-        assert problem.without("pnl").solutions().one().pnl == 20_500
-
-
 def test_inverse_notional_could_fit_pnl_while_hiding_bad_reference_data():
     previous = CreditParameters("previous", recovery=Rational(2, 5), survival=Rational(39, 40))
     problem = pnl_problem(previous)

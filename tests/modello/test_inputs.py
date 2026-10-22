@@ -16,7 +16,7 @@ from modello import (
     inspect_model,
 )
 
-from ._models import Check, Envelope, PositiveReading, Reading
+from ._models import Check, Envelope, Pair, PairParent, PositiveReading, Reading, Scalar, ScalarComponent
 
 
 @pytest.mark.parametrize(
@@ -34,30 +34,18 @@ from ._models import Check, Envelope, PositiveReading, Reading
 def test_scalar_input_types(value):
     """Capture accepts ordinary scalars before construction converts their values."""
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-
-    problem = inspect_model(Child, "scalar", x=value)
+    problem = inspect_model(Scalar, "scalar", x=value)
     (observation,) = tuple(c for c in problem.constraints if c.input is not None)
     assert observation.kind is ConstraintKind.INPUT
     assert observation.right == simplify(value)
-    assert Child("constructed", x=value).x == simplify(value)
+    assert Scalar("constructed", x=value).x == simplify(value)
 
 
 def test_partial_instance_can_be_completed_without_mutating_source():
     """A parent's equations can complete a symbolic snapshot of a child."""
 
-    class Child(Modello):
-        a = InstanceDummy("a")
-        b = InstanceDummy("b")
-        total = a + b
-
-    class Parent(Modello):
-        child = Child
-        total = child.total + 1
-
-    source = Child("C", a=2)
-    parent = Parent("P", child=source, total=10)
+    source = Pair("C", a=2)
+    parent = PairParent("P", child=source, total=10)
     assert (parent.child.a, parent.child.b, parent.child.total) == (2, 7, 9)
     assert isinstance(source.b, BoundInstanceDummy)
     assert source.total == source.b + 2
@@ -67,15 +55,12 @@ def test_partial_instance_can_be_completed_without_mutating_source():
 def test_reusing_symbolic_instances_creates_independent_children():
     """Reusing an input instance copies its values into independent symbol scopes."""
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-
     class Parent(Modello):
-        left = Child
-        right = Child
+        left = Scalar
+        right = Scalar
         difference = left.x - right.x
 
-    source = Child("C")
+    source = Scalar("C")
     parent = Parent("P", left=source, right=source)
     assert parent.left.x != parent.right.x
     assert parent.left.x != source.x
@@ -108,32 +93,23 @@ def test_input_expressions_resolve_relative_and_sibling_symbols():
 def test_invalid_nested_values_are_rejected(value):
     """Invalid nested values are never silently treated as missing inputs."""
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-
-    class Parent(Modello):
-        child = Child
-
-    with pytest.raises(TypeError, match="child must be a Child instance"):
-        Parent("P", child=value)
+    with pytest.raises(TypeError, match="child must be a Scalar instance"):
+        ScalarComponent("P", child=value)
 
 
 @pytest.mark.parametrize(
     "boundary, message",
     [
         pytest.param("root-mapping", "branch must be a Branch instance", id="root-mapping"),
-        pytest.param("nested-mapping", "leaf must be a Leaf instance", id="nested-mapping"),
+        pytest.param("nested-mapping", "leaf must be a Scalar instance", id="nested-mapping"),
         pytest.param("parent-keyword", "Unknown model attribute 'typo'", id="parent-keyword"),
     ],
 )
 def test_unknown_attributes_and_deep_mappings_are_rejected(boundary, message):
     """Unknown keywords and mappings at every constructor boundary are invalid."""
 
-    class Leaf(Modello):
-        x = InstanceDummy("x")
-
     class Branch(Modello):
-        leaf = Leaf
+        leaf = Scalar
 
     class Tree(Modello):
         branch = Branch
@@ -150,22 +126,16 @@ def test_unknown_attributes_and_deep_mappings_are_rejected(boundary, message):
 def test_child_instances_must_have_a_compatible_model_type():
     """Structurally similar but unrelated model instances are rejected."""
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-
     class Other(Modello):
         x = InstanceDummy("x")
 
-    class Parent(Modello):
-        child = Child
+    with pytest.raises(TypeError, match="child.*Scalar"):
+        ScalarComponent("P", child=Other("O", x=3))
 
-    with pytest.raises(TypeError, match="child.*Child"):
-        Parent("P", child=Other("O", x=3))
+    class Derived(Scalar):
+        y = Scalar.x + 1
 
-    class Derived(Child):
-        y = Child.x + 1
-
-    assert Parent("P", child=Derived("D", x=3)).child.x == 3
+    assert ScalarComponent("P", child=Derived("D", x=3)).child.x == 3
 
 
 def test_scalar_aliases_keep_all_supplied_constraints():
@@ -195,11 +165,8 @@ def test_scalar_aliases_keep_all_supplied_constraints():
 def test_invalid_scalar_values_identify_the_field(value):
     """Malformed scalar values report their path rather than failing inside SymPy."""
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-
     with pytest.raises(TypeError, match="x.*scalar"):
-        Child("C", x=value)
+        Scalar("C", x=value)
 
 
 def test_invalid_copied_scalar_identifies_its_nested_path():
@@ -212,20 +179,14 @@ def test_invalid_copied_scalar_identifies_its_nested_path():
 def test_instance_subclasses_must_retain_the_declared_child_shape():
     """An instance subclass cannot omit paths expected by its declared component."""
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-
     class Replacement(Modello):
         y = InstanceDummy("y")
 
-    class Base(Modello):
-        child = Child
-
-    class Derived(Base):
+    class Derived(ScalarComponent):
         child = Replacement
 
     class Parent(Modello):
-        payload = Base
+        payload = ScalarComponent
 
     with pytest.raises(TypeError, match="missing payload.child.x"):
         Parent("P", payload=Derived("D", child=Replacement("R", y=3)))
@@ -234,15 +195,12 @@ def test_instance_subclasses_must_retain_the_declared_child_shape():
 def test_external_bound_symbols_remain_owned_by_the_source_instance():
     """Passing an external symbol as a scalar keeps an explicit symbolic dependency."""
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-
     class Parent(Modello):
-        child = Child
+        child = Scalar
         doubled = child.x * 2
 
-    source = Child("external")
-    parent = Parent("P", child=Child("C", x=source.x))
+    source = Scalar("external")
+    parent = Parent("P", child=Scalar("C", x=source.x))
     assert parent.child.x == source.x
     assert parent.doubled == 2 * source.x
     assert isinstance(source.x, BoundInstanceDummy)
