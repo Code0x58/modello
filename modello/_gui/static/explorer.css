@@ -35,6 +35,9 @@ button {
 button:disabled,
 input:disabled {
   opacity: 0.6;
+  cursor: default;
+}
+[aria-busy="true"] :disabled {
   cursor: wait;
 }
 button:focus-visible,
@@ -1003,6 +1006,172 @@ footer {
     background: inherit;
   }
 }
+.input-intro {
+  margin: 20px 24px 10px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: #61738d;
+}
+.input-batch-hint {
+  margin-top: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+#input-list {
+  margin-top: 20px;
+}
+.input-row {
+  display: grid;
+  grid-template-columns: 18px minmax(120px, 1fr) minmax(100px, 155px) 94px 28px;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--line);
+  border-left: 3px solid transparent;
+}
+.input-row.pending {
+  background: #f1f6ff;
+  border-left-color: #719ae0;
+}
+.input-row.error {
+  border-left-color: #c2775f;
+  background: #fff8f4;
+}
+.input-supply {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  accent-color: var(--blue);
+}
+.input-name {
+  min-width: 0;
+  cursor: pointer;
+}
+.input-name strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+}
+.input-unit {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+.input-name small {
+  display: block;
+  line-height: 1.6;
+  font-size: 10px;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+.input-path {
+  color: var(--muted);
+}
+.input-original {
+  color: #5c7599;
+}
+.case-value {
+  min-width: 0;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #cbd8eb;
+  border-radius: 6px;
+  color: var(--ink);
+  background: white;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.case-value:disabled {
+  opacity: 1;
+  color: #8a99af;
+  background: #f6f8fb;
+  border-color: var(--line);
+}
+.case-value[aria-invalid="true"] {
+  border-color: #c78973;
+}
+.input-state {
+  font-size: 10px;
+  color: #607b9e;
+}
+.input-restore {
+  border: 0;
+  background: none;
+  font-size: 19px;
+  color: #577ba9;
+  padding: 4px;
+}
+.input-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  background: #f8faff;
+  border-top: 1px solid var(--line);
+  padding: 18px 24px;
+}
+.input-actions p {
+  flex: 1 1 100%;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+.input-actions.pending {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  box-shadow: 0 -5px 16px #3159890b;
+}
+.input-actions .ghost {
+  margin-left: auto;
+}
+.input-history {
+  margin-top: 14px;
+  padding: 12px;
+  border-left: 2px solid #a9c3e8;
+  background: #eaf1fc;
+  font-size: 11px;
+  color: #5f789c;
+  line-height: 1.6;
+}
+.input-history p {
+  margin: 0 0 8px;
+}
+.manage-inputs {
+  background: none;
+  border: 0;
+  color: #6086ba;
+  font-size: 11px;
+  padding: 0;
+}
+@media (max-width: 1000px) {
+  .input-row {
+    grid-template-columns: 18px minmax(0, 1fr) 28px;
+    gap: 10px;
+    padding: 16px 19px;
+  }
+  .input-supply {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .input-name {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .input-restore {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .case-value {
+    grid-column: 2 / 4;
+    grid-row: 2;
+  }
+  .input-state {
+    grid-column: 2 / 4;
+    grid-row: 3;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   * {
     scroll-behavior: auto !important;
@@ -1167,7 +1336,7 @@ footer {
   }
   .scenarios #scenario-buttons {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
   }
   .scenario {
@@ -1285,6 +1454,20 @@ footer {
   }
 }
 @media (max-width: 520px) {
+  .toolbar {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .toolbar nav {
+    width: 100%;
+  }
+  .toolbar .tab {
+    flex: 1;
+  }
+  .view-controls {
+    width: 100%;
+    justify-content: space-between;
+  }
   .local {
     display: none;
   }

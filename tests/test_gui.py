@@ -74,6 +74,60 @@ def test_release_initial_input():
     assert rows(explorer.snapshot())["area"]["value"] == "20"
 
 
+def test_override_drop_and_restore_individual_inputs():
+    explorer = Explorer(Panel, inputs={"width": 4, "height": 5})
+    initial = rows(explorer.snapshot())
+    assert initial["width"]["initial_input"] == "4"
+    assert initial["width"]["input_state"] == "initial"
+    changed = rows(explorer.snapshot({"width": 6, "height": None}))
+    assert changed["width"]["input_state"] == "overridden"
+    assert changed["width"]["initial_input"] == "4"
+    assert changed["height"]["input_state"] == "dropped"
+    assert changed["height"]["kind"] == "free"
+    assert changed["area"]["input_state"] == "unspecified"
+    # Restoring width does not restore the separately dropped height.
+    restored = rows(explorer.snapshot({"height": None}))
+    assert restored["width"]["input_state"] == "initial"
+    assert restored["height"]["input_state"] == "dropped"
+    assert restored["area"]["value"] == "4*height"
+
+
+def test_drop_input_and_observe_output_as_one_case():
+    client = create_app(Panel, inputs={"width": 4, "height": 5}).test_client()
+    contradictory = client.post("/api/explore", json={"bindings": {"area": "30"}})
+    assert contradictory.status_code == 422
+    response = client.post("/api/explore", json={"bindings": {"height": None, "area": "30"}})
+    assert response.status_code == 200
+    data = rows(response.json)
+    # Dropping an observation does not require the quantity to stay free.
+    assert data["height"]["input_state"] == "dropped"
+    assert data["height"]["kind"] == "derived"
+    assert data["height"]["value"] == "15/2"
+    assert data["area"]["input_state"] == "added"
+    # Switching back swaps the observations atomically in the other direction.
+    restored = rows(client.post("/api/explore", json={"bindings": {"area": None}}).json)
+    assert restored["height"]["input_state"] == "initial"
+    assert restored["area"]["kind"] == "derived"
+    assert restored["area"]["value"] == "20"
+
+
+def test_input_history_uses_shared_aliases_and_hides_background_values():
+    class Alias(Modello):
+        value = InstanceDummy("value", positive=True)
+        other = value
+
+    explorer = Explorer(Alias, inputs={"value": 2})
+    for field in rows(explorer.snapshot({"other": 3})).values():
+        assert field["input_state"] == "overridden"
+        assert field["initial_input"] == "2"
+    for field in rows(explorer.snapshot({"other": None})).values():
+        assert field["input_state"] == "dropped"
+    hidden = Explorer(Estimate, inputs={"price": 1234567}).snapshot()["symbols"][0]
+    assert hidden["input_state"] == "hidden"
+    assert hidden["initial_input"] == ""
+    assert "1234567" not in json.dumps(hidden)
+
+
 def test_reopen_instance_uses_inputs_not_solved_outputs():
     original = Estimate("job", panel=Panel("panel", width=4, height=5), price=10)
     explorer = Explorer(original)
@@ -463,3 +517,45 @@ def test_invalid_portfolio_edit_identifies_both_input_and_derived_domain():
     response = client.post("/api/explore", json={"bindings": {"allocation.equity": "120%"}})
     assert response.status_code == 422
     assert set(response.json["paths"]) == {"allocation.equity", "allocation.bonds"}
+
+
+def test_portfolio_missing_return_story_drops_and_reinfers_an_original_input():
+    from examples.gui import DEMO_INPUTS, Portfolio
+
+    client = create_app(Portfolio, inputs=DEMO_INPUTS).test_client()
+    initial = client.post("/api/explore", json={}).json
+    scenario = next(item for item in initial["scenarios"] if item["title"] == "Find a missing return")
+    response = client.post("/api/explore", json={"bindings": scenario["bindings"]})
+    assert response.status_code == 200
+    assert response.json["status"] == "checked"
+    field = rows(response.json)["market.equity.expected_return"]
+    assert field["input_state"] == "dropped"
+    assert field["kind"] == "derived"
+    assert field["initial_input"] == "8%"
+    assert field["input"] == ""
+    assert field["value"] == "51/700"
+    assert field["display_value"] == "7.29%"
+    assert response.json["hidden_inputs"] == 2
+    # Restore the assumption and drop the target together to return to forward calculation.
+    restored = client.post("/api/explore", json={"bindings": {"allocation.equity": "70%"}}).json
+    assert rows(restored)["market.equity.expected_return"]["input_state"] == "initial"
+    assert rows(restored)["expected_return"]["display_value"] == "6.5%"
+
+
+def test_portfolio_assumption_comparison_and_partial_unspecification():
+    from examples.gui import DEMO_INPUTS, Portfolio
+
+    explorer = Explorer(Portfolio, inputs=DEMO_INPUTS)
+    compared = rows(
+        explorer.snapshot({"allocation.equity": Rational(7, 10), "market.bonds.expected_return": Rational(1, 25)})
+    )
+    assert compared["expected_return"]["display_value"] == "6.8%"
+    assert compared["market.bonds.expected_return"]["input_state"] == "overridden"
+    restored = rows(explorer.snapshot({"allocation.equity": Rational(7, 10)}))
+    assert restored["expected_return"]["display_value"] == "6.5%"
+    assert restored["market.bonds.expected_return"]["input_state"] == "initial"
+    unspecified = explorer.snapshot({"allocation.equity": Rational(7, 10), "market.equity.expected_return": None})
+    assert unspecified["status"] == "conditional"
+    assert rows(unspecified)["market.equity.expected_return"]["kind"] == "free"
+    assert rows(unspecified)["market.equity.expected_return"]["input_state"] == "dropped"
+    assert rows(unspecified)["expected_return"]["value_state"] == "symbolic"

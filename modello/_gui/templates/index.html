@@ -47,6 +47,8 @@
         <nav aria-label="Model views">
           <button id="explore-tab" class="tab active" aria-pressed="true">
             Explore</button
+          ><button id="inputs-tab" class="tab" aria-pressed="false">
+            Inputs</button
           ><button id="equations-tab" class="tab" aria-pressed="false">
             Equations
           </button>
@@ -125,6 +127,27 @@
             </div>
             <div id="tree"></div>
           </div>
+          <form id="inputs" hidden>
+            <p class="input-intro">
+              Supply what you know; let the equations determine the rest.
+              Uncheck a quantity to stop supplying its value. Its equations
+              still apply, so it may become free or be calculated.
+            </p>
+            <p class="input-intro input-batch-hint">
+              Change several observations together to swap an input for a
+              target. Results update only when you apply the case.
+            </p>
+            <div id="input-list"></div>
+            <div class="input-actions">
+              <p id="input-draft-status" role="status" aria-live="polite"></p>
+              <button id="discard-inputs" type="button" class="ghost">
+                Discard changes
+              </button>
+              <button id="apply-inputs" type="submit" class="primary">
+                Apply inputs
+              </button>
+            </div>
+          </form>
           <div id="equations" hidden>
             <p class="equation-intro">
               The original equations, before observations are substituted.

@@ -82,6 +82,7 @@ class _Snapshot:
     problem: ModelProblem
     printer: EquationPrinter
     supplied: Mapping[Symbol, Expr]
+    initial_inputs: Mapping[Symbol, Expr]
     definitions: Mapping[Symbol, Expr]
     constraints: Mapping[Symbol, list[dict[str, str]]]
 
@@ -183,6 +184,7 @@ class Explorer:
             self.problem = inspect_model(model, name)
         self._layout = Layout(self.problem, metadata or {})
         self._initial = self._bind(self.problem, inputs or {})
+        self._initial_inputs = {c.left: c.right for c in self._initial.constraints if c.kind is ConstraintKind.INPUT}
 
     def _bind(self, initial: ModelProblem, bindings: Mapping[str, ScalarValue | None]) -> ModelProblem:
         changes: dict[Symbol, tuple[ModelField, Expr | None]] = {}
@@ -235,9 +237,11 @@ class Explorer:
     ) -> dict[str, Any]:
         """Return a JSON-ready view; invalid edits raise without changing state.
 
-        Bindings replace initial inputs, and ``None`` releases an input. Raw
-        views show definitions without solving and still identify observations.
-        Bound views label an undecided audit as a conditional preview.
+        Bindings replace initial inputs, and ``None`` drops an observation
+        without removing definitions. Omit a path to restore its initial input
+        state. Several bindings are checked together as one proposed case.
+        Raw views show definitions without solving. Bound views label an
+        undecided audit as a conditional preview.
         """
         problem = self._bind(self._initial, bindings or {})
         values, verdict = ({}, "raw") if raw else _preview(problem)
@@ -256,7 +260,7 @@ class Explorer:
             }
             for symbol in c.symbols:
                 constraints.setdefault(symbol, []).append(entry)
-        context = _Snapshot(problem, printer, supplied, definitions, constraints)
+        context = _Snapshot(problem, printer, supplied, self._initial_inputs, definitions, constraints)
         rows: list[dict[str, Any]] = []
         symbols: list[dict[str, Any]] = []
         for path, field in self._layout.fields.items():
@@ -360,6 +364,10 @@ class Explorer:
             "input": self._input_text(path, context.supplied[symbol])
             if symbol in context.supplied and not hidden
             else "",
+            "initial_input": self._input_text(path, context.initial_inputs[symbol])
+            if symbol in context.initial_inputs and not hidden
+            else "",
+            "input_state": "hidden" if hidden else _input_state(symbol, context.supplied, context.initial_inputs),
             "editable": path in self._layout.editable,
             "assumptions": list(self._layout.assumptions[symbol]),
             "constraints": [] if hidden else list(context.constraints.get(symbol, ())),
@@ -385,6 +393,14 @@ def _field_kind(symbol: Symbol, value: Expr, supplied: Mapping[Symbol, Expr], co
     if symbol in copied:
         return "fixed"
     return "free" if value == symbol else "derived"
+
+
+def _input_state(symbol: Symbol, supplied: Mapping[Symbol, Expr], initial: Mapping[Symbol, Expr]) -> str:
+    if symbol not in supplied:
+        return "dropped" if symbol in initial else "unspecified"
+    if symbol not in initial:
+        return "added"
+    return "initial" if supplied[symbol] == initial[symbol] else "overridden"
 
 
 def _preview_status(raw: bool, verdict: str) -> tuple[str, str]:

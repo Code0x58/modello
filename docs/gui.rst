@@ -50,10 +50,13 @@ Use the guided questions to see different ways to bind the same model:
   6.5%, volatility is approximately 14.08%, and expected gain is USD 6,500.
 * **Target 6% return** observes a result instead of an input. The equations
   infer a 60% equity / 40% bond mix and USD 6,000 expected gain.
+* **Find a missing return** supplies a 70/30 mix, drops the original equity
+  return assumption, and observes a 6% portfolio return. The equations infer
+  an equity return of approximately 7.29%.
 
 Each question restores the initial inputs before applying its observations.
 Subsequent edits are marked as a custom exploration. Inspect a quantity,
-enter a value, and choose **Apply value** or press Enter. **Release input**
+enter a value, and choose **Apply value** or press Enter. **Drop input**
 removes a supplied observation; clearing the editor does the same.
 Try a 120% equity allocation to see the derived bond weight violate its
 non-negative domain. The change is rejected and the previous results remain.
@@ -63,6 +66,65 @@ non-negative domain. The change is rejected and the previous results remain.
 
 .. image:: _static/gui/inverse.png
    :alt: A return target is marked as an input while the allocation is inferred.
+
+Choosing what you know
+----------------------
+
+An input is a supplied observation, not a permanent role assigned to a field.
+You can change an original input, drop it, or supply a normally calculated
+result as a target. Dropping an observation keeps the defining equations:
+the quantity may become free, or it may be inferred from other observations.
+Supplying a target adds an observation; it does not replace its equation or
+silently discard conflicting inputs.
+
+The **Inputs** view makes this choice explicit. Checked quantities are supplied;
+unchecked quantities are left to the model. Edit values, uncheck assumptions,
+or check a result and enter its target. **Apply inputs** validates all pending
+changes together. The results continue to show the last applied case until
+then. Rejected cases preserve both those results and the pending changes.
+**Discard changes** returns the draft to the applied case without solving.
+The apply controls stay visible while you scroll through pending changes.
+
+The view distinguishes Original, Changed, Added, and Dropped inputs. Each row
+shows its original supplied value when there was one. Its reset arrow restores
+that quantity's original input state in the draft; it does not reset other
+quantities. Aliases share one observation and one row. Hidden inputs remain
+active and have no checkbox or editor.
+
+Useful stories to try:
+
+* **Compare an assumption.** Start with **70 / 30 split**. Change bond return
+  from 3% to 4%: portfolio return becomes 6.8%. **Restore original input** in
+  its inspector returns to 6.5%, retaining the 70/30 allocation. This restores
+  only the selected assumption; **Reset inputs** restores the entire initial
+  model instead.
+* **Stop assuming a value.** Drop the equity return input in the same 70/30
+  case. Equity return becomes free and portfolio return becomes an expression.
+  You can explore this partly specified model without choosing a replacement.
+* **Solve for a missing assumption.** In **Inputs**, uncheck equity return,
+  check expected portfolio return, enter ``6%``, and apply them together.
+  Equity return is now approximately 7.29% and labelled Calculated, with its
+  original 8% explicitly marked as a Dropped input. The guided question
+  **Find a missing return** sets up exactly this case.
+* **Return to forward calculation.** From that case, restore the equity
+  return with its row's reset arrow and uncheck the portfolio return target.
+  Apply both changes together: the original 8% assumption again produces a
+  6.5% portfolio return, with the 70/30 allocation retained.
+
+Keeping both the original 8% equity return and a 6% portfolio return target
+with the 70/30 allocation is contradictory. It is rejected rather than silently
+changing the allocation or an assumption. Changing several observations
+together avoids passing through that contradictory intermediate case.
+
+.. image:: _static/gui/inputs.png
+   :alt: Explicit supplied-input checkboxes, original values, and per-quantity restore controls.
+
+.. image:: _static/gui/missing-return.png
+   :alt: A dropped equity return assumption is inferred from a supplied portfolio return target.
+
+.. image:: _static/gui/mobile-inputs.png
+   :width: 260px
+   :alt: The mobile editor supplies expected return while other results remain unobserved.
 
 Understanding the interface
 ---------------------------
@@ -175,6 +237,8 @@ Presentation metadata never changes the algebra.
 trusted scalar observations and an optional field to select. Paths and edit
 permissions are validated; a scenario cannot change hidden or Recorded values.
 Its observations still pass through the same validation as manual edits.
+Use ``None`` in a scenario's bindings to drop a specific initial observation;
+other initial observations remain active.
 
 ``symbol`` is literal text, including Unicode, rather than LaTeX. ``unit`` is a
 display label without automatic unit conversion or dimensional analysis.
@@ -231,6 +295,17 @@ its original filtering. Python users can call ``Explorer(...).snapshot(raw=True)
 for a solver-free, JSON-ready view without installing Flask. Snapshot ``kind``
 uses ``derived`` for both numeric and symbolic calculations and ``fixed`` only
 for recorded component observations; ``value_state`` describes the display form.
+Each visible field also reports ``initial_input`` and an ``input_state`` of
+``initial``, ``overridden``, ``added``, ``dropped``, or ``unspecified``. This input
+history is independent of whether the current value is free or calculated.
+Hidden fields omit original values and report ``input_state="hidden"``.
+
+Python snapshots are stateless proposals against the initial observations:
+``snapshot({"height": 6})`` overrides height, and ``snapshot({"height": None})``
+drops it. Omitting height from the next proposal restores its original state.
+Pass all desired overrides and drops together in one mapping. The browser
+retains this mapping between edits and removes a field's override when you
+restore it individually.
 
 API
 ---

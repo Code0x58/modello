@@ -36,12 +36,13 @@ let state,
   bindings = {},
   selected = "",
   busy = false,
-  equationsVisible = false,
+  activeView = "explore",
   activeScenario = null;
 let fieldsByPath = new Map(),
   changed = new Set(),
   errors = new Set();
 const drafts = new Map(),
+  inputEdits = new Map(),
   collapsed = new Set();
 const node = (tag, className, text) => {
   const element = document.createElement(tag);
@@ -128,15 +129,28 @@ function showError(message, paths = []) {
       "aria-invalid",
       String(errors.has(selected)),
     );
+  document.querySelectorAll(".input-row").forEach((row) => {
+    row
+      .querySelector(".case-value")
+      .setAttribute("aria-invalid", String(errors.has(row.dataset.input)));
+  });
 }
 async function refresh(next = bindings, options = {}) {
   if (busy) return;
   const keepFocus = document.activeElement?.id === "binding-input";
   busy = true;
   $("canvas").setAttribute("aria-busy", "true");
+  const disabledBefore = new Map();
   document.querySelectorAll("button, input").forEach((element) => {
+    disabledBefore.set(element, element.disabled);
     element.disabled = true;
   });
+  const unlock = () => {
+    disabledBefore.forEach((disabled, element) => {
+      if (element.isConnected) element.disabled = disabled;
+    });
+    disabledBefore.clear();
+  };
   try {
     const response = await fetch("/api/explore", {
       method: "POST",
@@ -146,6 +160,8 @@ async function refresh(next = bindings, options = {}) {
     const data = await response.json();
     if (!response.ok) {
       showError(data.error || "Could not update the model.", data.paths || []);
+      if (options.commitInputs)
+        $("message").scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
     changed = new Set(
@@ -167,9 +183,12 @@ async function refresh(next = bindings, options = {}) {
     state = data;
     errors.clear();
     drafts.clear();
+    if (options.commitInputs || options.scenario !== undefined)
+      inputEdits.clear();
     if (options.select) selected = options.select;
     if (options.scenario !== undefined) activeScenario = options.scenario;
     else if (options.edit) activeScenario = null;
+    unlock();
     render();
   } catch (_) {
     showError(
@@ -179,17 +198,22 @@ async function refresh(next = bindings, options = {}) {
     busy = false;
     $("canvas").setAttribute("aria-busy", "false");
     $("raw").checked = state?.raw || false;
-    document.querySelectorAll("button, input").forEach((element) => {
-      element.disabled = false;
-    });
+    unlock();
     if (keepFocus) $("binding-input")?.focus({ preventScroll: true });
   }
 }
-function apply(field, text) {
-  const next = { ...bindings };
+function withoutAliases(base, field) {
+  const next = { ...base };
   field.aliases.forEach((alias) => delete next[alias]);
+  return next;
+}
+function apply(field, text) {
+  const next = withoutAliases(bindings, field);
   next[field.path] = text.trim() || null;
   return refresh(next, { edit: true });
+}
+function restore(field) {
+  return refresh(withoutAliases(bindings, field), { edit: true });
 }
 function section(title) {
   const element = node("section", "detail-section");
@@ -217,6 +241,27 @@ function details() {
   source.append(badge(field), node("span", "", field.provenance));
   current.append(value(field, true), source);
   detail.append(current);
+  if (
+    field.editable &&
+    field.initial_input &&
+    field.input_state !== "initial"
+  ) {
+    const history = node("div", "input-history");
+    history.append(node("p", "", `Original input: ${field.initial_input}.`));
+    if (field.input_state === "dropped")
+      history.append(
+        node(
+          "p",
+          "",
+          "You are no longer supplying this value. The equations still apply.",
+        ),
+      );
+    const revert = node("button", "ghost", "Restore original input");
+    revert.type = "button";
+    revert.addEventListener("click", () => restore(field));
+    history.append(revert);
+    detail.append(history);
+  }
   if (field.value_state === "symbolic" && field.depends_on.length) {
     const dependency = node("div", "dependency-note", "Still depends on ");
     field.depends_on.forEach((item) =>
@@ -249,7 +294,7 @@ function details() {
     const actions = node("div", "form-actions");
     actions.append(node("button", "primary", "Apply value"));
     if (field.kind === "input") {
-      const release = node("button", "ghost", "Release input");
+      const release = node("button", "ghost", "Drop input");
       release.type = "button";
       release.addEventListener("click", () => apply(field, ""));
       actions.append(release);
@@ -258,8 +303,8 @@ function details() {
       "p",
       "input-help",
       field.number_format === "percent"
-        ? "Use 70% or 7/10. Clear the value to release the observation."
-        : "Numbers and exact arithmetic, such as 3/2 or sqrt(2). Clear to release.",
+        ? "Use 70% or 7/10. Clear to stop supplying a value; the equations still apply."
+        : "Exact arithmetic, such as 3/2 or sqrt(2). Clear to stop supplying a value; the equations still apply.",
     );
     hint.id = "input-help";
     form.append(label, input, actions, hint);
@@ -268,6 +313,14 @@ function details() {
       apply(field, input.value);
     });
     detail.append(form);
+    const manage = node("button", "manage-inputs", "Change inputs together ↗");
+    manage.type = "button";
+    manage.addEventListener("click", () => {
+      activeView = "inputs";
+      setView();
+      $("canvas").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    detail.append(manage);
   } else
     detail.append(
       node(
@@ -301,7 +354,7 @@ function details() {
     const expand = node("button", "equation-expand", "View in equations ↗");
     expand.type = "button";
     expand.addEventListener("click", () => {
-      equationsVisible = true;
+      activeView = "equations";
       setView();
       document
         .querySelector(`[data-equation="${CSS.escape(own.path)}"]`)
@@ -489,19 +542,154 @@ function renderScenarios() {
       ? "Custom exploration · edit a quantity or choose a question to start again."
       : state.scenarios[activeScenario]?.description || "";
 }
+function updateInputActions() {
+  const count = inputEdits.size;
+  $("inputs-tab").textContent = count ? `Inputs (${count})` : "Inputs";
+  $("input-draft-status").textContent = count
+    ? `${count} pending ${count === 1 ? "change" : "changes"}. Results still show the applied case.`
+    : "No pending changes. Unchecked quantities are not supplied as inputs.";
+  $("apply-inputs").disabled = !count;
+  $("discard-inputs").disabled = !count;
+  document.querySelector(".input-actions").classList.toggle("pending", !!count);
+}
+function renderInputs() {
+  $("input-list").replaceChildren();
+  const labels = {
+    initial: "Original input",
+    overridden: "Changed input",
+    added: "Added input",
+    dropped: "Dropped input",
+    unspecified: "Not supplied",
+  };
+  const fields = state.fields.filter(
+    (field) => field.editable && field.path === field.aliases[0],
+  );
+  fields.forEach((field, index) => {
+    const edit = inputEdits.get(field.path);
+    const row = node("div", "input-row");
+    row.dataset.input = field.path;
+    row.dataset.field = field.path;
+    const supply = node("input", "input-supply");
+    supply.type = "checkbox";
+    supply.id = `supply-${index}`;
+    supply.checked = edit ? edit.enabled : field.kind === "input";
+    supply.setAttribute("aria-label", `Supply ${field.path}`);
+    const name = node("label", "input-name");
+    name.htmlFor = supply.id;
+    const title = node("strong", "", field.title);
+    if (field.unit)
+      title.append(node("span", "input-unit", ` · ${field.unit}`));
+    name.append(title);
+    name.title = field.description;
+    name.append(node("small", "input-path", field.path));
+    if (field.initial_input)
+      name.append(
+        node("small", "input-original", `Original: ${field.initial_input}`),
+      );
+    const input = node("input", "case-value");
+    input.type = "text";
+    input.value = edit ? edit.text : field.input;
+    input.setAttribute("aria-label", `Input value for ${field.path}`);
+    input.setAttribute("aria-invalid", String(errors.has(field.path)));
+    const source = node("span", "input-state");
+    const revert = node("button", "input-restore", "↺");
+    revert.type = "button";
+    revert.title = "Restore the original input state in this draft";
+    revert.setAttribute(
+      "aria-label",
+      `Restore original input for ${field.path}`,
+    );
+    const sync = () => {
+      input.disabled = !supply.checked;
+      input.required = supply.checked;
+      input.placeholder = !supply.checked
+        ? "Not supplied"
+        : field.number_format === "percent"
+          ? "e.g. 6%"
+          : "Exact value";
+      const pending = inputEdits.get(field.path);
+      row.classList.toggle("pending", !!pending);
+      source.textContent = pending
+        ? pending.restore
+          ? "Will restore"
+          : pending.enabled
+            ? "Will supply"
+            : "Will drop"
+        : labels[field.input_state];
+      revert.disabled =
+        !pending && ["initial", "unspecified"].includes(field.input_state);
+      updateInputActions();
+    };
+    const record = () => {
+      if (
+        supply.checked
+          ? field.kind === "input" && input.value.trim() === field.input
+          : field.kind !== "input"
+      )
+        inputEdits.delete(field.path);
+      else
+        inputEdits.set(field.path, {
+          enabled: supply.checked,
+          text: input.value,
+        });
+      sync();
+    };
+    supply.addEventListener("change", () => {
+      record();
+      if (supply.checked) input.focus();
+    });
+    input.addEventListener("input", record);
+    revert.addEventListener("click", () => {
+      if (["initial", "unspecified"].includes(field.input_state))
+        inputEdits.delete(field.path);
+      else
+        inputEdits.set(field.path, {
+          enabled: !!field.initial_input,
+          text: field.initial_input,
+          restore: true,
+        });
+      supply.checked = !!field.initial_input;
+      input.value = field.initial_input;
+      sync();
+    });
+    row.append(supply, name, input, source, revert);
+    $("input-list").append(row);
+    sync();
+  });
+  if (!fields.length)
+    $("input-list").append(
+      node("p", "empty", "This model has no editable observations."),
+    );
+  updateInputActions();
+}
+function applyInputs() {
+  let next = { ...bindings };
+  for (const [path, edit] of inputEdits) {
+    const field = fieldsByPath.get(path);
+    next = withoutAliases(next, field);
+    if (!edit.restore) next[path] = edit.enabled ? edit.text.trim() : null;
+  }
+  return refresh(next, { edit: true, commitInputs: true });
+}
 function setView() {
-  $("exploration").hidden = equationsVisible;
-  $("equations").hidden = !equationsVisible;
-  $("explore-tab").classList.toggle("active", !equationsVisible);
-  $("equations-tab").classList.toggle("active", equationsVisible);
-  $("explore-tab").setAttribute("aria-pressed", String(!equationsVisible));
-  $("equations-tab").setAttribute("aria-pressed", String(equationsVisible));
-  $("view-label").textContent = equationsVisible
-    ? "THE ORIGINAL MODEL"
-    : "MODEL STRUCTURE";
-  $("view-title").textContent = equationsVisible
-    ? "The equations behind the results"
-    : "Inputs & relationships";
+  $("exploration").hidden = activeView !== "explore";
+  ["inputs", "equations"].forEach((view) => {
+    $(view).hidden = activeView !== view;
+  });
+  ["explore", "inputs", "equations"].forEach((view) => {
+    $(`${view}-tab`).classList.toggle("active", activeView === view);
+    $(`${view}-tab`).setAttribute("aria-pressed", String(activeView === view));
+  });
+  $("view-label").textContent = {
+    explore: "MODEL STRUCTURE",
+    inputs: "OBSERVATIONS",
+    equations: "THE ORIGINAL MODEL",
+  }[activeView];
+  $("view-title").textContent = {
+    explore: "Inputs & relationships",
+    inputs: "What are you supplying?",
+    equations: "The equations behind the results",
+  }[activeView];
 }
 function render() {
   fieldsByPath = new Map(
@@ -540,6 +728,7 @@ function render() {
       ? "Symbolic preview · set what you know to explore a case."
       : state.condition;
   renderScenarios();
+  renderInputs();
   renderHighlights();
   renderTree();
   $("equation-list").replaceChildren();
@@ -609,13 +798,20 @@ document.addEventListener("keydown", (event) => {
 });
 window.addEventListener("resize", hideTooltips);
 window.addEventListener("scroll", hideTooltips, true);
-$("explore-tab").addEventListener("click", () => {
-  equationsVisible = false;
-  setView();
+["explore", "inputs", "equations"].forEach((view) => {
+  $(`${view}-tab`).addEventListener("click", () => {
+    activeView = view;
+    setView();
+  });
 });
-$("equations-tab").addEventListener("click", () => {
-  equationsVisible = true;
-  setView();
+$("inputs").addEventListener("submit", (event) => {
+  event.preventDefault();
+  applyInputs();
+});
+$("discard-inputs").addEventListener("click", () => {
+  inputEdits.clear();
+  errors.clear();
+  render();
 });
 $("raw").addEventListener("change", () => refresh());
 $("reset").addEventListener("click", () =>

@@ -164,6 +164,16 @@ class Portfolio(Modello):
                 {"expected_return": Rational(6, 100)},
                 select="allocation.equity",
             ),
+            Scenario(
+                "Find a missing return",
+                "Keep a 70/30 mix, drop the assumed equity return, and infer it from a 6% portfolio return.",
+                {
+                    "allocation.equity": Rational(7, 10),
+                    "market.equity.expected_return": None,
+                    "expected_return": Rational(6, 100),
+                },
+                select="market.equity.expected_return",
+            ),
         ),
         fields={
             "capital": FieldInfo(
