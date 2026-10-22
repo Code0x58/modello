@@ -5,12 +5,13 @@ from __future__ import annotations
 from difflib import get_close_matches
 from typing import TYPE_CHECKING, Iterator, Mapping
 
-from sympy import Symbol
+from sympy import S, Symbol
 
 from modello._gui.mathml import EquationPrinter
-from modello.diagnostics import ConstraintKind, ModelField, ModelProblem
+from modello._gui.quantities import Quantity, is_finite_real
+from modello.diagnostics import ConstraintKind, FieldValue, ModelField, ModelProblem
 from modello.errors import ModelInputError
-from modello.gui import FieldInfo, ModelInfo, Scenario
+from modello.gui import FieldInfo, ModelInfo, PlotInfo, Scenario
 
 if TYPE_CHECKING:
     from modello import Modello
@@ -20,6 +21,7 @@ class Layout:
     """One index for names, aliases, visibility, edit policy, and raw equations."""
 
     def __init__(self, problem: ModelProblem, overrides: Mapping[str, FieldInfo]) -> None:
+        self.problem = problem
         self.fields = {".".join(field.path): field for field in problem.fields}
         self.metadata = dict.fromkeys(self.fields, FieldInfo())
         self.components: list[str] = []
@@ -36,7 +38,11 @@ class Layout:
         hidden_symbols = {field.symbol for path, field in self.fields.items() if path in hidden}
         hidden.update(path for path, field in self.fields.items() if field.symbol in hidden_symbols)
         self.hidden = frozenset(hidden)
-        self.copied = frozenset(c.left for c in problem.constraints if c.kind is ConstraintKind.INFERRED)
+        # An unbound quantity copied from a component contributes only x = x;
+        # it is still editable. Nontrivial recorded observations remain protected.
+        self.copied = frozenset(
+            c.left for c in problem.constraints if c.kind is ConstraintKind.INFERRED and c.left != c.right
+        )
         self.editable = frozenset(
             path for path, field in self.fields.items() if path not in hidden and field.symbol not in self.copied
         )
@@ -106,22 +112,60 @@ class Layout:
                 raise ModelInputError(f"ModelInfo.highlights: hidden field {path!r} cannot be highlighted")
         if self.model_info.initial_field:
             self.field(self.model_info.initial_field, context="ModelInfo.initial_field")
+        self._validate_plot(self.model_info.plot, "ModelInfo.plot")
         for index, scenario in enumerate(self.model_info.scenarios):
             if not isinstance(scenario, Scenario):
                 raise ModelInputError(f"ModelInfo.scenarios[{index}]: expected a Scenario declaration")
             context = f"Scenario {scenario.title!r}"
+            self._validate_plot(scenario.plot, f"{context}.plot")
             if scenario.select:
                 self.field(scenario.select, context=f"{context}.select")
-            for path in scenario.bindings:
-                self.field(path, context=f"{context}.bindings")
-                if path not in self.editable:
-                    source = "hidden" if path in self.hidden else "Recorded"
-                    raise ModelInputError(f"{context}.bindings: cannot edit {source} field {path!r}")
+            for option, mapping in (("bindings", scenario.bindings), ("bounds", scenario.bounds)):
+                for path in mapping:
+                    self.field(path, context=f"{context}.{option}")
+                    if path in self.hidden or (option == "bindings" and path not in self.editable):
+                        source = "hidden" if path in self.hidden else "Recorded"
+                        raise ModelInputError(f"{context}.{option}: cannot edit {source} field {path!r}")
+
+    def _validate_plot(self, plot: PlotInfo | None, context: str) -> None:
+        if plot is None:
+            return
+        if not isinstance(plot, PlotInfo):
+            raise ModelInputError(f"{context}: expected PlotInfo")
+        if not 1 <= len(plot.controls) <= 2 or len(set(plot.controls)) != len(plot.controls):
+            raise ModelInputError(f"{context}: choose one or two distinct controls")
+        fields = [self.field(path, context=context) for path in (*plot.controls, plot.output)]
+        if any(path in self.hidden for path in (*plot.controls, plot.output)):
+            raise ModelInputError(f"{context}: plotted quantities must be visible")
+        if len({field.symbol for field in fields[:-1]}) != len(plot.controls):
+            raise ModelInputError(f"{context}: choose distinct controls rather than aliases")
+        if any(field.symbol.is_real is not True for field in fields[:-1]):
+            raise ModelInputError(f"{context}: controls must be real quantities")
+        if set(plot.windows) != set(plot.controls) or any(len(bounds) != 2 for bounds in plot.windows.values()):
+            raise ModelInputError(f"{context}: supply two window endpoints for every control")
+        if plot.view not in {"map", "surface"}:
+            raise ModelInputError(f"{context}: view must be 'map' or 'surface'")
+        for path, endpoints in plot.windows.items():
+            lower, upper = (FieldValue(self.field(path), value).value for value in endpoints)
+            if not all(is_finite_real(value) for value in (lower, upper)) or (lower < upper) is not S.true:
+                raise ModelInputError(f"PlotInfo.windows: {path!r} needs increasing finite real bounds")
 
     def field(self, path: str, *, context: str = "bindings") -> ModelField:
         """Resolve a leaf; component paths cannot be used as scalar inputs."""
         _require_path(path, self.fields, context)
         return self.fields[path]
+
+    def quantity(self, path: str, *, context: str = "bindings") -> Quantity:
+        return Quantity(self.field(path, context=context), self.metadata[path], self.problem)
+
+    def visible_quantities(self) -> tuple[Quantity, ...]:
+        """Prefer highlights and the inspector selection when quantities have aliases."""
+        quantities: dict[Symbol, Quantity] = {}
+        for path in (*self.model_info.highlights, self.model_info.initial_field, *self.fields):
+            if path in self.fields and path not in self.hidden:
+                quantity = self.quantity(path)
+                quantities.setdefault(quantity.symbol, quantity)
+        return tuple(quantities.values())
 
 
 def _require_path(path: str, choices: Mapping[str, object], context: str) -> None:

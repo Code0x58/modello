@@ -39,6 +39,21 @@ through records, declarations, input capture, solution families, diagnosis, and
 the public namespace; reverse type references use ``TYPE_CHECKING``. The GUI and
 numerical example adapters consume the compiled declaration's fields.
 
+GUI presentation stays above these layers. ``Quantity`` joins a model field to
+its labels and display units; ``CheckedCases`` owns finite alternatives and the
+observations that distinguish them. ``Coordinates`` retains the family's free
+quantities and checks point previews or reference sections. ``FamilyPlot``
+samples a section through validated ``PlotWindow`` intervals and audits each
+candidate against the original model. ``FamilyView`` composes these concepts
+into the browser protocol without turning a preview into an observation.
+
+In the browser, ``SampleGrid`` owns sample adjacency and gaps. Flat and surface
+projections map that grid onto the screen; ``SampleChart`` creates the SVG and
+inspection controls. ``ChartSession`` retains chart preferences and discards
+responses to superseded questions. Keep geometry independent of DOM rendering
+and keep these presentation types out of the solver.
+
+
 Validation
 ----------
 

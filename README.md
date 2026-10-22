@@ -135,6 +135,10 @@ The [debugging guide](https://modello.readthedocs.io/en/latest/debugging.html)
 explains conflicts and ambiguous solutions. Use
 [solution families](https://modello.readthedocs.io/en/latest/solutions.html)
 to explore alternative values and bounded observations before selecting a model.
+The optional [browser explorer](https://modello.readthedocs.io/en/latest/gui.html)
+combines these families with bounds, checked alternatives, linked plots, and case
+comparisons. Run `uv run --extra gui python -m examples.gui` from a checkout;
+`--demo calibration` and `--demo reachability` explore further family workflows.
 
 The [practical applications](docs/examples/applications/index.rst) demonstrate
 invoice reconciliation, production planning, and circuit measurement checks.
@@ -173,8 +177,12 @@ is described in [notebooks/README.md](notebooks/README.md).
 Install `modello[gui]` for the optional local browser explorer. Run
 `python -m examples.gui` and open <http://127.0.0.1:5058> to explore nested
 quantities, edit or release inputs, inspect domains and provenance, and browse
-typeset MathML equations. The portfolio demo starts with a free stock–bond
-allocation and also solves for a return target. Field presentation lives beside
+typeset MathML equations. The default projectile demo explores a nonlinear
+safety parabola, the reachable area beneath it, and a rotatable safety
+paraboloid, all from the earlier mechanics model. Guided questions open their
+charts automatically and show how bounds narrow the possibilities. Use
+`--demo portfolio` for the stock–bond allocation and inverse return/risk
+questions. Field presentation lives beside
 declarations with `gui(field, title=..., ...)`, using the core's generic annotation
 registry. Start with the [runnable quickstart](docs/gui.rst#quickstart-your-own-explorer)
 to build your own explorer. The [GUI guide](docs/gui.rst) covers metadata, hidden

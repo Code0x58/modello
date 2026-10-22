@@ -12,6 +12,46 @@ Install its separate extra; the base library still depends only on SymPy:
 From a checkout, use ``uv run --extra gui python -m examples.gui``. Open
 http://127.0.0.1:5058.
 
+Curves, areas, and surfaces from one projectile
+-----------------------------------------------
+
+The default demo reuses :mod:`examples.projectile`, the mechanics model behind
+the :ref:`solution-view gallery <projectile-views>`. A ball leaves ground level
+at 20 m/s, under uniform gravity of 10 m/s², with no air resistance. Combining
+every launch direction gives the highest reachable target at each horizontal
+location:
+
+.. math::
+
+   h(x,y) = 20 - \frac{x^2+y^2}{80}.
+
+This is an envelope of many possible throws. The guided questions open checked
+charts automatically, with useful display windows:
+
+* **Safety parabola** fixes sideways distance to zero. The curved ceiling peaks
+  at 20 m and meets the ground at horizontal distances of ±40 m.
+* **Reachable area** releases target height. The shaded samples describe targets
+  above ground and below that ceiling; colour shows clearance above each target.
+* **Safety paraboloid** releases sideways distance instead. Rotate and tilt the
+  curved surface, or switch to **Map** to inspect its circular ground footprint.
+* **Targets 8–12 m high** narrows the reachable area to an elevated band.
+* **Boundary at 10 m** observes an envelope height. The same equations now give
+  two symmetric checked horizontal positions, ±20√2 m.
+
+.. image:: _static/gui/family-area.png
+   :alt: A curved reachable area beneath the projectile envelope, coloured by clearance above each target.
+
+.. image:: _static/gui/family-surface.png
+   :alt: A rotatable sampled safety paraboloid over horizontal and sideways distances.
+
+The browser displays curves with one varied control and maps or surfaces with
+two. A surface is two-dimensional even though its graph uses three axes.
+Families with three or more remaining coordinates can still be inspected
+through one- or two-control sections. The browser does not draw volumes;
+the earlier :mod:`examples.solution_views` exporter includes a voxel volume
+illustration. Coordinate count alone does not certify the dimension of an
+implicitly constrained family.
+
 Quickstart: your own explorer
 ------------------------------
 
@@ -37,7 +77,8 @@ the GUI extra; core annotations and Python snapshots work without Flask.
 A portfolio to explore
 ----------------------
 
-The demo is a familiar two-asset mean–variance portfolio. Equity and bond
+Run ``python -m examples.gui --demo portfolio`` for the two-asset mean–variance
+portfolio. Equity and bond
 assumptions live in nested components, and allocation weights must be
 non-negative and sum to 100%. It starts with the equity allocation **free**,
 so the results remain expressions in that unknown.
@@ -72,6 +113,10 @@ Use the guided questions to see different ways to bind the same model:
   6.5%, volatility is approximately 14.08%, and expected gain is USD 6,500.
 * **Target 6% return** observes a result instead of an input. The equations
   infer a 60% equity / 40% bond mix and USD 6,000 expected gain.
+* **Same risk, two answers** observes 5% volatility. Both 0% equity and
+  :math:`2/17` equity satisfy it, with different expected returns.
+* **Narrow the answers** keeps that risk target and adds a 3.5% minimum
+  expected return. Only the :math:`2/17` equity allocation remains.
 * **Find a missing return** supplies a 70/30 mix, drops the original equity
   return assumption, and observes a 6% portfolio return. The equations infer
   an equity return of approximately 7.29%.
@@ -80,8 +125,9 @@ Each question restores the initial inputs before applying its observations.
 Subsequent edits are marked as a custom exploration. Inspect a quantity,
 enter a value, and choose **Apply value** or press Enter. **Drop input**
 removes a supplied observation; clearing the editor does the same.
-Try a 120% equity allocation to see the derived bond weight violate its
-non-negative domain. The change is rejected and the previous results remain.
+Try a 120% equity allocation to see an **Empty family**: its derived bond
+weight violates the non-negative domain. The observations remain visible so
+you can inspect the failing domain and revise the question.
 
 .. image:: _static/gui/explore.png
    :alt: A checked 70/30 case with calculated outputs and a mathematical risk definition in the inspector.
@@ -103,7 +149,9 @@ The **Inputs** view makes this choice explicit. Checked quantities are supplied;
 unchecked quantities are left to the model. Edit values, uncheck assumptions,
 or check a result and enter its target. **Apply inputs** validates all pending
 changes together. The results continue to show the last applied case until
-then. Rejected cases preserve both those results and the pending changes.
+then. Malformed values and directly invalid scalar inputs preserve both those
+results and the pending changes. A valid question with no feasible answers is
+applied as an empty family.
 **Discard changes** returns the draft to the applied case without solving.
 The apply controls stay visible while you scroll through pending changes.
 
@@ -134,9 +182,97 @@ Useful stories to try:
   6.5% portfolio return, with the 70/30 allocation retained.
 
 Keeping both the original 8% equity return and a 6% portfolio return target
-with the 70/30 allocation is contradictory. It is rejected rather than silently
-changing the allocation or an assumption. Changing several observations
-together avoids passing through that contradictory intermediate case.
+with the 70/30 allocation is contradictory. The empty family retains those
+observations for inspection. Changing several observations together avoids
+passing through that contradictory intermediate case.
+
+From a question to its possible answers
+----------------------------------------
+
+The family panel adapts to the reduced model, after observations and aliases
+have been accounted for:
+
+* One closed, audited state is a **checked answer**.
+* A small explicit finite family shows **checked alternatives** side by side.
+  Choose a case to inspect its values. The whole family and all filters remain
+  available; the preview does not turn its coordinates into supplied inputs.
+* One remaining coordinate offers a response curve. Two offer a flat map or
+  rotatable surface, with the selected output encoded by colour and, on the
+  surface, height.
+* With more coordinates, preview a checked reference case and choose one or
+  two controls. The other coordinates stay at the reference, producing a
+  **section**, with those fixed values stated beside the plot.
+* An established empty family shows no feasible answer. An unresolved audit
+  or implicit set retains its expressions and conditions without claiming
+  existence, uniqueness, or infeasibility.
+
+Coordinate count is not a dimension certificate. Two coordinates can still
+be coupled by an equality or discrete restrictions. Finite alternatives take
+priority over coordinate-based plots. At most 32 finite coordinate proposals
+are materialised automatically; larger finite families need further narrowing
+or an explicit point preview.
+
+.. image:: _static/gui/family-alternatives.png
+   :alt: Two checked portfolio allocations share the risk target and differ in expected return.
+
+Select **Same risk, two answers**, inspect **Case 1**, and choose **Pin this
+checked case**. Inspect **Case 2** to compare it with the pinned case. The
+comparison includes changed quantities and highlighted outputs; the pinned
+observations and filters remain inspectable. Pinning does not change the model.
+The comparison belongs to the current browser session and is cleared on reload.
+
+For finite checked alternatives, the panel suggests quantities whose observed
+values would distinguish them. It prefers highlighted outputs and avoids
+repeating suggestions that separate the same groups of cases. Highlighted
+outputs independent of the remaining coordinates are identified separately.
+These statements follow from the equations and audited cases; they do not
+assign probabilities or rank explanations by likelihood.
+
+In a quantity's inspector, **At least** and **At most** add inclusive bounds.
+Either endpoint may be omitted. **Apply bounds** releases an exact input for
+that quantity and retains every other observation, definition, and filter.
+**Remove bounds** removes only those browser-added bounds. Recorded observations
+cannot be replaced or released: bounding a Recorded quantity intersects its
+existing restrictions. An incompatible bound produces an empty family.
+Aliases share their bounds, just as they share observations.
+
+**Possible across the whole family** keeps intervals, discrete alternatives,
+and disconnected unions distinct. **Exact set** retains implicit sets and
+conditions too. While inspecting one checked case, these sets continue to
+describe the surrounding family.
+
+.. image:: _static/gui/family-curve.png
+   :alt: The nonlinear safety parabola with checked sample points and an exact point preview in the inspector.
+
+Plot windows are display choices. Finite enclosing coordinate bounds seed the
+window where available; unbounded coordinates require explicit endpoints.
+Every plotted point is audited against all equations, assumptions, and family
+filters. Selecting a point, including through the keyboard-accessible sample
+picker, opens a checked preview in the original family. One-coordinate plots
+retain gaps at rejected or undecided samples. Two-coordinate plots audit a
+21-by-21 grid and shade only cells with four checked corners. Surface faces
+interpolate those corners; boundaries and interiors remain approximations.
+Missing corners leave open cells. The legend gives the sampled output range.
+The **Map** and **Surface** buttons reuse the same checked points without
+another solve. Native rotation and tilt sliders work with the keyboard too.
+Empty samples do not establish an empty family, and pictures do not establish
+global extrema.
+
+Further runnable questions use the same existing example equations:
+
+.. code-block:: console
+
+   $ python -m examples.gui --demo calibration
+   $ python -m examples.gui --demo reachability
+
+The calibration starts with recorded cost in [200, 202], shared impact in
+[1/4, 3/4], and planned cost in [1026, 1076]. The reachability model retains a
+coupled set over forward distance, sideways distance, and target height.
+Preview (0, 0, 0), then take a one- or two-coordinate section through that case.
+For one-coordinate families, constant exact derivatives can also relate
+quantities with matching display units. The calibration explains that each
+1 USD change in recorded cost corresponds to 25 USD in planned cost. Nonlinear
+or unresolved derivatives are not promoted to a constant response relationship.
 
 .. image:: _static/gui/inputs.png
    :alt: Explicit supplied-input checkboxes, original values, and per-quantity restore controls.
@@ -161,6 +297,7 @@ its current value is numeric or symbolic:
   as a target, making it an input instead.
 * **Recorded** is a copied component result retained in a recorded problem.
   Its editor is disabled because that observation is held in the snapshot.
+  Copying an unspecified quantity leaves it editable.
 
 Hover or focus a colour key to read its explanation. Touch users can tap a key;
 tap elsewhere or press Escape to dismiss it. The case-status key also explains
@@ -200,8 +337,9 @@ Tooltip placement is clamped to the viewport.
 Starting from your model
 ------------------------
 
-``create_app`` accepts a model class, an existing instance, or a recorded
-:class:`~modello.diagnostics.ModelProblem`. Initial inputs use full dotted paths:
+``create_app`` accepts a model class, an existing instance, a recorded
+:class:`~modello.diagnostics.ModelProblem`, or a
+:class:`~modello.solutions.SolutionFamily`. Initial inputs use full dotted paths:
 
 .. code-block:: python
 
@@ -215,9 +353,31 @@ With an instance, original inputs are reopened as observations and solved
 outputs are recomputed when inputs change. An overwritten instance field
 becomes an input, as with component copies. The source instance is never
 mutated. With a recorded problem, all its constraints remain, including
-inferred component observations. Those are labelled Recorded and held fixed.
+inferred component observations. Observations that constrain quantities are
+labelled Recorded and held fixed; copying an unknown's own symbol leaves it open.
 Reopen the instance when you want its outputs to recompute from original inputs.
 Each browser holds its own edits and cannot change another browser's state.
+
+Pass the family itself to retain ``where(...)`` filters, preferred coordinates,
+and any section conditions. A model instance selected with ``one()`` contains
+its observations and values, but does not retain the originating family's
+inequalities or section context:
+
+>>> from examples.solution_families import ImpactStudy
+>>> from modello.gui import Explorer
+>>> from sympy import Rational
+>>> explorer = Explorer(ImpactStudy.calibrated())
+>>> initial = explorer.snapshot()
+>>> initial["exploration"]["coordinate_count"]
+1
+>>> preview = explorer.snapshot(point={"impact": Rational(1, 2)})
+>>> preview["status"], preview["exploration"]["coordinate_count"]
+('checked', 1)
+>>> next(field["value"] for field in preview["fields"] if field["path"] == "planned.cost")
+'1051'
+>>> chart = explorer.plot(controls=["impact"], output="planned.cost", windows={"impact": (Rational(1, 4), Rational(3, 4))})
+>>> len(chart["points"]), chart["unknown"]
+(41, 0)
 
 Descriptions, units, and guided questions
 -----------------------------------------
@@ -271,6 +431,32 @@ permissions are validated; a scenario cannot change hidden or Recorded values.
 Its observations still pass through the same validation as manual edits.
 Use ``None`` in a scenario's bindings to drop a specific initial observation;
 other initial observations remain active.
+``Scenario(bounds={"expected_return": (Rational(7, 200), None)}, ...)``
+adds a lower bound. Guided questions restore initial observations and replace
+browser-added bounds; they retain any filters on a supplied source family.
+
+``ModelInfo(plot=...)`` opens an initial chart; ``Scenario(plot=...)`` opens one
+for that guided question. Both accept a ``PlotInfo`` declaration:
+
+.. code-block:: python
+
+   from modello.gui import PlotInfo
+
+   ceiling = PlotInfo(
+       controls=("x", "y"),
+       output="height",
+       windows={"x": (-40, 40), "y": (-40, 40)},
+       view="surface",
+   )
+
+The one or two controls and the output must be visible field paths. Window
+endpoints are increasing, finite real numbers in model units; percentage
+notation is generated for percentage editors. Windows affect only the picture.
+They do not add observations or bounds. The browser checks samples on opening
+the chart; serialising metadata or requesting a raw snapshot never solves it.
+Presets should select coordinates left free by the scenario. A preset for a
+larger family still needs a checked reference before taking a section.
+
 Presentation paths are checked when constructing ``Explorer`` or ``create_app``,
 before serving any requests. Errors name the offending option or scenario,
 include the full nested path, and suggest similar field names when available.
@@ -308,14 +494,13 @@ uses Python's syntax tree without evaluating Python or SymPy expression strings.
 Arbitrary functions, attribute access, and new parameter names are not accepted.
 The trusted Python API continues to accept normal symbolic scalar inputs.
 
-The proposed case is checked against original equations and all declared
-assumptions, including domains of calculated and hidden quantities. Invalid
-edits identify both the edited fields and any derived domain failures, while
-retaining the last successful model. No arbitrary branch or sampled point is
-chosen when several solutions remain.
-
-.. image:: _static/gui/validation.png
-   :alt: An invalid allocation is rejected while the previous return and risk remain visible.
+Proposed numerical cases are checked against original equations, all declared
+assumptions, and retained family filters, including domains of calculated and
+hidden quantities. Malformed values and directly invalid scalar inputs are
+rejected without replacing the applied results. Infeasible combinations are
+shown as empty families, with known substituted domain failures available for
+inspection. No arbitrary branch or sampled point is chosen when several
+solutions remain.
 
 A unique symbolic proposal is labelled **Exploring** when its audit cannot
 establish a fully checked numeric case. This includes partially bound models
@@ -330,12 +515,16 @@ Scope of this draft
 The interface serves bundled HTML, CSS, JavaScript, and MathML without a CDN or
 JavaScript build. The local Flask server is intended for small trusted models
 on loopback. Symbolic work is synchronous; arithmetic limits are not a solver
-timeout. There is no deployment, authentication, persistence, multi-branch
-selection, or model-instance export flow.
+timeout. There is no deployment, authentication, persistence,
+or model-instance export flow. Case previews and pinned comparisons are kept
+in browser memory. Plotting explicitly checks a bounded sample of 41 points for
+one control or 11 by 11 for two; it does not continuously solve while dragging.
 
-Construction and the preview share directed-definition expansion and candidate
-generation. The preview uses the diagnostic audit while construction retains
-its original filtering. Python users can call ``Explorer(...).snapshot(raw=True)``
+The GUI explores the exact solution family and uses its candidate audits.
+Inputs outside the family's supported exact-expression scope retain the prior
+single-proposal preview, with the family limitation reported explicitly.
+Ordinary construction keeps its existing solving behavior.
+Python users can call ``Explorer(...).snapshot(raw=True)``
 for a solver-free, JSON-ready view without installing Flask. Snapshot ``kind``
 uses ``derived`` for both numeric and symbolic calculations and ``fixed`` only
 for recorded component observations; ``value_state`` describes the display form.
@@ -351,8 +540,19 @@ Pass all desired overrides and drops together in one mapping. The browser
 retains this mapping between edits and removes a field's override when you
 restore it individually.
 
+``snapshot(bounds={path: (lower, upper)}, case=index)`` selects one checked
+finite alternative without changing the observations. Alternatively,
+``point={path: exact_value, ...}`` previews every remaining coordinate together.
+Case indices belong to the current refinement and are reset after edits.
+Bounds are stateless against the source family, so omitting them removes the
+browser-added restrictions. Source-family conditions always remain active.
+The ``exploration`` record reports coordinates, audited alternatives,
+selection, active conditions, invariant outputs, and distinguishing quantities.
+Each visible field's ``possible_values`` retains its exact set separately from
+the selected point's displayed value.
+
 API
 ---
 
 .. automodule:: modello.gui
-   :members: gui, ModelInfo, FieldInfo, Scenario, Explorer, BindingError, create_app
+   :members: gui, ModelInfo, FieldInfo, PlotInfo, Scenario, Explorer, BindingError, create_app

@@ -31,7 +31,10 @@ assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
 assert "gui" in distribution.metadata.get_all("Provides-Extra", ())
 assert "flask" not in sys.modules
 from modello.gui import Explorer, FieldInfo, ModelInfo, gui
-for name in ("templates/index.html", "static/explorer.css", "static/explorer.js"):
+for name in (
+    "templates/index.html", "static/explorer.css", "static/explorer.js", "static/families.js", "static/charts.js",
+    "static/chart_geometry.js"
+):
     assert Path(modello.__file__).with_name("_gui").joinpath(name).is_file()
 assert "flask" not in sys.modules
 assert not any(str(path).startswith("tests/") for path in distribution.files or ())
@@ -66,6 +69,12 @@ assert observed.values(family.symbols.a, family.symbols.c) == FiniteSet(Tuple(3,
 point = observed.one()
 assert isinstance(point, RightAngleTriangle)
 assert (point.a, point.b, point.c) == (3, 4, 5)
+explorer = Explorer(family)
+assert explorer.snapshot(point={"a": 3})["status"] == "checked"
+assert explorer.snapshot()["exploration"]["coordinate_count"] == 1
+chart = explorer.plot(controls=["a"], output="c", windows={"a": (3, 4)})
+assert len(chart["points"]) == 41
+assert "flask" not in sys.modules
 
 class Box(modello.Modello):
     base = modello.component(RightAngleTriangle)
@@ -97,6 +106,7 @@ import examples
 from examples.geometry import RightAngleTriangle
 from examples.data import NamedMap
 from examples.gui_quickstart import ReturnModel
+from examples.gui_families import demo_family
 from modello.gui import Explorer
 
 assert Path(examples.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
@@ -105,6 +115,10 @@ assert RightAngleTriangle("T", a=3, b=4).c == 5
 assert NamedMap({"a": 2}).map(lambda value: value * 3) == {"a": 6}
 assert ReturnModel("example", capital=100_000, expected_return="2/25").gain == 8_000
 assert Explorer(ReturnModel, inputs={"capital": 100_000}).snapshot(raw=True)["raw"]
+assert Explorer(demo_family("calibration")).snapshot()["exploration"]["coordinate_count"] == 1
+projectile = Explorer(demo_family("projectile"))
+assert projectile.snapshot()["plot"]["output"] == "height"
+assert projectile.plot(controls=["x"], output="height", windows={"x": (-40, 40)})["points"][20]["axes"] == [0, 20]
 assert "flask" not in sys.modules
 data = resources.files("examples.portfolio").joinpath("data")
 for name in ("market.csv", "transactions.csv", "benchmark.csv"):

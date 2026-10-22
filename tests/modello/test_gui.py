@@ -75,7 +75,8 @@ def test_override_drop_and_restore_individual_inputs():
 def test_drop_input_and_observe_output_as_one_case():
     client = create_app(Panel, inputs={"width": 4, "height": 5}).test_client()
     contradictory = client.post("/api/explore", json={"bindings": {"area": "30"}})
-    assert contradictory.status_code == 422
+    assert contradictory.status_code == 200
+    assert contradictory.json["status"] == "empty"
     response = client.post("/api/explore", json={"bindings": {"height": None, "area": "30"}})
     assert response.status_code == 200
     data = rows(response.json)
@@ -124,8 +125,7 @@ def test_snapshot_keeps_inferred_component_observations():
     problem = inspect_model(Estimate, "snapshot", panel=Panel("source", width=4, height=5), price=10)
     data = Explorer(problem).snapshot()
     assert not rows(data)["panel.area"]["editable"]
-    with pytest.raises(BindingError):
-        Explorer(problem).snapshot({"panel.width": 6})
+    assert Explorer(problem).snapshot({"panel.width": 6})["status"] == "empty"
 
 
 def test_reopen_solution_family_case_preserves_annotations_and_observed_targets():
@@ -172,9 +172,9 @@ def test_validation_is_atomic_and_reports_indirect_domain_errors():
     with pytest.raises(BindingError, match="positive") as failure:
         explorer.snapshot({"x": -1})
     assert failure.value.paths == ("x",)
-    with pytest.raises(BindingError) as failure:
-        explorer.snapshot({"x": 1})
-    assert "remainder" in failure.value.paths
+    infeasible = explorer.snapshot({"x": 1})
+    assert infeasible["status"] == "empty"
+    assert "remainder" in infeasible["exploration"]["violations"]
     assert rows(explorer.snapshot())["remainder"]["value"] == "1"
 
 
@@ -183,8 +183,10 @@ def test_multiple_solutions_are_not_selected():
         x = InstanceDummy("x", real=True)
         squared = x**2
 
-    with pytest.raises(BindingError, match="Multiple solutions"):
-        Explorer(Square, inputs={"squared": 4}).snapshot()
+    result = Explorer(Square, inputs={"squared": 4}).snapshot()
+    assert result["status"] == "alternatives"
+    assert result["exploration"]["selection"] is None
+    assert result["exploration"]["case_count"] == 2
 
 
 def test_external_parameters_stay_conditional():
