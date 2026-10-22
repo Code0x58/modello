@@ -28,7 +28,7 @@ class Scale:
 
     def __init__(self, label: str, factor: ScalarValue) -> None:
         value = sympify(factor)
-        if not label.strip() or not isinstance(value, Expr) or value.is_Rational is not True or value in (0, 1):
+        if not label.strip() or not isinstance(value, Rational) or value in (0, 1):
             raise ValueError("Supply a label and an exact rational factor other than 0 or 1; use Rational for decimals")
         object.__setattr__(self, "label", label)
         object.__setattr__(self, "factor", value)
@@ -106,8 +106,7 @@ class Reconciliation(Generic[Model]):
             raise TypeError("Supply Suspect records for this problem")
         object.__setattr__(self, "problem", problem)
         object.__setattr__(self, "suspects", selected)
-        symbols = [suspect.field.symbol for suspect in self.suspects]
-        if len(set(symbols)) != len(symbols):
+        if len({suspect.field.symbol for suspect in selected}) != len(selected):
             raise ValueError("Declare each suspect quantity once, including its aliases")
         for suspect in self.suspects:
             observation = self._observation(suspect.field)
@@ -134,6 +133,13 @@ class Reconciliation(Generic[Model]):
             raise ValueError("A suspect must have exactly one directly recorded scalar observation")
         return observations[0]
 
+    def _trial(self, observation: ModelConstraint, value: Expr | None = None) -> ModelProblem[Model]:
+        """Replace or release one observation, preserving order and clearing stale candidates."""
+        constraints = list(self.problem.constraints)
+        index = constraints.index(observation)
+        constraints[index : index + 1] = [] if value is None else [replace(observation, right=value)]
+        return replace(self.problem, constraints=tuple(constraints), candidates=())
+
     def scan(self) -> MutationReport[Model]:
         """Check concrete mutations individually, without solving backwards.
 
@@ -150,21 +156,12 @@ class Reconciliation(Generic[Model]):
             observation = self._observation(suspect.field)
             original = cast(Expr, observation.right)
             proposals: dict[Expr, list[Scale]] = {}
-            for mutation in suspect.mutations:
+            for mutation in dict.fromkeys(suspect.mutations):
                 proposed = original * mutation.factor
                 if proposed != original:
-                    explanations = proposals.setdefault(proposed, [])
-                    if mutation not in explanations:
-                        explanations.append(mutation)
+                    proposals.setdefault(proposed, []).append(mutation)
             for proposed, mutations in proposals.items():
-                trial = replace(
-                    self.problem,
-                    constraints=tuple(
-                        replace(constraint, right=proposed) if constraint is observation else constraint
-                        for constraint in self.problem.constraints
-                    ),
-                    candidates=(),
-                )
+                trial = self._trial(observation, proposed)
                 trials.append(
                     MutationTrial(suspect.field, original, proposed, tuple(mutations), trial, trial.analyse())
                 )
@@ -176,14 +173,6 @@ class Reconciliation(Generic[Model]):
         Keep all other observations, definitions, domains, and copied results.
         The returned family can contain zero, one, several, or unresolved states.
         """
-        if field not in self.problem.fields or not any(
-            field.symbol == suspect.field.symbol for suspect in self.suspects
-        ):
+        if field not in self.problem.fields or field.symbol not in {suspect.field.symbol for suspect in self.suspects}:
             raise ValueError("Select a declared suspect field of this problem")
-        observation = self._observation(field)
-        trial = replace(
-            self.problem,
-            constraints=tuple(constraint for constraint in self.problem.constraints if constraint is not observation),
-            candidates=(),
-        )
-        return trial.solutions()
+        return self._trial(self._observation(field)).solutions()

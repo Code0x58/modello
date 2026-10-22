@@ -76,6 +76,28 @@ def test_nested_scalar_trial_keeps_sibling_observations_and_source_snapshot():
     assert study.infer(quantity).one().terms.quantity == 200
 
 
+def test_replacement_and_release_clear_stale_candidates_after_input_removal():
+    # Removing an earlier input leaves constraint indices distinct from positions.
+    problem = inspect_model(
+        Trade, "captured", quantity=2, terms=Terms("terms", quantity=2, price=3), total=600
+    ).without("quantity")
+    witness = problem.without("total").analyse().witness
+    assert witness is not None
+    problem = replace(problem, candidates=(witness.candidate,))
+    price = problem.field("terms", "price")
+    study = Reconciliation(problem, [Suspect(price)])
+
+    report = study.scan()
+    assert all(not trial.problem.candidates for trial in report.trials)
+    (match,) = report.matches
+    assert match.problem.solutions().one().terms.price == 300
+    inferred = study.infer(price)
+    assert not inferred.problem.candidates
+    assert inferred.one().terms.price == 300
+    assert problem.candidates == (witness.candidate,)
+    assert witness.candidate.value(price) == 3
+
+
 def test_equivalent_cause_labels_share_one_checked_trial():
     problem = trade_problem(quantity=10, price=1200, total=120)
     price = problem.field("terms", "price")
