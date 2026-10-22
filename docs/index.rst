@@ -47,9 +47,11 @@ transitions, reporting, and fitting a refined component from an outer constraint
 
 Distinct instances receive distinct bound symbols, even if they share a name.
 Values are solved at construction time; changing an attribute afterward does
-not recompute the model. Failed solves raise :class:`modello.errors.ModelSolveError`
-with the equations and supplied observations preserved for inspection. Use
-:doc:`solution families <solutions>` to explore alternatives before selecting a state.
+not recompute the model. Construction requires one retained solver candidate;
+zero or several candidates raise :class:`~modello.errors.SolutionCountError`.
+A candidate may still represent a symbolic family of answers. The
+:doc:`debugging guide <debugging>` explains these outcomes and how to inspect them.
+Use :doc:`solution families <solutions>` to explore alternatives before selecting a state.
 
 The `examples directory <https://github.com/Code0x58/modello/tree/master/examples>`_
 contains geometry, flow-scaling, and historical tax-model examples. Tax examples

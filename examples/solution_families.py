@@ -10,6 +10,7 @@ import argparse
 from pathlib import Path
 
 from sympy import Interval
+from sympy.plotting import plot
 
 from modello import (
     InstanceDummy,
@@ -31,28 +32,6 @@ class Execution(Modello):
     fee = InstanceDummy("fee", nonnegative=True)
     price = reference + impact * quantity
     cost = quantity * price + fee
-
-
-class Exposure(Modello):
-    """Three signed exposures to illustrative risk factors."""
-
-    x = InstanceDummy("x", real=True)
-    y = InstanceDummy("y", real=True)
-    z = InstanceDummy("z", real=True)
-
-
-class Risk(Modello):
-    """A positive quadratic variance, including correlated exposures."""
-
-    exposure = component(Exposure)
-    variance = exposure.x**2 + exposure.x * exposure.y + 2 * exposure.y**2 + 3 * exposure.z**2
-
-
-class IsoRisk(Modello):
-    """Name the level shared by every exposure combination on a risk contour."""
-
-    risk = component(Risk)
-    level = risk.variance
 
 
 class ImpactStudy(Modello):
@@ -83,8 +62,6 @@ class ImpactStudy(Modello):
     @staticmethod
     def plot(family: SolutionFamily[ImpactStudy], destination: Path) -> None:
         """Plot the symbolic cost expression on its admissible impact interval."""
-        from sympy.plotting import plot
-
         study = family.symbols
         domain = family.values(study.impact)
         costs = family.values(study.planned.cost)

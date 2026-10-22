@@ -1,16 +1,14 @@
-"""Opt-in, conservative diagnosis of a recorded symbolic problem.
+"""Problem preparation and opt-in conservative diagnosis.
 
-Constraints and domains are kept separate. A failed solver is not an
-inconsistency oracle: consistency requires a checked, closed witness and
-inconsistency requires an exact contradiction. Everything else is unknown.
+Consistency requires a checked, closed witness; inconsistency requires an exact
+contradiction. Solver failure alone establishes neither.
 """
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass, replace
 from functools import cached_property
-from typing import TYPE_CHECKING, Generic, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Generic, cast
 
 from sympy import (
     Basic,
@@ -20,7 +18,6 @@ from sympy import (
     FiniteSet,
     Float,
     I,
-    Interval,
     Matrix,
     S,
     Set,
@@ -31,139 +28,33 @@ from sympy import (
     solve,
     solveset,
     sqrt,
-    sympify,
 )
 from sympy.core.function import AppliedUndef
-from sympy.printing.str import StrPrinter
 from sympy.solvers.solveset import NonlinearError
 
-from modello.errors import ModelInputError, ModelValidationError
-from modello.errors import ModelSolveError as ModelSolveError
-
-if sys.version_info >= (3, 11):
-    from enum import StrEnum as _StrEnum
-else:
-    from enum import Enum
-
-    class _StrEnum(str, Enum):
-        """String-enum behaviour for the supported Python 3.10 runtime."""
-
-        __str__ = str.__str__
-
-        def __format__(self, format_spec: str) -> str:
-            return str.__format__(self, format_spec)
-
+from modello._model import BoundInstanceDummy, InstanceDummy, ModelloMeta, _BoundField, _ModelReference
+from modello._problem import (
+    AssumptionCheck,
+    Candidate,
+    CandidateCheck,
+    ConstraintKind,
+    FieldPath,
+    FieldValue,
+    ModelConstraint,
+    ModelField,
+    ModelT,
+    ResidualCheck,
+    Status,
+    Verdict,
+    _canonical_fields,
+    _domain,
+    _FieldPrinter,
+)
+from modello.errors import ModelInputError, ModelSolveError as ModelSolveError, ModelValidationError
+from modello.solutions import SolutionFamily
 
 if TYPE_CHECKING:
     from modello import Modello, ScalarValue, SymbolicScalar
-    from modello.solutions import SolutionFamily
-
-ModelT = TypeVar("ModelT", bound="Modello")
-
-FieldPath = tuple[str, ...]
-Status = Literal["consistent", "inconsistent", "unknown"]
-Verdict = Literal["satisfied", "violated", "unknown"]
-
-
-class ConstraintKind(_StrEnum):
-    """A defining equation, supplied input, or inferred component result."""
-
-    DEFINITION = "definition"
-    INPUT = "input"
-    INFERRED = "inferred"
-
-
-@dataclass(frozen=True)
-class ModelField:
-    """One public path to a quantity; aliases retain the same symbol identity."""
-
-    path: FieldPath
-    symbol: Symbol
-
-
-@dataclass(frozen=True)
-class ModelConstraint:
-    """An equation's origin, original sides, and optional constructor-input group.
-
-    Copied component values distinguish supplied inputs from inferred results.
-    ``input`` groups both under the component argument;
-    it does not mean that each copied value was supplied explicitly.
-    """
-
-    index: int
-    path: FieldPath
-    kind: ConstraintKind
-    left: Symbol
-    right: Basic
-    input: str | None = None
-
-    @property
-    def symbols(self) -> frozenset[Symbol]:
-        """Return identities mentioned by either side, without simplifying them."""
-        return frozenset(self.left.free_symbols | self.right.free_symbols)
-
-
-@dataclass(frozen=True, init=False)
-class FieldValue:
-    """A value associated with an actual field of this problem."""
-
-    field: ModelField
-    value: Expr
-
-    def __init__(self, field: ModelField, value: ScalarValue) -> None:
-        try:
-            expression = value if isinstance(value, Expr) else sympify(value)
-        except (SympifyError, TypeError) as error:
-            raise ModelInputError("A field value must be a SymPy-compatible scalar") from error
-        if not isinstance(expression, Expr):
-            raise ModelInputError("A field value must be a SymPy-compatible scalar")
-        object.__setattr__(self, "field", field)
-        object.__setattr__(self, "value", expression)
-
-
-@dataclass(frozen=True)
-class Candidate:
-    """A proposed assignment, rather than a claim of validity or completeness."""
-
-    values: tuple[FieldValue, ...]
-
-    def value(self, field: ModelField) -> Expr:
-        """Read a quantity through any of its recorded aliases."""
-        matches = tuple(item.value for item in self.values if item.field.symbol == field.symbol)
-        if not matches:
-            raise KeyError(".".join(field.path))
-        if any(value != matches[0] for value in matches):
-            raise ModelValidationError("Candidate contains conflicting values for aliases")
-        return matches[0]
-
-
-@dataclass(frozen=True)
-class ResidualCheck:
-    """An equation checked against a candidate, retaining an undecided outcome."""
-
-    constraint: ModelConstraint
-    residual: Basic
-    verdict: Verdict
-
-
-@dataclass(frozen=True)
-class AssumptionCheck:
-    """A field's required predicate compared with its proposed value."""
-
-    value: FieldValue
-    predicate: str
-    expected: bool
-    actual: bool | None
-
-
-@dataclass(frozen=True)
-class CandidateCheck:
-    """An audit; only a satisfied, closed assignment is a consistency witness."""
-
-    candidate: Candidate
-    residuals: tuple[ResidualCheck, ...]
-    assumptions: tuple[AssumptionCheck, ...]
-    verdict: Verdict
 
 
 @dataclass(frozen=True)
@@ -252,55 +143,6 @@ class Conflict:
     removal_checks: tuple[RemovalCheck, ...] = ()
 
 
-def _common_prefix(left: FieldPath, right: FieldPath) -> FieldPath:
-    for index, (a, b) in enumerate(zip(left, right)):
-        if a != b:
-            return left[:index]
-    return left[: min(len(left), len(right))]
-
-
-class _FieldPrinter(StrPrinter):
-    """Label quantities without substitution, which could change the algebra."""
-
-    def __init__(
-        self,
-        fields: tuple[ModelField, ...],
-        symbols: frozenset[Symbol],
-        scope: FieldPath,
-        referenced: frozenset[Symbol],
-    ) -> None:
-        super().__init__()
-        paths: dict[Symbol, FieldPath] = {}
-        for field in fields:
-            previous = paths.get(field.symbol)
-            # Prefer aliases in this component; ties keep the recorded order.
-            if previous is None or len(_common_prefix(scope, field.path[:-1])) > len(
-                _common_prefix(scope, previous[:-1])
-            ):
-                paths[field.symbol] = field.path
-        self.scope = scope
-        # Both sides share one scope, even when the right side reaches outside it.
-        for symbol in referenced & paths.keys():
-            self.scope = _common_prefix(self.scope, paths[symbol][:-1])
-        self.labels = {symbol: ".".join(path[len(self.scope) :]) for symbol, path in paths.items()}
-        external: dict[str, list[Symbol]] = {}
-        for symbol in sorted(
-            symbols - self.labels.keys(),
-            key=lambda s: (s.name, str(sorted(s.assumptions0.items())), getattr(s, "dummy_index", -1)),
-        ):
-            external.setdefault(symbol.name, []).append(symbol)
-        for name, group in external.items():
-            for index, symbol in enumerate(group, 1):
-                suffix = f"#{index}" if len(group) > 1 else ""
-                self.labels[symbol] = f"external[{name}{suffix}]"
-
-    def _print_Symbol(self, expression: Symbol) -> str:
-        return self.labels.get(expression, super()._print_Symbol(expression))
-
-    def _print_Dummy(self, expression: Symbol) -> str:
-        return self.labels.get(expression, super()._print_Dummy(expression))
-
-
 @dataclass(frozen=True, repr=False)
 class ModelProblem(Generic[ModelT]):
     """A frozen snapshot shared by preparation, construction, and failure handling."""
@@ -311,6 +153,73 @@ class ModelProblem(Generic[ModelT]):
     constraints: tuple[ModelConstraint, ...]
     candidates: tuple[Candidate, ...] = ()
 
+    def _capture_inputs(self, **value_map: ScalarValue | Modello) -> ModelProblem[ModelT]:
+        """Append constructor inputs without rebinding this snapshot."""
+        if not value_map:
+            return self
+        model = self.model
+        fields = {field.path: field.symbol for field in self.fields}
+        bindings = {dummy: fields[path] for path, dummy in model._modello_fields.items()}
+        constraints = list(self.constraints)
+
+        def add_value(
+            path: FieldPath,
+            raw: object,
+            scope: dict[InstanceDummy, BoundInstanceDummy],
+            group: str,
+            source: _BoundField | None = None,
+        ) -> None:
+            try:
+                value = simplify(raw)
+            except (SympifyError, TypeError, AttributeError) as error:
+                raise ModelInputError(f"{'.'.join(path)} must be a SymPy-compatible scalar") from error
+            if not isinstance(value, Expr):
+                raise ModelInputError(f"{'.'.join(path)} must be a SymPy-compatible scalar")
+            kind = ConstraintKind.INPUT if source is None else source.copied_kind(raw)
+            constraints.append(
+                ModelConstraint(len(constraints), path, kind, fields[path], value.xreplace(scope), group)
+            )
+
+        for attr, value in value_map.items():
+            if attr in model._modello_namespace.dummies:
+                add_value((attr,), value, bindings, attr)
+                continue
+            child = model._modello_namespace.nested_models.get(attr)
+            if child is None:
+                raise ModelInputError(f"Unknown model attribute {attr!r}")
+            child_model = child._modello_model
+            if not isinstance(value, child_model):
+                raise ModelInputError(f"{attr} must be a {child_model.__name__} instance")
+            prefix = (attr,)
+            source_fields = type(value)._modello_fields
+            for path in child_model._modello_fields:
+                if path not in source_fields:
+                    raise ModelInputError(f"Child instance is missing {'.'.join((attr, *path))}")
+            scope = {
+                **bindings,
+                **{d: fields[prefix + path] for path, d in child_model._modello_fields.items()},
+                **{
+                    value._modello_bound_fields[source_fields[path]].symbol: fields[prefix + path]
+                    for path in child_model._modello_fields
+                },
+            }
+            for path in child_model._modello_fields:
+                scalar: object = value
+                for part in path:
+                    scalar = getattr(scalar, part)
+                add_value(
+                    (attr, *path),
+                    scalar,
+                    scope,
+                    attr,
+                    value._modello_bound_fields[source_fields[path]],
+                )
+        return replace(self, constraints=tuple(constraints), candidates=())
+
+    def _fresh(self) -> ModelProblem[ModelT]:
+        """Prepare the same declaration with fresh identities and no observations."""
+        return _prepare_problem(self.model, self.name)
+
     @cached_property
     def symbols(self) -> ModelT:
         """Access this problem's independent quantities through typed components.
@@ -319,8 +228,6 @@ class ModelProblem(Generic[ModelT]):
         scalar symbols and nested components, rather than solved model methods.
         Derived fields also have their own symbols, so they can be observed.
         """
-        from modello import _ModelReference
-
         return cast(ModelT, _ModelReference(self.model, {field.path: field.symbol for field in self.fields}))
 
     def __repr__(self) -> str:
@@ -430,8 +337,6 @@ class ModelProblem(Generic[ModelT]):
         This explicit operation can invoke exact symbolic solvers. It preserves
         unresolved conditions rather than choosing a candidate or branch.
         """
-        from modello.solutions import SolutionFamily
-
         fields = []
         for parameter in parameters:
             if not isinstance(parameter, Symbol):
@@ -442,6 +347,24 @@ class ModelProblem(Generic[ModelT]):
             if field not in fields:
                 fields.append(field)
         return SolutionFamily._prepare(self, tuple(fields))
+
+
+def _prepare_problem(model: type[ModelT], name: str, /, **value_map: ScalarValue | Modello) -> ModelProblem[ModelT]:
+    """Capture a declaration and its constructor inputs as one bound snapshot."""
+    if not isinstance(model, ModelloMeta):
+        raise ModelInputError("inspect_model requires a Modello class and constructor inputs")
+    bindings = {d: d.bound(name) for d in dict.fromkeys(model._modello_fields.values())}
+    fields = {path: bindings[d] for path, d in model._modello_fields.items()}
+    constraints = [
+        ModelConstraint(i, path, ConstraintKind.DEFINITION, bindings[d], expr.xreplace(bindings))
+        for i, (path, (d, expr)) in enumerate(
+            zip(model._modello_constraint_paths, model._modello_class_constraints, strict=True)
+        )
+    ]
+    problem = ModelProblem(
+        model, name, tuple(ModelField(path, symbol) for path, symbol in fields.items()), tuple(constraints)
+    )
+    return problem._capture_inputs(**value_map)
 
 
 @dataclass(frozen=True)
@@ -509,13 +432,6 @@ class ProblemAnalysis:
         suffix = "; check budget exhausted" if self.budget_exhausted else ""
         lines.append(f"  Subset assessments: {self.checks}{suffix}.")
         return "\n".join(lines)
-
-
-def _canonical_fields(problem: ModelProblem) -> tuple[ModelField, ...]:
-    fields: dict[Symbol, ModelField] = {}
-    for field in problem.fields:
-        fields.setdefault(field.symbol, field)
-    return tuple(fields.values())
 
 
 def _candidate(problem: ModelProblem, values: dict[Symbol, Expr]) -> Candidate:
@@ -671,31 +587,6 @@ class _Assessment:
     witness: CandidateCheck | None = None
     candidates: tuple[CandidateCheck, ...] = ()
     solution_sets: tuple[SolutionSet, ...] = ()
-
-
-def _domain(symbol: Symbol) -> Set:
-    """A numeric search domain containing every permitted finite scalar value."""
-    domain = (
-        S.Integers
-        if symbol.is_integer
-        else S.Rationals
-        if symbol.is_rational
-        else S.Reals
-        if symbol.is_real
-        else S.Complexes
-    )
-    if symbol.is_real:
-        if symbol.is_positive:
-            domain &= Interval.open(0, S.Infinity)
-        elif symbol.is_nonnegative:
-            domain &= Interval(0, S.Infinity)
-        elif symbol.is_negative:
-            domain &= Interval.open(S.NegativeInfinity, 0)
-        elif symbol.is_nonpositive:
-            domain &= Interval(S.NegativeInfinity, 0)
-    if symbol.is_zero is False:
-        domain -= FiniteSet(0)
-    return domain
 
 
 def _solution_sets(

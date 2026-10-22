@@ -90,9 +90,10 @@ component to nest the operations and retain their complete equations.
 
 ## Inspect a failed solve
 
-Conflicting observations, ambiguous candidates, and backend failures raise
-`ModelSolveError` with a snapshot of the problem. Match the failure to decide
-when to request a detailed report:
+Construction requires one retained solver candidate. Zero or several candidates
+raise `SolutionCountError`; a solver exception raises `SolverBackendError`.
+Both inherit from `ModelSolveError` and retain a snapshot of the problem. Match
+the failure to decide when to request a detailed report:
 
 ```python
 from modello import ModelSolveError, SolutionCountError, SolverBackendError
@@ -115,9 +116,10 @@ except ModelSolveError as error:
 ```
 
 `SolutionCountError` exposes `solution_count` for retained candidates and
-`returned_count` before domain checks. Counts can describe symbolic families.
-A zero count alone does not prove a contradiction. Analysis checks for evidence
-when requested; `print(error.problem)` shows the nested equations and inputs.
+`returned_count` for captured candidates before domain checks. A candidate may
+represent a symbolic family of answers; a zero count alone does not prove a
+contradiction. Analysis looks for checked evidence and runs only when you ask
+for it. `print(error.problem)` shows the nested equations without running analysis.
 
 Catch `ModelloError` to handle Modello's validation and solve failures together,
 or use the specific classes in the

@@ -1,6 +1,7 @@
 """Joint sets must preserve domains, singular cases, and relationships."""
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
+from itertools import combinations
 
 import pytest
 from sympy import (
@@ -16,16 +17,22 @@ from sympy import (
     S,
     Symbol,
     Tuple,
+    diff,
     pi,
     sin,
 )
 
+import modello
 import modello.solutions as solutions
+from examples.projectile import FreeFlight, Projectile
+from examples.solution_families import Execution
+from examples.solution_views import ModelView, ModelViews
 from modello import (
     ConstraintKind,
     InstanceDummy,
     ModelInputError,
     Modello,
+    ModelProblem,
     ModelValidationError,
     SolutionFamily,
     SolutionSelectionError,
@@ -46,8 +53,6 @@ class Check(Modello):
 
 
 def test_family_materialisation_preserves_bindings_and_provenance_without_legacy_solver(monkeypatch):
-    import modello
-
     problem = inspect_model(Check, "explore")
     check = problem.symbols
     x, total = check.reading.x, check.total
@@ -177,8 +182,6 @@ def test_inconsistent_affine_observations_produce_an_empty_joint_family():
 
 
 def test_multivariate_fallback_keeps_the_joint_relation():
-    from examples.solution_views import ModelViews
-
     class Circle(Modello):
         x = InstanceDummy("x", real=True)
         y = InstanceDummy("y", real=True)
@@ -206,13 +209,6 @@ def test_multivariate_fallback_keeps_the_joint_relation():
 
 
 def test_model_views_follow_dependencies_and_measure_images_without_pointwise_rank():
-    from itertools import combinations
-
-    from sympy import diff
-
-    from examples.solution_families import Execution
-    from examples.solution_views import ModelViews
-
     problem = inspect_model(Execution, "views", reference=100)
     execution = problem.symbols
     quantity, impact, fee = execution.quantity, execution.impact, execution.fee
@@ -238,34 +234,36 @@ def test_model_views_follow_dependencies_and_measure_images_without_pointwise_ra
     assert view.control_dimension == view.image_dimension(reading.symbols.squared) == 1
 
 
-def test_named_risk_regions_preserve_coupling_and_derive_the_minimum():
-    from sympy import diff
-
-    from examples.solution_families import IsoRisk
-
-    problem = inspect_model(IsoRisk, "risk regions")
-    risk = problem.symbols
-    exposure = risk.risk.exposure
-    x, y, z = exposure.x, exposure.y, exposure.z
-    family = problem.solutions(x, y, z)
-    boundary = family.observe(level=1)
-    interior = family.where(risk.level <= 1)
-    assert tuple(field.symbol for field in boundary.parameters) == (x, y, z)
-    assert isinstance(boundary.parameter_domain, ConditionSet)
-    for region, centre in ((boundary, S.false), (interior, S.true)):
-        assert region.parameter_domain.contains(Tuple(0, 0, 0)) is centre
-        assert region.parameter_domain.contains(Tuple(1, 0, 0)) is S.true
-        assert region.parameter_domain.contains(Tuple(2, 0, 0)) is S.false
-        planar = region.where(Eq(z, 0))
-        assert tuple(field.symbol for field in planar.parameters) == (x, y)
-        assert planar.parameter_domain.contains(Tuple(0, 0)) is centre
-        assert planar.parameter_domain.contains(Tuple(1, 0)) is S.true
-        assert planar.parameter_domain.contains(Tuple(2, 0)) is S.false
-    variance = family.expression(risk.level)
-    assert diff(variance, x, 2) == 2
-    minimum = family.where(Eq(diff(variance, x), 0))
-    assert minimum.expression(x) == -y / 2
-    assert minimum.expression(risk.level).expand() == Rational(7, 4) * y**2 + 3 * z**2
+def test_projectile_envelope_preserves_physical_reachability_and_coupling():
+    forward = Projectile("forward", free=FreeFlight("free", speed=20, x=16, y=0, z=32), gravity=10, target_height=0)
+    assert forward.free.time_squared == Rational(16, 5)
+    assert forward.height == 16
+    problem = Projectile.prepare()
+    shot = problem.symbols
+    x, y, z = shot.x, shot.y, shot.free.z
+    height = problem.solutions(x, y, z, shot.target_height).expression(shot.height)
+    envelope = Projectile.envelope()
+    safety = envelope.symbols
+    ceiling = envelope.expression(safety.height)
+    assert envelope.expression(safety.free.z) == 40
+    assert (ceiling - (20 - safety.x**2 / 80 - safety.y**2 / 80)).expand() == 0
+    rebased = ceiling.subs({safety.x: x, safety.y: y})
+    assert (rebased - height - (z - 40) ** 2 / 80).expand() == 0
+    region = envelope.where(safety.clearance >= 0, safety.target_height >= 0)
+    assert tuple(field.symbol for field in region.parameters) == (safety.x, safety.y, safety.target_height)
+    points = ((0, 0, 20), (40, 0, 0), (0, 0, 10), (0, 0, 21), (41, 0, 0), (0, 0, -1))
+    for point, expected in zip(points, (S.true, S.true, S.true, S.false, S.false, S.false), strict=True):
+        assert region.parameter_domain.contains(Tuple(*point)) is expected
+    anchor = Projectile("reference", free=FreeFlight("free", speed=20, x=0, y=0, z=40), gravity=10, target_height=0)
+    planar = region.section(safety.x, safety.target_height, through=anchor)
+    view = ModelView(planar.parameters, planar)
+    assert view.control_dimension is None
+    assert view.image_dimension(safety.x, safety.target_height) is None
+    assert planar.parameter_domain.contains(Tuple(0, 20)) is S.true
+    assert planar.parameter_domain.contains(Tuple(40, 1)) is S.false
+    slower = Projectile.envelope(speed=10, gravity=10)
+    other = slower.symbols
+    assert (slower.expression(other.height) - (5 - other.x**2 / 20 - other.y**2 / 20)).expand() == 0
 
 
 @pytest.mark.parametrize(
@@ -387,10 +385,6 @@ def test_rational_affine_backend_failure_leaves_the_joined_relation(monkeypatch)
 
 
 def test_materialisation_does_not_accept_an_undecided_candidate_audit(monkeypatch):
-    from dataclasses import replace
-
-    from modello import ModelProblem
-
     p = inspect_model(Reading, "point", x=2)
     reference = Reading("reference", x=2)
     check = ModelProblem.check

@@ -13,22 +13,25 @@ observations can be useful for consistency checks. Distinguish these cases:
      - Behaviour
    * - Some quantities remain undetermined
      - Construction can succeed with symbolic expressions.
-   * - Extra observations agree with the equations
-     - Construction succeeds; redundancy is allowed.
+   * - Extra observations repeat information already supplied
+     - Redundancy is allowed; it does not itself cause a failure.
    * - The constructor retains no solver candidate
-     - ``ValueError: 0 solutions ...``
+     - ``SolutionCountError`` with ``solution_count == 0``.
    * - Several solver candidates remain
-     - ``ValueError: 2 solutions ...`` (or another count).
+     - ``SolutionCountError`` with ``solution_count > 1``.
+   * - The solver raises an exception
+     - ``SolverBackendError`` retaining the original ``backend_error``.
 
 Counts of inputs and equations alone cannot establish consistency or uniqueness.
-Solve failures raise ``ModelSolveError``, a subclass of ``ValueError`` carrying
-the recorded problem. A reported zero count alone is not an inconsistency proof.
-Its subclasses distinguish ``SolutionCountError`` from ``SolverBackendError``;
-the :ref:`error reference <errors>` describes their inspectable parameters and
-the common ``ModelloError`` base for library failures.
+Conflicting observations and several valid answers can both be useful modelling
+outcomes. Both solve exception types inherit from ``ModelSolveError`` (also a
+``ValueError``) and carry the recorded ``problem``. A zero candidate count alone
+does not prove inconsistency. Use the structured attributes to handle failures;
+the :ref:`error reference <errors>` describes them and the common ``ModelloError``
+base for library failures.
 The following small model illustrates how to investigate each case:
 
->>> from modello import InstanceDummy, Modello, ModelSolveError, component, inspect_model
+>>> from modello import InstanceDummy, Modello, ModelSolveError, SolutionCountError, component, inspect_model
 >>> class Reading(Modello):
 ...     x = InstanceDummy("x", real=True)
 ...     squared = x**2
@@ -48,10 +51,11 @@ _partial_reading_x**2 + 1
 {_partial_reading_x}
 
 The bound symbol belongs to ``partial.reading.x``. Check ``free_symbols`` on the
-particular result you need. An empty set means that expression has no unresolved
-symbolic dependencies; it does not prove
-every other field in the model is determined. Nor is the number of free symbols
-in one expression a general count of the system's degrees of freedom.
+particular result you need. An empty set means no free symbols occur in that
+expression; an unevaluated function such as ``f(1)`` can still prevent a numerical
+result. It does not establish that every other field is determined. Nor is the
+number of free symbols in one expression a general count of the system's degrees
+of freedom.
 
 Dependencies can also be intentional external parameters:
 
@@ -80,11 +84,10 @@ its structured snapshot for investigation:
 
 >>> try:
 ...     Check("conflict", reading=known, total=6)
-... except ModelSolveError as error:
+... except SolutionCountError as error:
 ...     problem = error.problem
-...     print(error)
-0 solutions reported for Check('conflict')
-Inspect .problem or call .problem.analyse() for an opt-in diagnostic report.
+...     print(error.solution_count)
+0
 >>> problem
 ModelProblem(Check, 'conflict', fields=3, constraints=5)
 >>> print(problem)
@@ -124,8 +127,10 @@ Observing only a total of 5 leaves two real readings, ``-2`` and ``2``:
 
 >>> try:
 ...     Check("ambiguous", total=5)
-... except ModelSolveError as error:
+... except SolutionCountError as error:
 ...     ambiguous = error.problem
+...     print(error.solution_count, error.returned_count)
+2 2
 >>> field = ambiguous.field("reading", "x")
 >>> sorted(candidate.value(field) for candidate in ambiguous.candidates)
 [-2, 2]
@@ -137,8 +142,8 @@ Observing only a total of 5 leaves two real readings, ``-2`` and ``2``:
 (True, {-2, 2}, Reals)
 
 Here ``consistent`` establishes existence, not uniqueness. Each candidate can
-be audited with ``ambiguous.check(candidate)``; its residual and assumption
-checks distinguish satisfied, violated, and undecided outcomes.
+be audited with ``ambiguous.check(candidate)``. Its ``verdict`` is ``satisfied``,
+``violated``, or ``unknown``; residual and assumption checks explain the outcome.
 
 Modello does not choose a branch arbitrarily. Supply an observation that selects
 the intended answer, or refine the model's domain if that is part of its
@@ -156,9 +161,9 @@ violates this model's strict positivity:
 
 >>> try:
 ...     PositiveCheck("outside_domain", total=1)
-... except ModelSolveError as error:
-...     print(str(error).splitlines()[0])
-0 solutions reported for PositiveCheck('outside_domain')
+... except SolutionCountError as error:
+...     print(error.solution_count)
+0
 >>> PositiveCheck("inspect_domain").reading.x.is_positive
 True
 
@@ -167,9 +172,11 @@ Undefined expressions, such as ``1 / x`` at zero, can also leave no valid
 solution. Assumptions about external symbolic parameters may remain undecided;
 successful construction is not proof of all possible parameter values' validity.
 
-The solution count describes retained solver answers, not the number of numeric
-points represented by a symbolic model. The unresolved ``partial`` model above
-represents a family of readings and is valid.
+``solution_count`` counts retained solver candidates. A candidate may contain
+symbolic expressions representing a family of numerical answers, as in the
+unresolved ``partial`` model above. ``returned_count`` counts captured candidates
+before domain filtering; ``error.problem.candidates`` retains them for inspection,
+including rejected proposals.
 
 ``solution_sets`` uses SymPy's ``solveset`` where equations reduce to one
 unknown after forced numerical substitutions. Unlike a finite candidate list,
@@ -286,7 +293,7 @@ member admits a checked witness, with declared symbol domains retained. It does
 not mean the smallest possible conflict or the only conflict.
 
 ``report.input_checks`` retains every attempted whole-input removal, including
-inconsistent or undecided outcomes. ``report.relaxations`` selects only those
+``inconsistent`` and ``unknown`` outcomes. ``report.relaxations`` selects only those
 with validated witnesses. Removing ``reading`` releases all its copied values,
 including derived fields. These are possibilities to investigate, not choices
 of which observation is wrong:

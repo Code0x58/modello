@@ -1,7 +1,8 @@
 """Discover coordinate sections and plot responses without guessing dimensions.
 
 Run ``python -m examples.solution_views``. Optional ``--plot-dir plots`` shows
-parabolas, a risk surface, and elliptical/ellipsoidal risk budgets.
+the safety parabola, reachable area, safety paraboloid, and reachable volume
+for an ideal projectile with a fixed launch speed.
 """
 
 from __future__ import annotations
@@ -26,17 +27,18 @@ from sympy import (
     Ne,
     Poly,
     ProductSet,
-    Rational,
     S,
     Tuple,
     lambdify,
     sympify,
 )
 from sympy.core.relational import Relational
+from sympy.plotting.series import ImplicitSeries
 from sympy.polys.domains import QQ
 from sympy.polys.matrices import DomainMatrix
 from sympy.polys.polyerrors import CoercionFailed, PolynomialError
 
+from examples.projectile import Projectile
 from modello import (
     ModelField,
     ModelInputError,
@@ -45,7 +47,6 @@ from modello import (
     SolutionFamily,
     SymbolicScalar,
     UnresolvedSolutionError,
-    inspect_model,
 )
 
 M = TypeVar("M", bound=Modello)
@@ -230,7 +231,6 @@ class ModelView(Generic[M]):
         import matplotlib.pyplot as plt
         import numpy as np
         from matplotlib.collections import PolyCollection
-        from sympy.plotting.series import ImplicitSeries
 
         windows = self._windows(lower, upper)
         parameters = tuple(field.symbol for field in self.family.parameters)
@@ -334,37 +334,35 @@ class ModelViews(Generic[M]):
 
 
 def main() -> None:
-    """Reuse one quadratic risk model for response graphs and constrained regions."""
-    from examples.solution_families import Exposure, Risk
-
+    """Discover the boundary of all throws, then the targets they can reach."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plot-dir", type=Path)
     arguments = parser.parse_args()
-    problem = inspect_model(Risk, "risk geometry")
-    risk = problem.symbols
-    x, y, z = risk.exposure.x, risk.exposure.y, risk.exposure.z
-    family = problem.solutions(x, y, z)
-    anchor = Risk("zero risk", exposure=Exposure("origin", x=0, y=0, z=0))
-    lower = Risk("lower", exposure=Exposure("lower", x=-Rational(6, 5), y=-1, z=-Rational(3, 4)))
-    upper = Risk("upper", exposure=Exposure("upper", x=Rational(6, 5), y=1, z=Rational(3, 4)))
-    print("Controls | Control dimension | Image dimension (variance) | Variance")
+    family = Projectile.envelope()
+    flight = family.symbols
+    x, y, target_height = flight.x, flight.y, flight.target_height
+    anchor = family.observe(x=0, y=0, target_height=0).one()
+    print("Controls | Control dimension | Image dimension (height) | Envelope height")
     for view in ModelViews(family, through=anchor).sections():
         print(
             ", ".join(".".join(field.path) for field in view.controls),
             view.control_dimension,
-            view.image_dimension(risk.variance),
-            view.family.format(view.family.expression(risk.variance)),
+            view.image_dimension(flight.height),
+            view.family.format(view.family.expression(flight.height)),
             sep=" | ",
         )
     if arguments.plot_dir:
-        curve = family.section(x, through=anchor)
-        plane = family.section(x, y, through=anchor)
-        plots: tuple[tuple[str, str, SolutionFamily[Risk], SymbolicScalar | None], ...] = (
-            ("parabola", "Parabola: vary x with y = z = 0", curve, risk.variance),
-            ("paraboloid", "Elliptic paraboloid: correlated x and y, z = 0", plane, risk.variance),
-            ("ellipse", "Ellipse: variance = 1, z = 0", plane.observe(variance=1), None),
-            ("disk", "Elliptical disk: variance ≤ 1, z = 0", plane.where(risk.variance <= 1), None),
-            ("ellipsoid", "Ellipsoid: variance ≤ 1 (voxel approximation)", family.where(risk.variance <= 1), None),
+        lower = family.observe(x=-44, y=-44, target_height=0).one()
+        upper = family.observe(x=44, y=44, target_height=24).one()
+        reachable = family.where(flight.clearance >= 0, target_height >= 0)
+        curve = family.section(x, through=anchor).where(flight.height >= 0)
+        area = reachable.section(x, target_height, through=anchor)
+        surface = family.section(x, y, through=anchor)
+        plots: tuple[tuple[str, str, SolutionFamily[Projectile], SymbolicScalar | None], ...] = (
+            ("safety-parabola", "Parabola of safety: the highest reachable target", curve, flight.height),
+            ("reachable-area", "Reachable targets in a vertical plane", area, None),
+            ("safety-paraboloid", "Safety paraboloid: envelope of all launch directions", surface, flight.height),
+            ("reachable-volume", "Reachable targets above ground (voxel approximation)", reachable, None),
         )
         gallery = []
         for name, title, selected, response in plots:
@@ -386,15 +384,17 @@ def main() -> None:
             )
         (arguments.plot_dir / "index.html").write_text(
             f"""<!doctype html><html lang="en"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width"><title>One risk model, five views</title>
+<meta name="viewport" content="width=device-width"><title>One projectile model, four views</title>
 <style>body{{font:16px system-ui;margin:2rem}}figure{{margin:0}}img{{width:100%}}
 main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(440px,1fr))}}</style>
-<h1>One risk model, five views</h1>
-<p><code>variance = {escape(family.format(family.expression(risk.variance)))}</code></p>
-<p>Free exposures produce curves and a bowl. Observing unit variance selects its
-level set; a risk budget includes the interior. Opposite exposures partly offset
-one another: the bowl's valley gives the conditional minimum x = −y/2.</p>
-<p>Windows: x [−1.2, 1.2], y [−1, 1], z [−0.75, 0.75].
+<h1>One projectile model, four views</h1>
+<p><code>height = {escape(family.format(family.expression(flight.height)))}</code></p>
+<p>A ball leaves ground level at 20 m/s under uniform gravity of 10 m/s², without air resistance.
+SymPy differentiates the motion model to find the highest reachable target at each
+horizontal position. This envelope is the parabola of safety in a vertical plane and
+a paraboloid in space; the region between it and the ground contains every reachable target.</p>
+<p>The envelope combines all launch directions; it is not one ball's trajectory.
+All coordinates are in metres. The surface continues below ground outside the reachable region.
 The implicit plots and occupied voxels are numerical illustrations, not exact set boundaries.</p>
 <main>{"".join(gallery)}</main></html>""",
             encoding="utf-8",
