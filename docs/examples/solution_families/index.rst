@@ -74,8 +74,7 @@ family; numerical plotting does not establish additional guarantees.
 Explore combinations of controls
 --------------------------------
 
-Reuse ``Execution`` to explore quantity, impact, and fee while holding the
-reference price fixed. Choose a reference execution:
+Reuse ``Execution`` with a fixed reference price and a reference execution:
 
 >>> from modello import inspect_model
 >>> from examples.solution_families import Execution
@@ -92,37 +91,28 @@ changes through the same equations:
 >>> quantity.expression(execution.cost).expand() == 100 * execution.quantity + execution.quantity**2 / 2 + 1
 True
 
-``ModelViews.sections()`` lazily enumerates combinations of one to three current
-coordinates by default. Three controls give seven sections: three individual
-controls, three pairs, and all three together:
+``ModelViews.sections()`` lazily enumerates one-, two-, and three-control
+combinations: seven sections here.
 
->>> views = tuple(ModelViews(family, through=reference).sections())
->>> len(views)
-7
->>> together = views[-1]
+>>> views = ModelViews(family, through=reference)
+>>> together = tuple(views.sections())[-1]
 >>> together.control_dimension, together.image_dimension(execution.price, execution.cost)
 (3, 2)
 
-This is a finite exploration of the model's declared coordinates. Arbitrarily
-transformed coordinates would give infinitely many other views. Aliases share
-a coordinate, and constant or repeated outputs do not add image dimensions.
-Here the sections reveal fee as a vertical shift in cost, while the sensitivity
-to impact grows with quantity squared.
+Three controls produce only two independent price/cost dimensions. Fee shifts
+cost uniformly, while impact sensitivity grows with quantity squared. These
+named coordinate combinations give a finite catalogue of views.
 
-Control dimension, output image dimension, and plot axes answer different
-questions. The example certifies control dimension for explicit real interval
-boxes and finite real point sets. For rational-coefficient polynomial outputs
-on a box, it computes image dimension from the exact Jacobian rank over a
-rational-function field using SymPy's
-`DomainMatrix <https://docs.sympy.org/latest/modules/polys/domainmatrix.html>`_.
-The polynomial-image result follows
-`Geiger et al., Lemma 9 and Theorem 10 (2001) <https://doi.org/10.1214/aos/1009210550>`_.
-This uses the whole polynomial map: ``x**2`` has a one-dimensional image on
-``[-1, 1]`` even though its derivative vanishes at a reference of zero.
-Coupled or unresolved domains return ``None``. For example, the two coordinates
-of ``x**2 + y**2 = 1`` are constrained, and fixing ``y = 0`` leaves two points.
-General real algebraic dimension needs stronger methods, such as those studied
-by `Lairez and Safey El Din (ISSAC 2021) <https://doi.org/10.1145/3452143.3465551>`_.
+Control dimension is certified for explicit real interval boxes and finite real
+point sets. Polynomial outputs with rational coefficients have an exact image
+dimension on boxes, using SymPy's
+`DomainMatrix <https://docs.sympy.org/latest/modules/polys/domainmatrix.html>`_
+Jacobian rank over a rational-function field
+(`Geiger et al., Lemma 9 and Theorem 10 <https://doi.org/10.1214/aos/1009210550>`_).
+This concerns the whole image: ``x**2`` on ``[-1, 1]`` has dimension one despite
+its zero derivative at zero. Unsupported or coupled domains remain ``None``;
+general real algebraic dimension needs stronger methods
+(`Lairez and Safey El Din, 2021 <https://doi.org/10.1145/3452143.3465551>`_).
 
 Export the execution sections with the optional notebook dependencies:
 
@@ -130,13 +120,7 @@ Export the execution sections with the optional notebook dependencies:
 
    $ uv run --group notebooks python -m examples.solution_views --plot-dir views
 
-Open ``views/index.html`` to browse the plots together.
-
-One control produces a response curve and two produce a surface. Three control
-axes show samples coloured by the response: the scalar output is a fourth
-quantity. These plots use bounded windows and sample the model; they establish
-no additional dimension or feasibility claims. ``ModelView.plot(...)`` accepts
-typed ``lower`` and ``upper`` executions for those windows.
-
-See :doc:`/solutions` for refinement, coupled projections, exception handling,
-and the current scope of the exploration API.
+Open ``views/index.html`` for curves, two-control response surfaces, and
+three-control samples coloured by a fourth response quantity.
+``ModelView.plot(...)`` takes typed ``lower`` and ``upper`` executions for its
+sampling windows; plots do not certify dimensions or feasibility.

@@ -110,26 +110,22 @@ Such sets describe possibilities, without assigning probabilities to them.
 Take a section through a reference
 ----------------------------------
 
-``section(..., through=case)`` lets selected current coordinates vary and fixes
-the others at a checked model instance. Derived outputs follow the model's
-equations. With no selected coordinates, the result is the reference point:
+``section(..., through=case)`` varies selected current coordinates and fixes
+the others at a checked model instance. Derived outputs follow the equations;
+selecting no coordinates gives the reference point:
 
 >>> point = family.section(through=chosen)
 >>> point.values(check.reading.x, check.total)
 {(2, 5)}
 
-Pass symbols such as ``check.reading.x`` to let those coordinates vary. Aliases
-of the same coordinate are counted once. Selecting every current coordinate
-returns the original family after checking the reference. Use ``values(...)``
-to project all remaining states onto outputs; a section instead restricts the
-states by fixing omitted coordinates.
+Pass symbols such as ``check.reading.x`` to select coordinates. In contrast,
+``values(...)`` projects outputs while letting all remaining coordinates vary.
 
-The reference must satisfy the original equations, declared domains, and added
-conditions. A proven violation raises ``ModelValidationError``; an undecided
-check raises ``UnresolvedSolutionError`` with the candidate audit. A section can
-still be discrete or coupled, so the number of selected coordinates does not
-certify its dimension. The example also explores small combinations of controls
-and their response plots.
+The reference is checked against the equations, domains, and added conditions:
+a violation raises ``ModelValidationError`` and an undecided check raises
+``UnresolvedSolutionError`` with its candidate audit. Sections can remain
+discrete or coupled. The :doc:`example <examples/solution_families/index>`
+explores their dimensions and response plots.
 
 Continue after an exception
 ----------------------------

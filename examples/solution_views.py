@@ -10,6 +10,7 @@ import argparse
 from dataclasses import dataclass
 from html import escape
 from itertools import combinations
+from operator import attrgetter
 from pathlib import Path
 from typing import Generic, Iterator, TypeVar
 
@@ -47,14 +48,11 @@ M = TypeVar("M", bound=Modello)
 def _intervals(family: SolutionFamily[M]) -> tuple[Interval, ...] | None:
     """Recognise a nonempty real Cartesian box, without resolving conditions."""
     domain = family.parameter_domain
-    if len(family.parameters) == 1:
-        factors = (domain,)
-    elif isinstance(domain, ProductSet) and len(domain.args) == len(family.parameters):
-        factors = domain.args
-    else:
-        return None
+    factors = domain.args if len(family.parameters) > 1 and isinstance(domain, ProductSet) else (domain,)
     intervals = tuple(Interval(-S.Infinity, S.Infinity) if factor is S.Reals else factor for factor in factors)
-    if not intervals or any(not isinstance(factor, Interval) or factor.is_empty is not False for factor in intervals):
+    if len(intervals) != len(family.parameters) or any(
+        not isinstance(factor, Interval) or factor.is_empty is not False for factor in intervals
+    ):
         return None
     return intervals
 
@@ -87,10 +85,7 @@ def _polynomials(family: SolutionFamily[M], expressions: tuple[ScalarValue, ...]
 
 
 def _value(model: M, field: ModelField) -> Expr:
-    value: object = model
-    for name in field.path:
-        value = getattr(value, name)
-    expression = sympify(value)
+    expression = sympify(attrgetter(".".join(field.path))(model))
     if not isinstance(expression, Expr) or any(
         getattr(expression, predicate) is not True for predicate in ("is_number", "is_real", "is_finite")
     ):
@@ -114,12 +109,7 @@ class ModelView(Generic[M]):
         return 0 if _finite_real_points(self.family) else None
 
     def image_dimension(self, *expressions: ScalarValue) -> int | None:
-        """Certify real polynomial image dimension, rather than rank at an anchor.
-
-        A polynomial map with rational coefficients on a nonempty real interval
-        box has image dimension equal to its Jacobian's rational-function rank.
-        Conditional domains and other expressions retain an unknown result.
-        """
+        """Certify image dimension for polynomials with rational coefficients, or return None."""
         if not expressions:
             raise ModelInputError("Select at least one output expression")
         outputs = _polynomials(self.family, expressions)
@@ -142,12 +132,7 @@ class ModelView(Generic[M]):
         destination: Path,
         samples: int = 17,
     ) -> None:
-        """Sample a polynomial response inside a bounded real coordinate box.
-
-        One or two controls produce a curve or response surface. With three,
-        the control axes carry samples coloured by the output: a four-dimensional
-        response graph, not a claim that the output fills a volume.
-        """
+        """Plot a bounded polynomial curve, surface, or three-control colour sample."""
         import matplotlib.pyplot as plt
         import numpy as np
 
@@ -183,33 +168,29 @@ class ModelView(Generic[M]):
             grid = np.linspace(start_float, end_float, samples + left + right)
             grids.append(grid[left : len(grid) - right])
         parameters = tuple(field.symbol for field in self.family.parameters)
-        coordinates = np.meshgrid(*grids, indexing="ij") if len(grids) > 1 else [grids[0]]
+        coordinates = np.meshgrid(*grids, indexing="ij")
         values = np.broadcast_to(
             np.asarray(lambdify(parameters, outputs[0], "numpy")(*coordinates), dtype=float), coordinates[0].shape
         )
         if not np.isfinite(values).all():
             raise UnresolvedSolutionError(self.family, "The response exceeds the numeric range of this plot.")
-        labels = tuple(".".join(field.path) for field in self.family.parameters)
         output_label = self.family.format(sympify(output))
+        labels = (*(".".join(field.path) for field in self.family.parameters), output_label)
         figure = plt.figure(figsize=(8, 6))
         try:
-            axes = figure.add_subplot(projection="3d") if len(grids) > 1 else figure.add_subplot()
+            axes = figure.add_subplot(projection="3d" if len(grids) > 1 else None)
             if len(grids) == 1:
                 axes.plot(coordinates[0], values)
-                axes.set_ylabel(output_label)
             elif len(grids) == 2:
                 axes.plot_surface(*coordinates, values, cmap="viridis")
-                axes.set_ylabel(labels[1])
-                axes.set_zlabel(output_label)
             else:
                 points = axes.scatter(
                     *(coordinate.ravel() for coordinate in coordinates), c=values.ravel(), cmap="viridis", s=12
                 )
-                axes.set_ylabel(labels[1])
-                axes.set_zlabel(labels[2])
                 figure.colorbar(points, ax=axes, label=output_label, shrink=0.7, pad=0.15)
-            axes.set_xlabel(labels[0])
-            axes.set_title(f"{output_label}: {'three-control samples' if len(grids) == 3 else 'coordinate section'}")
+            axes.set(xlabel=labels[0], ylabel=labels[1], title=output_label)
+            if len(grids) > 1:
+                axes.set_zlabel(labels[2])
             figure.tight_layout()
             destination.parent.mkdir(parents=True, exist_ok=True)
             figure.savefig(destination)
@@ -251,7 +232,8 @@ def main() -> None:
     gallery = []
     print("Controls | Control dimension | Image dimension (price, cost) | Cost")
     for view in ModelViews(family, through=anchor).sections():
-        names = ", ".join(".".join(field.path) for field in view.controls)
+        controls = tuple(".".join(field.path) for field in view.controls)
+        names = ", ".join(controls)
         print(
             names,
             view.control_dimension,
@@ -260,10 +242,11 @@ def main() -> None:
             sep=" | ",
         )
         if arguments.plot_dir:
-            for name, output in (("price", execution.price), ("cost", execution.cost)):
-                if view.image_dimension(output) == 0:
+            for output in (execution.price, execution.cost):
+                if view.family.expression(output).is_number:
                     continue
-                filename = "-".join((*["-".join(field.path) for field in view.controls], name)) + ".png"
+                name = view.family.format(output)
+                filename = f"{'-'.join(controls)}-{name}.png"
                 view.plot(output, lower=lower, upper=upper, destination=arguments.plot_dir / filename)
                 title = escape(f"{name} · varying {names}")
                 gallery.append(
@@ -272,19 +255,15 @@ def main() -> None:
                 )
     if arguments.plot_dir:
         (arguments.plot_dir / "index.html").write_text(
-            '<!doctype html><html lang="en"><meta charset="utf-8">'
-            '<meta name="viewport" content="width=device-width"><title>Execution model views</title>'
-            "<style>body{font:16px system-ui;max-width:1400px;margin:2rem auto;padding:0 1rem;color:#243047}"
-            ".gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:1rem}"
-            "figure{margin:0;border:1px solid #dce3ed;border-radius:8px;padding:1rem}"
-            "img{width:100%;height:auto}figcaption{font-weight:600}</style>"
-            "<h1>Execution model views</h1><p>Vary selected controls around one fixed reference. "
-            "Reference: quantity 5, impact ½, fee 1, reference price 100. "
-            "Windows: quantity [1, 10], impact [0, 1], fee [0, 2]. "
-            "Plots sample bounded windows of the feasible sections. Three-control plots use colour "
-            'for the output; they do not show a four-dimensional graph directly.</p><div class="gallery">'
-            + "".join(gallery)
-            + "</div></html>",
+            f"""<!doctype html><html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width"><title>Execution model views</title>
+<style>body{{font:16px system-ui;margin:2rem}}figure{{margin:0}}img{{width:100%}}
+main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}}</style>
+<h1>Execution model views</h1>
+<p>Reference: quantity 5, impact ½, fee 1, reference price 100.
+Windows: quantity [1, 10], impact [0, 1], fee [0, 2].
+Three-control plots use colour for the response.</p>
+<main>{"".join(gallery)}</main></html>""",
             encoding="utf-8",
         )
 
