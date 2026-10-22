@@ -74,6 +74,12 @@ function value(field, large = false) {
   const element = node("div", `quantity-value${large ? " large" : ""}`);
   if (field.value_state === "hidden")
     element.append(node("span", "muted", field.value));
+  else if (
+    state.status !== "checked" &&
+    field.possible_values &&
+    field.possible_values.kind !== "implicit"
+  )
+    element.append(node("span", "possible-value", field.possible_values.text));
   else if (field.value_state === "free")
     element.append(node("span", "open-value", "Not specified"));
   else if (field.value_state === "numeric" && field.display_value) {
@@ -141,7 +147,7 @@ async function refresh(next = bindings, options = {}) {
   busy = true;
   $("canvas").setAttribute("aria-busy", "true");
   const disabledBefore = new Map();
-  document.querySelectorAll("button, input").forEach((element) => {
+  document.querySelectorAll("button, input, select").forEach((element) => {
     disabledBefore.set(element, element.disabled);
     element.disabled = true;
   });
@@ -155,7 +161,11 @@ async function refresh(next = bindings, options = {}) {
     const response = await fetch("/api/explore", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bindings: next, raw: $("raw").checked }),
+      body: JSON.stringify({
+        bindings: next,
+        raw: $("raw").checked,
+        ...familyUI.request(options),
+      }),
     });
     const data = await response.json();
     if (!response.ok) {
@@ -181,6 +191,7 @@ async function refresh(next = bindings, options = {}) {
       activeScenario = 0;
     bindings = { ...next };
     state = data;
+    familyUI.accepted(data, options);
     errors.clear();
     drafts.clear();
     if (options.commitInputs || options.scenario !== undefined)
@@ -321,6 +332,8 @@ function details() {
       $("canvas").scrollIntoView({ behavior: "smooth", block: "start" });
     });
     detail.append(manage);
+    if (!state.raw && state.exploration?.kind !== "unsupported")
+      detail.append(familyUI.rangeEditor(field));
   } else
     detail.append(
       node(
@@ -331,6 +344,15 @@ function details() {
           : "This result is retained from a component snapshot.",
       ),
     );
+  const possible = familyUI.familyValues(field);
+  if (
+    !field.editable &&
+    field.value_state !== "hidden" &&
+    !state.raw &&
+    state.exploration?.kind !== "unsupported"
+  )
+    detail.append(familyUI.rangeEditor(field));
+  if (possible) detail.append(possible);
   const domain = section("Domain & assumptions");
   const tags = node("div", "domain-tags");
   (field.assumptions.length ? field.assumptions : ["finite scalar"]).forEach(
@@ -512,7 +534,7 @@ function renderHighlights() {
         "small",
         "highlight-note",
         field.value_state === "symbolic"
-          ? "Depends on open inputs"
+          ? "Possible across the family"
           : field.provenance,
       ),
     );
@@ -533,7 +555,11 @@ function renderScenarios() {
     button.title = `${scenario.description} Restores the initial model inputs.`;
     button.setAttribute("aria-pressed", String(index === activeScenario));
     button.addEventListener("click", () =>
-      refresh(scenario.bindings, { select: scenario.select, scenario: index }),
+      refresh(scenario.bindings, {
+        bounds: scenario.bounds,
+        select: scenario.select,
+        scenario: index,
+      }),
     );
     $("scenario-buttons").append(button);
   });
@@ -709,7 +735,11 @@ function render() {
       ? "Raw definitions"
       : state.status === "checked"
         ? "Checked case"
-        : "Exploring";
+        : state.status === "alternatives"
+          ? "Checked alternatives"
+          : state.status === "empty"
+            ? "Empty family"
+            : "Exploring";
   $("status").textContent = status + " ⓘ";
   $("status").className = `status ${state.status}`;
   $("tip-status").textContent =
@@ -717,7 +747,9 @@ function render() {
       ? "Definitions are shown without solving. Your recorded inputs are retained."
       : state.status === "checked"
         ? "This numerical case satisfies every recorded equation and declared domain."
-        : "This is a symbolic or undecided preview. Open inputs and remaining domain conditions are not yet a checked numerical case.";
+        : state.status === "alternatives" || state.status === "empty"
+          ? state.condition
+          : "This is a symbolic or undecided preview. Open inputs and remaining domain conditions are not yet a checked numerical case.";
   $("summary").textContent =
     `${state.fields.length} quantities · ${state.equations.length} equations`;
   $("background").textContent = state.hidden_inputs
@@ -728,6 +760,7 @@ function render() {
       ? "Symbolic preview · set what you know to explore a case."
       : state.condition;
   renderScenarios();
+  familyUI.render();
   renderInputs();
   renderHighlights();
   renderTree();
@@ -818,6 +851,7 @@ $("reset").addEventListener("click", () =>
   refresh(
     {},
     {
+      bounds: {},
       scenario: state.scenarios.findIndex(
         (scenario) => !Object.keys(scenario.bindings).length,
       ),

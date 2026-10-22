@@ -10,6 +10,10 @@
     />
     <script
       defer
+      src="{{ url_for('static', filename='families.js') }}"
+    ></script>
+    <script
+      defer
       src="{{ url_for('static', filename='explorer.js') }}"
     ></script>
   </head>
@@ -120,6 +124,21 @@
             >
           </div>
           <div id="exploration">
+            <section
+              id="family"
+              class="family"
+              aria-label="Solution family"
+              hidden
+            >
+              <h3 id="family-title"></h3>
+              <p id="family-summary" role="status" aria-live="polite"></p>
+              <div id="family-filters"></div>
+              <div id="family-insights"></div>
+              <div id="family-cases" class="family-scroll"></div>
+              <div id="family-controls"></div>
+              <div id="family-plot"></div>
+              <div id="family-comparison" class="family-scroll"></div>
+            </section>
             <div id="highlights" class="highlights" hidden></div>
             <div class="table-heading">
               <span>QUANTITY</span><span>VALUE / EXPRESSION</span

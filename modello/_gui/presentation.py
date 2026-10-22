@@ -112,11 +112,12 @@ class Layout:
             context = f"Scenario {scenario.title!r}"
             if scenario.select:
                 self.field(scenario.select, context=f"{context}.select")
-            for path in scenario.bindings:
-                self.field(path, context=f"{context}.bindings")
-                if path not in self.editable:
-                    source = "hidden" if path in self.hidden else "Recorded"
-                    raise ModelInputError(f"{context}.bindings: cannot edit {source} field {path!r}")
+            for option, mapping in (("bindings", scenario.bindings), ("bounds", scenario.bounds)):
+                for path in mapping:
+                    self.field(path, context=f"{context}.{option}")
+                    if path in self.hidden or (option == "bindings" and path not in self.editable):
+                        source = "hidden" if path in self.hidden else "Recorded"
+                        raise ModelInputError(f"{context}.{option}: cannot edit {source} field {path!r}")
 
     def field(self, path: str, *, context: str = "bindings") -> ModelField:
         """Resolve a leaf; component paths cannot be used as scalar inputs."""

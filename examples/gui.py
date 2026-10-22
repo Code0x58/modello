@@ -1,5 +1,7 @@
 """Explore a two-asset portfolio with metadata beside its model declarations."""
 
+import argparse
+
 from sympy import Expr, Rational, sqrt
 
 from modello import InstanceDummy, Modello, component
@@ -125,6 +127,19 @@ class Allocation(Modello):
             select="allocation.equity",
         ),
         Scenario(
+            title="Same risk, two answers",
+            description="A 5% volatility target admits two allocations. Compare returns, then add a return bound.",
+            bindings={"volatility": Rational(1, 20)},
+            select="expected_return",
+        ),
+        Scenario(
+            title="Narrow the answers",
+            description="Retain 5% volatility and require at least 3.5% expected return.",
+            bindings={"volatility": Rational(1, 20)},
+            bounds={"expected_return": (Rational(7, 200), None)},
+            select="allocation.equity",
+        ),
+        Scenario(
             title="Find a missing return",
             description="Keep a 70/30 mix, drop the assumed equity return, and infer it from a 6% portfolio return.",
             bindings={
@@ -203,9 +218,16 @@ DEMO_INPUTS = {
 
 def main() -> None:
     """Start the demo at http://127.0.0.1:5058."""
-    create_app(Portfolio, "Two-asset portfolio · one-year horizon", inputs=DEMO_INPUTS).run(
-        host="127.0.0.1", port=5058, debug=False
-    )
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--demo", choices=("portfolio", "calibration", "reachability"), default="portfolio")
+    arguments = parser.parse_args()
+    if arguments.demo == "portfolio":
+        app = create_app(Portfolio, "Two-asset portfolio · one-year horizon", inputs=DEMO_INPUTS)
+    else:
+        from examples.gui_families import demo_family
+
+        app = create_app(demo_family(arguments.demo))
+    app.run(host="127.0.0.1", port=5058, debug=False)
 
 
 if __name__ == "__main__":

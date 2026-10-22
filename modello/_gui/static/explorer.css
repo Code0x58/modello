@@ -1658,3 +1658,228 @@ footer {
 .highlight {
   cursor: pointer;
 }
+
+/* Family exploration shares the quantity tree and inspector. */
+.family {
+  padding: 20px;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.family h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+#family-summary {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #536782;
+  margin: 0 0 12px;
+}
+.family button {
+  font-size: 12px;
+}
+.family-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.family-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+  margin: 12px 0;
+}
+.family-table th,
+.family-table td {
+  text-align: left;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+  line-height: 1.6;
+}
+.family-table th {
+  color: #596e8b;
+  font-weight: 550;
+}
+.family-table td {
+  font-variant-numeric: tabular-nums;
+}
+.selected-case {
+  background: #edf3ff;
+}
+.selected-case button {
+  color: #244f9e;
+}
+.bound-chip {
+  border: 1px solid #d7e1f1;
+  border-radius: 5px;
+  background: #edf3ff;
+  padding: 7px 10px;
+  margin: 0 6px 8px 0;
+  color: #315589;
+}
+.family details {
+  margin-top: 12px;
+}
+.family summary {
+  color: #526e96;
+  font-size: 12px;
+  cursor: pointer;
+}
+.set-exact {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.set-summary {
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.possible-value {
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.range-form,
+.coordinate-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+.range-label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #526984;
+  font-size: 12px;
+  min-width: 0;
+}
+.range-form .form-actions,
+.range-form .input-help {
+  grid-column: 1 / -1;
+}
+.family input,
+.family select,
+.range-form input {
+  min-width: 0;
+  width: 100%;
+  padding: 9px;
+  border: 1px solid #cbd8ec;
+  border-radius: 5px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}
+.plot-coordinate {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0;
+}
+.plot-choice {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.plot-choice input {
+  width: auto;
+  flex-shrink: 0;
+}
+.plot-form {
+  margin-top: 12px;
+}
+.plot-form .range-label {
+  margin: 12px 0;
+}
+.family .primary {
+  padding: 9px 13px;
+  margin-top: 9px;
+}
+#family-insights button {
+  text-align: left;
+  display: block;
+  margin: 6px 0;
+}
+#family-comparison > button {
+  margin: 10px 8px 0 0;
+}
+.family-chart {
+  width: 100%;
+  display: block;
+}
+.family-chart text {
+  fill: var(--ink);
+  font-size: 11px;
+}
+.family-chart .chart-frame {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.response-line {
+  stroke: var(--blue);
+  stroke-width: 1.5;
+  fill: none;
+}
+.sample-point {
+  fill: var(--blue);
+  cursor: pointer;
+}
+.plot-caption,
+.plot-readout {
+  color: #536782;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.response-insight {
+  color: #315589;
+  background: #edf3ff;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  border-radius: 5px;
+}
+.status.empty {
+  background: #fff1e6;
+  color: #925519;
+}
+.status.alternatives {
+  background: #edf3ff;
+  color: #315589;
+}
+select:focus-visible {
+  outline: 3px solid #91b4fb;
+  outline-offset: 3px;
+}
+@media (max-width: 480px) {
+  .family {
+    padding: 16px;
+  }
+  .family-table th,
+  .family-table td {
+    min-width: 90px;
+  }
+  .plot-coordinate {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .plot-choice {
+    grid-column: 1 / -1;
+  }
+  .family select,
+  .family input,
+  .range-form input {
+    font-size: 16px;
+  }
+  .coordinate-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (pointer: coarse) {
+  .family button,
+  .family select {
+    min-height: 44px;
+  }
+}

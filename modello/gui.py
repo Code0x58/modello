@@ -7,7 +7,7 @@ browser edits are exact scalars parsed without evaluating expression strings.
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field, replace
-from typing import TYPE_CHECKING, Any, Literal, Mapping, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence, TypeVar
 
 from sympy import Expr, S, Symbol, factor_terms
 
@@ -17,9 +17,12 @@ from modello._gui.inputs import parse_scalar
 from modello._gui.mathml import EquationPrinter
 from modello.diagnostics import Candidate, ConstraintKind, FieldValue, ModelConstraint, ModelField, ModelProblem
 from modello.errors import ModelInputError, ModelValidationError, SolverBackendError
+from modello.solutions import SolutionFamily
 
 if TYPE_CHECKING:
     from flask import Flask
+
+    from modello._gui.families import FamilyView
 
 __all__ = ["BindingError", "Explorer", "FieldInfo", "ModelInfo", "Scenario", "create_app", "gui"]
 
@@ -92,6 +95,7 @@ class Scenario:
     title: str
     description: str
     bindings: Mapping[str, ScalarValue | None] = dataclass_field(default_factory=dict)
+    bounds: Mapping[str, tuple[ScalarValue | None, ScalarValue | None]] = dataclass_field(default_factory=dict)
     select: str = ""
 
 
@@ -201,7 +205,7 @@ def _preview(problem: ModelProblem) -> tuple[dict[Symbol, Expr], str]:
 
 
 class Explorer:
-    """Prepare raw or bound views of a class, instance, or recorded problem.
+    """Explore a class, instance, recorded problem, or solution family.
 
     Declare model text with ``@ModelInfo(...)`` and field labels with ``gui``.
     Component declarations are inherited by the layout; ``metadata`` overrides
@@ -211,7 +215,7 @@ class Explorer:
 
     def __init__(
         self,
-        model: type[Modello] | Modello | ModelProblem,
+        model: type[Modello] | Modello | ModelProblem | SolutionFamily,
         name: str = "exploration",
         *,
         inputs: Mapping[str, ScalarValue] | None = None,
@@ -219,7 +223,10 @@ class Explorer:
     ) -> None:
         from modello._gui.presentation import Layout
 
-        if isinstance(model, ModelProblem):
+        self._source_family = model if isinstance(model, SolutionFamily) else None
+        if isinstance(model, SolutionFamily):
+            self.problem = model.problem
+        elif isinstance(model, ModelProblem):
             self.problem = model
         elif isinstance(model, Modello):
             self.problem = _instance_problem(model, name)
@@ -228,6 +235,11 @@ class Explorer:
         self._layout = Layout(self.problem, metadata or {})
         self._initial = self._bind(self.problem, inputs or {}, context="inputs")
         self._initial_inputs = {c.left: c.right for c in self._initial.constraints if c.kind is ConstraintKind.INPUT}
+        for scenario in self._layout.model_info.scenarios:
+            try:
+                self._ranges(scenario.bounds)
+            except (ModelInputError, ModelValidationError) as error:
+                raise ModelInputError(f"Scenario {scenario.title!r}.bounds: {error}") from error
 
     def _bind(
         self, initial: ModelProblem, bindings: Mapping[str, ScalarValue | None], *, context: str = "bindings"
@@ -263,11 +275,15 @@ class Explorer:
             initial, constraints=tuple(replace(c, index=i) for i, c in enumerate(constraints)), candidates=()
         )
 
-    def _browser_bindings(self, bindings: Mapping[str, str | None]) -> dict[str, Expr | None]:
+    def _browser_bindings(self, bindings: Mapping[str, str | None], *, filters: bool = False) -> dict[str, Expr | None]:
         """Apply the same edit policy used to decide which fields have editors."""
         parsed = {}
         for path, text in bindings.items():
-            if path not in self._layout.editable:
+            if (
+                path not in self._layout.fields
+                or path in self._layout.hidden
+                or (not filters and path not in self._layout.editable)
+            ):
                 raise BindingError("This field cannot be edited.", (path,))
             if text is not None and not isinstance(text, str):
                 raise BindingError("Enter input values as text.", (path,))
@@ -278,7 +294,13 @@ class Explorer:
         return parsed
 
     def snapshot(
-        self, bindings: Mapping[str, ScalarValue | None] | None = None, *, raw: bool = False
+        self,
+        bindings: Mapping[str, ScalarValue | None] | None = None,
+        *,
+        raw: bool = False,
+        bounds: Mapping[str, tuple[ScalarValue | None, ScalarValue | None]] | None = None,
+        case: int | None = None,
+        point: Mapping[str, ScalarValue] | None = None,
     ) -> dict[str, Any]:
         """Return a JSON-ready view; invalid edits raise without changing state.
 
@@ -289,7 +311,34 @@ class Explorer:
         undecided audit as a conditional preview.
         """
         problem = self._bind(self._initial, bindings or {})
-        values, verdict = ({}, "raw") if raw else _preview(problem)
+        family_view = None
+        exploration: dict[str, Any] | None = None
+        values: dict[Symbol, Expr]
+        ranges = self._ranges(bounds or {})
+        if raw:
+            values, verdict = {}, "raw"
+        else:
+            try:
+                family_view = self._family_view(problem, ranges)
+            except ModelInputError as error:
+                if self._source_family is not None or ranges or case is not None or point is not None:
+                    raise
+                # Ordinary GUI previews also support inputs outside the family's exact-scalar scope.
+                values, verdict = _preview(problem)
+                exploration = {"kind": "unsupported", "reason": str(error)}
+            else:
+                family_view.select(case=case, point=point)
+                values = family_view.values()
+                exploration = family_view.summary()
+                verdict = (
+                    "empty"
+                    if family_view.family.is_empty is True
+                    else "satisfied"
+                    if family_view.reference is not None
+                    else "alternatives"
+                    if family_view.cases
+                    else "unknown"
+                )
         definitions = {c.left: c.right for c in problem.constraints if c.kind is ConstraintKind.DEFINITION}
         supplied = {c.left: c.right for c in problem.constraints if c.kind is ConstraintKind.INPUT}
         printer = self._layout.printer()
@@ -311,6 +360,13 @@ class Explorer:
         for path, field in self._layout.fields.items():
             expression = definitions.get(field.symbol, field.symbol) if raw else values[field.symbol]
             row = self._field_view(path, expression, context)
+            if path not in self._layout.hidden:
+                row["bounds"] = [
+                    self._input_text(path, endpoint) if endpoint is not None else ""
+                    for endpoint in ranges.get(field.symbol, (None, None))
+                ]
+                if family_view is not None:
+                    row["possible_values"] = family_view.possible(field)
             (symbols if path in self._layout.hidden else rows).append(row)
         status, message = _preview_status(raw, verdict)
         root = self._layout.metadata[""]
@@ -334,6 +390,7 @@ class Explorer:
             "equations": [dict(equation) for equation in self._layout.equations],
             "status": status,
             "condition": message,
+            "exploration": exploration,
             "highlights": list(self._layout.model_info.highlights),
             "initial_field": self._layout.model_info.initial_field,
             "scenarios": [
@@ -347,6 +404,15 @@ class Explorer:
                         else self._input_text(path, FieldValue(self._layout.field(path), value).value)
                         for path, value in scenario.bindings.items()
                     },
+                    "bounds": {
+                        path: [
+                            None
+                            if endpoint is None
+                            else self._input_text(path, FieldValue(self._layout.field(path), endpoint).value)
+                            for endpoint in endpoints
+                        ]
+                        for path, endpoints in scenario.bounds.items()
+                    },
                 }
                 for scenario in self._layout.model_info.scenarios
             ],
@@ -354,6 +420,73 @@ class Explorer:
                 c.kind is ConstraintKind.INPUT and ".".join(c.path) in self._layout.hidden for c in problem.constraints
             ),
         }
+
+    def _ranges(
+        self, bounds: Mapping[str, tuple[ScalarValue | None, ScalarValue | None]]
+    ) -> dict[Symbol, tuple[Expr | None, Expr | None]]:
+        ranges: dict[Symbol, tuple[Expr | None, Expr | None]] = {}
+        for path, endpoints in bounds.items():
+            field = self._layout.field(path, context="bounds")
+            if path in self._layout.hidden:
+                raise BindingError("This field cannot be bounded.", (path,))
+            if len(endpoints) != 2:
+                raise BindingError("Supply a lower and upper bound; either may be omitted.", (path,))
+            lower, upper = (None if endpoint is None else FieldValue(field, endpoint).value for endpoint in endpoints)
+            if any(
+                value is not None
+                and (value.is_number is not True or value.is_real is not True or value.is_finite is not True)
+                for value in (lower, upper)
+            ):
+                raise BindingError("Bounds must be finite real numbers.", (path,))
+            if lower is not None and upper is not None and (lower > upper) is S.true:
+                raise BindingError("The lower bound must not exceed the upper bound.", (path,))
+            if field.symbol in ranges and ranges[field.symbol] != (lower, upper):
+                raise BindingError("Aliases must have the same bounds.", (path,))
+            if lower is not None or upper is not None:
+                ranges[field.symbol] = (lower, upper)
+        return ranges
+
+    def _family_view(
+        self, problem: ModelProblem, ranges: Mapping[Symbol, tuple[Expr | None, Expr | None]]
+    ) -> FamilyView:
+        from modello._gui.families import FamilyView
+
+        if self._source_family is not None:
+            # Reprepare edited observations with the same identities, preferences, and inherited filters.
+            family = SolutionFamily._prepare(problem, self._source_family._preferred, self._source_family.conditions)
+        else:
+            family = problem.solutions()
+        conditions = []
+        for symbol, (lower, upper) in ranges.items():
+            if lower is not None:
+                conditions.append(symbol >= lower)
+            if upper is not None:
+                conditions.append(symbol <= upper)
+        try:
+            constrained = family.where(*conditions)
+        except TypeError as error:
+            raise ModelInputError("Bounds require an ordered real-valued quantity") from error
+        return FamilyView(constrained, self._layout)
+
+    def plot(
+        self,
+        bindings: Mapping[str, ScalarValue | None] | None = None,
+        *,
+        controls: Sequence[str],
+        output: str,
+        windows: Mapping[str, Sequence[ScalarValue]],
+        bounds: Mapping[str, tuple[ScalarValue | None, ScalarValue | None]] | None = None,
+        case: int | None = None,
+        point: Mapping[str, ScalarValue] | None = None,
+    ) -> dict[str, Any]:
+        """Return checked samples of one or two coordinates, or a reference section.
+
+        Windows are display choices, not observations. Omitted coordinates require
+        a checked reference. Rejected or undecided samples never establish emptiness.
+        """
+        view = self._family_view(self._bind(self._initial, bindings or {}), self._ranges(bounds or {}))
+        view.select(case=case, point=point)
+        return view.plot(controls, output, windows)
 
     def _input_text(self, path: str, value: Expr) -> str:
         if self._layout.metadata[path].number_format == "percent":
@@ -453,11 +586,15 @@ def _preview_status(raw: bool, verdict: str) -> tuple[str, str]:
         return "raw", "Definitions only; recorded inputs retained"
     if verdict == "satisfied":
         return "checked", "All equations and domains checked"
+    if verdict == "empty":
+        return "empty", "No state satisfies all retained observations, filters, and domains"
+    if verdict == "alternatives":
+        return "alternatives", "Several independently checked cases satisfy the question"
     return "conditional", "Symbolic or undecided: not a validated numeric state"
 
 
 def create_app(
-    model: type[Modello] | Modello | ModelProblem,
+    model: type[Modello] | Modello | ModelProblem | SolutionFamily,
     name: str = "exploration",
     *,
     inputs: Mapping[str, ScalarValue] | None = None,
@@ -482,19 +619,72 @@ def create_app(
     def index() -> str:
         return render_template("index.html")
 
+    def arguments(payload: Any, *, plotting: bool = False) -> dict[str, Any]:
+        allowed = {"bindings", "bounds", "case", "point"} | ({"controls", "output", "windows"} if plotting else {"raw"})
+        if not isinstance(payload, dict) or set(payload) - allowed:
+            raise ValueError("Expected observations, bounds, and an optional case or point")
+        result: dict[str, Any] = {}
+        for name in ("bindings", "point"):
+            value = payload.get(name, {} if name == "bindings" else None)
+            if value is None and name == "point":
+                continue
+            if not isinstance(value, dict) or len(value) > len(explorer.problem.fields):
+                raise ValueError(f"Invalid {name}")
+            if name == "point" and any(not isinstance(v, str) or not v.strip() for v in value.values()):
+                raise ValueError("Point coordinates must be exact scalar text")
+            result[name] = explorer._browser_bindings(value, filters=name == "point")
+        result["bounds"] = {}
+        for name in ("bounds", "windows") if plotting else ("bounds",):
+            mapping = payload.get(name, {})
+            if not isinstance(mapping, dict) or len(mapping) > len(explorer.problem.fields):
+                raise ValueError(f"Invalid {name}")
+            parsed = {}
+            for path, endpoints in mapping.items():
+                if not isinstance(endpoints, list) or len(endpoints) != 2:
+                    raise ValueError(f"{name}: expected pairs of endpoint values")
+                parsed[path] = tuple(
+                    explorer._browser_bindings({path: value}, filters=True)[path] for value in endpoints
+                )
+                if name == "windows" and None in parsed[path]:
+                    raise ValueError("Plotting windows need two endpoints")
+            result[name] = parsed
+        case = payload.get("case")
+        if case is not None and (isinstance(case, bool) or not isinstance(case, int)):
+            raise ValueError("Case must be an integer index")
+        result["case"] = case
+        if plotting:
+            controls, output = payload.get("controls"), payload.get("output")
+            if (
+                not isinstance(controls, list)
+                or any(not isinstance(path, str) for path in controls)
+                or not isinstance(output, str)
+            ):
+                raise ValueError("Choose controls and an output")
+            result.update(controls=controls, output=output)
+        else:
+            raw = payload.get("raw", False)
+            if not isinstance(raw, bool):
+                raise ValueError("Invalid raw flag")
+            result["raw"] = raw
+        return result
+
+    def response(*, plotting: bool = False) -> Any:
+        try:
+            options = arguments(request.get_json(silent=True), plotting=plotting)
+            return jsonify(explorer.plot(**options) if plotting else explorer.snapshot(**options))
+        except BindingError as error:
+            return jsonify(error=str(error), paths=list(error.paths)), 422
+        except (ModelInputError, ModelValidationError) as error:
+            return jsonify(error=str(error), paths=[]), 422
+        except ValueError as error:
+            return jsonify(error=str(error), paths=[]), 400
+
     @app.post("/api/explore")
     def explore() -> Any:
-        payload = request.get_json(silent=True)
-        if not isinstance(payload, dict) or set(payload) - {"bindings", "raw"}:
-            return jsonify(error="Expected bindings and an optional raw flag.", paths=[]), 400
-        bindings, raw = payload.get("bindings", {}), payload.get("raw", False)
-        if not isinstance(bindings, dict) or not isinstance(raw, bool) or len(bindings) > len(explorer.problem.fields):
-            return jsonify(error="Invalid bindings or raw flag.", paths=[]), 400
-        try:
-            return jsonify(explorer.snapshot(explorer._browser_bindings(bindings), raw=raw))
-        except BindingError as error:
-            return jsonify(error=str(error), paths=list(dict.fromkeys([*bindings, *error.paths]))), 422
-        except (ModelInputError, ModelValidationError) as error:
-            return jsonify(error=str(error), paths=list(bindings)), 422
+        return response()
+
+    @app.post("/api/plot")
+    def plot() -> Any:
+        return response(plotting=True)
 
     return app

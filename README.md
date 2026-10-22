@@ -135,6 +135,10 @@ The [debugging guide](https://modello.readthedocs.io/en/latest/debugging.html)
 explains conflicts and ambiguous solutions. Use
 [solution families](https://modello.readthedocs.io/en/latest/solutions.html)
 to explore alternative values and bounded observations before selecting a model.
+The optional [browser explorer](https://modello.readthedocs.io/en/latest/gui.html)
+combines these families with bounds, checked alternatives, linked plots, and case
+comparisons. Run `uv run --extra gui python -m examples.gui` from a checkout;
+`--demo calibration` and `--demo reachability` explore further family workflows.
 
 The [practical applications](docs/examples/applications/index.rst) demonstrate
 invoice reconciliation, production planning, and circuit measurement checks.
