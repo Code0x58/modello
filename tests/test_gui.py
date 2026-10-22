@@ -18,17 +18,15 @@ from modello.gui import BindingError, Explorer, FieldInfo, ModelInfo, Scenario, 
 class Panel(Modello):
     """A rectangular panel."""
 
-    width = InstanceDummy("width", positive=True)
+    width = gui(InstanceDummy("width", positive=True), description="Width in metres.", symbol="w")
     height = InstanceDummy("height", positive=True)
     area = width * height
-    __gui__ = ModelInfo(fields={"width": FieldInfo(description="Width in metres.", symbol="w")})
 
 
 class Estimate(Modello):
     panel = component(Panel)
-    price = InstanceDummy("price", positive=True)
+    price = gui(InstanceDummy("price", positive=True), symbol="p", hidden=True)
     total = panel.area * price
-    __gui__ = ModelInfo(fields={"price": FieldInfo(symbol="p", hidden=True)})
 
 
 def rows(data):
@@ -340,14 +338,14 @@ def test_browser_cannot_edit_a_copied_inferred_observation():
 
 
 def test_model_info_composes_model_component_and_field_labels():
+    @ModelInfo(
+        title="Panel estimate",
+        description="A model description.",
+        info="A model note.",
+        fields={"panel": FieldInfo(title="Geometry"), "panel.height": FieldInfo(description="Height in metres.")},
+    )
     class Described(Modello):
         panel = component(Panel)
-        __gui__ = ModelInfo(
-            title="Panel estimate",
-            description="A model description.",
-            info="A model note.",
-            fields={"panel": FieldInfo(title="Geometry"), "panel.height": FieldInfo(description="Height in metres.")},
-        )
 
     data = Explorer(Described, metadata={"panel.area": FieldInfo(title="Surface")}).snapshot(raw=True)
     assert (data["title"], data["description"], data["info"]) == (
@@ -361,15 +359,17 @@ def test_model_info_composes_model_component_and_field_labels():
     assert rows(data)["panel.area"]["title"] == "Surface"
 
 
-def test_model_info_rejects_ambiguous_declarations():
-    class WrongType(Modello):
-        __gui__ = {}
+def test_model_info_rejects_unsupported_declarations():
+    @ModelInfo(title="Use annotations")
+    class Legacy(Modello):
+        __gui__ = ModelInfo(title="Old style")
 
+    @ModelInfo(fields={"": FieldInfo(title="Title")})
     class EmptyPath(Modello):
-        __gui__ = ModelInfo(fields={"": FieldInfo(title="Title")})
+        pass
 
-    with pytest.raises(ModelInputError, match="ModelInfo declaration"):
-        Explorer(WrongType)
+    with pytest.raises(ModelInputError, match=r"Legacy.__gui__ is unsupported; use @ModelInfo"):
+        Explorer(Legacy)
     with pytest.raises(ModelInputError, match="empty field path"):
         Explorer(EmptyPath)
 
@@ -404,6 +404,10 @@ def test_inline_annotations_supply_model_component_and_scalar_presentation():
 def test_gui_metadata_and_scenario_arguments_require_names():
     with pytest.raises(TypeError):
         gui(InstanceDummy("value"), "A title")
+    with pytest.raises(TypeError):
+        FieldInfo("A title")
+    with pytest.raises(TypeError):
+        ModelInfo("A title")
     with pytest.raises(TypeError):
         Scenario("A question", "A description")
     scenario = Scenario(title="A question", description="A description", bindings={"value": 3}, select="value")
@@ -448,7 +452,6 @@ def test_decorator_and_external_overrides_take_precedence_over_inline_metadata()
     @ModelInfo(title="Decorated", fields={"width": FieldInfo(title="Model override")})
     class Model(Modello):
         width = gui(InstanceDummy("width", positive=True), title="Inline")
-        __gui__ = ModelInfo(title="Legacy")
 
     data = Explorer(Model).snapshot(raw=True)
     assert data["title"] == "Decorated"
@@ -534,8 +537,7 @@ def test_empty_components_remain_in_the_raw_model_structure():
         """No quantities yet."""
 
     class Root(Modello):
-        empty = component(Empty)
-        __gui__ = ModelInfo(fields={"empty": FieldInfo(title="Placeholder")})
+        empty = gui(component(Empty), title="Placeholder")
 
     data = Explorer(Root).snapshot(raw=True)
     assert not data["fields"]
@@ -562,22 +564,21 @@ def test_typeset_values_constraints_and_exact_units():
 
 
 def test_percent_editor_roundtrip_and_highlighted_target():
-    class Rate(Modello):
-        value = InstanceDummy("value", real=True)
-        doubled = 2 * value
-        __gui__ = ModelInfo(
-            initial_field="value",
-            highlights=("doubled",),
-            fields={"value": FieldInfo(number_format="percent"), "doubled": FieldInfo(number_format="percent")},
-            scenarios=(
-                Scenario(
-                    title="Set 3%",
-                    description="Apply a known rate.",
-                    bindings={"value": Rational(3, 100)},
-                    select="doubled",
-                ),
+    @ModelInfo(
+        initial_field="value",
+        highlights=("doubled",),
+        scenarios=(
+            Scenario(
+                title="Set 3%",
+                description="Apply a known rate.",
+                bindings={"value": Rational(3, 100)},
+                select="doubled",
             ),
-        )
+        ),
+    )
+    class Rate(Modello):
+        value = gui(InstanceDummy("value", real=True), number_format="percent")
+        doubled = gui(2 * value, number_format="percent")
 
     client = create_app(Rate).test_client()
     initial = client.post("/api/explore", json={}).json
@@ -601,11 +602,129 @@ def test_percent_editor_roundtrip_and_highlighted_target():
     ],
 )
 def test_model_navigation_validates_paths_and_hidden_policy(options):
+    @ModelInfo(**options)
     class Invalid(Estimate):
-        __gui__ = ModelInfo(fields={"price": FieldInfo(hidden=True)}, **options)
+        pass
 
     with pytest.raises(ModelInputError):
         Explorer(Invalid)
+
+
+@pytest.mark.parametrize(
+    ("options", "location"),
+    [
+        ({"fields": {"panel.wdth": FieldInfo()}}, "ModelInfo.fields['panel.wdth'] on 'Invalid'"),
+        ({"highlights": ("panel.wdth",)}, "ModelInfo.highlights"),
+        ({"initial_field": "panel.wdth"}, "ModelInfo.initial_field"),
+        (
+            {"scenarios": (Scenario(title="Target", description="A target.", select="panel.wdth"),)},
+            "Scenario 'Target'.select",
+        ),
+        (
+            {"scenarios": (Scenario(title="Target", description="A target.", bindings={"panel.wdth": 2}),)},
+            "Scenario 'Target'.bindings",
+        ),
+    ],
+)
+def test_authoring_errors_identify_options_and_suggest_full_nested_paths(options, location):
+    @ModelInfo(**options)
+    class Invalid(Estimate):
+        pass
+
+    with pytest.raises(ModelInputError) as error:
+        Explorer(Invalid)
+    assert str(error.value) == f"{location}: Unknown field path 'panel.wdth'. Did you mean 'panel.width'?"
+
+
+def test_nested_model_metadata_errors_locate_relative_and_full_paths():
+    @ModelInfo(fields={"wdth": FieldInfo()})
+    class InvalidPanel(Panel):
+        pass
+
+    class Project(Modello):
+        panel = component(InvalidPanel)
+
+    with pytest.raises(ModelInputError) as error:
+        Explorer(Project)
+    assert str(error.value) == (
+        "ModelInfo.fields['wdth'] on 'panel': Unknown field path 'panel.wdth'. Did you mean 'panel.width'?"
+    )
+
+
+def test_external_metadata_and_input_path_errors_have_context_and_suggestions():
+    with pytest.raises(ModelInputError) as error:
+        Explorer(Estimate, metadata={"panel.wdth": FieldInfo()})
+    assert str(error.value) == "metadata: Unknown field path 'panel.wdth'. Did you mean 'panel.width'?"
+    with pytest.raises(BindingError) as error:
+        Explorer(Estimate, inputs={"panel.wdth": 2})
+    assert str(error.value) == "inputs: Unknown field path 'panel.wdth'. Did you mean 'panel.width'?"
+    assert error.value.paths == ("panel.wdth",)
+    with pytest.raises(BindingError) as error:
+        Explorer(Estimate).snapshot({"panel.wdth": 2})
+    assert str(error.value) == "bindings: Unknown field path 'panel.wdth'. Did you mean 'panel.width'?"
+    with pytest.raises(BindingError) as error:
+        Explorer(Panel).snapshot({"unrelated": 2})
+    assert str(error.value) == "bindings: Unknown field path 'unrelated'."
+
+
+def test_metadata_value_errors_explain_expected_declarations():
+    with pytest.raises(ModelInputError, match="metadata: expected FieldInfo at 'width'"):
+        Explorer(Panel, metadata={"width": "Title"})
+    with pytest.raises(ModelInputError, match="gui\\('width'\\): invalid number_format.*choose 'number' or 'percent'"):
+
+        class Invalid(Panel):
+            width = gui(InstanceDummy("width"), number_format="percentage")
+
+        Explorer(Invalid)
+    with pytest.raises(ModelInputError, match="gui\\('note'\\): Unknown field path 'note'"):
+
+        class NonField(Panel):
+            note = gui("Not a scalar or component", title="Note")
+
+        Explorer(NonField)
+
+
+def test_scenario_errors_identify_hidden_and_recorded_edit_policies():
+    @ModelInfo(scenarios=(Scenario(title="Background", description="Edit a hidden input.", bindings={"price": 2}),))
+    class Hidden(Estimate):
+        pass
+
+    with pytest.raises(ModelInputError, match="Scenario 'Background'.bindings: cannot edit hidden field 'price'"):
+        Explorer(Hidden)
+
+    @ModelInfo(scenarios=(Scenario(title="Copied", description="Edit a recorded result.", bindings={"panel.area": 6}),))
+    class Recorded(Estimate):
+        pass
+
+    problem = inspect_model(Recorded, "copy", panel=Panel("source", width=2, height=3))
+    with pytest.raises(ModelInputError, match="Scenario 'Copied'.bindings: cannot edit Recorded field 'panel.area'"):
+        Explorer(problem)
+
+    @ModelInfo(scenarios=("Use a Scenario object",))
+    class Invalid(Panel):
+        pass
+
+    with pytest.raises(ModelInputError, match=r"ModelInfo.scenarios\[0\]: expected a Scenario declaration"):
+        Explorer(Invalid)
+
+
+def test_quickstart_supports_forward_inverse_and_free_exploration():
+    from examples.gui_quickstart import ReturnModel
+
+    client = create_app(ReturnModel, inputs={"capital": 100_000}).test_client()
+    initial = client.post("/api/explore", json={}).json
+    assert rows(initial)["expected_return"]["kind"] == "free"
+    assert initial["status"] == "conditional"
+    bindings = initial["scenarios"][0]["bindings"]
+    forward = client.post("/api/explore", json={"bindings": bindings}).json
+    assert rows(forward)["gain"]["value"] == "8000"
+    changed = client.post("/api/explore", json={"bindings": {**bindings, "capital": "200000"}}).json
+    assert rows(changed)["gain"]["value"] == "16000"
+    released = client.post("/api/explore", json={"bindings": {"expected_return": None}}).json
+    assert rows(released)["expected_return"]["kind"] == "free"
+    inverse = client.post("/api/explore", json={"bindings": {"gain": "8000"}}).json
+    assert rows(inverse)["expected_return"]["display_value"] == "8%"
+    assert rows(inverse)["expected_return"]["kind"] == "derived"
 
 
 def test_percent_math_groups_the_whole_expression():

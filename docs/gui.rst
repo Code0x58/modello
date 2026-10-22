@@ -12,6 +12,28 @@ Install its separate extra; the base library still depends only on SymPy:
 From a checkout, use ``uv run --extra gui python -m examples.gui``. Open
 http://127.0.0.1:5058.
 
+Quickstart: your own explorer
+------------------------------
+
+Save this complete example as ``return_model.py`` and run
+``python return_model.py`` after installing ``modello[gui]``. Open
+http://127.0.0.1:5058. From a checkout, the same example runs with
+``uv run --extra gui python -m examples.gui_quickstart``.
+
+.. literalinclude:: ../examples/gui_quickstart.py
+   :language: python
+   :start-at: from sympy import Rational
+
+Capital starts as a supplied input and expected return starts free. Choose
+**8% return** to calculate USD 8,000 expected gain. Change capital to USD 200,000
+to see gain update to USD 16,000. Drop the return input to explore the formula
+again, or supply a gain instead to infer the required return.
+
+Plain model declarations work without presentation metadata. Add ``gui`` where
+labels, descriptions, symbols, or display formats help. ``@ModelInfo`` adds the
+model's text and optional guided questions. Only serving the browser requires
+the GUI extra; core annotations and Python snapshots work without Flask.
+
 A portfolio to explore
 ----------------------
 
@@ -200,40 +222,19 @@ Each browser holds its own edits and cannot change another browser's state.
 Descriptions, units, and guided questions
 -----------------------------------------
 
-Place presentation beside a field with ``gui(field, *, ...)``. Metadata options
-are keyword-only. It accepts an
-``InstanceDummy``, a calculated expression, or ``component(Child)``. The class
-body sees the original value immediately, so later expressions use the field
-normally. Decorate the class with ``@ModelInfo(...)`` for model-level text and
-guided questions. There is no parallel field-name dictionary to maintain.
+Place presentation beside a field with ``gui(field, *, ...)``, as in the
+quickstart. All metadata arguments are keyword-only, including direct
+``FieldInfo(...)``, ``ModelInfo(...)``, and ``Scenario(...)`` construction.
+``gui`` accepts an ``InstanceDummy``, a calculated expression, or
+``component(Child)``. Decorate the class with ``@ModelInfo(...)`` for model-level
+text and guided questions.
 
-.. code-block:: python
-
-   from sympy import Rational
-   from modello import InstanceDummy, Modello
-   from modello.gui import ModelInfo, Scenario, gui
-
-   @ModelInfo(
-       title="Return model",
-       description="Explore return and expected gain.",
-       initial_field="expected_return",
-       highlights=("gain",),
-       scenarios=(Scenario(
-           title="8% return", description="Supply a return and calculate expected gain.",
-           bindings={"expected_return": Rational(2, 25)}, select="gain",
-       ),),
-   )
-   class ReturnModel(Modello):
-       expected_return = gui(
-           InstanceDummy("return", real=True),
-           title="Expected return", symbol="μ", number_format="percent",
-           description="The assumed mean annual arithmetic return.",
-       )
-       capital = gui(
-           InstanceDummy("capital", positive=True),
-           title="Starting capital", symbol="C", unit="USD",
-       )
-       gain = gui(capital * expected_return, title="Expected gain", symbol="G", unit="USD")
+Use ``gui`` around the **entire value assigned inside a Modello class body**:
+``gain = gui(capital * expected_return, title="Expected gain")``. The class
+namespace unwraps the declaration before later expressions use the field
+normally. This declaration helper is not an arithmetic wrapper; putting
+``gui(capital, ...)`` inside a larger calculation, or using its return value
+outside that class scope, leaves the declaration uncollected.
 
 Field metadata is a :class:`FieldInfo` annotation. The core collects it through
 the general :class:`~modello.Annotation` mechanism; the solver never receives
@@ -258,9 +259,10 @@ writing other extensions using the same registry.
 
 For models declared elsewhere, a ``ModelInfo(fields=...)`` mapping can override
 presentation by relative dotted path. Application-level ``metadata=`` overrides
-take priority over that mapping, followed by inline annotations. Existing
-``__gui__ = ModelInfo(...)`` declarations are still accepted; a model decorator
-takes precedence when both are present. Presentation never changes the algebra.
+take priority over that mapping, followed by inline annotations. Each override
+replaces the whole ``FieldInfo`` for that path. Model presentation uses the
+annotation registry; ``__gui__`` blocks are rejected with a migration hint.
+Presentation never changes the algebra.
 
 ``highlights`` makes selected quantities prominent as result cards.
 ``initial_field`` chooses the first inspector selection. A ``Scenario`` contains
@@ -269,8 +271,16 @@ permissions are validated; a scenario cannot change hidden or Recorded values.
 Its observations still pass through the same validation as manual edits.
 Use ``None`` in a scenario's bindings to drop a specific initial observation;
 other initial observations remain active.
-Every ``Scenario`` argument is keyword-only: ``title``, ``description``,
-``bindings``, and ``select``. Repeating ``gui`` metadata on the same field or
+Presentation paths are checked when constructing ``Explorer`` or ``create_app``,
+before serving any requests. Errors name the offending option or scenario,
+include the full nested path, and suggest similar field names when available.
+For example, a misspelt ``Scenario(title="Target", ...,
+select="expected_retrn")`` reports ``Scenario 'Target'.select`` and suggests
+``'expected_return'``. Initial input paths and snapshot bindings use the same
+path checks. A scenario targeting hidden or Recorded data explains why the
+quantity cannot be edited.
+
+Repeating ``gui`` metadata on the same field or
 ``ModelInfo`` on the same class raises ``ModelDefinitionError``; subclasses
 can explicitly refine inherited presentation in their own declaration scope.
 

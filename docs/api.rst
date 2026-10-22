@@ -140,8 +140,8 @@ compiled registries.
 Several annotation types can decorate one field, with one declaration per exact
 type in each class scope. Duplicate types in a call, stacked helpers, repeated
 field annotations, and repeated model decorators raise
-``ModelDefinitionError``, even when the metadata is identical. No annotation
-is silently discarded. A rejected model annotation leaves its registry intact.
+``ModelDefinitionError``, even when the metadata is identical. A rejected model
+annotation leaves its registry intact.
 
 Inheritance preserves metadata by field name. A subclass has a new declaration
 scope and may explicitly replace an inherited annotation as a whole. Later

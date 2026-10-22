@@ -88,11 +88,16 @@ import sys
 import examples
 from examples.geometry import RightAngleTriangle
 from examples.data import NamedMap
+from examples.gui_quickstart import ReturnModel
+from modello.gui import Explorer
 
 assert Path(examples.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
 assert Path(examples.__file__).with_name("py.typed").is_file()
 assert RightAngleTriangle("T", a=3, b=4).c == 5
 assert NamedMap({"a": 2}).map(lambda value: value * 3) == {"a": 6}
+assert ReturnModel("example", capital=100_000, expected_return="2/25").gain == 8_000
+assert Explorer(ReturnModel, inputs={"capital": 100_000}).snapshot(raw=True)["raw"]
+assert "flask" not in sys.modules
 data = resources.files("examples.portfolio").joinpath("data")
 for name in ("market.csv", "transactions.csv", "benchmark.csv"):
     assert data.joinpath(name).is_file(), name

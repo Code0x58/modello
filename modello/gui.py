@@ -28,10 +28,11 @@ _ValueT = TypeVar("_ValueT")
 _ModelT = TypeVar("_ModelT", bound=Modello)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class FieldInfo(Annotation):
     """Display metadata for a scalar or component, without changing its algebra.
 
+    All metadata arguments are keyword-only.
     ``symbol`` is literal MathML text, not LaTeX. ``hidden`` removes the editor
     and observation value while retaining its inputs. Calculated outputs can
     still reveal input values; hiding is a presentation choice. ``unit`` is a
@@ -60,9 +61,11 @@ def gui(
 ) -> _ValueT:
     """Annotate a scalar or component declaration without changing its type.
 
-    Use ``field = gui(expression, title=..., symbol=...)`` in a Modello class
-    body. Metadata is stored under ``Model.__modello_annotations__[FieldInfo]``;
-    the model sees the original value and retains its normal algebra.
+    Wrap the entire assigned value: ``field = gui(expression, title=...)``
+    inside a Modello class body. The class namespace unwraps the declaration
+    before later expressions use it; this helper is not an arithmetic wrapper
+    outside that scope. Metadata is stored under
+    ``Model.__modello_annotations__[FieldInfo]``.
     """
     return annotate(
         field,
@@ -93,7 +96,7 @@ class Scenario:
     select: str = ""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ModelInfo(Annotation):
     """Decorate a model with its text and exploration hints.
 
@@ -102,6 +105,7 @@ class ModelInfo(Annotation):
     presentation overrides, including labels on components from other models.
     ``highlights`` selects result cards, ``initial_field`` opens an inspector,
     and ``scenarios`` supplies named explorations from the initial inputs.
+    All metadata arguments are keyword-only.
     """
 
     title: str = ""
@@ -223,14 +227,16 @@ class Explorer:
         else:
             self.problem = inspect_model(model, name)
         self._layout = Layout(self.problem, metadata or {})
-        self._initial = self._bind(self.problem, inputs or {})
+        self._initial = self._bind(self.problem, inputs or {}, context="inputs")
         self._initial_inputs = {c.left: c.right for c in self._initial.constraints if c.kind is ConstraintKind.INPUT}
 
-    def _bind(self, initial: ModelProblem, bindings: Mapping[str, ScalarValue | None]) -> ModelProblem:
+    def _bind(
+        self, initial: ModelProblem, bindings: Mapping[str, ScalarValue | None], *, context: str = "bindings"
+    ) -> ModelProblem:
         changes: dict[Symbol, tuple[ModelField, Expr | None]] = {}
         for path, raw in bindings.items():
             try:
-                field = self._layout.field(path)
+                field = self._layout.field(path, context=context)
                 value = None if raw is None else FieldValue(field, raw).value
             except ModelInputError as error:
                 raise BindingError(str(error), (path,)) from error

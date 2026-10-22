@@ -86,6 +86,8 @@ def check_extensions() -> None:
     _invalid_note: int = Description.for_model(AnnotatedDrawing)["end"].text  # type: ignore[assignment]
     annotate_model(object, Description("Invalid"))  # type: ignore[type-var]
     gui(component(Point), "Start")  # type: ignore[call-arg]
+    FieldInfo("Start")  # type: ignore[call-arg]
+    ModelInfo("Drawing")  # type: ignore[call-arg]
     Scenario("A question", "A description")  # type: ignore[call-arg]
 
 

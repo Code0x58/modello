@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from difflib import get_close_matches
 from typing import TYPE_CHECKING, Iterator, Mapping
 
 from sympy import Symbol
@@ -63,9 +64,11 @@ class Layout:
         annotated_models = ModelInfo.for_model(model)
         declarations: dict[str, ModelInfo] = {}
         for path, child in _model_tree(model):
-            model_info = annotated_models.get(path, getattr(child, "__gui__", ModelInfo()))
-            if not isinstance(model_info, ModelInfo):
-                raise ModelInputError(f"{child.__name__}.__gui__ must be a ModelInfo declaration")
+            if hasattr(child, "__gui__"):
+                raise ModelInputError(
+                    f"{child.__name__}.__gui__ is unsupported; use @ModelInfo(...) and gui(field, ...)"
+                )
+            model_info = annotated_models.get(path, ModelInfo())
             declarations[path] = model_info
             self.metadata[path] = FieldInfo(
                 title=model_info.title, description=model_info.description or child.__doc__ or "", info=model_info.info
@@ -74,18 +77,22 @@ class Layout:
                 self.components.append(path)
         self.model_info = declarations[""]
         for path, info in FieldInfo.for_model(model).items():
-            self._set_info(path, info)
+            self._set_info(path, info, context=f"gui({path!r})")
         for prefix, declaration in reversed(declarations.items()):
             for relative_path, info in declaration.fields.items():
+                context = f"ModelInfo.fields[{relative_path!r}] on {prefix or model.__name__!r}"
                 if not relative_path:
-                    raise ModelInputError("Model-level text belongs in ModelInfo, not an empty field path")
-                self._set_info(_join(prefix, relative_path), info)
+                    raise ModelInputError(
+                        f"{context}: use ModelInfo for model-level text instead of an empty field path"
+                    )
+                self._set_info(_join(prefix, relative_path), info, context=context)
 
-    def _set_info(self, path: str, info: FieldInfo) -> None:
-        if path not in self.metadata or not isinstance(info, FieldInfo):
-            raise ModelInputError(f"Invalid GUI metadata at {path!r}")
+    def _set_info(self, path: str, info: FieldInfo, *, context: str = "metadata") -> None:
+        _require_path(path, self.metadata, context)
+        if not isinstance(info, FieldInfo):
+            raise ModelInputError(f"{context}: expected FieldInfo at {path!r}")
         if info.number_format not in {"number", "percent"}:
-            raise ModelInputError(f"Invalid numeric format at {path!r}")
+            raise ModelInputError(f"{context}: invalid number_format at {path!r}; choose 'number' or 'percent'")
         self.metadata[path] = info
 
     def printer(self) -> EquationPrinter:
@@ -94,26 +101,34 @@ class Layout:
 
     def _validate_navigation(self) -> None:
         for path in self.model_info.highlights:
-            self.field(path)
+            self.field(path, context="ModelInfo.highlights")
             if path in self.hidden:
-                raise ModelInputError("A hidden quantity cannot be highlighted")
+                raise ModelInputError(f"ModelInfo.highlights: hidden field {path!r} cannot be highlighted")
         if self.model_info.initial_field:
-            self.field(self.model_info.initial_field)
-        for scenario in self.model_info.scenarios:
+            self.field(self.model_info.initial_field, context="ModelInfo.initial_field")
+        for index, scenario in enumerate(self.model_info.scenarios):
             if not isinstance(scenario, Scenario):
-                raise ModelInputError("Model scenarios must be Scenario declarations")
+                raise ModelInputError(f"ModelInfo.scenarios[{index}]: expected a Scenario declaration")
+            context = f"Scenario {scenario.title!r}"
             if scenario.select:
-                self.field(scenario.select)
+                self.field(scenario.select, context=f"{context}.select")
             for path in scenario.bindings:
+                self.field(path, context=f"{context}.bindings")
                 if path not in self.editable:
-                    raise ModelInputError(f"Scenario cannot edit {path!r}")
+                    source = "hidden" if path in self.hidden else "Recorded"
+                    raise ModelInputError(f"{context}.bindings: cannot edit {source} field {path!r}")
 
-    def field(self, path: str) -> ModelField:
+    def field(self, path: str, *, context: str = "bindings") -> ModelField:
         """Resolve a leaf; component paths cannot be used as scalar inputs."""
-        try:
-            return self.fields[path]
-        except KeyError as error:
-            raise ModelInputError(f"Unknown field: {path}") from error
+        _require_path(path, self.fields, context)
+        return self.fields[path]
+
+
+def _require_path(path: str, choices: Mapping[str, object], context: str) -> None:
+    if path not in choices:
+        suggestions = get_close_matches(path, choices, n=1)
+        hint = f" Did you mean {suggestions[0]!r}?" if suggestions else ""
+        raise ModelInputError(f"{context}: Unknown field path {path!r}.{hint}")
 
 
 def _assumptions(symbol: Symbol) -> list[str]:
