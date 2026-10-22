@@ -1,7 +1,7 @@
 """Discover coordinate sections and plot responses without guessing dimensions.
 
-Run ``python -m examples.solution_views``. Optional ``--plot-dir plots`` exports
-curves, surfaces, and three-control samples with Matplotlib and NumPy.
+Run ``python -m examples.solution_views``. Optional ``--plot-dir plots`` shows
+parabolas, a risk surface, and elliptical/ellipsoidal risk budgets.
 """
 
 from __future__ import annotations
@@ -10,15 +10,20 @@ import argparse
 from dataclasses import dataclass
 from html import escape
 from itertools import combinations
+from math import isfinite
 from operator import attrgetter
 from pathlib import Path
 from typing import Generic, Iterator, TypeVar
 
 from sympy import (
+    ConditionSet,
+    Contains,
+    Eq,
     Expr,
     FiniteSet,
     Interval,
     Matrix,
+    Ne,
     Poly,
     ProductSet,
     Rational,
@@ -27,6 +32,7 @@ from sympy import (
     lambdify,
     sympify,
 )
+from sympy.core.relational import Relational
 from sympy.polys.domains import QQ
 from sympy.polys.matrices import DomainMatrix
 from sympy.polys.polyerrors import CoercionFailed, PolynomialError
@@ -45,9 +51,11 @@ from modello import (
 M = TypeVar("M", bound=Modello)
 
 
-def _intervals(family: SolutionFamily[M]) -> tuple[Interval, ...] | None:
-    """Recognise a nonempty real Cartesian box, without resolving conditions."""
+def _intervals(family: SolutionFamily[M], *, enclosing: bool = False) -> tuple[Interval, ...] | None:
+    """Recognise a real box; optionally enclose rather than resolve conditions."""
     domain = family.parameter_domain
+    while enclosing and isinstance(domain, ConditionSet):
+        domain = domain.base_set
     factors = domain.args if len(family.parameters) > 1 and isinstance(domain, ProductSet) else (domain,)
     intervals = tuple(Interval(-S.Infinity, S.Infinity) if factor is S.Reals else factor for factor in factors)
     if len(intervals) != len(family.parameters) or any(
@@ -123,6 +131,34 @@ class ModelView(Generic[M]):
         jacobian = Matrix(outputs).jacobian(parameters)
         return int(DomainMatrix.from_Matrix(jacobian).convert_to(QQ.frac_field(*parameters)).rank())
 
+    def _windows(self, lower: M, upper: M) -> tuple[Interval, ...]:
+        intervals = _intervals(self.family, enclosing=True)
+        if intervals is None or not 1 <= len(intervals) <= 3:
+            raise UnresolvedSolutionError(self.family, "Plotting requires one to three real box coordinates.")
+        if not isinstance(lower, self.family.problem.model) or not isinstance(upper, self.family.problem.model):
+            raise ModelInputError("Plot bounds must use the family's model type")
+        windows = []
+        for field, interval in zip(self.family.parameters, intervals, strict=True):
+            start, end = _value(lower, field), _value(upper, field)
+            if (start < end) is not S.true:
+                raise ModelInputError("Each lower control bound must be less than its upper bound")
+            window = interval.intersect(Interval(start, end))
+            if not isinstance(window, Interval) or any(
+                endpoint.is_number is not True or endpoint.is_finite is not True
+                for endpoint in (window.start, window.end)
+            ):
+                raise UnresolvedSolutionError(
+                    self.family, "Plot bounds must intersect each control in a numeric interval."
+                )
+            if not all(isfinite(float(value)) for value in (window.start, window.end)) or float(window.start) >= float(
+                window.end
+            ):
+                raise UnresolvedSolutionError(
+                    self.family, "The plot window needs distinct finite floating-point bounds."
+                )
+            windows.append(window)
+        return tuple(windows)
+
     def plot(
         self,
         output: SymbolicScalar,
@@ -131,6 +167,7 @@ class ModelView(Generic[M]):
         upper: M,
         destination: Path,
         samples: int = 17,
+        title: str | None = None,
     ) -> None:
         """Plot a bounded polynomial curve, surface, or three-control colour sample."""
         import matplotlib.pyplot as plt
@@ -144,26 +181,9 @@ class ModelView(Generic[M]):
             )
         if type(samples) is not int or samples < 2:
             raise ModelInputError("Plot samples must be an integer of at least two per control")
-        if not isinstance(lower, self.family.problem.model) or not isinstance(upper, self.family.problem.model):
-            raise ModelInputError("Plot bounds must use the family's model type")
         grids = []
-        for field, interval in zip(self.family.parameters, intervals, strict=True):
-            start, end = _value(lower, field), _value(upper, field)
-            if (start < end) is not S.true:
-                raise ModelInputError("Each lower control bound must be less than its upper bound")
-            window = interval.intersect(Interval(start, end))
-            if not isinstance(window, Interval) or any(
-                endpoint.is_number is not True or endpoint.is_finite is not True
-                for endpoint in (window.start, window.end)
-            ):
-                raise UnresolvedSolutionError(
-                    self.family, "Plot bounds must intersect each control in a numeric interval."
-                )
+        for window in self._windows(lower, upper):
             start_float, end_float = float(window.start), float(window.end)
-            if not np.isfinite((start_float, end_float)).all() or start_float >= end_float:
-                raise UnresolvedSolutionError(
-                    self.family, "The plot window needs distinct finite floating-point bounds."
-                )
             left, right = int(window.left_open is S.true), int(window.right_open is S.true)
             grid = np.linspace(start_float, end_float, samples + left + right)
             grids.append(grid[left : len(grid) - right])
@@ -182,17 +202,114 @@ class ModelView(Generic[M]):
             if len(grids) == 1:
                 axes.plot(coordinates[0], values)
             elif len(grids) == 2:
-                axes.plot_surface(*coordinates, values, cmap="viridis")
+                axes.plot_surface(*coordinates, values, cmap="viridis", alpha=0.9)
+                axes.contour(*coordinates, values, zdir="z", offset=values.min(), cmap="viridis", linewidths=0.7)
             else:
                 points = axes.scatter(
                     *(coordinate.ravel() for coordinate in coordinates), c=values.ravel(), cmap="viridis", s=12
                 )
                 figure.colorbar(points, ax=axes, label=output_label, shrink=0.7, pad=0.15)
-            axes.set(xlabel=labels[0], ylabel=labels[1], title=output_label)
+            axes.set(xlabel=labels[0], ylabel=labels[1], title=title or output_label)
             if len(grids) > 1:
                 axes.set_zlabel(labels[2])
             figure.tight_layout()
             destination.parent.mkdir(parents=True, exist_ok=True)
+            figure.savefig(destination)
+        finally:
+            plt.close(figure)
+
+    def plot_region(
+        self, *, lower: M, upper: M, destination: Path, samples: int = 31, title: str | None = None
+    ) -> None:
+        """Draw a planar implicit set or a voxel approximation of a 3D inequality region.
+
+        A voxel's centre satisfies the numerical predicate; its whole cell need
+        not. Three-dimensional equalities need a surface parameterisation and
+        are rejected rather than filtered from a grid.
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from matplotlib.collections import PolyCollection
+        from sympy.plotting.series import ImplicitSeries
+
+        windows = self._windows(lower, upper)
+        parameters = tuple(field.symbol for field in self.family.parameters)
+        predicate = self.family.parameter_domain.contains(Tuple(*parameters)) if len(parameters) > 1 else None
+        if predicate is None or predicate.free_symbols - set(parameters) or predicate.has(Contains):
+            raise UnresolvedSolutionError(
+                self.family, "This region needs an explicit predicate in two or three coordinates."
+            )
+        if type(samples) is not int or samples < 2:
+            raise ModelInputError("Plot samples must be an integer of at least two per control")
+        labels = tuple(".".join(field.path) for field in self.family.parameters)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if len(parameters) == 2:
+            if predicate is S.true:
+                data = ([(windows[0], windows[1])], "fill")
+            else:
+                data = ImplicitSeries(
+                    predicate,
+                    *(
+                        (parameter, window.start, window.end)
+                        for parameter, window in zip(parameters, windows, strict=True)
+                    ),
+                    depth=2,
+                    adaptive=not isinstance(predicate, Relational),
+                    n=samples,
+                ).get_data()
+            figure, axes = plt.subplots(figsize=(8, 6))
+            try:
+                if len(data) == 4:
+                    a, b, residual, kind = data
+                    if kind == "contourf":
+                        axes.contourf(a, b, residual, levels=[0, np.inf], colors=["#a0d1d8"])
+                    # A signed residual's zero level is the constraint boundary.
+                    axes.contour(a, b, residual, levels=[0], colors=["#237d91"], linewidths=2)
+                else:
+                    polygons = [
+                        [(a.start, b.start), (a.start, b.end), (a.end, b.end), (a.end, b.start)] for a, b in data[0]
+                    ]
+                    axes.add_collection(PolyCollection(polygons, facecolors="#a0d1d8", edgecolors="none"))
+                axes.set(
+                    xlim=(float(windows[0].start), float(windows[0].end)),
+                    ylim=(float(windows[1].start), float(windows[1].end)),
+                    xlabel=labels[0],
+                    ylabel=labels[1],
+                    title=title or self.family.problem.name,
+                    aspect="equal",
+                )
+                figure.tight_layout()
+                figure.savefig(destination)
+            finally:
+                plt.close(figure)
+            return
+        if predicate.has(Eq, Ne):
+            raise UnresolvedSolutionError(
+                self.family, "Three-dimensional equality sets need a surface parameterisation."
+            )
+        edges = [np.linspace(float(window.start), float(window.end), samples + 1) for window in windows]
+        centres = np.meshgrid(*[(edge[:-1] + edge[1:]) / 2 for edge in edges], indexing="ij")
+        occupied = np.broadcast_to(
+            np.asarray(lambdify(parameters, predicate, "numpy")(*centres), dtype=bool), centres[0].shape
+        )
+        if not occupied.any():
+            raise UnresolvedSolutionError(
+                self.family, "No feasible voxel centres were sampled; this does not prove emptiness."
+            )
+        figure = plt.figure(figsize=(8, 6))
+        try:
+            axes = figure.add_subplot(projection="3d")
+            axes.voxels(
+                *np.meshgrid(*edges, indexing="ij"),
+                occupied,
+                facecolors="#4398a7",
+                edgecolor=(1, 1, 1, 0.12),
+                linewidth=0.2,
+            )
+            axes.set(xlabel=labels[0], ylabel=labels[1], zlabel=labels[2], title=title or self.family.problem.name)
+            axes.set_box_aspect(tuple(float(window.measure) for window in windows))
+            axes.view_init(elev=24, azim=-55)
+            figure.tight_layout()
             figure.savefig(destination)
         finally:
             plt.close(figure)
@@ -217,52 +334,68 @@ class ModelViews(Generic[M]):
 
 
 def main() -> None:
-    """Inspect seven execution sections; optionally export nonconstant responses."""
-    from examples.solution_families import Execution
+    """Reuse one quadratic risk model for response graphs and constrained regions."""
+    from examples.solution_families import Exposure, Risk
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plot-dir", type=Path)
     arguments = parser.parse_args()
-    problem = inspect_model(Execution, "execution views", reference=100)
-    execution = problem.symbols
-    family = problem.solutions(execution.quantity, execution.impact, execution.fee)
-    anchor = Execution("anchor", quantity=5, reference=100, impact=Rational(1, 2), fee=1)
-    lower = Execution("lower", quantity=1, reference=100, impact=0, fee=0)
-    upper = Execution("upper", quantity=10, reference=100, impact=1, fee=2)
-    gallery = []
-    print("Controls | Control dimension | Image dimension (price, cost) | Cost")
+    problem = inspect_model(Risk, "risk geometry")
+    risk = problem.symbols
+    x, y, z = risk.exposure.x, risk.exposure.y, risk.exposure.z
+    family = problem.solutions(x, y, z)
+    anchor = Risk("zero risk", exposure=Exposure("origin", x=0, y=0, z=0))
+    lower = Risk("lower", exposure=Exposure("lower", x=-Rational(6, 5), y=-1, z=-Rational(3, 4)))
+    upper = Risk("upper", exposure=Exposure("upper", x=Rational(6, 5), y=1, z=Rational(3, 4)))
+    print("Controls | Control dimension | Image dimension (variance) | Variance")
     for view in ModelViews(family, through=anchor).sections():
-        controls = tuple(".".join(field.path) for field in view.controls)
-        names = ", ".join(controls)
         print(
-            names,
+            ", ".join(".".join(field.path) for field in view.controls),
             view.control_dimension,
-            view.image_dimension(execution.price, execution.cost),
-            view.family.format(view.family.expression(execution.cost)),
+            view.image_dimension(risk.variance),
+            view.family.format(view.family.expression(risk.variance)),
             sep=" | ",
         )
-        if arguments.plot_dir:
-            for output in (execution.price, execution.cost):
-                if view.family.expression(output).is_number:
-                    continue
-                name = view.family.format(output)
-                filename = f"{'-'.join(controls)}-{name}.png"
-                view.plot(output, lower=lower, upper=upper, destination=arguments.plot_dir / filename)
-                title = escape(f"{name} · varying {names}")
-                gallery.append(
-                    f'<figure><img src="{escape(filename, quote=True)}" alt="{title}" loading="lazy">'
-                    f"<figcaption>{title}</figcaption></figure>"
-                )
     if arguments.plot_dir:
+        curve = family.section(x, through=anchor)
+        plane = family.section(x, y, through=anchor)
+        plots: tuple[tuple[str, str, SolutionFamily[Risk], SymbolicScalar | None], ...] = (
+            ("parabola", "Parabola: vary x with y = z = 0", curve, risk.variance),
+            ("paraboloid", "Elliptic paraboloid: correlated x and y, z = 0", plane, risk.variance),
+            ("ellipse", "Ellipse: variance = 1, z = 0", plane.observe(variance=1), None),
+            ("disk", "Elliptical disk: variance ≤ 1, z = 0", plane.where(risk.variance <= 1), None),
+            ("ellipsoid", "Ellipsoid: variance ≤ 1 (voxel approximation)", family.where(risk.variance <= 1), None),
+        )
+        gallery = []
+        for name, title, selected, response in plots:
+            view = ModelView(selected.parameters, selected)
+            destination = arguments.plot_dir / f"{name}.png"
+            if response is None:
+                view.plot_region(
+                    lower=lower,
+                    upper=upper,
+                    destination=destination,
+                    samples=401 if len(view.controls) == 2 else 31,
+                    title=title,
+                )
+            else:
+                view.plot(response, lower=lower, upper=upper, destination=destination, samples=65, title=title)
+            gallery.append(
+                f'<figure><img src="{name}.png" alt="{escape(title)}" loading="lazy">'
+                f"<figcaption>{escape(title)}</figcaption></figure>"
+            )
         (arguments.plot_dir / "index.html").write_text(
             f"""<!doctype html><html lang="en"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width"><title>Execution model views</title>
+<meta name="viewport" content="width=device-width"><title>One risk model, five views</title>
 <style>body{{font:16px system-ui;margin:2rem}}figure{{margin:0}}img{{width:100%}}
-main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}}</style>
-<h1>Execution model views</h1>
-<p>Reference: quantity 5, impact ½, fee 1, reference price 100.
-Windows: quantity [1, 10], impact [0, 1], fee [0, 2].
-Three-control plots use colour for the response.</p>
+main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(440px,1fr))}}</style>
+<h1>One risk model, five views</h1>
+<p><code>variance = {escape(family.format(family.expression(risk.variance)))}</code></p>
+<p>Free exposures produce curves and a bowl. Observing unit variance selects its
+level set; a risk budget includes the interior. Opposite exposures partly offset
+one another: the bowl's valley gives the conditional minimum x = −y/2.</p>
+<p>Windows: x [−1.2, 1.2], y [−1, 1], z [−0.75, 0.75].
+The implicit plots and occupied voxels are numerical illustrations, not exact set boundaries.</p>
 <main>{"".join(gallery)}</main></html>""",
             encoding="utf-8",
         )

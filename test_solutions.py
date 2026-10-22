@@ -238,6 +238,36 @@ def test_model_views_follow_dependencies_and_measure_images_without_pointwise_ra
     assert view.control_dimension == view.image_dimension(reading.symbols.squared) == 1
 
 
+def test_named_risk_regions_preserve_coupling_and_derive_the_minimum():
+    from sympy import diff
+
+    from examples.solution_families import IsoRisk
+
+    problem = inspect_model(IsoRisk, "risk regions")
+    risk = problem.symbols
+    exposure = risk.risk.exposure
+    x, y, z = exposure.x, exposure.y, exposure.z
+    family = problem.solutions(x, y, z)
+    boundary = family.observe(level=1)
+    interior = family.where(risk.level <= 1)
+    assert tuple(field.symbol for field in boundary.parameters) == (x, y, z)
+    assert isinstance(boundary.parameter_domain, ConditionSet)
+    for region, centre in ((boundary, S.false), (interior, S.true)):
+        assert region.parameter_domain.contains(Tuple(0, 0, 0)) is centre
+        assert region.parameter_domain.contains(Tuple(1, 0, 0)) is S.true
+        assert region.parameter_domain.contains(Tuple(2, 0, 0)) is S.false
+        planar = region.where(Eq(z, 0))
+        assert tuple(field.symbol for field in planar.parameters) == (x, y)
+        assert planar.parameter_domain.contains(Tuple(0, 0)) is centre
+        assert planar.parameter_domain.contains(Tuple(1, 0)) is S.true
+        assert planar.parameter_domain.contains(Tuple(2, 0)) is S.false
+    variance = family.expression(risk.level)
+    assert diff(variance, x, 2) == 2
+    minimum = family.where(Eq(diff(variance, x), 0))
+    assert minimum.expression(x) == -y / 2
+    assert minimum.expression(risk.level).expand() == Rational(7, 4) * y**2 + 3 * z**2
+
+
 @pytest.mark.parametrize(
     "assumptions, valid, invalid",
     [

@@ -71,56 +71,101 @@ family; numerical plotting does not establish additional guarantees.
 .. image:: impact-cost.png
    :alt: Planned execution cost increases from 1026 to 1076 as impact varies from one quarter to three quarters.
 
-Explore combinations of controls
---------------------------------
+Discover named risk views
+-------------------------
 
-Reuse ``Execution`` with a fixed reference price and a reference execution:
+.. figure:: risk-views.png
+   :alt: One quadratic risk model gives a parabola, a bowl, an ellipse, a filled elliptical disk, and an ellipsoidal volume.
+
+   The same equations viewed through free inputs, an equal-risk constraint,
+   and a risk budget. The solid is a voxel approximation.
+
+A quadratic risk model gives more revealing geometry. Define signed exposures,
+their variance, and a component layer naming a common risk level:
+
+.. literalinclude:: ../../../examples/solution_families.py
+   :start-at: class Exposure
+   :end-before: class ImpactStudy
+
+Leave the exposures unknown, then take sections through a typed reference:
 
 >>> from modello import inspect_model
->>> from examples.solution_families import Execution
+>>> from examples.solution_families import Exposure, Risk, IsoRisk
 >>> from examples.solution_views import ModelViews
->>> problem = inspect_model(Execution, "views", reference=100)
->>> execution = problem.symbols
->>> family = problem.solutions(execution.quantity, execution.impact, execution.fee)
->>> reference = Execution("reference", quantity=5, reference=100, impact=Rational(1, 2), fee=1)
-
-First vary quantity alone. Impact and fee stay at the reference values; cost
-changes through the same equations:
-
->>> quantity = family.section(execution.quantity, through=reference)
->>> quantity.expression(execution.cost).expand() == 100 * execution.quantity + execution.quantity**2 / 2 + 1
+>>> problem = inspect_model(Risk, "risk views")
+>>> risk = problem.symbols
+>>> family = problem.solutions(risk.exposure.x, risk.exposure.y, risk.exposure.z)
+>>> reference = Risk("zero risk", exposure=Exposure("zero exposures", x=0, y=0, z=0))
+>>> curve = family.section(risk.exposure.x, through=reference)
+>>> curve.expression(risk.variance) == risk.exposure.x**2
 True
 
-``ModelViews.sections()`` lazily enumerates one-, two-, and three-control
-combinations: seven sections here.
+Varying ``x`` traces a **parabola**; varying ``x, y`` traces an **elliptic
+paraboloid**. ``ModelViews.sections()`` lazily enumerates all seven combinations
+of these three controls. A scalar response still has only one image dimension:
 
->>> views = ModelViews(family, through=reference)
->>> together = tuple(views.sections())[-1]
->>> together.control_dimension, together.image_dimension(execution.price, execution.cost)
-(3, 2)
+>>> whole = tuple(ModelViews(family, through=reference).sections())[-1]
+>>> whole.control_dimension, whole.image_dimension(risk.variance)
+(3, 1)
 
-Three controls produce only two independent price/cost dimensions. Fee shifts
-cost uniformly, while impact sensitivity grows with quantity squared. These
-named coordinate combinations give a finite catalogue of views.
+The named ``IsoRisk`` layer selects a different view: supply its level while
+leaving its nested exposures unknown. At level one, the solutions form an
+**ellipsoid boundary**:
 
-Control dimension is certified for explicit real interval boxes and finite real
-point sets. Polynomial outputs with rational coefficients have an exact image
-dimension on boxes, using SymPy's
-`DomainMatrix <https://docs.sympy.org/latest/modules/polys/domainmatrix.html>`_
-Jacobian rank over a rational-function field
-(`Geiger et al., Lemma 9 and Theorem 10 <https://doi.org/10.1214/aos/1009210550>`_).
-This concerns the whole image: ``x**2`` on ``[-1, 1]`` has dimension one despite
-its zero derivative at zero. Unsupported or coupled domains remain ``None``;
-general real algebraic dimension needs stronger methods
-(`Lairez and Safey El Din, 2021 <https://doi.org/10.1145/3452143.3465551>`_).
+>>> from sympy import Eq, Tuple, diff
+>>> unit = inspect_model(IsoRisk, "unit risk", level=1)
+>>> contour = unit.solutions()
+>>> exposure = unit.symbols.risk.exposure
+>>> contour.values(exposure.x, exposure.y, exposure.z).contains(Tuple(1, 0, 0))
+True
 
-Export the execution sections with the optional notebook dependencies:
+An inequality retains the interior too: ``variance <= 1`` gives an **ellipsoidal
+risk-budget region**. Fixing ``z=0`` cuts an **elliptical disk**; equality instead
+of inequality gives its ellipse boundary:
+
+>>> budget = family.where(risk.variance <= 1)
+>>> disk = budget.where(Eq(risk.exposure.z, 0))
+>>> disk.values(risk.exposure.x, risk.exposure.y).contains(Tuple(0, 0))
+True
+>>> disk.values(risk.exposure.x, risk.exposure.y).contains(Tuple(2, 0))
+False
+
+The same expression reveals a **conditional minimum-risk hedge**. Constrain its
+``x`` sensitivity to zero; SymPy supplies the relationship, rather than a second
+implementation of the risk model:
+
+>>> variance = family.expression(risk.variance)
+>>> hedged = family.where(Eq(diff(variance, risk.exposure.x), 0))
+>>> hedged.expression(risk.exposure.x) == -risk.exposure.y / 2
+True
+>>> hedged.expression(risk.variance) == 7 * risk.exposure.y**2 / 4 + 3 * risk.exposure.z**2
+True
+
+Its second derivative in ``x`` is positive, so this is the unique minimum for
+each fixed ``y, z``. The cross term makes opposite exposures partly offset one
+another; the hedge appears as the valley through the risk surface.
+
+Export the story with the optional notebook dependencies:
 
 .. code-block:: console
 
    $ uv run --group notebooks python -m examples.solution_views --plot-dir views
 
-Open ``views/index.html`` for curves, two-control response surfaces, and
-three-control samples coloured by a fourth response quantity.
-``ModelView.plot(...)`` takes typed ``lower`` and ``upper`` executions for its
-sampling windows; plots do not certify dimensions or feasibility.
+Open ``views/index.html`` for the parabola, paraboloid, ellipse, filled disk,
+and ellipsoidal budget. ``ModelView.plot(response, ...)`` draws a response over
+box controls; ``plot_region(...)`` uses
+`SymPy's implicit plotting data <https://docs.sympy.org/latest/modules/plotting.html#sympy.plotting.series.ImplicitSeries.get_data>`_
+for two-control sets, or approximates a three-control inequality region with
+voxels, whose cells can cross the boundary. Both take
+typed ``lower`` and ``upper`` models for their sampling windows. Three-control
+equality surfaces are not supported by this renderer.
+
+These constraints define exact solution sets even when SymPy retains a
+``ConditionSet``. Numerical pictures do not certify their dimensions. Dimension
+reporting covers real interval boxes and finite point sets; polynomial image
+dimension uses an exact rational-function Jacobian rank
+(`Geiger et al., Lemma 9 and Theorem 10 <https://doi.org/10.1214/aos/1009210550>`_).
+Coupled domains remain ``None``: three coordinates can describe an ellipsoid's
+two-dimensional boundary. To explore an already supplied input, prepare a new
+problem leaving it unknown; observations add constraints rather than unpinning
+existing inputs.
