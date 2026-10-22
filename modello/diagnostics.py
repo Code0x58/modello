@@ -22,7 +22,6 @@ from sympy import (
     S,
     Set,
     Symbol,
-    SympifyError,
     linear_eq_to_matrix,
     simplify,
     solve,
@@ -32,7 +31,8 @@ from sympy import (
 from sympy.core.function import AppliedUndef
 from sympy.solvers.solveset import NonlinearError
 
-from modello._model import BoundInstanceDummy, InstanceDummy, ModelloMeta, _BoundField, _ModelReference
+from modello._inputs import _InputCapture
+from modello._model import ModelloMeta, _ModelReference
 from modello._problem import (
     AssumptionCheck,
     Candidate,
@@ -157,64 +157,8 @@ class ModelProblem(Generic[ModelT]):
         """Append constructor inputs without rebinding this snapshot."""
         if not value_map:
             return self
-        model = self.model
-        fields = {field.path: field.symbol for field in self.fields}
-        bindings = {dummy: fields[path] for path, dummy in model._modello_fields.items()}
-        constraints = list(self.constraints)
-
-        def add_value(
-            path: FieldPath,
-            raw: object,
-            scope: dict[InstanceDummy, BoundInstanceDummy],
-            group: str,
-            source: _BoundField | None = None,
-        ) -> None:
-            try:
-                value = simplify(raw)
-            except (SympifyError, TypeError, AttributeError) as error:
-                raise ModelInputError(f"{'.'.join(path)} must be a SymPy-compatible scalar") from error
-            if not isinstance(value, Expr):
-                raise ModelInputError(f"{'.'.join(path)} must be a SymPy-compatible scalar")
-            kind = ConstraintKind.INPUT if source is None else source.copied_kind(raw)
-            constraints.append(
-                ModelConstraint(len(constraints), path, kind, fields[path], value.xreplace(scope), group)
-            )
-
-        for attr, value in value_map.items():
-            if attr in model._modello_namespace.dummies:
-                add_value((attr,), value, bindings, attr)
-                continue
-            child = model._modello_namespace.nested_models.get(attr)
-            if child is None:
-                raise ModelInputError(f"Unknown model attribute {attr!r}")
-            child_model = child._modello_model
-            if not isinstance(value, child_model):
-                raise ModelInputError(f"{attr} must be a {child_model.__name__} instance")
-            prefix = (attr,)
-            source_fields = type(value)._modello_fields
-            for path in child_model._modello_fields:
-                if path not in source_fields:
-                    raise ModelInputError(f"Child instance is missing {'.'.join((attr, *path))}")
-            scope = {
-                **bindings,
-                **{d: fields[prefix + path] for path, d in child_model._modello_fields.items()},
-                **{
-                    value._modello_bound_fields[source_fields[path]].symbol: fields[prefix + path]
-                    for path in child_model._modello_fields
-                },
-            }
-            for path in child_model._modello_fields:
-                scalar: object = value
-                for part in path:
-                    scalar = getattr(scalar, part)
-                add_value(
-                    (attr, *path),
-                    scalar,
-                    scope,
-                    attr,
-                    value._modello_bound_fields[source_fields[path]],
-                )
-        return replace(self, constraints=tuple(constraints), candidates=())
+        constraints = _InputCapture(self).capture(value_map)
+        return replace(self, constraints=constraints, candidates=())
 
     def _fresh(self) -> ModelProblem[ModelT]:
         """Prepare the same declaration with fresh identities and no observations."""
@@ -353,17 +297,20 @@ def _prepare_problem(model: type[ModelT], name: str, /, **value_map: ScalarValue
     """Capture a declaration and its constructor inputs as one bound snapshot."""
     if not isinstance(model, ModelloMeta):
         raise ModelInputError("inspect_model requires a Modello class and constructor inputs")
-    bindings = {d: d.bound(name) for d in dict.fromkeys(model._modello_fields.values())}
-    fields = {path: bindings[d] for path, d in model._modello_fields.items()}
+    definition = model._modello_definition
+    bindings = {d: d.bound(name) for d in dict.fromkeys(definition.fields.values())}
+    fields = tuple(ModelField(path, bindings[d]) for path, d in definition.fields.items())
     constraints = [
-        ModelConstraint(i, path, ConstraintKind.DEFINITION, bindings[d], expr.xreplace(bindings))
-        for i, (path, (d, expr)) in enumerate(
-            zip(model._modello_constraint_paths, model._modello_class_constraints, strict=True)
+        ModelConstraint(
+            i,
+            constraint.path,
+            ConstraintKind.DEFINITION,
+            bindings[constraint.left],
+            constraint.right.xreplace(bindings),
         )
+        for i, constraint in enumerate(definition.constraints)
     ]
-    problem = ModelProblem(
-        model, name, tuple(ModelField(path, symbol) for path, symbol in fields.items()), tuple(constraints)
-    )
+    problem = ModelProblem(model, name, fields, tuple(constraints))
     return problem._capture_inputs(**value_map)
 
 

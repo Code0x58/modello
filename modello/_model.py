@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, MutableMapping, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, Protocol, TypeAlias, cast
 
 from sympy import Basic, Dummy, Expr, Symbol
 from sympy.simplify.simplify import simplify
@@ -74,6 +74,23 @@ class _BoundField:
         return self.kind if isinstance(value, Basic) and value == self.value else ConstraintKind.INPUT
 
 
+@dataclass(frozen=True, slots=True)
+class _Definition:
+    """Keep a defining equation with the path that explains where it came from."""
+
+    path: FieldPath
+    left: InstanceDummy
+    right: Basic
+
+
+@dataclass(frozen=True)
+class _ModelDefinition:
+    """A compiled declaration: all field paths and their scoped equations."""
+
+    fields: Mapping[FieldPath, InstanceDummy]
+    constraints: tuple[_Definition, ...]
+
+
 @dataclass(frozen=True)
 class _ModelReference:
     """Expose a child's complete field tree during class definition."""
@@ -86,9 +103,9 @@ class _ModelReference:
         """Scope child symbols independently while preserving aliases."""
         replacements = {
             d: InstanceDummy(f"{name}_{d.name}", **d.assumptions0)
-            for d in dict.fromkeys(model._modello_fields.values())
+            for d in dict.fromkeys(model._modello_definition.fields.values())
         }
-        return cls(model, {path: replacements[d] for path, d in model._modello_fields.items()})
+        return cls(model, {path: replacements[d] for path, d in model._modello_definition.fields.items()})
 
     def __getattr__(self, name: str) -> InstanceDummy | _ModelReference:
         """Resolve a scalar or a reference to a deeper child."""
@@ -189,31 +206,39 @@ class ModelloMetaNamespace(dict):
         if (isinstance(value, Basic) or is_model) and key.startswith("_modello_"):
             raise ModelDefinitionError("The _modello_ prefix is reserved for model metadata")
         if isinstance(value, Basic):
-            if key in self.nested_models:
-                raise ModelDefinitionError(f"Cannot replace nested model {self.name}.{key} with a scalar")
-            expr = simplify(value).xreplace(self._replacements)
-            dummy = expr if isinstance(expr, InstanceDummy) else self.dummies.get(key)
-            if dummy is None:
-                dummy = InstanceDummy(key, **expr.assumptions0)
-            if key in self.dummies:
-                self._replace({self.dummies[key]: dummy})
-            self.attrs[key] = expr
-            self.dummies[key] = dummy
-            value = dummy
+            value = self._declare_scalar(key, value)
         elif is_model:
-            if key in self.dummies:
-                raise ModelDefinitionError(f"Cannot replace scalar {self.name}.{key} with a nested model")
-            child = _ModelReference._modello_create(cast("type[Modello]", value), key)
-            replacements = self._child_replacements(key, child)
-            if replacements:
-                self._replace(replacements)
-            self.nested_models[key] = child
-            value = child
+            value = self._declare_component(key, cast("type[Modello]", value))
         elif isinstance(value, _ModelReference):
             raise ModelInputError("Declare a component using its model class, not another component reference")
         elif key in self.dummies or key in self.nested_models:
             raise ModelDefinitionError(f"Cannot assign {self.name}.{key} to a non-model value")
         super().__setitem__(key, value)
+
+    def _declare_scalar(self, key: str, value: Basic) -> InstanceDummy:
+        """Bind an expression and propagate changes to inherited aliases."""
+        if key in self.nested_models:
+            raise ModelDefinitionError(f"Cannot replace nested model {self.name}.{key} with a scalar")
+        expr = simplify(value).xreplace(self._replacements)
+        dummy = expr if isinstance(expr, InstanceDummy) else self.dummies.get(key)
+        if dummy is None:
+            dummy = InstanceDummy(key, **expr.assumptions0)
+        if key in self.dummies:
+            self._replace({self.dummies[key]: dummy})
+        self.attrs[key] = expr
+        self.dummies[key] = dummy
+        return dummy
+
+    def _declare_component(self, key: str, model: type[Modello]) -> _ModelReference:
+        """Scope a component and rebind any inherited references to its fields."""
+        if key in self.dummies:
+            raise ModelDefinitionError(f"Cannot replace scalar {self.name}.{key} with a nested model")
+        child = _ModelReference._modello_create(model, key)
+        replacements = self._child_replacements(key, child)
+        if replacements:
+            self._replace(replacements)
+        self.nested_models[key] = child
+        return child
 
     def add_annotations(self, field: str, annotations: tuple[Annotation, ...]) -> None:
         """Reject duplicate declarations while allowing inherited metadata to be refined."""
@@ -235,6 +260,44 @@ class ModelloMetaNamespace(dict):
         )
         return fields
 
+    def compile(self) -> _ModelDefinition:
+        """Include descendants' equations, preserving their paths and aliases."""
+        constraints = [
+            _Definition((attr,), self.dummies[attr], expr)
+            for attr, expr in self.attrs.items()
+            if expr != self.dummies[attr]
+        ]
+        for attr, child in self.nested_models.items():
+            definition = child._modello_model._modello_definition
+            replacements = {d: child._modello_fields[path] for path, d in definition.fields.items()}
+            constraints.extend(
+                _Definition(
+                    (attr, *constraint.path),
+                    replacements[constraint.left],
+                    constraint.right.xreplace(replacements).xreplace(self._replacements),
+                )
+                for constraint in definition.constraints
+            )
+        expressions = [*self.attrs.values(), *(constraint.right for constraint in constraints)]
+        used = set().union(*(expr.free_symbols for expr in expressions))
+        for dummy in used & self._missing.keys():
+            raise ModelDefinitionError(
+                f"{self.name} references removed or ambiguous child field {self._missing[dummy]}"
+            )
+        return _ModelDefinition(self.fields(), tuple(constraints))
+
+    def compiled_annotations(self) -> Mapping[type[Annotation], Mapping[str, Annotation]]:
+        """Scope child annotations before applying this class's refinements."""
+        annotations: dict[type[Annotation], dict[str, Annotation]] = {}
+        for attr, child in self.nested_models.items():
+            for kind, fields in child._modello_model.__modello_annotations__.items():
+                annotations.setdefault(kind, {}).update(
+                    (f"{attr}.{path}" if path else attr, annotation) for path, annotation in fields.items()
+                )
+        for kind, fields in self.annotations.items():
+            annotations.setdefault(kind, {}).update(fields)
+        return _freeze(annotations)
+
 
 class ModelloMeta(type):
     """Compile a model tree's field paths and equations once per class."""
@@ -245,43 +308,11 @@ class ModelloMeta(type):
         return ModelloMetaNamespace(__name, __bases)
 
     def __new__(mcs, name: str, bases: tuple[type, ...], meta_namespace: ModelloMetaNamespace) -> Any:
-        """Include every descendant's constraints with its own scoped symbols."""
+        """Attach the compiled declaration and annotations to an ordinary class."""
         namespace = dict(meta_namespace)
-        constraints = [
-            (meta_namespace.dummies[attr], expr)
-            for attr, expr in meta_namespace.attrs.items()
-            if expr != meta_namespace.dummies[attr]
-        ]
-        paths: list[FieldPath] = [
-            (attr,) for attr, expr in meta_namespace.attrs.items() if expr != meta_namespace.dummies[attr]
-        ]
-        for attr, child in meta_namespace.nested_models.items():
-            model = child._modello_model
-            replacements = {d: child._modello_fields[path] for path, d in model._modello_fields.items()}
-            constraints.extend(
-                (replacements[d], expr.xreplace(replacements).xreplace(meta_namespace._replacements))
-                for d, expr in model._modello_class_constraints
-            )
-            paths.extend((attr, *path) for path in model._modello_constraint_paths)
-        expressions = [*meta_namespace.attrs.values(), *(expr for _, expr in constraints)]
-        used = set().union(*(expr.free_symbols for expr in expressions))
-        for dummy in used & meta_namespace._missing.keys():
-            raise ModelDefinitionError(
-                f"{name} references removed or ambiguous child field {meta_namespace._missing[dummy]}"
-            )
         namespace["_modello_namespace"] = meta_namespace
-        namespace["_modello_fields"] = meta_namespace.fields()
-        namespace["_modello_class_constraints"] = tuple(constraints)
-        namespace["_modello_constraint_paths"] = tuple(paths)
-        annotations: dict[type[Annotation], dict[str, Annotation]] = {}
-        for attr, child in meta_namespace.nested_models.items():
-            for kind, fields in child._modello_model.__modello_annotations__.items():
-                annotations.setdefault(kind, {}).update(
-                    (f"{attr}.{path}" if path else attr, annotation) for path, annotation in fields.items()
-                )
-        for kind, fields in meta_namespace.annotations.items():
-            annotations.setdefault(kind, {}).update(fields)
-        namespace["__modello_annotations__"] = _freeze(annotations)
+        namespace["_modello_definition"] = meta_namespace.compile()
+        namespace["__modello_annotations__"] = meta_namespace.compiled_annotations()
         return super().__new__(mcs, name, bases, namespace)
 
 
@@ -293,7 +324,7 @@ def _populate(
     input_symbols = inputs | {c.left for c in problem.constraints if c.kind is ConstraintKind.INPUT}
 
     def populate(instance: Modello, model: type[Modello], prefix: FieldPath) -> None:
-        bound_fields = {d: fields[prefix + path] for path, d in model._modello_fields.items()}
+        bound_fields = {d: fields[prefix + path] for path, d in model._modello_definition.fields.items()}
         instance._modello_bound_fields = {
             d: _BoundField(
                 bound, solution[bound], ConstraintKind.INPUT if bound in input_symbols else ConstraintKind.INFERRED

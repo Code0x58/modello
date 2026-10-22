@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import ClassVar, Mapping, TypeVar, cast
 
-from sympy import Basic, Eq, Expr, S, Symbol, solve
+from sympy import Eq, Expr, S, Symbol, solve
 
 from modello._model import (
     BoundInstanceDummy as BoundInstanceDummy,
@@ -15,13 +15,14 @@ from modello._model import (
     SymbolicCondition as SymbolicCondition,
     SymbolicScalar as SymbolicScalar,
     _BoundField,
+    _ModelDefinition,
     _ModelReference as _ModelReference,
     _populate,
 )
 from modello._problem import (
     Candidate,
     ConstraintKind as ConstraintKind,
-    FieldPath,
+    FieldPath as FieldPath,
     FieldValue,
     ModelConstraint as ModelConstraint,
     ModelField as ModelField,
@@ -46,9 +47,7 @@ class Modello(metaclass=ModelloMeta):
     """Build a symbolic model, solving its named children together with it."""
 
     _modello_namespace: ClassVar[ModelloMetaNamespace] = ModelloMetaNamespace("", ())
-    _modello_fields: ClassVar[dict[FieldPath, InstanceDummy]] = {}
-    _modello_class_constraints: ClassVar[tuple[tuple[InstanceDummy, Basic], ...]] = ()
-    _modello_constraint_paths: ClassVar[tuple[FieldPath, ...]] = ()
+    _modello_definition: ClassVar[_ModelDefinition]
     _modello_bound_fields: dict[InstanceDummy, _BoundField]
     __modello_annotations__: ClassVar[Mapping[type[Annotation], Mapping[str, Annotation]]]
 
@@ -56,23 +55,7 @@ class Modello(metaclass=ModelloMeta):
         """Accept scalar values and compatible child model instances."""
         problem = inspect_model(type(self), name, **value_map)
         reported = _solve_problem(problem)
-        candidates = []
-        for resolved in reported:
-            if any(value.has(S.NaN, S.ComplexInfinity) for value in resolved.values()):
-                continue
-            if all(
-                getattr(value, f"is_{assumption}", None) in (None, expected)
-                for dummy, value in resolved.items()
-                for assumption, expected in dummy.assumptions0.items()
-            ):
-                candidates.append(resolved)
-        if len(candidates) != 1:
-            snapshots = tuple(
-                Candidate(tuple(FieldValue(field, values[field.symbol]) for field in problem.fields))
-                for values in reported
-            )
-            raise SolutionCountError(problem, len(candidates), snapshots)
-        solution = candidates[0]
+        solution = _select_candidate(problem, reported)
         _populate(self, problem, solution)
 
 
@@ -133,3 +116,27 @@ def _solve_problem(problem: ModelProblem, *, check: bool = True) -> tuple[dict[S
     return tuple(
         {symbol: expression.xreplace(result) for symbol, expression in expressions.items()} for result in solutions
     )
+
+
+def _select_candidate(problem: ModelProblem, reported: tuple[dict[Symbol, Expr], ...]) -> dict[Symbol, Expr]:
+    """Select one defined result compatible with the constructor's assumptions.
+
+    Undecided assumptions remain acceptable for symbolic construction. This is
+    distinct from the closed, exact witness required by a diagnostic audit.
+    """
+    candidates = []
+    for resolved in reported:
+        if any(value.has(S.NaN, S.ComplexInfinity) for value in resolved.values()):
+            continue
+        if all(
+            getattr(value, f"is_{assumption}", None) in (None, expected)
+            for dummy, value in resolved.items()
+            for assumption, expected in dummy.assumptions0.items()
+        ):
+            candidates.append(resolved)
+    if len(candidates) != 1:
+        snapshots = tuple(
+            Candidate(tuple(FieldValue(field, values[field.symbol]) for field in problem.fields)) for values in reported
+        )
+        raise SolutionCountError(problem, len(candidates), snapshots)
+    return candidates[0]

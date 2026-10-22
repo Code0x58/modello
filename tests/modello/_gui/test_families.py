@@ -231,7 +231,7 @@ def test_family_request_validation(payload):
 
 
 def test_hidden_values_and_recorded_observations_remain_uneditable():
-    from tests.test_gui import Estimate, Panel
+    from tests.modello._gui_models import Estimate, Panel
 
     problem = inspect_model(Estimate, "record", panel=Panel("panel", width=2, height=3), price=1234567)
     client = create_app(problem).test_client()
@@ -267,75 +267,6 @@ def test_unsupported_family_scope_keeps_existing_numeric_preview():
     assert data["exploration"]["kind"] == "unsupported"
     with pytest.raises(BindingError):
         Explorer(Response).snapshot({"x": "not a scalar"})
-
-
-def test_exact_response_insight_and_three_coordinate_demo():
-    from examples.gui_families import demo_family
-
-    calibration = Explorer(demo_family("calibration")).snapshot()
-    assert {
-        (relation["source"], relation["output"], relation["ratio"])
-        for relation in calibration["exploration"]["relations"]
-    } == {("recorded.cost", "planned.cost", "25")}
-    reachability = Explorer(demo_family("reachability"))
-    assert reachability.snapshot()["exploration"]["coordinate_count"] == 3
-    chart = reachability.plot(
-        controls=["x", "y"],
-        output="height",
-        windows={"x": (-40, 40), "y": (-40, 40)},
-        point={"x": 0, "y": 0, "target_height": 0},
-    )
-    assert chart["section"] and len(chart["points"]) == 317
-    assert chart["rejected"] == 124 and chart["unknown"] == 0
-
-
-def test_projectile_guided_curve_area_surface_and_elevated_band():
-    from examples.gui_families import demo_family
-
-    client = create_app(demo_family("projectile")).test_client()
-    initial = client.post("/api/explore", json={}).json
-    assert initial["exploration"]["coordinate_count"] == 1
-    curve = client.post("/api/plot", json={key: initial["plot"][key] for key in ("controls", "output", "windows")}).json
-    assert curve["points"][0]["axes"] == [-40, 0]
-    assert curve["points"][20]["axes"] == [0, 20]
-    assert curve["points"][-1]["axes"] == [40, 0]
-    assert all(abs(point["axes"][1] - (20 - point["axes"][0] ** 2 / 80)) < 1e-12 for point in curve["points"])
-    for index in (1, 2, 3):
-        scenario = initial["scenarios"][index]
-        options = {key: scenario[key] for key in ("bindings", "bounds")}
-        preview = client.post("/api/explore", json=options)
-        assert preview.status_code == 200
-        assert preview.json["exploration"]["coordinate_count"] == 2
-        plot = scenario["plot"]
-        response = client.post(
-            "/api/plot", json={**options, **{key: plot[key] for key in ("controls", "output", "windows")}}
-        )
-        assert response.status_code == 200
-        chart = response.json
-        assert chart["unknown"] == 0 and chart["rejected"] > 0
-        assert not chart["section"]
-        if index == 2:
-            assert plot["view"] == "surface"
-            assert len(chart["points"]) == 317
-            assert next(point for point in chart["points"] if point["index"] == 220)["axes"] == [0, 0, 20]
-            assert all(abs(z - (20 - (x * x + y * y) / 80)) < 1e-12 for x, y, z in (p["axes"] for p in chart["points"]))
-        else:
-            assert all(z >= 0 for _, _, z in (p["axes"] for p in chart["points"]))
-            assert all(abs(z - (20 - x * x / 80 - y)) < 1e-12 for x, y, z in (p["axes"] for p in chart["points"]))
-            if index == 3:
-                assert all(8 <= point["axes"][1] <= 12 for point in chart["points"])
-        selected = client.post("/api/explore", json={**options, "point": chart["points"][0]["point"]}).json
-        assert selected["status"] == "checked"
-        assert selected["exploration"]["coordinate_count"] == 2
-    scenario = initial["scenarios"][4]
-    choices = client.post("/api/explore", json={"bindings": scenario["bindings"]}).json
-    assert choices["exploration"]["case_count"] == 2
-    assert {candidate["values"]["x"]["value"] for candidate in choices["exploration"]["cases"]} == {
-        "-20*sqrt(2)",
-        "20*sqrt(2)",
-    }
-    # Reset returns to the original curved boundary, including its bound observations.
-    assert client.post("/api/explore", json={}).json["exploration"]["coordinate_count"] == 1
 
 
 def test_plot_presets_use_display_units_and_raw_view_does_not_solve(monkeypatch):

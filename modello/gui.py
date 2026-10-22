@@ -166,11 +166,11 @@ def _instance_problem(instance: Modello, name: str) -> ModelProblem:
     problem = inspect_model(model, name)
     bindings = {
         instance._modello_bound_fields[d].symbol: problem.field(*path).symbol
-        for path, d in model._modello_fields.items()
+        for path, d in model._modello_definition.fields.items()
     }
     constraints = list(problem.constraints)
     seen: set[Symbol] = set()
-    for path, dummy in model._modello_fields.items():
+    for path, dummy in model._modello_definition.fields.items():
         value: Any = instance
         for part in path:
             value = getattr(value, part)
