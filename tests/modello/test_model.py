@@ -1,9 +1,18 @@
-"""Class declarations preserve aliases, inheritance, and component shape."""
+"""Model declarations, references, and population of component trees."""
 
 import pytest
-from sympy import Symbol
+from sympy import (
+    S,
+    Symbol,
+)
 
-from modello import InstanceDummy, Modello
+from modello import (
+    BoundInstanceDummy,
+    InstanceDummy,
+    Modello,
+    component,
+    inspect_model,
+)
 
 
 def test_multiple_inheritance_expr_conflict():
@@ -274,3 +283,137 @@ def test_class_body_component_aliases_require_an_explicit_model_class():
         class Invalid(Modello):
             child = Child
             alias = child
+
+
+@pytest.mark.parametrize(
+    "declare",
+    [pytest.param(component, id="typed"), pytest.param(lambda model: model, id="raw-class")],
+)
+def test_component_declarations_accept_preconstructed_children(declare):
+    """Both declaration forms bind an independently constructed child."""
+
+    class Child(Modello):
+        a = InstanceDummy("a")
+        b = InstanceDummy("b")
+        c = a + b
+
+    child = Child("C", a=2, b=3)
+
+    class Parent(Modello):
+        child = declare(Child)
+        d = InstanceDummy("d")
+        e = child.c + d
+
+    instance = Parent("P", child=child, d=4)
+    assert instance.child.c == 5
+    assert instance.e == 9
+
+
+def test_repeated_subtrees_preserve_deep_paths_and_source_identity():
+    """Repeated subtrees retain their values and resolve cross-branch paths."""
+
+    class Leaf(Modello):
+        a = InstanceDummy("a")
+        b = InstanceDummy("b")
+        total = a + b
+
+    class Branch(Modello):
+        leaf = Leaf
+        offset = InstanceDummy("offset")
+        total = leaf.total + offset
+
+    class Tree(Modello):
+        left = Branch
+        right = Branch
+        whole = left.total + right.total
+        cross_branch = left.leaf.a + right.leaf.total
+
+    left = Branch("L", leaf=Leaf("LL", a=1, b=2), offset=1)
+    right = Branch("R", leaf=Leaf("RL", a=2, b=3), offset=2)
+    tree = Tree("T", left=left, right=right)
+    assert tree.left.leaf.total == 3
+    assert tree.left.total == 4
+    assert tree.right.leaf.total == 5
+    assert tree.right.total == 7
+    assert tree.whole == 11
+    assert tree.cross_branch == 6
+    assert (tree.left.leaf.a, tree.left.leaf.b) == (1, 2)
+    assert (tree.right.leaf.a, tree.right.leaf.b) == (2, 3)
+    assert tree.left is not left
+    assert tree.left.leaf is not left.leaf
+
+
+def test_empty_and_unconstrained_child_instances():
+    """Empty and unconstrained children can be supplied or omitted."""
+
+    class Empty(Modello):
+        pass
+
+    class Child(Modello):
+        x = InstanceDummy("x")
+
+    class Parent(Modello):
+        empty = Empty
+        child = Child
+
+    parent = Parent("P", child=Child("C", x=5), empty=Empty("E"))
+    assert parent.child.x == 5
+    assert isinstance(parent.empty, Empty)
+    assert isinstance(Parent("P").child.x, BoundInstanceDummy)
+
+
+def test_nested_construction_uses_declarations_without_child_initializers():
+    """Composition solves declarations directly instead of independently rebuilding children."""
+    calls = []
+
+    class Child(Modello):
+        x = InstanceDummy("x")
+
+        def __init__(self, name, **values):
+            """Record explicit standalone construction."""
+            calls.append(name)
+            super().__init__(name, **values)
+
+    class Parent(Modello):
+        child = Child
+
+    source = Child("C", x=2)
+    parent = Parent("P", child=source)
+    assert parent.child.x == 2
+    assert calls == ["C"]
+
+
+def test_nested_refinement_keeps_both_definitions_of_an_aliased_quantity():
+    """An alias and its component equation retain separate origins when nested."""
+
+    class Doubled(Modello):
+        x = InstanceDummy("x", real=True)
+        total = 2 * x
+
+    class Joined(Modello):
+        reading = component(Doubled)
+        observed = reading.total
+        observed = reading.x + 3
+
+    class Tripled(Doubled):
+        total = 3 * Doubled.x
+
+    class Refined(Joined):
+        reading = component(Tripled)
+
+    class Root(Modello):
+        left = component(Refined)
+        right = component(Joined)
+
+    problem = inspect_model(Root, "origins")
+    symbols = problem.symbols
+    assert [(c.path, c.left, c.right) for c in problem.constraints] == [
+        (("left", "observed"), symbols.left.reading.total, symbols.left.reading.x + 3),
+        (("left", "reading", "total"), symbols.left.reading.total, 3 * symbols.left.reading.x),
+        (("right", "observed"), symbols.right.reading.total, symbols.right.reading.x + 3),
+        (("right", "reading", "total"), symbols.right.reading.total, 2 * symbols.right.reading.x),
+    ]
+    for case in (Root("constructed"), problem.solutions().one()):
+        assert isinstance(case.left.reading, Tripled)
+        assert (case.left.reading.x, case.left.observed) == (S(3) / 2, S(9) / 2)
+        assert (case.right.reading.x, case.right.observed) == (3, 6)

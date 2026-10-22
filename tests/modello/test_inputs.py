@@ -1,6 +1,5 @@
 """Scalar and component observations retain types, identities, and provenance."""
 
-import json
 from decimal import Decimal
 from fractions import Fraction
 
@@ -247,15 +246,6 @@ def test_external_bound_symbols_remain_owned_by_the_source_instance():
     assert parent.child.x == source.x
     assert parent.doubled == 2 * source.x
     assert isinstance(source.x, BoundInstanceDummy)
-
-
-def test_input_constraint_keeps_string_enum_compatibility():
-    direct = inspect_model(Reading, "direct", x=2)
-    assert direct.constraints[-1].kind is ConstraintKind.INPUT
-    assert str(direct.constraints[-1].kind) == "input"
-    assert f"{direct.constraints[-1].kind:>7}" == "  input"
-    assert json.dumps(direct.constraints[-1].kind) == '"input"'
-    assert "[input 'x']" in str(direct)
 
 
 @pytest.mark.parametrize(

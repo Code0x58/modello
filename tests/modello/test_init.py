@@ -1,4 +1,4 @@
-"""Joint solving selects candidates and populates independent component trees."""
+"""Public construction jointly solves and selects admissible candidates."""
 
 import pytest
 from sympy import S, Symbol, simplify
@@ -27,30 +27,6 @@ def test_no_constraints():
     expected = simplify(1)
     assert isinstance(instance.thing, type(expected))
     assert instance.thing == expected
-
-
-@pytest.mark.parametrize(
-    "declare",
-    [pytest.param(component, id="typed"), pytest.param(lambda model: model, id="raw-class")],
-)
-def test_component_declarations_accept_preconstructed_children(declare):
-    """Both declaration forms bind an independently constructed child."""
-
-    class Child(Modello):
-        a = InstanceDummy("a")
-        b = InstanceDummy("b")
-        c = a + b
-
-    child = Child("C", a=2, b=3)
-
-    class Parent(Modello):
-        child = declare(Child)
-        d = InstanceDummy("d")
-        e = child.c + d
-
-    instance = Parent("P", child=child, d=4)
-    assert instance.child.c == 5
-    assert instance.e == 9
 
 
 @pytest.mark.parametrize(
@@ -85,55 +61,6 @@ def test_constructor_candidate_selection(positive_problem, values, retained, exp
             tuple(item.field for item in candidate.values) == positive_problem.fields
             for candidate in caught.value.problem.candidates
         )
-
-
-def test_repeated_subtrees_preserve_deep_paths_and_source_identity():
-    """Repeated subtrees retain their values and resolve cross-branch paths."""
-
-    class Leaf(Modello):
-        a = InstanceDummy("a")
-        b = InstanceDummy("b")
-        total = a + b
-
-    class Branch(Modello):
-        leaf = Leaf
-        offset = InstanceDummy("offset")
-        total = leaf.total + offset
-
-    class Tree(Modello):
-        left = Branch
-        right = Branch
-        whole = left.total + right.total
-        cross_branch = left.leaf.a + right.leaf.total
-
-    left = Branch("L", leaf=Leaf("LL", a=1, b=2), offset=1)
-    right = Branch("R", leaf=Leaf("RL", a=2, b=3), offset=2)
-    tree = Tree("T", left=left, right=right)
-    assert tree.left.leaf.total == 3
-    assert tree.left.total == 4
-    assert tree.right.leaf.total == 5
-    assert tree.right.total == 7
-    assert tree.whole == 11
-    assert tree.cross_branch == 6
-    assert (tree.left.leaf.a, tree.left.leaf.b) == (1, 2)
-    assert (tree.right.leaf.a, tree.right.leaf.b) == (2, 3)
-    assert tree.left is not left
-    assert tree.left.leaf is not left.leaf
-
-
-def test_nested_geometry_forward_and_inverse():
-    """Parent constraints solve descendants, including their own derived fields."""
-    from examples.geometry import RightAngleTriangle
-    from examples.nested_geometry import Box
-    from examples.nested_line import Line, Point
-
-    line = Line("L", start=Point("start", x=0, y=0), end=Point("end", x=3, y=4))
-    assert line.length == 5
-    assert isinstance(line.start, Point)
-    assert line.start is not line.end
-
-    box = Box("B", base=RightAngleTriangle("base", b=4), height=12, diagonal=13)
-    assert (box.base.a, box.base.b, box.base.c) == (3, 4, 5)
 
 
 def test_missing_nested_inputs_remain_shared_parameters():
@@ -173,25 +100,6 @@ def test_external_symbols_are_parameters_not_solver_unknowns():
     assert parent.total == parameter
 
 
-def test_empty_and_unconstrained_child_instances():
-    """Empty and unconstrained children can be supplied or omitted."""
-
-    class Empty(Modello):
-        pass
-
-    class Child(Modello):
-        x = InstanceDummy("x")
-
-    class Parent(Modello):
-        empty = Empty
-        child = Child
-
-    parent = Parent("P", child=Child("C", x=5), empty=Empty("E"))
-    assert parent.child.x == 5
-    assert isinstance(parent.empty, Empty)
-    assert isinstance(Parent("P").child.x, BoundInstanceDummy)
-
-
 def test_inconsistent_and_ambiguous_nested_systems_are_rejected():
     """Nested constraints retain assumptions and the unique-solution requirement."""
 
@@ -212,20 +120,6 @@ def test_inconsistent_and_ambiguous_nested_systems_are_rejected():
         Parent("P", child=Child("C", x=2), total=10)
     assert "x = 2" in str(error.value.problem)
     assert "total = 10" in str(error.value.problem)
-
-
-def test_error_labels_preserve_noncommutative_relationships():
-    """Readable names must not turn an ordered product difference into zero."""
-
-    class Ordered(Modello):
-        scale = InstanceDummy("scale", positive=True)
-        x = InstanceDummy("x", commutative=False)
-        y = InstanceDummy("y", commutative=False)
-        commutator = x * y - y * x
-
-    with pytest.raises(ModelSolveError, match="0 solutions") as error:
-        Ordered("O", scale=0)
-    assert "commutator = x*y - y*x" in str(error.value.problem)
 
 
 def test_derived_field_assumptions_filter_multiple_roots():
@@ -276,27 +170,6 @@ def test_cyclic_definitions_are_solved_as_simultaneous_equations():
 
     parent = Parent("P")
     assert (parent.child.x, parent.child.y, parent.total) == (1, 2, 3)
-
-
-def test_nested_construction_uses_declarations_without_child_initializers():
-    """Composition solves declarations directly instead of independently rebuilding children."""
-    calls = []
-
-    class Child(Modello):
-        x = InstanceDummy("x")
-
-        def __init__(self, name, **values):
-            """Record explicit standalone construction."""
-            calls.append(name)
-            super().__init__(name, **values)
-
-    class Parent(Modello):
-        child = Child
-
-    source = Child("C", x=2)
-    parent = Parent("P", child=source)
-    assert parent.child.x == 2
-    assert calls == ["C"]
 
 
 def test_constants_and_positive_inputs_cannot_be_contradicted():

@@ -55,6 +55,10 @@ defines it. CI also checks formatting, lint, types, documentation, and both
 distribution formats. The commands are maintained in ``AGENTS.md`` and
 ``.github/workflows/ci.yml``.
 
+Mirror source packages under ``tests/`` and use ``test_<module>.py``, omitting a
+module's leading underscore. Use ``test_init.py`` for package entry points and
+keep repository-wide checks at the test root.
+
 Keep regressions focused on distinct behavior and independent mathematical
 checks. Refresh dependencies with ``uv lock --upgrade`` and commit ``uv.lock``.
 Dependabot proposes grouped weekly dependency and GitHub Actions updates.
