@@ -42,6 +42,20 @@ the constructor's solving path. Runtime imports point downwards; reverse type
 references use ``TYPE_CHECKING``. Problem snapshots own constructor-input
 capture, shared by construction and immutable family observations.
 
+GUI presentation stays above these layers. ``Quantity`` joins a model field to
+its labels and display units; ``CheckedCases`` owns finite alternatives and the
+observations that distinguish them. ``Coordinates`` retains the family's free
+quantities and checks point previews or reference sections. ``FamilyPlot``
+samples a section through validated ``PlotWindow`` intervals and audits each
+candidate against the original model. ``FamilyView`` composes these concepts
+into the browser protocol without turning a preview into an observation.
+
+In the browser, ``SampleGrid`` owns sample adjacency and gaps. Flat and surface
+projections map that grid onto the screen; ``SampleChart`` creates the SVG and
+inspection controls. ``ChartSession`` retains chart preferences and discards
+responses to superseded questions. Keep geometry independent of DOM rendering
+and keep these presentation types out of the solver.
+
 Executable walkthroughs cover the examples' ordinary usage. Focus additional
 tests on distinct regressions, accounting and chronology invariants, and
 independent mathematical checks. Test shared validation and compilation behavior

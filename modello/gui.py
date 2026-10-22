@@ -15,6 +15,7 @@ from modello import Annotation, Modello, ScalarValue, _solve_problem, annotate, 
 from modello._gui.formatting import display_number
 from modello._gui.inputs import parse_scalar
 from modello._gui.mathml import EquationPrinter
+from modello._gui.quantities import is_finite_real
 from modello.diagnostics import Candidate, ConstraintKind, FieldValue, ModelConstraint, ModelField, ModelProblem
 from modello.errors import ModelInputError, ModelValidationError, SolverBackendError
 from modello.solutions import SolutionFamily
@@ -257,19 +258,6 @@ class Explorer:
                 self._ranges(scenario.bounds)
             except (ModelInputError, ModelValidationError) as error:
                 raise ModelInputError(f"Scenario {scenario.title!r}.bounds: {error}") from error
-        for plot in (self._layout.model_info.plot, *(s.plot for s in self._layout.model_info.scenarios)):
-            if plot is not None:
-                # Validate numeric windows at authoring time, without reducing or solving the model.
-                for path, endpoints in plot.windows.items():
-                    lower, upper = (FieldValue(self._layout.field(path), value).value for value in endpoints)
-                    if (
-                        any(
-                            v.is_number is not True or v.is_real is not True or v.is_finite is not True
-                            for v in (lower, upper)
-                        )
-                        or (lower < upper) is not S.true
-                    ):
-                        raise ModelInputError(f"PlotInfo.windows: {path!r} needs increasing finite real bounds")
 
     def _bind(
         self, initial: ModelProblem, bindings: Mapping[str, ScalarValue | None], *, context: str = "bindings"
@@ -360,15 +348,7 @@ class Explorer:
                 family_view.select(case=case, point=point)
                 values = family_view.values()
                 exploration = family_view.summary()
-                verdict = (
-                    "empty"
-                    if family_view.family.is_empty is True
-                    else "satisfied"
-                    if family_view.reference is not None
-                    else "alternatives"
-                    if family_view.cases
-                    else "unknown"
-                )
+                verdict = family_view.verdict
         definitions = {c.left: c.right for c in problem.constraints if c.kind is ConstraintKind.DEFINITION}
         supplied = {c.left: c.right for c in problem.constraints if c.kind is ConstraintKind.INPUT}
         printer = self._layout.printer()
@@ -477,11 +457,7 @@ class Explorer:
             if len(endpoints) != 2:
                 raise BindingError("Supply a lower and upper bound; either may be omitted.", (path,))
             lower, upper = (None if endpoint is None else FieldValue(field, endpoint).value for endpoint in endpoints)
-            if any(
-                value is not None
-                and (value.is_number is not True or value.is_real is not True or value.is_finite is not True)
-                for value in (lower, upper)
-            ):
+            if any(value is not None and not is_finite_real(value) for value in (lower, upper)):
                 raise BindingError("Bounds must be finite real numbers.", (path,))
             if lower is not None and upper is not None and (lower > upper) is S.true:
                 raise BindingError("The lower bound must not exceed the upper bound.", (path,))
@@ -534,9 +510,7 @@ class Explorer:
         return view.plot(controls, output, windows)
 
     def _input_text(self, path: str, value: Expr) -> str:
-        if self._layout.metadata[path].number_format == "percent":
-            return self.problem.format(value * 100) + "%"
-        return self.problem.format(value)
+        return self._layout.quantity(path).input(value)
 
     def _field_view(self, path: str, expression: Expr, context: _Snapshot) -> dict[str, Any]:
         field = self._layout.fields[path]

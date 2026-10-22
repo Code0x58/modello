@@ -5,10 +5,11 @@ from __future__ import annotations
 from difflib import get_close_matches
 from typing import TYPE_CHECKING, Iterator, Mapping
 
-from sympy import Symbol
+from sympy import S, Symbol
 
 from modello._gui.mathml import EquationPrinter
-from modello.diagnostics import ConstraintKind, ModelField, ModelProblem
+from modello._gui.quantities import Quantity, is_finite_real
+from modello.diagnostics import ConstraintKind, FieldValue, ModelField, ModelProblem
 from modello.errors import ModelInputError
 from modello.gui import FieldInfo, ModelInfo, PlotInfo, Scenario
 
@@ -20,6 +21,7 @@ class Layout:
     """One index for names, aliases, visibility, edit policy, and raw equations."""
 
     def __init__(self, problem: ModelProblem, overrides: Mapping[str, FieldInfo]) -> None:
+        self.problem = problem
         self.fields = {".".join(field.path): field for field in problem.fields}
         self.metadata = dict.fromkeys(self.fields, FieldInfo())
         self.components: list[str] = []
@@ -143,11 +145,27 @@ class Layout:
             raise ModelInputError(f"{context}: supply two window endpoints for every control")
         if plot.view not in {"map", "surface"}:
             raise ModelInputError(f"{context}: view must be 'map' or 'surface'")
+        for path, endpoints in plot.windows.items():
+            lower, upper = (FieldValue(self.field(path), value).value for value in endpoints)
+            if not all(is_finite_real(value) for value in (lower, upper)) or (lower < upper) is not S.true:
+                raise ModelInputError(f"PlotInfo.windows: {path!r} needs increasing finite real bounds")
 
     def field(self, path: str, *, context: str = "bindings") -> ModelField:
         """Resolve a leaf; component paths cannot be used as scalar inputs."""
         _require_path(path, self.fields, context)
         return self.fields[path]
+
+    def quantity(self, path: str, *, context: str = "bindings") -> Quantity:
+        return Quantity(self.field(path, context=context), self.metadata[path], self.problem)
+
+    def visible_quantities(self) -> tuple[Quantity, ...]:
+        """Prefer highlights and the inspector selection when quantities have aliases."""
+        quantities: dict[Symbol, Quantity] = {}
+        for path in (*self.model_info.highlights, self.model_info.initial_field, *self.fields):
+            if path in self.fields and path not in self.hidden:
+                quantity = self.quantity(path)
+                quantities.setdefault(quantity.symbol, quantity)
+        return tuple(quantities.values())
 
 
 def _require_path(path: str, choices: Mapping[str, object], context: str) -> None:

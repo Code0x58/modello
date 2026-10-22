@@ -32,7 +32,8 @@ assert "gui" in distribution.metadata.get_all("Provides-Extra", ())
 assert "flask" not in sys.modules
 from modello.gui import Explorer, FieldInfo, ModelInfo, gui
 for name in (
-    "templates/index.html", "static/explorer.css", "static/explorer.js", "static/families.js", "static/charts.js"
+    "templates/index.html", "static/explorer.css", "static/explorer.js", "static/families.js", "static/charts.js",
+    "static/chart_geometry.js"
 ):
     assert Path(modello.__file__).with_name("_gui").joinpath(name).is_file()
 assert "flask" not in sys.modules

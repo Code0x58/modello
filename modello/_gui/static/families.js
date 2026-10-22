@@ -1,14 +1,64 @@
 "use strict";
+// Keep chart settings and checked samples together across edits and asynchronous requests.
+class ChartSession {
+  data = null;
+  preferences = null;
+  pending = null;
+  initialised = false;
+  revision = 0;
+
+  accept(data, options) {
+    this.revision++;
+    const changed =
+      options.edit ||
+      options.scenario !== undefined ||
+      options.bounds ||
+      options.point ||
+      options.case !== undefined ||
+      data.raw;
+    if (!options.fromPlot && changed) this.data = null;
+    if (options.plot !== undefined) this.usePreset(options.plot);
+    else if (!this.initialised) this.usePreset(data.plot);
+    this.initialised = true;
+    if (data.raw) this.pending = null;
+  }
+  usePreset(preset) {
+    if (preset === undefined) return;
+    this.preferences = preset;
+    this.pending = preset;
+    this.data = null;
+  }
+  takePending() {
+    const preset = this.pending;
+    this.pending = null;
+    return preset;
+  }
+  async sample(preferences, context) {
+    this.preferences = preferences;
+    const revision = this.revision;
+    const { controls, windows, output } = preferences;
+    try {
+      const response = await fetch("/api/plot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...context, controls, windows, output }),
+      });
+      const result = await response.json();
+      if (revision !== this.revision) return null;
+      if (response.ok) this.data = result;
+      return { ok: response.ok, result };
+    } catch (error) {
+      if (revision !== this.revision) return null;
+      throw error;
+    }
+  }
+}
 // A selected point and a pinned comparison never become model observations.
 const familyUI = (() => {
+  const chart = new ChartSession();
   let bounds = {},
     selection = null,
-    baseline = null,
-    plotData = null,
-    plotPreferences = null,
-    pendingPlot = null,
-    initialised = false,
-    revision = 0;
+    baseline = null;
   const get = (id) => document.getElementById(id);
   const button = (label, action, className = "ghost") => {
     const element = node("button", className, label);
@@ -35,32 +85,9 @@ const familyUI = (() => {
     };
   }
   function accepted(data, options) {
-    revision++;
     bounds = options.bounds ?? bounds;
     selection = data.exploration?.selection ?? null;
-    if (
-      !options.fromPlot &&
-      (options.edit ||
-        options.scenario !== undefined ||
-        options.bounds ||
-        options.point ||
-        options.case !== undefined ||
-        data.raw)
-    )
-      plotData = null;
-    const preset =
-      options.plot !== undefined
-        ? options.plot
-        : !initialised
-          ? data.plot
-          : undefined;
-    initialised = true;
-    if (preset !== undefined) {
-      plotPreferences = preset;
-      pendingPlot = preset;
-      plotData = null;
-    }
-    if (data.raw) pendingPlot = null;
+    chart.accept(data, options);
   }
   function currentSelection() {
     return selection?.kind === "case"
@@ -290,6 +317,21 @@ const familyUI = (() => {
       );
       return;
     }
+    container.append(pointPreview(coordinates));
+    const plotCoordinates = coordinates.filter((coordinate) => coordinate.real);
+    if (!plotCoordinates.length) {
+      container.append(
+        node(
+          "p",
+          "input-help",
+          "Charts need real coordinates. Exact scalar point previews remain available.",
+        ),
+      );
+      return;
+    }
+    container.append(plotOptions(info, plotCoordinates));
+  }
+  function pointPreview(coordinates) {
     const preview = node("details", "coordinate-preview");
     preview.open = selection?.kind === "point";
     preview.append(node("summary", "", "Preview a checked case"));
@@ -330,21 +372,12 @@ const familyUI = (() => {
         "Previewing leaves your observations and filters unchanged.",
       ),
     );
-    container.append(preview);
-    const plotCoordinates = coordinates.filter((coordinate) => coordinate.real);
-    if (!plotCoordinates.length) {
-      container.append(
-        node(
-          "p",
-          "input-help",
-          "Charts need real coordinates. Exact scalar point previews remain available.",
-        ),
-      );
-      return;
-    }
+    return preview;
+  }
+  function plotOptions(info, plotCoordinates) {
     const plot = node("details", "plot-options");
     plot.open =
-      !plotPreferences &&
+      !chart.preferences &&
       (["curve", "region"].includes(info.kind) ||
         (info.kind === "section" && state.status === "checked"));
     plot.append(
@@ -358,15 +391,31 @@ const familyUI = (() => {
     );
     const form = node("form", "plot-form");
     const controls = new Map();
+    const viewLabel = node("label", "range-label", "Chart presentation");
+    const view = node("select");
+    view.setAttribute("aria-label", "Plot view");
+    for (const [value, title] of [
+      ["map", "Map"],
+      ["surface", "3D surface"],
+    ]) {
+      const option = node("option", "", title);
+      option.value = value;
+      view.append(option);
+    }
+    view.value = chart.preferences?.view ?? "map";
+    viewLabel.hidden =
+      [...controls.values()].filter((value) => value.checkbox.checked).length <
+      2;
+    viewLabel.append(view);
     plotCoordinates.forEach((coordinate, index) => {
       const row = node("div", "plot-coordinate");
       const label = node("label", "plot-choice");
       const checkbox = node("input");
       checkbox.type = "checkbox";
-      checkbox.checked = plotPreferences?.controls.some((path) =>
+      checkbox.checked = chart.preferences?.controls.some((path) =>
         plotCoordinates.some((item) => item.path === path),
       )
-        ? plotPreferences.controls.includes(coordinate.path)
+        ? chart.preferences.controls.includes(coordinate.path)
         : index < 2;
       checkbox.setAttribute("aria-label", `Vary ${coordinate.path}`);
       label.append(checkbox, node("span", "", coordinate.title));
@@ -374,7 +423,7 @@ const familyUI = (() => {
         const input = node("input");
         input.type = "text";
         input.value =
-          plotPreferences?.windows[coordinate.path]?.[endpoint] ?? initial;
+          chart.preferences?.windows[coordinate.path]?.[endpoint] ?? initial;
         input.placeholder = endpoint ? "Window maximum" : "Window minimum";
         input.setAttribute(
           "aria-label",
@@ -401,6 +450,9 @@ const familyUI = (() => {
       controls.set(coordinate.path, { checkbox, windows });
       form.append(row);
     });
+    viewLabel.hidden =
+      [...controls.values()].filter((value) => value.checkbox.checked).length <
+      2;
     const label = node("label", "range-label", "Follow this quantity");
     const output = node("select");
     output.setAttribute("aria-label", "Plot output");
@@ -411,8 +463,8 @@ const familyUI = (() => {
       output.append(option);
     });
     output.value =
-      plotPreferences?.output ??
-      plotData?.output ??
+      chart.preferences?.output ??
+      chart.data?.output ??
       (fieldsByPath.get(state.initial_field)?.depends_on.length
         ? state.initial_field
         : undefined) ??
@@ -423,22 +475,7 @@ const familyUI = (() => {
       choices[0]?.path;
     output.addEventListener("change", () => choose(output.value, false, false));
     label.append(output);
-    const viewLabel = node("label", "range-label", "Chart presentation");
-    const view = node("select");
-    view.setAttribute("aria-label", "Plot view");
-    for (const [value, title] of [
-      ["map", "Map"],
-      ["surface", "3D surface"],
-    ]) {
-      const option = node("option", "", title);
-      option.value = value;
-      view.append(option);
-    }
-    view.value = plotPreferences?.view ?? "map";
-    viewLabel.hidden =
-      [...controls.values()].filter((value) => value.checkbox.checked).length <
-      2;
-    viewLabel.append(view);
+
     const action = node("button", "primary", "Plot checked samples");
     action.type = "submit";
     const message = node("p", "input-help");
@@ -477,7 +514,7 @@ const familyUI = (() => {
       });
     });
     plot.append(form);
-    container.append(plot);
+    return plot;
   }
   async function loadPlot(preferences) {
     const message = get("plot-message");
@@ -486,33 +523,21 @@ const familyUI = (() => {
       ".plot-form button[type=submit]",
     );
     action.disabled = true;
-    const requestedRevision = revision;
     message.textContent = "Checking the sample points…";
-    plotPreferences = preferences;
     try {
-      const response = await fetch("/api/plot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bindings,
-          bounds,
-          ...currentSelection(),
-          controls: preferences.controls,
-          windows: preferences.windows,
-          output: preferences.output,
-        }),
+      const reply = await chart.sample(preferences, {
+        bindings,
+        bounds,
+        ...currentSelection(),
       });
-      const result = await response.json();
-      if (requestedRevision !== revision) return;
-      if (!response.ok) {
-        message.textContent = result.error;
+      if (!reply) return;
+      if (!reply.ok) {
+        message.textContent = reply.result.error;
         return;
       }
-      plotData = result;
       drawPlot();
       message.textContent = "";
     } catch (_) {
-      if (requestedRevision !== revision) return;
       message.textContent =
         "The plot could not be loaded. Your exploration is retained.";
     } finally {
@@ -522,8 +547,8 @@ const familyUI = (() => {
   function drawPlot() {
     const container = get("family-plot");
     container.replaceChildren();
-    if (!plotData || state.raw) return;
-    const data = plotData;
+    if (!chart.data || state.raw) return;
+    const data = chart.data;
     const points = data.points;
     container.append(
       node(
@@ -560,10 +585,10 @@ const familyUI = (() => {
       container,
       data,
       fieldsByPath,
-      plotPreferences?.view ?? "map",
+      chart.preferences?.view ?? "map",
       (point) => refresh(bindings, { point, fromPlot: true }),
       (view) => {
-        plotPreferences = { ...plotPreferences, view };
+        chart.preferences = { ...chart.preferences, view };
         const input = get("family-controls").querySelector(
           '[aria-label="Plot view"]',
         );
@@ -572,11 +597,7 @@ const familyUI = (() => {
       },
     );
   }
-  function render() {
-    const root = get("family");
-    root.hidden = state.raw;
-    if (state.raw) return;
-    const info = state.exploration;
+  function renderHeading(info) {
     const title = get("family-title"),
       summary = get("family-summary");
     const titles = {
@@ -599,6 +620,8 @@ const familyUI = (() => {
           : info?.kind === "unsupported"
             ? info.reason
             : `${info?.coordinate_count ?? 0} remaining coordinates · coordinate count does not establish the dimension of a coupled set. ${selection ? "Previewing a checked case; observations are unchanged." : "Select what you know and explore the possible values."}`;
+  }
+  function renderFilters(info) {
     const filters = get("family-filters");
     filters.replaceChildren();
     canonical()
@@ -622,6 +645,8 @@ const familyUI = (() => {
       );
       filters.append(retained);
     }
+  }
+  function renderInsights(info) {
     const insights = get("family-insights");
     insights.replaceChildren();
     (info?.suggestions ?? []).forEach((path) => {
@@ -675,18 +700,24 @@ const familyUI = (() => {
           `${info.candidate_count} coordinate proposals; automatic enumeration is limited to ${info.case_limit}. Narrow the family or preview a point.`,
         ),
       );
+  }
+  function render() {
+    const root = get("family");
+    root.hidden = state.raw;
+    if (state.raw) return;
+    const info = state.exploration;
+    renderHeading(info);
+    renderFilters(info);
+    renderInsights(info);
     caseTable(info ?? {});
     coordinateForms(info ?? {});
     compare();
     drawPlot();
-    if (pendingPlot) {
-      const preset = pendingPlot;
-      pendingPlot = null;
-      loadPlot(preset);
-    }
+    const preset = chart.takePending();
+    if (preset) loadPlot(preset);
   }
   new ResizeObserver(() => {
-    if (plotData) drawPlot();
+    if (chart.data) drawPlot();
   }).observe(get("family-plot"));
   return { request, accepted, render, rangeEditor, familyValues };
 })();
