@@ -177,9 +177,10 @@ parameters, with the confirmed 10m notional and other observations fixed:
 >>> from sympy import Rational
 >>> from examples.reconciliation import CDSMark, CDSPnL, REDData
 >>> from modello import inspect_model
->>> previous = REDData("DEMO:PAIR:OLD", recovery=Rational(2, 5), survival=Rational(39, 40))
->>> current = REDData("DEMO:PAIR:CURRENT", recovery=Rational(2, 5), survival=Rational(97, 100))
->>> for label, data in (("previous", previous), ("current", current)):
+>>> for label, data in (
+...     ("previous", REDData("DEMO:PAIR:OLD", recovery=Rational(2, 5), survival=Rational(39, 40))),
+...     ("current", REDData("DEMO:PAIR:CURRENT", recovery=Rational(2, 5), survival=Rational(97, 100))),
+... ):
 ...     trial = inspect_model(
 ...         CDSPnL, "RED comparison",
 ...         opening=CDSMark(

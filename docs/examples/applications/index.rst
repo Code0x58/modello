@@ -9,6 +9,10 @@ their Python model types throughout the hierarchy. Run these applications with:
 
    $ python -m examples.applications
 
+Each section keeps its models and runnable example together. Call
+``main_invoice()``, ``main_production()``, or ``main_circuit()`` from
+``examples.applications`` to run just that application.
+
 Invoice reconciliation
 ----------------------
 
@@ -17,7 +21,7 @@ from a confirmed total. The invoice groups parts and labour into named component
 
 .. literalinclude:: ../../../examples/applications.py
    :start-at: class InvoiceLine
-   :end-before: class Batch
+   :end-before: def main_invoice
    :language: python
 
 All amounts use one currency. The synthetic tax rate applies to items and
@@ -63,7 +67,7 @@ size. The parent equates saleable output with packed mass:
 
 .. literalinclude:: ../../../examples/applications.py
    :start-at: class Batch
-   :end-before: class Resistor
+   :end-before: def main_production
    :language: python
 
 The first ``packed_mass`` assignment aliases the packaging output; the second
@@ -94,7 +98,7 @@ equations; the parent supplies a shared current and sums voltage drops:
 
 .. literalinclude:: ../../../examples/applications.py
    :start-at: class Resistor
-   :end-before: def main
+   :end-before: def main_circuit
    :language: python
 
 >>> from examples.applications import Resistor, SeriesCircuit

@@ -113,10 +113,11 @@ def main() -> None:
     print("Each match is a possible explanation to check against the trade record.")
 
     # Synthetic credit parameters associated with previous/current RED pairs.
-    previous = REDData("DEMO:PAIR:OLD", recovery=Rational(2, 5), survival=Rational(39, 40))
-    current = REDData("DEMO:PAIR:CURRENT", recovery=Rational(2, 5), survival=Rational(97, 100))
     print("Compare source assumptions (synthetic RED parameters):")
-    for label, data in (("previous", previous), ("current", current)):
+    for label, data in (
+        ("previous", REDData("DEMO:PAIR:OLD", recovery=Rational(2, 5), survival=Rational(39, 40))),
+        ("current", REDData("DEMO:PAIR:CURRENT", recovery=Rational(2, 5), survival=Rational(97, 100))),
+    ):
         source_trial = inspect_model(
             CDSPnL,
             "RED comparison",
