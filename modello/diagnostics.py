@@ -33,21 +33,24 @@ from sympy.core.function import AppliedUndef
 from sympy.solvers.solveset import NonlinearError
 
 from modello._model import BoundInstanceDummy, InstanceDummy, ModelloMeta, _BoundField, _ModelReference
-from modello._problem import AssumptionCheck as AssumptionCheck
-from modello._problem import Candidate as Candidate
-from modello._problem import CandidateCheck as CandidateCheck
-from modello._problem import ConstraintKind as ConstraintKind
-from modello._problem import FieldPath as FieldPath
-from modello._problem import FieldValue as FieldValue
-from modello._problem import ModelConstraint as ModelConstraint
-from modello._problem import ModelField as ModelField
-from modello._problem import ModelT as ModelT
-from modello._problem import ResidualCheck as ResidualCheck
-from modello._problem import Status as Status
-from modello._problem import Verdict as Verdict
-from modello._problem import _canonical_fields, _domain, _FieldPrinter
-from modello.errors import ModelInputError, ModelValidationError
-from modello.errors import ModelSolveError as ModelSolveError
+from modello._problem import (
+    AssumptionCheck,
+    Candidate,
+    CandidateCheck,
+    ConstraintKind,
+    FieldPath,
+    FieldValue,
+    ModelConstraint,
+    ModelField,
+    ModelT,
+    ResidualCheck,
+    Status,
+    Verdict,
+    _canonical_fields,
+    _domain,
+    _FieldPrinter,
+)
+from modello.errors import ModelInputError, ModelSolveError as ModelSolveError, ModelValidationError
 from modello.solutions import SolutionFamily
 
 if TYPE_CHECKING:

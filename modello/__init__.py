@@ -6,35 +6,39 @@ from typing import ClassVar, TypeVar, cast
 
 from sympy import Basic, Eq, S, solve
 
-from modello._model import BoundInstanceDummy as BoundInstanceDummy
-from modello._model import InstanceDummy as InstanceDummy
-from modello._model import ModelloMeta as ModelloMeta
-from modello._model import ModelloMetaNamespace as ModelloMetaNamespace
-from modello._model import ScalarValue as ScalarValue
-from modello._model import SymbolicCondition as SymbolicCondition
-from modello._model import SymbolicScalar as SymbolicScalar
-from modello._model import _BoundField as _BoundField
-from modello._model import _ModelReference as _ModelReference
-from modello._model import _populate as _populate
-from modello._problem import Candidate as Candidate
-from modello._problem import ConstraintKind as ConstraintKind
-from modello._problem import FieldPath as FieldPath
-from modello._problem import FieldValue as FieldValue
-from modello._problem import ModelConstraint as ModelConstraint
-from modello._problem import ModelField as ModelField
-from modello.diagnostics import ModelProblem as ModelProblem
-from modello.diagnostics import _prepare_problem
-from modello.errors import ModelDefinitionError as ModelDefinitionError
-from modello.errors import ModelInputError as ModelInputError
-from modello.errors import ModelloError as ModelloError
-from modello.errors import ModelSolveError as ModelSolveError
-from modello.errors import ModelValidationError as ModelValidationError
-from modello.errors import SolutionCountError as SolutionCountError
-from modello.errors import SolutionSelectionError as SolutionSelectionError
-from modello.errors import SolverBackendError as SolverBackendError
-from modello.errors import UnresolvedSolutionError as UnresolvedSolutionError
-from modello.solutions import SolutionFamily as SolutionFamily
-from modello.solutions import SolutionIssue as SolutionIssue
+from modello._model import (
+    BoundInstanceDummy,
+    InstanceDummy,
+    ModelloMeta,
+    ModelloMetaNamespace,
+    ScalarValue,
+    SymbolicCondition as SymbolicCondition,
+    SymbolicScalar as SymbolicScalar,
+    _BoundField,
+    _ModelReference as _ModelReference,
+    _populate,
+)
+from modello._problem import (
+    Candidate,
+    ConstraintKind as ConstraintKind,
+    FieldPath,
+    FieldValue,
+    ModelConstraint as ModelConstraint,
+    ModelField as ModelField,
+)
+from modello.diagnostics import ModelProblem, _prepare_problem
+from modello.errors import (
+    ModelDefinitionError as ModelDefinitionError,
+    ModelInputError as ModelInputError,
+    ModelloError as ModelloError,
+    ModelSolveError as ModelSolveError,
+    ModelValidationError as ModelValidationError,
+    SolutionCountError,
+    SolutionSelectionError as SolutionSelectionError,
+    SolverBackendError,
+    UnresolvedSolutionError as UnresolvedSolutionError,
+)
+from modello.solutions import SolutionFamily as SolutionFamily, SolutionIssue as SolutionIssue
 
 
 class Modello(metaclass=ModelloMeta):

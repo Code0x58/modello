@@ -1,6 +1,7 @@
 """Joint sets must preserve domains, singular cases, and relationships."""
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
+from itertools import combinations
 
 import pytest
 from sympy import (
@@ -16,16 +17,21 @@ from sympy import (
     S,
     Symbol,
     Tuple,
+    diff,
     pi,
     sin,
 )
 
+import modello
 import modello.solutions as solutions
+from examples.solution_families import Execution, IsoRisk
+from examples.solution_views import ModelViews
 from modello import (
     ConstraintKind,
     InstanceDummy,
     ModelInputError,
     Modello,
+    ModelProblem,
     ModelValidationError,
     SolutionFamily,
     SolutionSelectionError,
@@ -46,8 +52,6 @@ class Check(Modello):
 
 
 def test_family_materialisation_preserves_bindings_and_provenance_without_legacy_solver(monkeypatch):
-    import modello
-
     problem = inspect_model(Check, "explore")
     check = problem.symbols
     x, total = check.reading.x, check.total
@@ -177,8 +181,6 @@ def test_inconsistent_affine_observations_produce_an_empty_joint_family():
 
 
 def test_multivariate_fallback_keeps_the_joint_relation():
-    from examples.solution_views import ModelViews
-
     class Circle(Modello):
         x = InstanceDummy("x", real=True)
         y = InstanceDummy("y", real=True)
@@ -206,13 +208,6 @@ def test_multivariate_fallback_keeps_the_joint_relation():
 
 
 def test_model_views_follow_dependencies_and_measure_images_without_pointwise_rank():
-    from itertools import combinations
-
-    from sympy import diff
-
-    from examples.solution_families import Execution
-    from examples.solution_views import ModelViews
-
     problem = inspect_model(Execution, "views", reference=100)
     execution = problem.symbols
     quantity, impact, fee = execution.quantity, execution.impact, execution.fee
@@ -239,10 +234,6 @@ def test_model_views_follow_dependencies_and_measure_images_without_pointwise_ra
 
 
 def test_named_risk_regions_preserve_coupling_and_derive_the_minimum():
-    from sympy import diff
-
-    from examples.solution_families import IsoRisk
-
     problem = inspect_model(IsoRisk, "risk regions")
     risk = problem.symbols
     exposure = risk.risk.exposure
@@ -387,10 +378,6 @@ def test_rational_affine_backend_failure_leaves_the_joined_relation(monkeypatch)
 
 
 def test_materialisation_does_not_accept_an_undecided_candidate_audit(monkeypatch):
-    from dataclasses import replace
-
-    from modello import ModelProblem
-
     p = inspect_model(Reading, "point", x=2)
     reference = Reading("reference", x=2)
     check = ModelProblem.check

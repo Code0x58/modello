@@ -33,10 +33,12 @@ from sympy import (
     sympify,
 )
 from sympy.core.relational import Relational
+from sympy.plotting.series import ImplicitSeries
 from sympy.polys.domains import QQ
 from sympy.polys.matrices import DomainMatrix
 from sympy.polys.polyerrors import CoercionFailed, PolynomialError
 
+from examples.solution_families import Exposure, Risk
 from modello import (
     ModelField,
     ModelInputError,
@@ -230,7 +232,6 @@ class ModelView(Generic[M]):
         import matplotlib.pyplot as plt
         import numpy as np
         from matplotlib.collections import PolyCollection
-        from sympy.plotting.series import ImplicitSeries
 
         windows = self._windows(lower, upper)
         parameters = tuple(field.symbol for field in self.family.parameters)
@@ -335,8 +336,6 @@ class ModelViews(Generic[M]):
 
 def main() -> None:
     """Reuse one quadratic risk model for response graphs and constrained regions."""
-    from examples.solution_families import Exposure, Risk
-
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plot-dir", type=Path)
     arguments = parser.parse_args()

@@ -10,6 +10,7 @@ import argparse
 from pathlib import Path
 
 from sympy import Interval
+from sympy.plotting import plot
 
 from modello import (
     InstanceDummy,
@@ -83,8 +84,6 @@ class ImpactStudy(Modello):
     @staticmethod
     def plot(family: SolutionFamily[ImpactStudy], destination: Path) -> None:
         """Plot the symbolic cost expression on its admissible impact interval."""
-        from sympy.plotting import plot
-
         study = family.symbols
         domain = family.values(study.impact)
         costs = family.values(study.planned.cost)
