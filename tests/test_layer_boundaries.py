@@ -15,6 +15,7 @@ def test_core_imports_follow_the_dependency_layers(pytestconfig: pytest.Config) 
                 "modello.errors",
                 "modello._problem",
                 "modello._model",
+                "modello._inputs",
                 "modello.solutions",
                 "modello.diagnostics",
                 "modello",

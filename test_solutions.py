@@ -146,6 +146,31 @@ def test_typed_symbol_tree_and_nested_observations_share_constructor_provenance(
     assert section.expression(symbols.left.total) == symbols.left.reading.x**2 + 1
 
 
+def test_failed_component_observation_leaves_existing_snapshots_unchanged():
+    """Partially captured inputs cannot leak from a failed immutable refinement."""
+    problem = inspect_model(Check, "observations")
+    family = problem.solutions()
+    original = problem.constraints
+    source = Reading("source", x=2)
+    source.squared = object()
+    with pytest.raises(ModelInputError, match=r"reading\.squared.*scalar"):
+        family.observe(total=5, reading=source)
+    assert problem.constraints is original
+    assert family.problem is problem
+    assert family.parameter_domain is S.Reals
+
+    source.squared = S(4)
+    observed = family.observe(reading=source).observe(total=5)
+    assert tuple(c.index for c in observed.problem.constraints) == tuple(range(len(original) + 3))
+    assert [(c.path, c.kind, c.input) for c in observed.problem.constraints[len(original) :]] == [
+        (("reading", "x"), ConstraintKind.INPUT, "reading"),
+        (("reading", "squared"), ConstraintKind.INFERRED, "reading"),
+        (("total",), ConstraintKind.INPUT, "total"),
+    ]
+    assert observed.one().total == 5
+    assert family.problem.constraints is original
+
+
 def test_affine_joining_equations_and_preferred_coordinates():
     class Sum(Modello):
         x = InstanceDummy("x", real=True)

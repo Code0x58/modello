@@ -126,6 +126,42 @@ def test_inherited_refinement_retains_definition_paths():
     assert result.conflict.irreducible is True
 
 
+def test_nested_refinement_keeps_both_definitions_of_an_aliased_quantity():
+    """An alias and its component equation retain separate origins when nested."""
+
+    class Doubled(Modello):
+        x = InstanceDummy("x", real=True)
+        total = 2 * x
+
+    class Joined(Modello):
+        reading = component(Doubled)
+        observed = reading.total
+        observed = reading.x + 3
+
+    class Tripled(Doubled):
+        total = 3 * Doubled.x
+
+    class Refined(Joined):
+        reading = component(Tripled)
+
+    class Root(Modello):
+        left = component(Refined)
+        right = component(Joined)
+
+    problem = inspect_model(Root, "origins")
+    symbols = problem.symbols
+    assert [(c.path, c.left, c.right) for c in problem.constraints] == [
+        (("left", "observed"), symbols.left.reading.total, symbols.left.reading.x + 3),
+        (("left", "reading", "total"), symbols.left.reading.total, 3 * symbols.left.reading.x),
+        (("right", "observed"), symbols.right.reading.total, symbols.right.reading.x + 3),
+        (("right", "reading", "total"), symbols.right.reading.total, 2 * symbols.right.reading.x),
+    ]
+    for case in (Root("constructed"), problem.solutions().one()):
+        assert isinstance(case.left.reading, Tripled)
+        assert (case.left.reading.x, case.left.observed) == (S(3) / 2, S(9) / 2)
+        assert (case.right.reading.x, case.right.observed) == (3, 6)
+
+
 def test_inspection_does_not_reserve_model_field_names():
     class Named(Modello):
         model = InstanceDummy("model", real=True)

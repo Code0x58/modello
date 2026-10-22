@@ -136,7 +136,7 @@ def _copy_model(model: Model, values: dict[FieldPath, Expr], inputs: tuple[Expr,
     def populate(source: Modello, prefix: FieldPath) -> Modello:
         result = copy(source)
         result._modello_bound_fields = {}
-        for path, dummy in type(source)._modello_fields.items():
+        for path, dummy in type(source)._modello_definition.fields.items():
             binding = source._modello_bound_fields[dummy]
             expression = _get_field(source, path)
             result._modello_bound_fields[dummy] = replace(
@@ -172,7 +172,7 @@ class ModelPlan(Generic[Model]):
         inputs: tuple[SymbolicScalar, ...] | None = None,
         properties: tuple[SymbolicScalar, ...] = (),
     ) -> None:
-        expressions = {path: _get_field(model, path) for path in type(model)._modello_fields}
+        expressions = {path: _get_field(model, path) for path in type(model)._modello_definition.fields}
         self.source = _copy_model(model, expressions)
         self._paths = tuple(expressions)
         self._expressions = tuple(expressions.values())
@@ -222,7 +222,7 @@ class ModelPlan(Generic[Model]):
         evaluated = dict(zip(self._outputs, map(Float, values), strict=True))
         fields = {path: evaluated[expression] for path, expression in zip(self._paths, self._expressions, strict=True)}
         for path, value in fields.items():
-            dummy = type(self.source)._modello_fields[path]
+            dummy = type(self.source)._modello_definition.fields[path]
             if any(
                 getattr(value, f"is_{assumption}", None) not in (None, expected)
                 for assumption, expected in dummy.assumptions0.items()
@@ -268,7 +268,7 @@ class ModelPlan(Generic[Model]):
             raise ValueError("Values violate model assumptions or leave expressions undefined") from error
         columns = dict(zip(self._outputs, outputs.values(), strict=True))
         for path, expression in zip(self._paths, self._expressions, strict=True):
-            _check_column(type(self.source)._modello_fields[path], columns[expression].values)
+            _check_column(type(self.source)._modello_definition.fields[path], columns[expression].values)
         return ModelPath(self, times, inputs, tuple(outputs.values()))
 
     def walk(self, result: Model | None = None) -> Iterator[ModelField]:
