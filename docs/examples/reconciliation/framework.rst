@@ -16,7 +16,8 @@ Try common mistakes first
 Supply labelled ``Scale`` hypotheses to configure a field's quote units, lot
 size, or sign convention.
 
-Here a price of 1200 may have been entered in GBX where GBP was expected:
+Here a price of 1200 may have been entered in pence (GBX) where pounds (GBP)
+were expected:
 
 >>> from sympy import Rational
 >>> from examples.applications import InvoiceLine
@@ -38,8 +39,8 @@ Here a price of 1200 may have been entered in GBX where GBP was expected:
 
 Both labels describe the same correction, so they share one checked trial.
 They are alternative explanations, without additional evidence for either cause.
-Each match carries its trial problem, ready for inspection or selection as a
-complete model instance:
+Each match carries its trial problem for inspection or exploration as a solution
+family. This example has one complete model instance:
 
 >>> corrected = match.problem.solutions().one()
 >>> corrected.unit_price, corrected.amount
@@ -71,7 +72,7 @@ equations. This stage is explicit and can also retain multiple answers:
 >>> len(report.matches), len(report.unresolved)
 (0, 0)
 >>> family = study.infer(quantity)
->>> family.values(quantity)
+>>> family.values(quantity.symbol)
 {7}
 
 ``family.one()`` returns a checked model instance when exactly one complete
@@ -113,9 +114,11 @@ Configuration is captured once, including supplied lists or generators.
 Full component paths select nested inputs: in the CDS example,
 ``problem.field("closing", "terms", "signed_notional")`` identifies the same
 quantity as the top-level notional alias. Declare that quantity once.
+Field records select editable observations; their ``.symbol`` values can be
+used in solution-family queries such as ``family.values(quantity.symbol)``.
 Each trial changes only that scalar observation; ``infer(field)`` removes it.
-Siblings, other inputs,
-definitions, and domains remain fixed, including copied inferred results.
+Siblings, other inputs, definitions, and domains remain fixed, including copied
+inferred results.
 This differs from ``problem.without("component")``, which removes a whole input
 argument group.
 

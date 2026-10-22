@@ -1,10 +1,11 @@
-Investigate a trade PnL break
-=============================
+Reconcile trade profit and loss
+===============================
 
-One pricing model can calculate PnL, test alternative source data, and infer
-suspect inputs from a trusted output. Its symbolic equations also provide the
-pricing formula for inspection. This one-period CDS example keeps those
-equations fixed throughout; :doc:`framework` adds configurable entry-error checks.
+One pricing model can calculate profit and loss (PnL), test alternative source
+data, and infer suspect inputs from a trusted output. Its symbolic equations
+also provide the pricing formula for inspection. This one-period credit
+default swap (CDS) example keeps those equations fixed throughout;
+:doc:`framework` adds configurable entry-error checks.
 
 .. code-block:: console
 
@@ -25,7 +26,8 @@ both at period end, with no accrual on default. All amounts use one currency:
 
    V = N D\left[(1-R)(1-S) - \frac{C}{10000}\tau S\right].
 
-Here :math:`N` is signed notional (positive buys protection), :math:`C` the annual
+Here :math:`V` is present value (PV), :math:`N` signed notional (positive buys
+protection), :math:`C` the annual
 coupon in basis points, :math:`R` recovery, :math:`S` survival probability,
 :math:`D` the discount factor, and :math:`\tau` the year fraction. The parent
 connects identical trade terms and recovery assumptions at two marks, then adds
@@ -49,8 +51,9 @@ coupon by 1bp changes the buyer's value by :math:`-N A/10000`. For the corrected
 10m trade below, the closing coupon sensitivity is -970 currency units/bp.
 This is the premium-annuity calculation behind risky PV01; scaling conventions
 vary by system (see the `RPV01 reference
-<https://www.mathworks.com/help/finance/cdsrpv01.html>`_). Market CS01 and
-interest-rate DV01 would require credit- and rate-curve dependencies too.
+<https://www.mathworks.com/help/finance/cdsrpv01.html>`_). Credit-spread
+sensitivity (CS01) and interest-rate sensitivity (DV01) would require credit-
+and rate-curve dependencies too.
 
 Production CDS pricing also needs schedules, accrual on default, curve
 calibration, and settlement conventions. See the `ISDA specifications
@@ -66,9 +69,9 @@ reconciliation. A reviewer can read the formula that drives the checks:
 >>> from examples.reconciliation import CDSMark
 >>> from modello import inspect_model
 >>> pricing = inspect_model(CDSMark, "formula")
->>> expression = pricing.solutions().expression(pricing.field("value"))
+>>> expression = pricing.solutions().expression(pricing.symbols.value)
 >>> print(pricing.format(expression))
--discount*red.survival*terms.coupon_bps*terms.signed_notional*year_fraction/10000 + discount*terms.signed_notional*(1 - red.recovery)*(1 - red.survival)
+-credit.survival*discount*terms.coupon_bps*terms.signed_notional*year_fraction/10000 + discount*terms.signed_notional*(1 - credit.recovery)*(1 - credit.survival)
 
 ``pricing.format(expression)`` renders quantities as component paths;
 ``sympy.latex`` can typeset the expression. Printing a prepared problem shows
@@ -139,7 +142,7 @@ fit the same PnL:
 >>> broader = Reconciliation(problem, [Suspect(problem.field(name)) for name in names])
 >>> for name in names:
 ...     family = broader.infer(problem.field(name))
-...     print(name, family.values(problem.field(name)))
+...     print(name, family.values(problem.field(name).symbol))
 signed_notional {10000000}
 coupon_bps {55000}
 recovery EmptySet
@@ -150,11 +153,11 @@ alone cannot explain it within [0, 1]. Suppose an independent opening valuation
 is known to be 22,000. Add that observation to each family to distinguish the
 three feasible explanations:
 
->>> from modello import FieldValue
->>> opening_value = FieldValue(problem.field("opening", "value"), 22_000)
+>>> from sympy import Eq
+>>> opening_observation = Eq(problem.symbols.opening.value, 22_000)
 >>> for name in ("signed_notional", "coupon_bps", "cashflow"):
-...     family = broader.infer(problem.field(name)).observe(opening_value)
-...     print(name, family.values(problem.field(name)))
+...     family = broader.infer(problem.field(name)).where(opening_observation)
+...     print(name, family.values(problem.field(name).symbol))
 signed_notional {10000000}
 coupon_bps EmptySet
 cashflow EmptySet
@@ -169,25 +172,26 @@ For uncertain outputs, explore :doc:`bounded observations <../solution_families/
 Compare source components
 --------------------------
 
-Related observations from one source make a useful component. Here ``REDData``
-bundles credit assumptions associated with a RED entity–obligation pair. Swap
-the component to check whether the break comes from using the previous pair's
-parameters, with the confirmed 10m notional and other observations fixed:
+In a second scenario, the trade's 10m notional is already confirmed, and the
+closing credit inputs are uncertain. ``CreditParameters`` groups recovery and
+survival assumptions from one pricing source. Swap the component to check
+parameters associated with a previous or current Reference Entity Database
+(RED) entity–obligation pair, keeping the other observations fixed:
 
 >>> from sympy import Rational
->>> from examples.reconciliation import CDSMark, CDSPnL, REDData
+>>> from examples.reconciliation import CDSMark, CDSPnL, CreditParameters
 >>> from modello import inspect_model
 >>> for label, data in (
-...     ("previous", REDData("DEMO:PAIR:OLD", recovery=Rational(2, 5), survival=Rational(39, 40))),
-...     ("current", REDData("DEMO:PAIR:CURRENT", recovery=Rational(2, 5), survival=Rational(97, 100))),
+...     ("previous", CreditParameters("DEMO:PAIR:OLD", recovery=Rational(2, 5), survival=Rational(39, 40))),
+...     ("current", CreditParameters("DEMO:PAIR:CURRENT", recovery=Rational(2, 5), survival=Rational(97, 100))),
 ... ):
 ...     trial = inspect_model(
 ...         CDSPnL, "RED comparison",
 ...         opening=CDSMark(
-...             "opening", red=REDData("opening", survival=Rational(98, 100)),
+...             "opening", credit=CreditParameters("opening", survival=Rational(98, 100)),
 ...             discount=1, year_fraction=1,
 ...         ),
-...         closing=CDSMark("closing", red=data, discount=1, year_fraction=1),
+...         closing=CDSMark("closing", credit=data, discount=1, year_fraction=1),
 ...         signed_notional=10_000_000, coupon_bps=100, recovery=Rational(2, 5),
 ...         cashflow=-10_000, pnl=51_000,
 ...     )
@@ -198,7 +202,7 @@ current 51000 consistent
 
 The current parameters fit the trusted PnL; the previous parameters do not.
 Both evaluations use the same trade terms, market factors, cashflow, and
-pricing equations. Only the closing RED data component changes.
+pricing equations. Only the closing credit-parameter component changes.
 
 All values are shown here and are synthetic. The ``DEMO:`` names label the
 examples; they are not RED codes or symbolic constraints. Changing a label

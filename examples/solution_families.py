@@ -33,6 +33,28 @@ class Execution(Modello):
     cost = quantity * price + fee
 
 
+class Exposure(Modello):
+    """Three signed exposures to illustrative risk factors."""
+
+    x = InstanceDummy("x", real=True)
+    y = InstanceDummy("y", real=True)
+    z = InstanceDummy("z", real=True)
+
+
+class Risk(Modello):
+    """A positive quadratic variance, including correlated exposures."""
+
+    exposure = component(Exposure)
+    variance = exposure.x**2 + exposure.x * exposure.y + 2 * exposure.y**2 + 3 * exposure.z**2
+
+
+class IsoRisk(Modello):
+    """Name the level shared by every exposure combination on a risk contour."""
+
+    risk = component(Risk)
+    level = risk.variance
+
+
 class ImpactStudy(Modello):
     """Recorded and planned executions share their impact coefficient."""
 
@@ -55,18 +77,17 @@ class ImpactStudy(Modello):
     def calibrated(cls) -> SolutionFamily[ImpactStudy]:
         """Retain every impact consistent with a bounded cost observation."""
         problem = cls.prepare()
-        cost = problem.field("recorded", "cost")
-        return problem.solutions(problem.field("impact")).where(cost.symbol >= 200, cost.symbol <= 202)
+        study = problem.symbols
+        return problem.solutions(study.impact).where(study.recorded.cost >= 200, study.recorded.cost <= 202)
 
     @staticmethod
     def plot(family: SolutionFamily[ImpactStudy], destination: Path) -> None:
         """Plot the symbolic cost expression on its admissible impact interval."""
         from sympy.plotting import plot
 
-        impact = family.problem.field("impact")
-        cost = family.problem.field("planned", "cost")
-        domain = family.values(impact)
-        costs = family.values(cost)
+        study = family.symbols
+        domain = family.values(study.impact)
+        costs = family.values(study.planned.cost)
         if (
             not isinstance(domain, Interval)
             or not isinstance(costs, Interval)
@@ -74,8 +95,8 @@ class ImpactStudy(Modello):
         ):
             raise UnresolvedSolutionError(family, "This plot needs bounded impact and cost intervals.")
         chart = plot(
-            family.expression(cost),
-            (impact.symbol, domain.start, domain.end),
+            family.expression(study.planned.cost),
+            (study.impact, domain.start, domain.end),
             show=False,
             xlabel="Impact coefficient",
             ylabel="Planned execution cost",
@@ -91,9 +112,9 @@ def main() -> None:
     parser.add_argument("--plot", type=Path)
     arguments = parser.parse_args()
     family = ImpactStudy.calibrated()
-    problem = family.problem
-    print("Impact:", family.values(problem.field("impact")))
-    print("Planned cost:", family.values(problem.field("planned", "cost")))
+    study = family.symbols
+    print("Impact:", family.values(study.impact))
+    print("Planned cost:", family.values(study.planned.cost))
     if arguments.plot:
         ImpactStudy.plot(family, arguments.plot)
 

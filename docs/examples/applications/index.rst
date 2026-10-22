@@ -54,7 +54,7 @@ True
 True
 
 The :doc:`reconciliation framework <../reconciliation/framework>` first tries
-common entry errors. Its examples check GBX/GBP price units and a 25-item lot
+common entry errors. Its examples check pence/pounds (GBX/GBP) price units and a 25-item lot
 size. If both quantity and price are suspect, a total alone may admit several
 explanations.
 

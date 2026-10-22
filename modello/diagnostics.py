@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Generic, Literal, TypeVar
+from functools import cached_property
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar, cast
 
 from sympy import (
     Basic,
@@ -54,7 +55,7 @@ else:
 
 
 if TYPE_CHECKING:
-    from modello import Modello, ScalarValue
+    from modello import Modello, ScalarValue, SymbolicScalar
     from modello.solutions import SolutionFamily
 
 ModelT = TypeVar("ModelT", bound="Modello")
@@ -310,6 +311,18 @@ class ModelProblem(Generic[ModelT]):
     constraints: tuple[ModelConstraint, ...]
     candidates: tuple[Candidate, ...] = ()
 
+    @cached_property
+    def symbols(self) -> ModelT:
+        """Access this problem's independent quantities through typed components.
+
+        Like references in a model declaration, this read-only namespace exposes
+        scalar symbols and nested components, rather than solved model methods.
+        Derived fields also have their own symbols, so they can be observed.
+        """
+        from modello import _ModelReference
+
+        return cast(ModelT, _ModelReference(self.model, {field.path: field.symbol for field in self.fields}))
+
     def __repr__(self) -> str:
         return (
             f"ModelProblem({self.model.__name__}, {self.name!r}, "
@@ -411,7 +424,7 @@ class ModelProblem(Generic[ModelT]):
         """
         return _Analyser(self, max_checks).run(conflicts, relaxations)
 
-    def solutions(self, *parameters: ModelField) -> SolutionFamily[ModelT]:
+    def solutions(self, *parameters: SymbolicScalar) -> SolutionFamily[ModelT]:
         """Explore the joint family, optionally retaining chosen parameter fields.
 
         This explicit operation can invoke exact symbolic solvers. It preserves
@@ -419,7 +432,16 @@ class ModelProblem(Generic[ModelT]):
         """
         from modello.solutions import SolutionFamily
 
-        return SolutionFamily._prepare(self, parameters)
+        fields = []
+        for parameter in parameters:
+            if not isinstance(parameter, Symbol):
+                raise ModelInputError("A preferred coordinate must be one of this problem's field symbols")
+            field = next((field for field in self.fields if field.symbol == parameter), None)
+            if field is None:
+                raise ModelValidationError("The coordinate belongs to another model problem; use problem.symbols")
+            if field not in fields:
+                fields.append(field)
+        return SolutionFamily._prepare(self, tuple(fields))
 
 
 @dataclass(frozen=True)

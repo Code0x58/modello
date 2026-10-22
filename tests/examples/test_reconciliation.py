@@ -1,10 +1,10 @@
 """A reconciliation alternative must retain trusted facts and all other inputs."""
 
 import pytest
-from sympy import FiniteSet, Rational, S
+from sympy import Eq, FiniteSet, Rational, S
 
-from examples.reconciliation import CDSMark, CDSPnL, CDSTerms, REDData, sample_problem
-from modello import FieldValue, ModelSolveError, UnresolvedSolutionError, inspect_model
+from examples.reconciliation import CDSMark, CDSPnL, CDSTerms, CreditParameters, sample_problem
+from modello import ModelSolveError, UnresolvedSolutionError, inspect_model
 
 
 def test_recorded_pnl_and_break_are_exact():
@@ -25,7 +25,7 @@ def test_each_alternative_keeps_the_other_observations(released, expected):
     problem = sample_problem()
     trial = problem.without(released)
     family = trial.solutions()
-    assert family.values(problem.field(released)) == FiniteSet(expected)
+    assert family.values(problem.field(released).symbol) == FiniteSet(expected)
     case = family.one()  # Materialisation audits the complete retained problem.
     assert getattr(case, released) == expected
     assert case.pnl == 51_000
@@ -39,9 +39,9 @@ def test_each_alternative_keeps_the_other_observations(released, expected):
             assert getattr(case, name) == original
     assert case.opening.terms.signed_notional == case.closing.terms.signed_notional == case.signed_notional
     assert case.opening.terms.coupon_bps == case.closing.terms.coupon_bps == case.coupon_bps
-    assert case.opening.red.recovery == case.closing.red.recovery == case.recovery
-    assert case.opening.red.survival == Rational(98, 100)
-    assert case.closing.red.survival == Rational(97, 100)
+    assert case.opening.credit.recovery == case.closing.credit.recovery == case.recovery
+    assert case.opening.credit.survival == Rational(98, 100)
+    assert case.closing.credit.survival == Rational(97, 100)
     assert all(c in trial.constraints for c in problem.constraints if c.input != released)
     assert any(c.input == released for c in problem.constraints)  # The source was not edited.
 
@@ -56,7 +56,7 @@ def test_recovery_alone_cannot_explain_the_break_in_its_domain():
 def test_independent_opening_valuation_discriminates_between_explanations(released):
     problem = sample_problem()
     alternatives = problem.without(released).solutions()
-    checked = alternatives.observe(FieldValue(problem.field("opening", "value"), 22_000))
+    checked = alternatives.where(Eq(problem.symbols.opening.value, 22_000))
     if released == "signed_notional":
         case = checked.one()
         assert (case.signed_notional, case.opening.value, case.closing.value) == (10_000_000, 22_000, 83_000)
@@ -74,21 +74,21 @@ def test_releasing_several_inputs_can_leave_a_family():
 @pytest.mark.parametrize("field", ["recovery", "survival"])
 def test_probability_and_recovery_bounds_are_real_constraints(field):
     with pytest.raises(ModelSolveError):
-        REDData("outside domain", **{field: Rational(11, 10)})
+        CreditParameters("outside domain", **{field: Rational(11, 10)})
 
 
 def test_formula_is_the_same_for_both_protection_sides():
-    data = REDData("credit inputs", recovery=Rational(2, 5), survival=Rational(97, 100))
+    data = CreditParameters("credit inputs", recovery=Rational(2, 5), survival=Rational(97, 100))
     buyer = CDSMark(
         "buyer",
-        red=data,
+        credit=data,
         discount=1,
         year_fraction=1,
         terms=CDSTerms("buyer terms", signed_notional=10_000_000, coupon_bps=100),
     )
     seller = CDSMark(
         "seller",
-        red=data,
+        credit=data,
         discount=1,
         year_fraction=1,
         terms=CDSTerms("seller terms", signed_notional=-10_000_000, coupon_bps=100),
@@ -103,8 +103,8 @@ def test_formula_is_the_same_for_both_protection_sides():
         field("terms", "signed_notional")
         * field("discount")
         * (
-            (1 - field("red", "recovery")) * (1 - field("red", "survival"))
-            - field("terms", "coupon_bps") / 10000 * field("year_fraction") * field("red", "survival")
+            (1 - field("credit", "recovery")) * (1 - field("credit", "survival"))
+            - field("terms", "coupon_bps") / 10000 * field("year_fraction") * field("credit", "survival")
         )
     )
-    assert (p.solutions().expression(p.field("value")) - expected).simplify() == S.Zero
+    assert (p.solutions().expression(p.symbols.value) - expected).simplify() == S.Zero

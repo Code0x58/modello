@@ -20,7 +20,8 @@ Requires Python 3.10 or newer and SymPy 1.14 or newer.
 ## Build a system from its parts
 
 Define a holding's state and an execution, then connect them with balance
-equations. Each part is an ordinary model with typed, named quantities:
+equations. Each part has named quantities, and components retain their Python
+model types:
 
 ```python
 from modello import InstanceDummy, Modello, component
@@ -138,9 +139,10 @@ invoice reconciliation, production planning, and circuit measurement checks.
 
 One symbolic model can support both pricing and reconciliation, saving time
 spent manually substituting parameters or rearranging formulas for each check.
-The [CDS PnL example](docs/examples/reconciliation/index.rst)
-shows this by holding trusted PnL fixed, comparing source components, and
-investigating suspect inputs. The reusable
+The [credit default swap (CDS) example](docs/examples/reconciliation/index.rst)
+holds trusted profit and loss (PnL) fixed while comparing source components and
+investigating suspect inputs. It also derives a readable pricing formula from
+the same model. The reusable
 [reconciliation framework](docs/examples/reconciliation/framework.rst) tests
 decimal shifts and configured quote-unit, lot-size, or sign corrections before
 solving backwards for individual inputs.

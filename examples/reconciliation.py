@@ -6,10 +6,10 @@ It omits accrual on default, schedules, curve calibration, and settlement
 conventions. See the documentation for the precise scope and sign conventions.
 """
 
-from sympy import Rational, S
+from sympy import Eq, Rational, S
 
 from examples.reconcile import Reconciliation, Suspect
-from modello import FieldValue, InstanceDummy, Modello, ModelProblem, component, inspect_model
+from modello import InstanceDummy, Modello, ModelProblem, component, inspect_model
 
 
 class CDSTerms(Modello):
@@ -19,8 +19,8 @@ class CDSTerms(Modello):
     coupon_bps = InstanceDummy("coupon_bps", nonnegative=True)
 
 
-class REDData(Modello):
-    """Simplified credit assumptions associated with a RED pair."""
+class CreditParameters(Modello):
+    """Recovery and one-period survival assumptions supplied by a pricing source."""
 
     recovery = InstanceDummy("recovery", nonnegative=True)
     loss_fraction = InstanceDummy("loss_fraction", nonnegative=True)
@@ -31,14 +31,14 @@ class REDData(Modello):
 
 
 class CDSMark(Modello):
-    """Signed contract PV in notional currency under the one-period model."""
+    """Signed present value (PV) in notional currency for one remaining period."""
 
     terms = component(CDSTerms)
-    red = component(REDData)
+    credit = component(CreditParameters)
     discount = InstanceDummy("discount", positive=True)
     year_fraction = InstanceDummy("year_fraction", positive=True)
-    risky_annuity = discount * red.survival * year_fraction
-    protection = terms.signed_notional * red.loss_fraction * discount * red.default_probability
+    risky_annuity = discount * credit.survival * year_fraction
+    protection = terms.signed_notional * credit.loss_fraction * discount * credit.default_probability
     premium = terms.signed_notional * terms.coupon_bps / 10000 * risky_annuity
     value = protection - premium
 
@@ -56,8 +56,8 @@ class CDSPnL(Modello):
     signed_notional = opening.terms.signed_notional
     coupon_bps = closing.terms.coupon_bps
     coupon_bps = opening.terms.coupon_bps
-    recovery = closing.red.recovery
-    recovery = opening.red.recovery
+    recovery = closing.credit.recovery
+    recovery = opening.credit.recovery
     cashflow = InstanceDummy("cashflow", real=True)
     pnl = closing.value - opening.value + cashflow
 
@@ -72,8 +72,12 @@ def sample_problem() -> ModelProblem[CDSPnL]:
     return inspect_model(
         CDSPnL,
         "PnL break",
-        opening=CDSMark("opening", red=REDData("opening", survival=Rational(98, 100)), discount=1, year_fraction=1),
-        closing=CDSMark("closing", red=REDData("closing", survival=Rational(97, 100)), discount=1, year_fraction=1),
+        opening=CDSMark(
+            "opening", credit=CreditParameters("opening", survival=Rational(98, 100)), discount=1, year_fraction=1
+        ),
+        closing=CDSMark(
+            "closing", credit=CreditParameters("closing", survival=Rational(97, 100)), discount=1, year_fraction=1
+        ),
         signed_notional=1_000_000,
         coupon_bps=100,
         recovery=Rational(2, 5),
@@ -85,13 +89,13 @@ def sample_problem() -> ModelProblem[CDSPnL]:
 def main() -> None:
     """Try common errors first; expose inverse inference as a separate stage."""
     pricing = inspect_model(CDSMark, "pricing")
-    expression = pricing.solutions().expression(pricing.field("value"))
+    expression = pricing.solutions().expression(pricing.symbols.value)
     print("Pricing formula:", pricing.format(expression))
     problem = sample_problem()
-    recorded = problem.without("pnl").solutions().one()
-    print("Calculated PnL from recorded inputs:", recorded.pnl)
+    calculated = problem.without("pnl").solutions().one()
+    print("Calculated PnL from recorded inputs:", calculated.pnl)
     print("Trusted PnL:", 51_000)
-    print("Break (recorded - trusted):", recorded.pnl - 51_000)
+    print("Break (calculated - trusted):", calculated.pnl - 51_000)
     study = Reconciliation(problem, tuple(Suspect(problem.field(name)) for name in ("signed_notional", "coupon_bps")))
     report = study.scan()
     print("Common entry mistakes (one field per trial):")
@@ -101,28 +105,30 @@ def main() -> None:
     for trial in report.unresolved:
         print(f"  Undecided: {'.'.join(trial.field.path)} -> {trial.proposed}: {trial.analysis.reason}")
     if report.baseline.status != "consistent" and not report.matches:
-        print("No confirmed common mutation; infer each suspect independently:")
+        print("No checked match from common mistakes; infer each suspect independently:")
         for suspect in study.suspects:
             family = study.infer(suspect.field)
-            print(f"  {'.'.join(suspect.field.path)}: {family.values(suspect.field)}")
-    print("Also requiring independently observed opening PV=22000:")
-    opening_value = FieldValue(problem.field("opening", "value"), 22_000)
+            print(f"  {'.'.join(suspect.field.path)}: {family.values(suspect.field.symbol)}")
+    print("Add independently observed opening value=22000:")
+    opening_observation = Eq(problem.symbols.opening.value, 22_000)
     for match in report.matches:
-        checked = match.problem.solutions().observe(opening_value)
-        print(f"  {'.'.join(match.field.path)}: {checked.values(match.field)}")
+        checked = match.problem.solutions().where(opening_observation)
+        print(f"  {'.'.join(match.field.path)}: {checked.values(match.field.symbol)}")
     print("Each match is a possible explanation to check against the trade record.")
 
     # Synthetic credit parameters associated with previous/current RED pairs.
     print("Compare source assumptions (synthetic RED parameters):")
     for label, data in (
-        ("previous", REDData("DEMO:PAIR:OLD", recovery=Rational(2, 5), survival=Rational(39, 40))),
-        ("current", REDData("DEMO:PAIR:CURRENT", recovery=Rational(2, 5), survival=Rational(97, 100))),
+        ("previous", CreditParameters("DEMO:PAIR:OLD", recovery=Rational(2, 5), survival=Rational(39, 40))),
+        ("current", CreditParameters("DEMO:PAIR:CURRENT", recovery=Rational(2, 5), survival=Rational(97, 100))),
     ):
         source_trial = inspect_model(
             CDSPnL,
             "RED comparison",
-            opening=CDSMark("opening", red=REDData("opening", survival=Rational(98, 100)), discount=1, year_fraction=1),
-            closing=CDSMark("closing", red=data, discount=1, year_fraction=1),
+            opening=CDSMark(
+                "opening", credit=CreditParameters("opening", survival=Rational(98, 100)), discount=1, year_fraction=1
+            ),
+            closing=CDSMark("closing", credit=data, discount=1, year_fraction=1),
             signed_notional=10_000_000,
             coupon_bps=100,
             recovery=Rational(2, 5),
@@ -131,7 +137,7 @@ def main() -> None:
         )
         calculated = source_trial.without("pnl").solutions().one()
         print(f"  {label}: PnL={calculated.pnl}, {source_trial.analyse().status}")
-    print("  Only the RED component changed; trade terms and trusted PnL stayed fixed.")
+    print("  Only the credit parameters changed; trade terms and trusted PnL stayed fixed.")
 
 
 if __name__ == "__main__":
