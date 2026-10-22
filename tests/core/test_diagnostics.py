@@ -1,14 +1,12 @@
 """Diagnosis must distinguish proofs, witnessed feasibility, and lack of knowledge."""
 
-import json
 from dataclasses import FrozenInstanceError, replace
-from itertools import combinations, product
+from itertools import combinations
 
 import pytest
 from sympy import (
     ConditionSet,
     Dummy,
-    Eq,
     FiniteSet,
     Function,
     ImageSet,
@@ -25,7 +23,6 @@ from sympy import (
 import modello
 import modello.diagnostics as diagnostics
 from modello import (
-    ConstraintKind,
     InstanceDummy,
     ModelDefinitionError,
     ModelInputError,
@@ -40,21 +37,7 @@ from modello import (
 )
 from modello.diagnostics import Candidate, FieldValue
 
-
-class Reading(Modello):
-    x = InstanceDummy("x", real=True)
-    squared = x**2
-
-
-class Check(Modello):
-    reading = component(Reading)
-    total = reading.squared + 1
-
-
-class Sum(Modello):
-    x = InstanceDummy("x", real=True)
-    y = InstanceDummy("y", real=True)
-    total = x + y
+from ._models import Check, Reading, Sum
 
 
 def assert_witness(problem, witness, constraints=None):
@@ -126,6 +109,42 @@ def test_inherited_refinement_retains_definition_paths():
     assert result.conflict.irreducible is True
 
 
+def test_nested_refinement_keeps_both_definitions_of_an_aliased_quantity():
+    """An alias and its component equation retain separate origins when nested."""
+
+    class Doubled(Modello):
+        x = InstanceDummy("x", real=True)
+        total = 2 * x
+
+    class Joined(Modello):
+        reading = component(Doubled)
+        observed = reading.total
+        observed = reading.x + 3
+
+    class Tripled(Doubled):
+        total = 3 * Doubled.x
+
+    class Refined(Joined):
+        reading = component(Tripled)
+
+    class Root(Modello):
+        left = component(Refined)
+        right = component(Joined)
+
+    problem = inspect_model(Root, "origins")
+    symbols = problem.symbols
+    assert [(c.path, c.left, c.right) for c in problem.constraints] == [
+        (("left", "observed"), symbols.left.reading.total, symbols.left.reading.x + 3),
+        (("left", "reading", "total"), symbols.left.reading.total, 3 * symbols.left.reading.x),
+        (("right", "observed"), symbols.right.reading.total, symbols.right.reading.x + 3),
+        (("right", "reading", "total"), symbols.right.reading.total, 2 * symbols.right.reading.x),
+    ]
+    for case in (Root("constructed"), problem.solutions().one()):
+        assert isinstance(case.left.reading, Tripled)
+        assert (case.left.reading.x, case.left.observed) == (S(3) / 2, S(9) / 2)
+        assert (case.right.reading.x, case.right.observed) == (3, 6)
+
+
 def test_inspection_does_not_reserve_model_field_names():
     class Named(Modello):
         model = InstanceDummy("model", real=True)
@@ -137,8 +156,8 @@ def test_inspection_does_not_reserve_model_field_names():
         inspect_model(Named("instance"), "wrong_input")
 
 
-def test_exact_linear_conflict_certificate_and_single_input_relaxations():
-    p = inspect_model(Sum, "bad", x=1, y=2, total=4)
+def test_exact_linear_conflict_certificate_and_single_input_relaxations(conflicting_sum):
+    p = conflicting_sum
     result = p.analyse(conflicts=True, relaxations=True)
     assert result.status == "inconsistent"
     assert result.linear.complete
@@ -156,27 +175,45 @@ def test_exact_linear_conflict_certificate_and_single_input_relaxations():
     assert "Certificate:" in str(result)
 
 
-def test_small_affine_cases_against_independent_exact_answers():
-    for x, y, total in product((-1, 0, 1), repeat=3):
-        p = inspect_model(Sum, "grid", x=x, y=y, total=total)
-        result = p.analyse()
-        assert result.status == ("consistent" if x + y == total else "inconsistent")
-        if x + y == total:
-            assert_witness(p, result.witness)
-        else:
-            assert result.conflict.linear_certificate.verify()
+@pytest.mark.parametrize(
+    "x, y, total",
+    [
+        pytest.param(0, 0, 0, id="zero"),
+        pytest.param(-1, 1, 0, id="cancellation"),
+        pytest.param(-1, -1, -2, id="negative-total"),
+        pytest.param(1, 2, 3, id="positive-total"),
+        pytest.param(0, 0, 1, id="positive-conflict"),
+        pytest.param(0, 0, -1, id="negative-conflict"),
+    ],
+)
+def test_small_affine_cases_against_independent_exact_answers(x, y, total):
+    p = inspect_model(Sum, "grid", x=x, y=y, total=total)
+    result = p.analyse()
+    assert result.status == ("consistent" if x + y == total else "inconsistent")
+    if x + y == total:
+        assert_witness(p, result.witness)
+    else:
+        assert result.conflict.linear_certificate.verify()
 
 
-def test_every_subset_of_an_affine_conflict_against_linsolve():
-    p = inspect_model(Sum, "subsets", x=1, y=2, total=4)
+@pytest.mark.parametrize(
+    "indices",
+    [
+        pytest.param(indices, id="constraints=" + (",".join(map(str, indices)) or "none"))
+        for size in range(5)
+        for indices in combinations(range(4), size)
+    ],
+)
+def test_every_subset_of_an_affine_conflict_against_linsolve(conflicting_sum, indices):
+    p = conflicting_sum
+    assert len(p.constraints) == 4
+    subset = tuple(p.constraints[index] for index in indices)
     variables = tuple(field.symbol for field in p.fields)
-    for size in range(len(p.constraints) + 1):
-        for subset in combinations(p.constraints, size):
-            actual = replace(p, constraints=subset).analyse()
-            solutions = linsolve([c.left - c.right for c in subset], variables)
-            # An empty equation list has every assignment as a solution.
-            expected = bool(solutions) if subset else True
-            assert actual.status == ("consistent" if expected else "inconsistent")
+    actual = replace(p, constraints=subset).analyse()
+    solutions = linsolve([c.left - c.right for c in subset], variables)
+    # An empty equation list has every assignment as a solution.
+    expected = bool(solutions) if subset else True
+    assert actual.status == ("consistent" if expected else "inconsistent")
 
 
 def test_affine_nullity_is_not_dimension_after_domain_restrictions():
@@ -202,9 +239,8 @@ def test_nonlinear_singular_solution_is_not_inferred_from_rank():
     assert_witness(p, result.witness)
 
 
-def test_empty_solver_output_is_unknown_and_external_witness_can_prove_feasibility(monkeypatch):
-    monkeypatch.setattr(diagnostics, "solve", lambda *args, **kwargs: [])
-    monkeypatch.setattr(diagnostics, "solveset", lambda f, x, domain: ConditionSet(x, Eq(f, 0), domain))
+@pytest.mark.usefixtures("inconclusive_diagnostics")
+def test_empty_solver_output_is_unknown_and_external_witness_can_prove_feasibility():
     p = inspect_model(Reading, "unknown", squared=3)
     result = p.analyse(conflicts=True)
     assert result.status == "unknown"
@@ -214,9 +250,8 @@ def test_empty_solver_output_is_unknown_and_external_witness_can_prove_feasibili
     assert replace(p, candidates=(witness,)).analyse().status == "consistent"
 
 
-def test_unknown_deletion_does_not_certify_irreducibility(monkeypatch):
-    monkeypatch.setattr(diagnostics, "solve", lambda *args, **kwargs: [])
-    monkeypatch.setattr(diagnostics, "solveset", lambda f, x, domain: ConditionSet(x, Eq(f, 0), domain))
+@pytest.mark.usefixtures("inconclusive_diagnostics")
+def test_unknown_deletion_does_not_certify_irreducibility():
     p = inspect_model(Reading, "conflict", x=0, squared=3)
     result = p.analyse(conflicts=True)
     assert result.status == "inconsistent"
@@ -225,8 +260,8 @@ def test_unknown_deletion_does_not_certify_irreducibility(monkeypatch):
     assert "irreducibility not established" in str(result)
 
 
-def test_budget_keeps_a_proven_conflict_without_claiming_a_completed_search():
-    p = inspect_model(Sum, "budget", x=1, y=2, total=4)
+def test_budget_keeps_a_proven_conflict_without_claiming_a_completed_search(conflicting_sum):
+    p = conflicting_sum
     result = p.analyse(conflicts=True, relaxations=True, max_checks=1)
     assert result.status == "inconsistent"
     assert result.checks == 1
@@ -266,59 +301,6 @@ def test_component_relaxations_remove_all_copied_values_together():
     assert not any(c.input == "reading" for c in p.without("reading").constraints)
 
 
-def test_copied_values_retain_construction_inputs_in_both_solve_directions():
-    direct = inspect_model(Reading, "direct", x=2)
-    assert direct.constraints[-1].kind is ConstraintKind.INPUT
-    assert str(direct.constraints[-1].kind) == "input"
-    assert f"{direct.constraints[-1].kind:>7}" == "  input"
-    assert json.dumps(direct.constraints[-1].kind) == '"input"'
-    assert "[input 'x']" in str(direct)
-
-    class Positive(Reading):
-        x = InstanceDummy("x", positive=True)
-        alias = x
-
-    for source, supplied, inferred in (
-        (Positive("forward", x=2), "x", "squared"),
-        (Positive("backward", squared=4), "squared", "x"),
-        (Positive("alias", alias=2), "x", "squared"),
-    ):
-        p = inspect_model(Check, "copy", reading=source)
-        assert {(c.path[-1], c.kind) for c in p.constraints if c.input == "reading"} == {
-            (supplied, "input"),
-            (inferred, "inferred"),
-        }
-        assert f"{inferred} = " in str(p)
-        assert "[inferred in 'reading']" in str(p)
-        assert "[input 'reading']" in str(p)
-
-        # Copying a populated descendant or the whole parent preserves the same
-        # distinction; it is not guessed from the field's declaration.
-        parent = Check("parent", reading=source)
-        descendant = inspect_model(Check, "descendant", reading=parent.reading)
-        assert [(c.path, c.kind) for c in descendant.constraints] == [(c.path, c.kind) for c in p.constraints]
-
-        class Envelope(Modello):
-            check = component(Check)
-
-        nested = inspect_model(Envelope, "nested", check=parent)
-        assert (
-            next(c for c in nested.constraints if c.input and c.path == ("check", "reading", supplied)).kind == "input"
-        )
-        assert (
-            next(c for c in nested.constraints if c.input and c.path == ("check", "reading", inferred)).kind
-            == "inferred"
-        )
-        assert next(c for c in nested.constraints if c.path == ("check", "total") and c.input).kind == "inferred"
-
-    class PositiveCheck(Check):
-        reading = component(Positive)
-
-    joined = PositiveCheck("joint", total=5)
-    copied = inspect_model(Check, "copy_joint", reading=joined.reading)
-    assert {c.kind for c in copied.constraints if c.input == "reading"} == {"inferred"}
-
-
 def test_parameter_conditions_and_floats_are_not_generic_rank_proofs():
     parameter = Symbol("parameter", real=True)
 
@@ -350,30 +332,57 @@ def test_parameter_conditions_and_floats_are_not_generic_rank_proofs():
     assert_witness(concrete, concrete.analyse().witness)
 
 
-def test_candidate_audits_cover_domains_undefined_values_and_case_identity():
-    class Positive(Modello):
-        x = InstanceDummy("x", positive=True)
-        alias = x
+@pytest.mark.parametrize(
+    "value, verdict",
+    [
+        pytest.param(S.One, "satisfied", id="positive"),
+        pytest.param(S.Zero, "violated", id="outside-domain"),
+        pytest.param(S.NaN, "violated", id="undefined"),
+        pytest.param(Symbol("unknown"), "unknown", id="undecided"),
+    ],
+)
+def test_candidate_audits_check_domains_and_definedness(positive_problem, value, verdict):
+    candidate = Candidate((FieldValue(positive_problem.field("x"), value),))
+    assert positive_problem.check(candidate).verdict == verdict
 
-    p = inspect_model(Positive, "candidate")
-    assert p.check(Candidate((FieldValue(p.field("x"), S.Zero),))).verdict == "violated"
-    assert p.check(Candidate((FieldValue(p.field("x"), S.NaN),))).verdict == "violated"
-    assert p.check(Candidate((FieldValue(p.field("x"), Symbol("unknown")),))).verdict == "unknown"
-    with pytest.raises(ValueError, match="aliases"):
-        p.check(Candidate((FieldValue(p.field("x"), S.One), FieldValue(p.field("alias"), S(2)))))
-    candidate = Candidate((FieldValue(p.field("alias"), 1),))
-    assert candidate.value(p.field("x")) == 1
-    with pytest.raises(KeyError):
-        candidate.value(inspect_model(Positive, "other").field("x"))
-    with pytest.raises(ValueError, match="aliases"):
-        Candidate((FieldValue(p.field("x"), S.One), FieldValue(p.field("alias"), S(2)))).value(p.field("x"))
-    with pytest.raises(ValueError, match="another problem"):
-        p.check(Candidate((FieldValue(inspect_model(Positive, "candidate").field("x"), S.One),)))
-    with pytest.raises(TypeError, match="scalar"):
-        FieldValue(p.field("x"), {})
-    with pytest.raises(TypeError, match="scalar"):
-        FieldValue(p.field("x"), object())
 
+@pytest.mark.parametrize("operation", ["audit", "lookup"])
+def test_candidate_aliases_cannot_have_conflicting_values(positive_problem, operation):
+    p = positive_problem
+    candidate = Candidate((FieldValue(p.field("x"), 1), FieldValue(p.field("alias"), 2)))
+    with pytest.raises(ModelValidationError, match="aliases"):
+        if operation == "audit":
+            p.check(candidate)
+        else:
+            candidate.value(p.field("x"))
+
+
+def test_candidate_lookup_accepts_recorded_aliases(positive_problem):
+    candidate = Candidate((FieldValue(positive_problem.field("alias"), 1),))
+    assert candidate.value(positive_problem.field("x")) == 1
+
+
+@pytest.mark.parametrize("operation", ["audit", "lookup"])
+def test_candidate_fields_are_owned_by_their_problem(positive_problem, operation):
+    p = positive_problem
+    other = inspect_model(p.model, p.name)
+    candidate = Candidate((FieldValue(p.field("x"), 1),))
+    if operation == "lookup":
+        with pytest.raises(KeyError):
+            candidate.value(other.field("x"))
+    else:
+        foreign = Candidate((FieldValue(other.field("x"), 1),))
+        with pytest.raises(ModelValidationError, match="another problem"):
+            p.check(foreign)
+
+
+@pytest.mark.parametrize("value", [pytest.param({}, id="mapping"), pytest.param(object(), id="opaque-object")])
+def test_field_values_require_scalars(positive_problem, value):
+    with pytest.raises(ModelInputError, match="scalar"):
+        FieldValue(positive_problem.field("x"), value)
+
+
+def test_a_derived_pole_is_an_undefined_deduction():
     class Reciprocal(Modello):
         x = InstanceDummy("x", real=True)
         inverse = 1 / x
@@ -383,8 +392,7 @@ def test_candidate_audits_cover_domains_undefined_values_and_case_identity():
     assert any(check.predicate == "defined" and check.actual is False for check in pole.deductions.assumptions)
 
 
-@pytest.mark.parametrize("backend_error", (NotImplementedError("unsupported solver"), ValueError("solver value error")))
-def test_constructor_failure_keeps_candidates_and_backend_cause(monkeypatch, backend_error):
+def test_ambiguous_construction_retains_auditable_candidates():
     with pytest.raises(SolutionCountError) as caught:
         Reading("ambiguous", squared=3)
     assert isinstance(caught.value, ModelloError)
@@ -400,6 +408,15 @@ def test_constructor_failure_keeps_candidates_and_backend_cause(monkeypatch, bac
     assert all(problem.check(candidate).verdict == "satisfied" for candidate in problem.candidates)
     assert problem.analyse().status == "consistent"
 
+
+@pytest.mark.parametrize(
+    "backend_error",
+    [
+        pytest.param(NotImplementedError("unsupported solver"), id="unsupported"),
+        pytest.param(ValueError("solver value error"), id="value-error"),
+    ],
+)
+def test_solver_backend_failure_keeps_its_cause(monkeypatch, backend_error):
     def unsupported(*args, **kwargs):
         raise backend_error
 
@@ -575,7 +592,16 @@ def test_nested_reports_show_component_types_and_equation_origins():
     assert "reading: Reading" in rendered
 
 
-def test_cross_layer_equations_share_the_nearest_common_ancestor():
+@pytest.mark.parametrize(
+    "reference, left, right, offset",
+    [
+        pytest.param(("review", "check", "total"), "reading.x", "total - 1", -1, id="same-component"),
+        pytest.param(("review", "x"), "check.reading.x", "x + 1", 1, id="parent-component"),
+        pytest.param(("review", "peer", "x"), "check.reading.x", "peer.x + 1", 1, id="sibling-component"),
+        pytest.param(("x",), "review.check.reading.x", "x + 1", 1, id="root"),
+    ],
+)
+def test_cross_layer_equations_share_the_nearest_common_ancestor(reference, left, right, offset):
     class Review(Modello):
         check = component(Check)
         peer = component(Reading)
@@ -585,37 +611,20 @@ def test_cross_layer_equations_share_the_nearest_common_ancestor():
         review = component(Review)
         x = InstanceDummy("x", real=True)
 
-    def snapshot(expression):
-        source = Reading("source", x=expression)
-        check = Check("check", reading=source)
-        review = Review("review", check=check)
-        return inspect_model(Batch, "batch", review=review)
-
-    for expression, left, right, reference, offset in (
-        (Batch.review.check.total - 1, "reading.x", "total - 1", ("review", "check", "total"), -1),
-        (Batch.review.x + 1, "check.reading.x", "x + 1", ("review", "x"), 1),
-        (Batch.review.peer.x + 1, "check.reading.x", "peer.x + 1", ("review", "peer", "x"), 1),
-        (Batch.x + 1, "review.check.reading.x", "x + 1", ("x",), 1),
-    ):
-        problem = snapshot(expression)
-        rendered = str(problem)
-        assert f"{left} = {right} [input 'review']" in rendered
-        assert "squared = x**2 [definition]" in rendered
-        # Rendering changes neither recorded paths nor the expressions they identify.
-        copied = next(c for c in problem.constraints if c.path == ("review", "check", "reading", "x"))
-        assert copied.right == problem.field(*reference).symbol + offset
-        assert problem.format(copied.right) == f"{'.'.join(reference)} {'+' if offset > 0 else '-'} 1"
-
-
-@pytest.mark.parametrize("replacement", (9, S(9)))
-def test_changed_component_results_are_inputs_instead_of_stale_inferences(replacement):
-    source = Reading("source", x=2)
-    source.squared = replacement
-    p = inspect_model(Check, "changed", reading=source)
-    copied = next(c for c in p.constraints if c.input and c.path == ("reading", "squared"))
-    assert copied.kind == "input"
-    assert copied.right == 9
-    assert p.analyse().status == "inconsistent"
+    expression = Batch
+    for part in reference:
+        expression = getattr(expression, part)
+    source = Reading("source", x=expression + offset)
+    check = Check("check", reading=source)
+    review = Review("review", check=check)
+    problem = inspect_model(Batch, "batch", review=review)
+    rendered = str(problem)
+    assert f"{left} = {right} [input 'review']" in rendered
+    assert "squared = x**2 [definition]" in rendered
+    # Rendering changes neither recorded paths nor the expressions they identify.
+    copied = next(c for c in problem.constraints if c.path == ("review", "check", "reading", "x"))
+    assert copied.right == problem.field(*reference).symbol + offset
+    assert problem.format(copied.right) == f"{'.'.join(reference)} {'+' if offset > 0 else '-'} 1"
 
 
 def test_bare_field_paths_cannot_be_confused_with_external_symbol_identities():

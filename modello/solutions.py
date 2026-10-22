@@ -200,6 +200,72 @@ def _parameter_set(
     return domain
 
 
+class _FamilyReduction:
+    """Track coordinate expressions while applying equivalence-preserving reductions.
+
+    Every original equation remains available for the final predicates. Failed
+    affine solving leaves the current expressions and coordinates unchanged.
+    """
+
+    def __init__(
+        self, symbols: tuple[Symbol, ...], equations: tuple[tuple[Expr, Expr], ...], protected: frozenset[Symbol]
+    ) -> None:
+        self.equations = equations
+        self.protected = protected
+        self.expressions: dict[Symbol, Expr] = {symbol: symbol for symbol in symbols}
+        self.remaining = list(symbols)
+        self.inconsistent = False
+        self.issues: list[SolutionIssue] = []
+
+    def substitute_isolated(self) -> None:
+        """Eliminate explicit quantities while retaining preferred coordinates."""
+        while True:
+            substitution = None
+            for left, right in self.equations:
+                a, b = left.xreplace(self.expressions), right.xreplace(self.expressions)
+                if a in self.remaining and a not in self.protected and a not in b.free_symbols:
+                    substitution = (a, b)
+                    break
+                if b in self.remaining and b not in self.protected and b not in a.free_symbols:
+                    substitution = (b, a)
+                    break
+            if substitution is None:
+                return
+            symbol, value = substitution
+            self.expressions = {key: expr.xreplace({symbol: value}) for key, expr in self.expressions.items()}
+            self.remaining.remove(symbol)
+
+    def eliminate_affine(self) -> None:
+        """Reduce rational affine joins, ordering preferred coordinates last."""
+        ordered = tuple(s for s in self.remaining if s not in self.protected) + tuple(
+            s for s in self.remaining if s in self.protected
+        )
+        affine = []
+        for left, right in self.equations:
+            if not ordered:
+                return
+            residual = left.xreplace(self.expressions) - right.xreplace(self.expressions)
+            try:
+                matrix, constant = linear_eq_to_matrix([residual], ordered)
+            except NonlinearError:
+                continue
+            if all(value.is_Rational for value in (*matrix, *constant)):
+                affine.append(residual)
+        if not affine:
+            return
+        try:
+            solved = linsolve(affine, ordered)
+            if solved is S.EmptySet:
+                self.inconsistent = True
+            else:
+                (row,) = solved
+                replacements = dict(zip(ordered, row, strict=True))
+                self.expressions = {key: expr.xreplace(replacements) for key, expr in self.expressions.items()}
+                self.remaining = [symbol for symbol in self.remaining if replacements[symbol] == symbol]
+        except Exception as error:
+            self.issues.append(SolutionIssue("rational affine reduction", error))
+
+
 @dataclass(frozen=True, repr=False)
 class SolutionFamily(Generic[ModelT]):
     """All finite commutative scalar states of one recorded model problem.
@@ -242,72 +308,32 @@ class SolutionFamily(Generic[ModelT]):
             for field, domain in zip(fields, domains, strict=True)
         )
         bindings = {field.symbol: symbol for field, symbol in zip(fields, symbols, strict=True)}
-        protected = {bindings[field.symbol] for field in preferred}
+        protected = frozenset(bindings[field.symbol] for field in preferred)
         equations = [(bindings[c.left], c.right.xreplace(bindings)) for c in problem.constraints]
         equations.extend(
             (condition.lhs.xreplace(bindings), condition.rhs.xreplace(bindings))
             for condition in conditions
             if isinstance(condition, Eq)
         )
-        expressions: dict[Symbol, Expr] = {symbol: symbol for symbol in symbols}
-        remaining = list(symbols)
-        # Eliminate only an explicitly isolated quantity, preserving all other
-        # equations and every eliminated quantity's domain below.
-        while True:
-            substitution = None
-            for left, right in equations:
-                a, b = left.xreplace(expressions), right.xreplace(expressions)
-                if a in remaining and a not in protected and a not in b.free_symbols:
-                    substitution = (a, b)
-                    break
-                if b in remaining and b not in protected and b not in a.free_symbols:
-                    substitution = (b, a)
-                    break
-            if substitution is None:
-                break
-            symbol, value = substitution
-            expressions = {key: expr.xreplace({symbol: value}) for key, expr in expressions.items()}
-            remaining.remove(symbol)
-        residuals = [left.xreplace(expressions) - right.xreplace(expressions) for left, right in equations]
-        issues: list[SolutionIssue] = []
-        # Exact rational affine elimination also handles joining equations, with
-        # preferred coordinates ordered last so they remain free where possible.
-        ordered = tuple(s for s in remaining if s not in protected) + tuple(s for s in remaining if s in protected)
-        affine = []
-        for residual in residuals:
-            if not ordered:
-                break
-            try:
-                matrix, constant = linear_eq_to_matrix([residual], ordered)
-            except NonlinearError:
-                continue
-            if all(value.is_Rational for value in (*matrix, *constant)):
-                affine.append(residual)
-        if affine:
-            try:
-                solved = linsolve(affine, ordered)
-                if solved is S.EmptySet:
-                    domains = tuple(S.EmptySet for _ in fields)
-                else:
-                    (row,) = solved
-                    replacements = dict(zip(ordered, row, strict=True))
-                    expressions = {key: expr.xreplace(replacements) for key, expr in expressions.items()}
-                    remaining = [symbol for symbol in remaining if replacements[symbol] == symbol]
-            except Exception as error:
-                issues.append(SolutionIssue("rational affine reduction", error))
-        parameters = tuple(remaining)
+        reduction = _FamilyReduction(symbols, tuple(equations), protected)
+        reduction.substitute_isolated()
+        reduction.eliminate_affine()
+        if reduction.inconsistent:
+            domains = tuple(S.EmptySet for _ in fields)
+        expressions = reduction.expressions
+        parameters = tuple(reduction.remaining)
         values = tuple(expressions[symbol] for symbol in symbols)
         predicates = [Eq(left.xreplace(expressions), right.xreplace(expressions)) for left, right in equations]
         predicates.extend(condition.xreplace(bindings).xreplace(expressions) for condition in conditions)
         predicates.extend(_membership(value, domain, parameters) for value, domain in zip(values, domains, strict=True))
         parameter_fields = tuple(fields[symbols.index(symbol)] for symbol in parameters)
         parameter_domains = tuple(domains[symbols.index(symbol)] for symbol in parameters)
-        domain = _parameter_set(parameters, parameter_domains, And(*predicates), issues)
+        domain = _parameter_set(parameters, parameter_domains, And(*predicates), reduction.issues)
         return cls(
             problem,
             parameter_fields,
             domain,
-            tuple(issues),
+            tuple(reduction.issues),
             tuple(_FamilyField(*binding) for binding in zip(fields, symbols, values, strict=True)),
             conditions,
             preferred,
