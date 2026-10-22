@@ -137,13 +137,18 @@ extension decorators and returns the original class. Decorate a component
 before declaring models that contain it, so its metadata is included in their
 compiled registries.
 
-Several annotation types can decorate one field. Stacked annotations of the
-same exact type use the last value. Inheritance preserves metadata by field
-name; a new annotation of the same type replaces the inherited object as a
-whole. Later model bases take precedence for each annotation type. A plain
-field reassignment retains its annotations, including the common pattern of
-declaring an assumed symbol and then assigning its defining expression.
-Aliases have separate named metadata while retaining their shared symbol.
+Several annotation types can decorate one field, with one declaration per exact
+type in each class scope. Duplicate types in a call, stacked helpers, repeated
+field annotations, and repeated model decorators raise
+``ModelDefinitionError``, even when the metadata is identical. No annotation
+is silently discarded. A rejected model annotation leaves its registry intact.
+
+Inheritance preserves metadata by field name. A subclass has a new declaration
+scope and may explicitly replace an inherited annotation as a whole. Later
+model bases take precedence for each annotation type. A plain field reassignment
+retains its annotations, including the common pattern of declaring an assumed
+symbol and then assigning its defining expression. Aliases have separate named
+metadata while retaining their shared symbol.
 
 Nested components contribute scoped paths automatically. Replacing a component
 rebuilds its descendant metadata from the replacement class, dropping obsolete

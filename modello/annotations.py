@@ -42,15 +42,16 @@ def annotate(value: _ValueT, *annotations: Annotation) -> _ValueT:
 
     The class namespace unwraps the value before subsequent expressions use
     it. The value's static type is preserved, like ``component(Model)``.
-    Stacked declarations retain different annotation types; the last instance
-    of the same exact type wins. This is a declaration helper, not a wrapper
-    for arithmetic outside a model class body.
+    Stacked declarations retain different annotation types; duplicate instances
+    of the same exact type raise ModelDefinitionError. This is a declaration
+    helper, not a wrapper for arithmetic outside a model class body.
     """
+    if isinstance(value, _Annotated):
+        annotations = (*value.annotations, *annotations)
+        value = cast(_ValueT, value.value)
     _validate(annotations)
     if not annotations:
         return value
-    if isinstance(value, _Annotated):
-        return cast(_ValueT, _Annotated(value.value, (*value.annotations, *annotations)))
     return cast(_ValueT, _Annotated(value, annotations))
 
 
@@ -58,13 +59,16 @@ def annotate_model(model: type[_ModelT], *annotations: Annotation) -> type[_Mode
     """Attach model-level metadata at the registry's empty path.
 
     Extension decorators can call this after a class has been created. The
-    class itself is returned, preserving its identity and type.
+    class itself is returned, preserving its identity and type. Repeating an
+    annotation type on the same class raises ModelDefinitionError; a subclass
+    can refine inherited metadata in its own declaration scope.
     """
     from modello import Modello
 
     if not isinstance(model, type) or not issubclass(model, Modello):
         raise ModelDefinitionError("Model annotations require a Modello class")
     _validate(annotations)
+    model._modello_namespace.add_annotations("", annotations)
     groups = {kind: dict(fields) for kind, fields in model.__modello_annotations__.items()}
     for annotation in annotations:
         groups.setdefault(type(annotation), {})[""] = annotation
@@ -73,8 +77,14 @@ def annotate_model(model: type[_ModelT], *annotations: Annotation) -> type[_Mode
 
 
 def _validate(annotations: tuple[Annotation, ...]) -> None:
-    if any(not isinstance(annotation, Annotation) for annotation in annotations):
-        raise ModelDefinitionError("Extension metadata must derive from Annotation")
+    seen: set[type[Annotation]] = set()
+    for annotation in annotations:
+        if not isinstance(annotation, Annotation):
+            raise ModelDefinitionError("Extension metadata must derive from Annotation")
+        kind = type(annotation)
+        if kind in seen:
+            raise ModelDefinitionError(f"Duplicate {kind.__name__} annotation")
+        seen.add(kind)
 
 
 def _freeze(

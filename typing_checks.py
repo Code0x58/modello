@@ -24,7 +24,7 @@ from modello import (
     inspect_model,
 )
 from modello.diagnostics import ComponentView, FieldValue, ModelField, ProblemAnalysis, SolutionSet
-from modello.gui import FieldInfo, ModelInfo, gui
+from modello.gui import FieldInfo, ModelInfo, Scenario, gui
 
 
 class Point(Modello):
@@ -85,6 +85,8 @@ def check_extensions() -> None:
     _invalid_label: int = drawing.start.label()  # type: ignore[assignment]
     _invalid_note: int = Description.for_model(AnnotatedDrawing)["end"].text  # type: ignore[assignment]
     annotate_model(object, Description("Invalid"))  # type: ignore[type-var]
+    gui(component(Point), "Start")  # type: ignore[call-arg]
+    Scenario("A question", "A description")  # type: ignore[call-arg]
 
 
 def check_inputs() -> None:

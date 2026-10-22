@@ -108,26 +108,26 @@ class Allocation(Modello):
     highlights=("expected_return", "volatility", "expected_gain"),
     scenarios=(
         Scenario(
-            "Explore freely",
-            "Keep the equity allocation free and see how it drives the results.",
+            title="Explore freely",
+            description="Keep the equity allocation free and see how it drives the results.",
             select="allocation.equity",
         ),
         Scenario(
-            "70 / 30 split",
-            "Supply a 70% equity allocation and calculate the return, risk, and expected gain.",
-            {"allocation.equity": Rational(7, 10)},
+            title="70 / 30 split",
+            description="Supply a 70% equity allocation and calculate the return, risk, and expected gain.",
+            bindings={"allocation.equity": Rational(7, 10)},
             select="volatility",
         ),
         Scenario(
-            "Target 6% return",
-            "Observe a 6% expected return and let the model infer the required allocation.",
-            {"expected_return": Rational(6, 100)},
+            title="Target 6% return",
+            description="Observe a 6% expected return and let the model infer the required allocation.",
+            bindings={"expected_return": Rational(6, 100)},
             select="allocation.equity",
         ),
         Scenario(
-            "Find a missing return",
-            "Keep a 70/30 mix, drop the assumed equity return, and infer it from a 6% portfolio return.",
-            {
+            title="Find a missing return",
+            description="Keep a 70/30 mix, drop the assumed equity return, and infer it from a 6% portfolio return.",
+            bindings={
                 "allocation.equity": Rational(7, 10),
                 "market.equity.expected_return": None,
                 "expected_return": Rational(6, 100),

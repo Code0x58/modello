@@ -44,21 +44,51 @@ def test_annotations_are_unwrapped_before_later_class_body_expressions():
     assert Unit.for_model(Described)["x"].name == "m"
 
 
-def test_stacked_extensions_and_repeated_annotation_types():
+def test_stacked_extensions_keep_distinct_annotation_types():
     class NestedDescription(Description):
         pass
 
     class Model(Modello):
         value = annotate(
             annotate(InstanceDummy("value"), Description("Inner"), Unit("m")),
-            Description("Outer"),
             NestedDescription("Separate kind"),
         )
 
-    assert Description.for_model(Model)["value"].text == "Outer"
+    assert Description.for_model(Model)["value"].text == "Inner"
     assert Unit.for_model(Model)["value"].name == "m"
     assert NestedDescription.for_model(Model)["value"].text == "Separate kind"
     assert not Annotation.for_model(Model)
+
+
+@pytest.mark.parametrize("stacked", [False, True])
+def test_duplicate_annotations_raise_even_when_the_metadata_is_identical(stacked):
+    info = Description("Same")
+    with pytest.raises(ModelDefinitionError, match="Duplicate Description annotation"):
+        if stacked:
+            annotate(annotate(InstanceDummy("value"), info), info)
+        else:
+            annotate(InstanceDummy("value"), info, info)
+
+
+def test_reannotating_a_field_in_one_class_body_is_rejected():
+    with pytest.raises(ModelDefinitionError, match=r"Duplicate Description annotation on Invalid\.value"):
+
+        class Invalid(Modello):
+            value = annotate(InstanceDummy("value"), Description("Original"))
+            value = annotate(value, Description("Second"))
+
+
+def test_duplicate_model_annotations_are_rejected_without_partial_updates():
+    class Model(Modello):
+        value = InstanceDummy("value")
+
+    annotate_model(Model, Description("Original"))
+    with pytest.raises(ModelDefinitionError, match="Duplicate Description annotation on Model"):
+        annotate_model(Model, Unit("m"), Description("Second"))
+    assert Description.for_model(Model)[""].text == "Original"
+    assert not Unit.for_model(Model)
+    annotate_model(Model, Unit("m"))
+    assert Unit.for_model(Model)[""].name == "m"
 
 
 def test_annotations_stay_with_named_fields_and_aliases_keep_separate_labels():

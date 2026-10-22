@@ -48,7 +48,7 @@ class FieldInfo(Annotation):
 
 
 def gui(
-    value: _ValueT,
+    field: _ValueT,
     *,
     title: str = "",
     description: str = "",
@@ -65,7 +65,7 @@ def gui(
     the model sees the original value and retains its normal algebra.
     """
     return annotate(
-        value,
+        field,
         FieldInfo(
             title=title,
             description=description,
@@ -78,12 +78,13 @@ def gui(
     )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Scenario:
     """A named exploration that restores initial inputs, then applies bindings.
 
-    Only visible, editable quantities may be bound. ``select`` opens a field
-    in the inspector; it need not be the quantity being observed.
+    All arguments are named. Only visible, editable quantities may be bound.
+    ``select`` opens a field in the inspector; it need not be the quantity
+    being observed.
     """
 
     title: str

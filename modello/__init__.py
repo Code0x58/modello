@@ -123,6 +123,7 @@ class ModelloMetaNamespace(dict):
         self.dummies: dict[str, InstanceDummy] = {}
         self.nested_models: dict[str, _ModelReference] = {}
         self.annotations: dict[type[Annotation], dict[str, Annotation]] = {}
+        self._declared_annotations: set[tuple[type[Annotation], str]] = set()
         self._replacements: dict[InstanceDummy, InstanceDummy] = {}
         self._missing: dict[InstanceDummy, str] = {}
         # Preserve the existing precedence: later model bases override earlier ones.
@@ -132,10 +133,6 @@ class ModelloMetaNamespace(dict):
                 continue
             for kind, fields in parent.annotations.items():
                 self.annotations.setdefault(kind, {}).update(fields)
-            # Model decorators run after namespace compilation.
-            for kind, fields in getattr(base, "__modello_annotations__", {}).items():
-                if "" in fields:
-                    self.annotations.setdefault(kind, {})[""] = fields[""]
             conflicts = (self.dummies.keys() & parent.nested_models.keys()) | (
                 self.nested_models.keys() & parent.dummies.keys()
             )
@@ -196,6 +193,7 @@ class ModelloMetaNamespace(dict):
         if isinstance(value, _Annotated):
             annotations = value.annotations
             value = value.value
+        self.add_annotations(key, annotations)
         is_model = isinstance(value, ModelloMeta)
         if (isinstance(value, Basic) or is_model) and key.startswith("_modello_"):
             raise ModelDefinitionError("The _modello_ prefix is reserved for model metadata")
@@ -224,9 +222,17 @@ class ModelloMetaNamespace(dict):
             raise ModelInputError("Declare a component using its model class, not another component reference")
         elif key in self.dummies or key in self.nested_models:
             raise ModelDefinitionError(f"Cannot assign {self.name}.{key} to a non-model value")
-        for annotation in annotations:
-            self.annotations.setdefault(type(annotation), {})[key] = annotation
         super().__setitem__(key, value)
+
+    def add_annotations(self, field: str, annotations: tuple[Annotation, ...]) -> None:
+        """Reject duplicate declarations while allowing inherited metadata to be refined."""
+        for annotation in annotations:
+            if (type(annotation), field) in self._declared_annotations:
+                path = f"{self.name}.{field}" if field else self.name
+                raise ModelDefinitionError(f"Duplicate {type(annotation).__name__} annotation on {path}")
+        for annotation in annotations:
+            self.annotations.setdefault(type(annotation), {})[field] = annotation
+            self._declared_annotations.add((type(annotation), field))
 
     def fields(self) -> dict[FieldPath, InstanceDummy]:
         """Flatten scalar fields while retaining their attribute paths."""

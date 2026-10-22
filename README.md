@@ -155,6 +155,6 @@ Install `modello[gui]` for the optional local browser explorer. Run
 quantities, edit or release inputs, inspect domains and provenance, and browse
 typeset MathML equations. The portfolio demo starts with a free stock–bond
 allocation and also solves for a return target. Field presentation lives beside
-declarations with `gui(value, title=..., ...)`, using the core's generic annotation
+declarations with `gui(field, title=..., ...)`, using the core's generic annotation
 registry. The [GUI guide](docs/gui.rst) covers metadata, hidden
 inputs, validation, and the prototype's scope. The base install remains SymPy only.

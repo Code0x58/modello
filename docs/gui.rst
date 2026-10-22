@@ -200,7 +200,8 @@ Each browser holds its own edits and cannot change another browser's state.
 Descriptions, units, and guided questions
 -----------------------------------------
 
-Place presentation beside a field with ``gui(value, ...)``. It accepts an
+Place presentation beside a field with ``gui(field, *, ...)``. Metadata options
+are keyword-only. It accepts an
 ``InstanceDummy``, a calculated expression, or ``component(Child)``. The class
 body sees the original value immediately, so later expressions use the field
 normally. Decorate the class with ``@ModelInfo(...)`` for model-level text and
@@ -218,8 +219,8 @@ guided questions. There is no parallel field-name dictionary to maintain.
        initial_field="expected_return",
        highlights=("gain",),
        scenarios=(Scenario(
-           "8% return", "Supply a return and calculate expected gain.",
-           {"expected_return": Rational(2, 25)}, select="gain",
+           title="8% return", description="Supply a return and calculate expected gain.",
+           bindings={"expected_return": Rational(2, 25)}, select="gain",
        ),),
    )
    class ReturnModel(Modello):
@@ -268,6 +269,10 @@ permissions are validated; a scenario cannot change hidden or Recorded values.
 Its observations still pass through the same validation as manual edits.
 Use ``None`` in a scenario's bindings to drop a specific initial observation;
 other initial observations remain active.
+Every ``Scenario`` argument is keyword-only: ``title``, ``description``,
+``bindings``, and ``select``. Repeating ``gui`` metadata on the same field or
+``ModelInfo`` on the same class raises ``ModelDefinitionError``; subclasses
+can explicitly refine inherited presentation in their own declaration scope.
 
 ``symbol`` is literal text, including Unicode, rather than LaTeX. ``unit`` is a
 display label without automatic unit conversion or dimensional analysis.

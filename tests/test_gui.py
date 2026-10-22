@@ -8,10 +8,10 @@ from xml.etree import ElementTree
 import pytest
 from sympy import Rational, Symbol, pi, sqrt
 
-from modello import InstanceDummy, Modello, component, inspect_model
+from modello import InstanceDummy, Modello, annotate, component, inspect_model
 from modello._gui.inputs import parse_scalar
 from modello.diagnostics import ConstraintKind
-from modello.errors import ModelInputError
+from modello.errors import ModelDefinitionError, ModelInputError
 from modello.gui import BindingError, Explorer, FieldInfo, ModelInfo, Scenario, create_app, gui
 
 
@@ -401,6 +401,34 @@ def test_inline_annotations_supply_model_component_and_scalar_presentation():
     assert Project("case", panel=original).total == 60
 
 
+def test_gui_metadata_and_scenario_arguments_require_names():
+    with pytest.raises(TypeError):
+        gui(InstanceDummy("value"), "A title")
+    with pytest.raises(TypeError):
+        Scenario("A question", "A description")
+    scenario = Scenario(title="A question", description="A description", bindings={"value": 3}, select="value")
+    assert scenario.bindings == {"value": 3}
+
+    class Model(Modello):
+        value = gui(field=InstanceDummy("value"), title="A title")
+
+    assert FieldInfo.for_model(Model)["value"].title == "A title"
+
+
+def test_gui_annotations_and_model_decorators_reject_duplicates():
+    with pytest.raises(ModelDefinitionError, match="Duplicate FieldInfo annotation"):
+
+        class DuplicateField(Modello):
+            value = gui(gui(InstanceDummy("value"), title="Original"), title="Second")
+
+    with pytest.raises(ModelDefinitionError, match="Duplicate ModelInfo annotation on DuplicateModel"):
+
+        @ModelInfo(title="Second")
+        @ModelInfo(title="Original")
+        class DuplicateModel(Modello):
+            value = InstanceDummy("value")
+
+
 def test_inline_gui_hidden_metadata_still_protects_all_aliases():
     class Model(Modello):
         value = gui(InstanceDummy("value", positive=True), title="Background value", hidden=True)
@@ -448,6 +476,41 @@ def test_gui_annotations_follow_inherited_fields_and_replaced_components():
     assert rows(data)["panel.height"]["title"] == "Second height"
     assert rows(data)["price"]["title"] == "Price"
     assert "panel.width" not in FieldInfo.for_model(Child)
+
+
+def test_flat_registry_metadata_and_override_precedence_across_nested_models():
+    @ModelInfo(title="Original model", fields={"value": FieldInfo(title="Child override")})
+    class Child(Modello):
+        value = gui(InstanceDummy("value"), title="Inline")
+
+    @ModelInfo(fields={"child.value": FieldInfo(title="Parent override")})
+    class Parent(Modello):
+        child = annotate(
+            component(Child), ModelInfo(title="Scoped model", fields={"value": FieldInfo(title="Scoped override")})
+        )
+
+    data = Explorer(Parent).snapshot(raw=True)
+    assert data["components"][0]["title"] == "Scoped model"
+    assert rows(data)["child.value"]["title"] == "Parent override"
+    data = Explorer(Parent, metadata={"child.value": FieldInfo(title="Application override")}).snapshot(raw=True)
+    assert rows(data)["child.value"]["title"] == "Application override"
+    assert rows(Explorer(Child).snapshot(raw=True))["value"]["title"] == "Child override"
+
+
+def test_hidden_components_propagate_by_path_without_hiding_similarly_named_siblings():
+    class Child(Modello):
+        value = InstanceDummy("value")
+        alias = value
+
+    class Parent(Modello):
+        part = gui(component(Child), hidden=True)
+        partial = component(Child)
+
+    data = Explorer(Parent, inputs={"part.value": 2}).snapshot(raw=True)
+    assert set(rows(data)) == {"partial.value", "partial.alias"}
+    assert [component["path"] for component in data["components"]] == ["partial"]
+    assert {field["path"] for field in data["symbols"]} == {"part.value", "part.alias"}
+    assert data["hidden_inputs"] == 1
 
 
 def test_field_provenance_distinguishes_calculations_from_recorded_observations():
@@ -506,7 +569,14 @@ def test_percent_editor_roundtrip_and_highlighted_target():
             initial_field="value",
             highlights=("doubled",),
             fields={"value": FieldInfo(number_format="percent"), "doubled": FieldInfo(number_format="percent")},
-            scenarios=(Scenario("Set 3%", "Apply a known rate.", {"value": Rational(3, 100)}, select="doubled"),),
+            scenarios=(
+                Scenario(
+                    title="Set 3%",
+                    description="Apply a known rate.",
+                    bindings={"value": Rational(3, 100)},
+                    select="doubled",
+                ),
+            ),
         )
 
     client = create_app(Rate).test_client()
@@ -525,8 +595,8 @@ def test_percent_editor_roundtrip_and_highlighted_target():
     [
         {"highlights": ("unknown",)},
         {"initial_field": "unknown"},
-        {"scenarios": (Scenario("Hidden", "Cannot change background data.", {"price": 2}),)},
-        {"scenarios": (Scenario("Unknown selection", "Bad field.", select="unknown"),)},
+        {"scenarios": (Scenario(title="Hidden", description="Cannot change background data.", bindings={"price": 2}),)},
+        {"scenarios": (Scenario(title="Unknown selection", description="Bad field.", select="unknown"),)},
         {"highlights": ("price",)},
     ],
 )
