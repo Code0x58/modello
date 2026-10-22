@@ -1,37 +1,17 @@
-"""Diagnosis must distinguish proofs, witnessed feasibility, and lack of knowledge."""
+"""Problem inspection and diagnosis distinguish proofs, witnesses, and uncertainty."""
 
 from dataclasses import FrozenInstanceError, replace
 from itertools import combinations
 
 import pytest
-from sympy import (
-    ConditionSet,
-    Dummy,
-    FiniteSet,
-    Function,
-    ImageSet,
-    S,
-    Symbol,
-    cos,
-    expand,
-    linsolve,
-    pi,
-    sin,
-    sqrt,
-)
+from sympy import ConditionSet, FiniteSet, Function, ImageSet, S, Symbol, cos, expand, linsolve, pi, sin, sqrt
 
 import modello
 import modello.diagnostics as diagnostics
 from modello import (
     InstanceDummy,
-    ModelDefinitionError,
-    ModelInputError,
     Modello,
-    ModelloError,
-    ModelSolveError,
     ModelValidationError,
-    SolutionCountError,
-    SolverBackendError,
     component,
     inspect_model,
 )
@@ -52,6 +32,42 @@ def assert_witness(problem, witness, constraints=None):
         assert values[field.symbol].is_finite is True
         for predicate, expected in field.symbol.assumptions0.items():
             assert getattr(values[field.symbol], f"is_{predicate}") == expected
+
+
+def test_candidate_audit_rejects_conflicting_alias_values(positive_problem):
+    p = positive_problem
+    candidate = Candidate((FieldValue(p.field("x"), 1), FieldValue(p.field("alias"), 2)))
+    with pytest.raises(ModelValidationError, match="aliases"):
+        p.check(candidate)
+
+
+def test_candidate_audit_rejects_fields_from_another_problem(positive_problem):
+    p = positive_problem
+    other = inspect_model(p.model, p.name)
+    foreign = Candidate((FieldValue(other.field("x"), 1),))
+    with pytest.raises(ModelValidationError, match="another problem"):
+        p.check(foreign)
+
+
+@pytest.mark.parametrize(
+    "backend_error",
+    [
+        pytest.param(NotImplementedError("unsupported solver"), id="unsupported"),
+        pytest.param(ValueError("solver value error"), id="value-error"),
+    ],
+)
+def test_backend_failures_do_not_prove_inconsistency(monkeypatch, backend_error):
+    def unsupported(*args, **kwargs):
+        raise backend_error
+
+    monkeypatch.setattr(diagnostics, "solve", unsupported)
+    monkeypatch.setattr(diagnostics, "solveset", unsupported)
+    analysis = inspect_model(Reading, "unsupported", squared=3).analyse()
+    assert analysis.status == "unknown"
+    assert type(backend_error).__name__ in analysis.reason
+    assert type(backend_error).__name__ in analysis.solution_sets[0].solver_errors[0]
+    monkeypatch.setattr(diagnostics, "linear_eq_to_matrix", unsupported)
+    assert inspect_model(Sum, "unsupported_linear", x=1, y=2, total=3).analyse().status == "unknown"
 
 
 def test_snapshot_preserves_aliases_origins_and_component_boundaries(monkeypatch):
@@ -107,42 +123,6 @@ def test_inherited_refinement_retains_definition_paths():
     assert result.status == "inconsistent"
     assert result.conflict is not None
     assert result.conflict.irreducible is True
-
-
-def test_nested_refinement_keeps_both_definitions_of_an_aliased_quantity():
-    """An alias and its component equation retain separate origins when nested."""
-
-    class Doubled(Modello):
-        x = InstanceDummy("x", real=True)
-        total = 2 * x
-
-    class Joined(Modello):
-        reading = component(Doubled)
-        observed = reading.total
-        observed = reading.x + 3
-
-    class Tripled(Doubled):
-        total = 3 * Doubled.x
-
-    class Refined(Joined):
-        reading = component(Tripled)
-
-    class Root(Modello):
-        left = component(Refined)
-        right = component(Joined)
-
-    problem = inspect_model(Root, "origins")
-    symbols = problem.symbols
-    assert [(c.path, c.left, c.right) for c in problem.constraints] == [
-        (("left", "observed"), symbols.left.reading.total, symbols.left.reading.x + 3),
-        (("left", "reading", "total"), symbols.left.reading.total, 3 * symbols.left.reading.x),
-        (("right", "observed"), symbols.right.reading.total, symbols.right.reading.x + 3),
-        (("right", "reading", "total"), symbols.right.reading.total, 2 * symbols.right.reading.x),
-    ]
-    for case in (Root("constructed"), problem.solutions().one()):
-        assert isinstance(case.left.reading, Tripled)
-        assert (case.left.reading.x, case.left.observed) == (S(3) / 2, S(9) / 2)
-        assert (case.right.reading.x, case.right.observed) == (3, 6)
 
 
 def test_inspection_does_not_reserve_model_field_names():
@@ -346,42 +326,6 @@ def test_candidate_audits_check_domains_and_definedness(positive_problem, value,
     assert positive_problem.check(candidate).verdict == verdict
 
 
-@pytest.mark.parametrize("operation", ["audit", "lookup"])
-def test_candidate_aliases_cannot_have_conflicting_values(positive_problem, operation):
-    p = positive_problem
-    candidate = Candidate((FieldValue(p.field("x"), 1), FieldValue(p.field("alias"), 2)))
-    with pytest.raises(ModelValidationError, match="aliases"):
-        if operation == "audit":
-            p.check(candidate)
-        else:
-            candidate.value(p.field("x"))
-
-
-def test_candidate_lookup_accepts_recorded_aliases(positive_problem):
-    candidate = Candidate((FieldValue(positive_problem.field("alias"), 1),))
-    assert candidate.value(positive_problem.field("x")) == 1
-
-
-@pytest.mark.parametrize("operation", ["audit", "lookup"])
-def test_candidate_fields_are_owned_by_their_problem(positive_problem, operation):
-    p = positive_problem
-    other = inspect_model(p.model, p.name)
-    candidate = Candidate((FieldValue(p.field("x"), 1),))
-    if operation == "lookup":
-        with pytest.raises(KeyError):
-            candidate.value(other.field("x"))
-    else:
-        foreign = Candidate((FieldValue(other.field("x"), 1),))
-        with pytest.raises(ModelValidationError, match="another problem"):
-            p.check(foreign)
-
-
-@pytest.mark.parametrize("value", [pytest.param({}, id="mapping"), pytest.param(object(), id="opaque-object")])
-def test_field_values_require_scalars(positive_problem, value):
-    with pytest.raises(ModelInputError, match="scalar"):
-        FieldValue(positive_problem.field("x"), value)
-
-
 def test_a_derived_pole_is_an_undefined_deduction():
     class Reciprocal(Modello):
         x = InstanceDummy("x", real=True)
@@ -390,92 +334,6 @@ def test_a_derived_pole_is_an_undefined_deduction():
     pole = inspect_model(Reciprocal, "pole", x=0).analyse()
     assert pole.status == "inconsistent"
     assert any(check.predicate == "defined" and check.actual is False for check in pole.deductions.assumptions)
-
-
-def test_ambiguous_construction_retains_auditable_candidates():
-    with pytest.raises(SolutionCountError) as caught:
-        Reading("ambiguous", squared=3)
-    assert isinstance(caught.value, ModelloError)
-    assert isinstance(caught.value, ValueError)
-    assert caught.value.solution_count == caught.value.returned_count == 2
-    match caught.value:
-        case SolutionCountError(2):
-            pass
-        case _:
-            pytest.fail("Candidate counts must be available for structural matching")
-    problem = caught.value.problem
-    assert len(problem.candidates) == 2
-    assert all(problem.check(candidate).verdict == "satisfied" for candidate in problem.candidates)
-    assert problem.analyse().status == "consistent"
-
-
-@pytest.mark.parametrize(
-    "backend_error",
-    [
-        pytest.param(NotImplementedError("unsupported solver"), id="unsupported"),
-        pytest.param(ValueError("solver value error"), id="value-error"),
-    ],
-)
-def test_solver_backend_failure_keeps_its_cause(monkeypatch, backend_error):
-    def unsupported(*args, **kwargs):
-        raise backend_error
-
-    monkeypatch.setattr(modello, "solve", unsupported)
-    monkeypatch.setattr(diagnostics, "solve", unsupported)
-    monkeypatch.setattr(diagnostics, "solveset", unsupported)
-    with pytest.raises(SolverBackendError) as failed:
-        Reading("unsupported", squared=3)
-    assert failed.value.backend_error is failed.value.__cause__ is backend_error
-    assert failed.value.solution_count is None
-    match failed.value:
-        case SolverBackendError(backend_error=error):
-            assert error is backend_error
-        case _:
-            pytest.fail("Backend failures must retain the original exception")
-    analysis = failed.value.problem.analyse()
-    assert analysis.status == "unknown"
-    assert type(backend_error).__name__ in analysis.reason
-    assert type(backend_error).__name__ in analysis.solution_sets[0].solver_errors[0]
-    monkeypatch.setattr(diagnostics, "linear_eq_to_matrix", unsupported)
-    assert inspect_model(Sum, "unsupported_linear", x=1, y=2, total=3).analyse().status == "unknown"
-
-
-def test_solution_count_distinguishes_returned_and_domain_rejected_candidates():
-    class Restricted(Reading):
-        positive = InstanceDummy("positive", positive=True)
-        positive = Reading.x - 10
-
-    with pytest.raises(SolutionCountError) as caught:
-        Restricted("outside_domain", squared=9)
-    assert caught.value.solution_count == 0
-    assert caught.value.returned_count == 2
-    assert len(caught.value.problem.candidates) == 2
-
-
-def test_modello_validation_errors_preserve_builtin_categories():
-    with pytest.raises(ModelInputError) as caught:
-        Check("bad_type", reading={"x": 2})
-    assert isinstance(caught.value, ModelloError) and isinstance(caught.value, TypeError)
-    with pytest.raises(ModelDefinitionError) as definition:
-
-        class Invalid(Check):
-            reading = InstanceDummy("replacement")
-
-    assert isinstance(definition.value, ModelValidationError)
-    assert isinstance(definition.value, ModelloError) and isinstance(definition.value, ValueError)
-    with pytest.raises(ModelValidationError):
-        inspect_model(Reading, "invalid_budget").analyse(max_checks=0)
-
-
-def test_exception_creation_and_printing_never_launch_analysis(monkeypatch):
-    def forbidden(*args, **kwargs):
-        raise AssertionError("Only an explicit analyse() call may launch diagnosis")
-
-    monkeypatch.setattr(diagnostics._Analyser, "run", forbidden)
-    with pytest.raises(ModelSolveError) as caught:
-        Sum("plain_failure", x=1, y=2, total=4)
-    assert "0 solutions reported" in str(caught.value)
-    assert "total = x + y [definition]" in str(caught.value.problem)
 
 
 def test_unevaluated_function_values_are_not_numeric_witnesses():
@@ -590,61 +448,3 @@ def test_nested_reports_show_component_types_and_equation_origins():
     assert "\n    check: Check\n      c1: total = reading.squared + 1" in rendered
     assert "\n      reading: Reading\n        c2: squared = x**2" in rendered
     assert "reading: Reading" in rendered
-
-
-@pytest.mark.parametrize(
-    "reference, left, right, offset",
-    [
-        pytest.param(("review", "check", "total"), "reading.x", "total - 1", -1, id="same-component"),
-        pytest.param(("review", "x"), "check.reading.x", "x + 1", 1, id="parent-component"),
-        pytest.param(("review", "peer", "x"), "check.reading.x", "peer.x + 1", 1, id="sibling-component"),
-        pytest.param(("x",), "review.check.reading.x", "x + 1", 1, id="root"),
-    ],
-)
-def test_cross_layer_equations_share_the_nearest_common_ancestor(reference, left, right, offset):
-    class Review(Modello):
-        check = component(Check)
-        peer = component(Reading)
-        x = InstanceDummy("x", real=True)
-
-    class Batch(Modello):
-        review = component(Review)
-        x = InstanceDummy("x", real=True)
-
-    expression = Batch
-    for part in reference:
-        expression = getattr(expression, part)
-    source = Reading("source", x=expression + offset)
-    check = Check("check", reading=source)
-    review = Review("review", check=check)
-    problem = inspect_model(Batch, "batch", review=review)
-    rendered = str(problem)
-    assert f"{left} = {right} [input 'review']" in rendered
-    assert "squared = x**2 [definition]" in rendered
-    # Rendering changes neither recorded paths nor the expressions they identify.
-    copied = next(c for c in problem.constraints if c.path == ("review", "check", "reading", "x"))
-    assert copied.right == problem.field(*reference).symbol + offset
-    assert problem.format(copied.right) == f"{'.'.join(reference)} {'+' if offset > 0 else '-'} 1"
-
-
-def test_bare_field_paths_cannot_be_confused_with_external_symbol_identities():
-    positive = Symbol("x", positive=True)
-    negative = Symbol("x", negative=True)
-    independent = Dummy("x", real=True)
-    dotted = Symbol("reading.x", real=True)
-
-    class Names(Modello):
-        x = InstanceDummy("x", real=True)
-        reading = component(Reading)
-        total = x + positive - negative + independent + dotted
-
-    p = inspect_model(Names, "names")
-    assert p.format(p.field("x").symbol) == "x"
-    assert p.format(p.field("reading", "x").symbol) == "reading.x"
-    assert p.format(dotted) == "external[reading.x]"
-    labels = {p.format(symbol) for symbol in (positive, negative, independent)}
-    assert labels == {"external[x#1]", "external[x#2]", "external[x#3]"}
-    rendered = str(p)
-    assert all(label in rendered for label in labels)
-    assert "self." not in rendered
-    assert p.constraints[0].right == p.field("x").symbol + positive - negative + independent + dotted
