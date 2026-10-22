@@ -59,9 +59,31 @@ defines it. Format code with ``uv run --dev ruff format .``. Refresh dependencie
 with ``uv lock --upgrade`` and commit ``uv.lock``. Dependabot proposes grouped
 weekly dependency and GitHub Actions updates. Workflows do not schedule rebuilds.
 
-Tests follow the source layers. Core model tests and public typing contracts
-live in ``test_modello.py`` and ``typing_checks.py``. Example tests
-live under ``tests/examples/``: ``test_data.py`` covers the independent data
+Tests follow the source layers. Core coverage lives in ``tests/core/``:
+
+* ``test_declarations.py`` covers class compilation, aliases, inheritance,
+  component replacement, and definition errors.
+* ``test_inputs.py`` covers scalar and component capture, independent symbol
+  scopes, copied-value provenance, and input validation.
+* ``test_construction.py`` covers candidate selection and joint population,
+  including cycles, poles, domain filtering, and symbolic results.
+* ``test_diagnostics.py`` covers candidate audits, consistency witnesses,
+  conflict certificates, bounded searches, and diagnostic rendering.
+* ``test_family_reduction.py`` covers isolated substitution, rational affine
+  joins, coordinate domains, singularities, and backend fallbacks.
+* ``test_solutions.py`` covers observations, output queries, ownership checks,
+  checked materialization, and connected model views.
+
+``_models.py`` supplies small shared declarations. Function-scoped fixtures in
+``conftest.py`` create fresh bound problems, so one test's observations cannot
+affect another test's symbol identities. Parameterize behavioral cases with
+descriptive IDs so each input boundary, copy direction, or exact mathematical
+case has its own result. Keep declarations local when their unusual shape is
+the regression being tested. Constructor candidate filtering has a direct
+input/output table; integration tests retain the complete solve and population
+path. Public typing contracts remain in ``typing_checks.py``.
+
+Example tests live under ``tests/examples/``: ``test_data.py`` covers the independent data
 helpers, ``test_symbolic.py`` covers numerical views, and
 ``test_named_members.py`` covers bound declarations and projections.
 Financial tests live under ``portfolio/`` and follow its equation, valuation,
@@ -86,7 +108,9 @@ Run a subtree while working on one layer:
 
    $ uv run --locked --dev pytest tests/examples/portfolio
    $ uv run --locked --dev pytest tests/examples/test_data.py
-   $ uv run --locked --dev pytest test_modello.py
+   $ uv run --locked --dev pytest tests/core
+   $ uv run --locked --dev pytest tests/core/test_inputs.py
+   $ uv run --locked --dev pytest --collect-only -q tests/core
 
 Build and validate both distribution formats:
 
