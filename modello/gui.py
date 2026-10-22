@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
-from typing import TYPE_CHECKING, Any, Literal, Mapping
+from typing import TYPE_CHECKING, Any, Literal, Mapping, TypeVar
 
 from sympy import Expr, S, Symbol, factor_terms
 
-from modello import Modello, ScalarValue, _solve_problem, inspect_model
+from modello import Annotation, Modello, ScalarValue, _solve_problem, annotate, annotate_model, inspect_model
 from modello._gui.formatting import display_number
 from modello._gui.inputs import parse_scalar
 from modello._gui.mathml import EquationPrinter
@@ -22,11 +22,14 @@ from modello.errors import ModelInputError, ModelValidationError, SolverBackendE
 if TYPE_CHECKING:
     from flask import Flask
 
-__all__ = ["BindingError", "Explorer", "FieldInfo", "ModelInfo", "Scenario", "create_app"]
+__all__ = ["BindingError", "Explorer", "FieldInfo", "ModelInfo", "Scenario", "create_app", "gui"]
+
+_ValueT = TypeVar("_ValueT")
+_ModelT = TypeVar("_ModelT", bound=Modello)
 
 
 @dataclass(frozen=True)
-class FieldInfo:
+class FieldInfo(Annotation):
     """Display metadata for a scalar or component, without changing its algebra.
 
     ``symbol`` is literal MathML text, not LaTeX. ``hidden`` removes the editor
@@ -44,6 +47,37 @@ class FieldInfo:
     number_format: Literal["number", "percent"] = "number"
 
 
+def gui(
+    value: _ValueT,
+    *,
+    title: str = "",
+    description: str = "",
+    info: str = "",
+    symbol: str = "",
+    hidden: bool = False,
+    unit: str = "",
+    number_format: Literal["number", "percent"] = "number",
+) -> _ValueT:
+    """Annotate a scalar or component declaration without changing its type.
+
+    Use ``field = gui(expression, title=..., symbol=...)`` in a Modello class
+    body. Metadata is stored under ``Model.__modello_annotations__[FieldInfo]``;
+    the model sees the original value and retains its normal algebra.
+    """
+    return annotate(
+        value,
+        FieldInfo(
+            title=title,
+            description=description,
+            info=info,
+            symbol=symbol,
+            hidden=hidden,
+            unit=unit,
+            number_format=number_format,
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class Scenario:
     """A named exploration that restores initial inputs, then applies bindings.
@@ -59,11 +93,12 @@ class Scenario:
 
 
 @dataclass(frozen=True)
-class ModelInfo:
-    """Model-level text and field metadata for a ``__gui__`` declaration.
+class ModelInfo(Annotation):
+    """Decorate a model with its text and exploration hints.
 
-    Field keys are relative dotted paths. Component classes supply their own
-    declarations; a parent's ``fields`` can override them by full path.
+    Use ``@ModelInfo(title=..., ...)`` above the class. Declare field metadata
+    inline with ``gui``. Optional ``fields`` keys are relative dotted paths for
+    presentation overrides, including labels on components from other models.
     ``highlights`` selects result cards, ``initial_field`` opens an inspector,
     and ``scenarios`` supplies named explorations from the initial inputs.
     """
@@ -75,6 +110,10 @@ class ModelInfo:
     highlights: tuple[str, ...] = ()
     initial_field: str = ""
     scenarios: tuple[Scenario, ...] = ()
+
+    def __call__(self, model: type[_ModelT]) -> type[_ModelT]:
+        """Keep the decorated class intact and register its model metadata."""
+        return annotate_model(model, self)
 
 
 @dataclass(frozen=True)
@@ -160,7 +199,7 @@ def _preview(problem: ModelProblem) -> tuple[dict[Symbol, Expr], str]:
 class Explorer:
     """Prepare raw or bound views of a class, instance, or recorded problem.
 
-    Declare model text and field labels with ``__gui__ = ModelInfo(...)``.
+    Declare model text with ``@ModelInfo(...)`` and field labels with ``gui``.
     Component declarations are inherited by the layout; ``metadata`` overrides
     field or component labels by full dotted path. ``inputs`` supplies initial
     bindings by dotted path. The original model instance is never mutated.

@@ -59,7 +59,7 @@ class Layout:
 
     def _collect(self, model: type[Modello], prefix: tuple[str, ...]) -> None:
         path = ".".join(prefix)
-        declaration = getattr(model, "__gui__", ModelInfo())
+        declaration = ModelInfo.for_model(model).get("", getattr(model, "__gui__", ModelInfo()))
         if not isinstance(declaration, ModelInfo):
             raise ModelInputError(f"{model.__name__}.__gui__ must be a ModelInfo declaration")
         if not prefix:
@@ -72,6 +72,9 @@ class Layout:
         for name, child in model._modello_namespace.nested_models.items():
             self.components.append(".".join((*prefix, name)))
             self._collect(child._modello_model, (*prefix, name))
+        for relative_path, info in FieldInfo.for_model(model).items():
+            if relative_path and "." not in relative_path:
+                self._set_info(".".join((*prefix, relative_path)), info)
         for relative_path, info in declaration.fields.items():
             if not relative_path:
                 raise ModelInputError("Model-level text belongs in ModelInfo, not an empty field path")

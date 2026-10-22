@@ -2,12 +2,14 @@
 """Public typing checks, including errors that mypy must continue to reject."""
 
 from collections import UserDict
+from dataclasses import dataclass
 from decimal import Decimal
 from fractions import Fraction
 
 from sympy import Symbol
 
 from modello import (
+    Annotation,
     ConstraintKind,
     InstanceDummy,
     Modello,
@@ -16,10 +18,13 @@ from modello import (
     ScalarValue,
     SolutionCountError,
     SolverBackendError,
+    annotate,
+    annotate_model,
     component,
     inspect_model,
 )
 from modello.diagnostics import ComponentView, FieldValue, ModelField, ProblemAnalysis, SolutionSet
+from modello.gui import FieldInfo, ModelInfo, gui
 
 
 class Point(Modello):
@@ -49,6 +54,37 @@ class Drawing(Modello):
 
     line = component(Line)
     extent = line.end.x - line.start.x
+
+
+@dataclass(frozen=True)
+class Description(Annotation):
+    text: str
+
+
+@ModelInfo(title="Annotated drawing")
+class AnnotatedDrawing(Modello):
+    """Extensions must preserve declared component and decorator types."""
+
+    start = gui(component(Point), title="Start")
+    end = annotate(component(Point), Description("End"))
+    extent = gui(end.x - start.x, title="Extent")
+
+
+def check_extensions() -> None:
+    """Metadata lookup is typed without weakening model attribute checks."""
+    drawing = AnnotatedDrawing("case", start=Point("start", x=2), end=Point("end", x=4))
+    point: Point = drawing.start
+    label: str = drawing.start.label()
+    assert point.label() == label
+    info: FieldInfo = FieldInfo.for_model(AnnotatedDrawing)["start"]
+    description: Description = Description.for_model(AnnotatedDrawing)["end"]
+    annotated: type[AnnotatedDrawing] = annotate_model(AnnotatedDrawing, Description("Drawing"))
+    assert info.title == "Start" and description.text == "End" and annotated is AnnotatedDrawing
+    drawing.start = Box("B")  # type: ignore[assignment]
+    _point_class: type[Point] = drawing.start  # type: ignore[assignment]
+    _invalid_label: int = drawing.start.label()  # type: ignore[assignment]
+    _invalid_note: int = Description.for_model(AnnotatedDrawing)["end"].text  # type: ignore[assignment]
+    annotate_model(object, Description("Invalid"))  # type: ignore[type-var]
 
 
 def check_inputs() -> None:

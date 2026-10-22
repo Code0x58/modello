@@ -30,7 +30,7 @@ assert Path(modello.__file__).with_name("py.typed").is_file()
 assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
 assert "gui" in distribution.metadata.get_all("Provides-Extra", ())
 assert "flask" not in sys.modules
-from modello.gui import Explorer
+from modello.gui import Explorer, FieldInfo, ModelInfo, gui
 for name in ("templates/index.html", "static/explorer.css", "static/explorer.js"):
     assert Path(modello.__file__).with_name("_gui").joinpath(name).is_file()
 assert "flask" not in sys.modules
@@ -46,14 +46,18 @@ assert not any(name == "examples" or name.startswith("examples.") for name in sy
 if sys.argv[1]:
     assert distribution.version == sys.argv[1], distribution.version
 
+@ModelInfo(title="A triangle", highlights=("c",))
 class RightAngleTriangle(modello.Modello):
-    a = modello.InstanceDummy("a", real=True, positive=True)
+    a = gui(modello.InstanceDummy("a", real=True, positive=True), title="Side A", unit="m")
     b = modello.InstanceDummy("b", real=True, positive=True)
     c = sqrt(a**2 + b**2)
 
 assert Explorer(RightAngleTriangle).snapshot(raw=True)["raw"]
 assert RightAngleTriangle("T", a=3, b=4).c == 5
 assert RightAngleTriangle("T", b=4, c=5).a == 3
+assert FieldInfo.for_model(RightAngleTriangle)["a"].unit == "m"
+assert RightAngleTriangle.__modello_annotations__[ModelInfo][""].title == "A triangle"
+assert "flask" not in sys.modules
 
 class Box(modello.Modello):
     base = modello.component(RightAngleTriangle)
@@ -62,6 +66,7 @@ class Box(modello.Modello):
 
 box = Box("B", base=RightAngleTriangle("base", b=4), height=12, diagonal=13)
 assert (box.base.a, box.base.b, box.base.c) == (3, 4, 5)
+assert FieldInfo.for_model(Box)["base.a"].title == "Side A"
 try:
     Box("B", base={"b": 4})
 except TypeError:

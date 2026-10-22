@@ -200,37 +200,66 @@ Each browser holds its own edits and cannot change another browser's state.
 Descriptions, units, and guided questions
 -----------------------------------------
 
-Declare model-level text and exploration hints with ``ModelInfo``. ``FieldInfo``
-labels scalars and components. Component classes supply their own declarations;
-a parent's ``fields`` or the ``metadata=`` argument can override labels by full
-path. Class docstrings supply default model and component descriptions.
-Presentation metadata never changes the algebra.
+Place presentation beside a field with ``gui(value, ...)``. It accepts an
+``InstanceDummy``, a calculated expression, or ``component(Child)``. The class
+body sees the original value immediately, so later expressions use the field
+normally. Decorate the class with ``@ModelInfo(...)`` for model-level text and
+guided questions. There is no parallel field-name dictionary to maintain.
 
 .. code-block:: python
 
    from sympy import Rational
-   from modello.gui import FieldInfo, ModelInfo, Scenario
+   from modello import InstanceDummy, Modello
+   from modello.gui import ModelInfo, Scenario, gui
 
-   # Inside a Modello class body:
-   __gui__ = ModelInfo(
-       title="Portfolio lab",
-       description="Explore a stock–bond mix.",
-       info="Annual arithmetic returns and covariance-based risk.",
-       initial_field="allocation.equity",
-       highlights=("expected_return", "volatility"),
+   @ModelInfo(
+       title="Return model",
+       description="Explore return and expected gain.",
+       initial_field="expected_return",
+       highlights=("gain",),
        scenarios=(Scenario(
-           "70 / 30 split", "Supply an allocation and calculate a case.",
-           {"allocation.equity": Rational(7, 10)}, select="volatility",
+           "8% return", "Supply a return and calculate expected gain.",
+           {"expected_return": Rational(2, 25)}, select="gain",
        ),),
-       fields={
-           "allocation.equity": FieldInfo(
-               title="Equity allocation", symbol="w", number_format="percent",
-               description="The fraction invested in equities, from 0% to 100%.",
-           ),
-           "capital": FieldInfo(title="Starting capital", symbol="C", unit="USD"),
-           "market.risk_free_rate": FieldInfo(symbol="rᶠ", hidden=True),
-       },
    )
+   class ReturnModel(Modello):
+       expected_return = gui(
+           InstanceDummy("return", real=True),
+           title="Expected return", symbol="μ", number_format="percent",
+           description="The assumed mean annual arithmetic return.",
+       )
+       capital = gui(
+           InstanceDummy("capital", positive=True),
+           title="Starting capital", symbol="C", unit="USD",
+       )
+       gain = gui(capital * expected_return, title="Expected gain", symbol="G", unit="USD")
+
+Field metadata is a :class:`FieldInfo` annotation. The core collects it through
+the general :class:`~modello.Annotation` mechanism; the solver never receives
+GUI wrappers or metadata. Registry lookups are independent of Flask:
+
+.. code-block:: python
+
+   from modello.gui import FieldInfo
+
+   info = ReturnModel.__modello_annotations__[FieldInfo]["expected_return"]
+   assert info.title == "Expected return"
+   # A typed helper for extension consumers:
+   assert FieldInfo.for_model(ReturnModel)["expected_return"].symbol == "μ"
+   assert ModelInfo.for_model(ReturnModel)[""].title == "Return model"
+
+Nested annotation paths are scoped automatically, such as
+``"market.equity.expected_return"``. Components retain their own declarations;
+``gui(component(Child), ...)`` labels that component in its parent. Class
+docstrings supply default model and component descriptions. Model classes and
+component instance types are preserved. See :ref:`extension-annotations` for
+writing other extensions using the same registry.
+
+For models declared elsewhere, a ``ModelInfo(fields=...)`` mapping can override
+presentation by relative dotted path. Application-level ``metadata=`` overrides
+take priority over that mapping, followed by inline annotations. Existing
+``__gui__ = ModelInfo(...)`` declarations are still accepted; a model decorator
+takes precedence when both are present. Presentation never changes the algebra.
 
 ``highlights`` makes selected quantities prominent as result cards.
 ``initial_field`` chooses the first inspector selection. A ``Scenario`` contains
@@ -311,4 +340,4 @@ API
 ---
 
 .. automodule:: modello.gui
-   :members: ModelInfo, FieldInfo, Scenario, Explorer, BindingError, create_app
+   :members: gui, ModelInfo, FieldInfo, Scenario, Explorer, BindingError, create_app

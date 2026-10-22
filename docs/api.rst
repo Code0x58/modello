@@ -95,6 +95,72 @@ API reference
 
 .. autoclass:: SymbolicScalar
 
+.. _extension-annotations:
+
+Extension annotations
+---------------------
+
+Extensions can attach metadata to declarations without changing their values,
+symbols, assumptions, aliases, or equations. Subclass ``Annotation`` and use
+``annotate`` inside a model class body:
+
+.. code-block:: python
+
+   from dataclasses import dataclass
+   from modello import Annotation, InstanceDummy, Modello, annotate, component
+
+   @dataclass(frozen=True)
+   class Unit(Annotation):
+       symbol: str
+
+   class Panel(Modello):
+       width = annotate(InstanceDummy("width", positive=True), Unit("m"))
+       area = annotate(width**2, Unit("m²"))
+
+   class Project(Modello):
+       panel = component(Panel)
+
+   assert Unit.for_model(Project)["panel.width"].symbol == "m"
+   assert Panel.__modello_annotations__[Unit]["area"].symbol == "m²"
+   assert Panel("case", width=3).area == 9
+
+The class collector unwraps each declaration before subsequent expressions use
+it. Helpers preserve the declared value's static type, including typed
+components. Use ``annotate`` around an entire assigned value; it is a class-body
+declaration helper rather than a general symbolic expression wrapper. Ordinary
+Python attributes keep their ordinary behaviour when annotated.
+
+``Model.__modello_annotations__`` groups metadata by its **exact annotation
+class**, then relative dotted attribute path. Both mapping levels are read-only.
+The empty path ``""`` stores model-level metadata. ``annotate_model`` supports
+extension decorators and returns the original class. Decorate a component
+before declaring models that contain it, so its metadata is included in their
+compiled registries.
+
+Several annotation types can decorate one field. Stacked annotations of the
+same exact type use the last value. Inheritance preserves metadata by field
+name; a new annotation of the same type replaces the inherited object as a
+whole. Later model bases take precedence for each annotation type. A plain
+field reassignment retains its annotations, including the common pattern of
+declaring an assumed symbol and then assigning its defining expression.
+Aliases have separate named metadata while retaining their shared symbol.
+
+Nested components contribute scoped paths automatically. Replacing a component
+rebuilds its descendant metadata from the replacement class, dropping obsolete
+paths. A label attached directly to the containing component declaration stays
+with that named field. Each model has its own registry mappings.
+
+This mechanism has no dependency on a particular extension. For example,
+``modello.gui`` implements ``FieldInfo(Annotation)`` and the ``gui`` helper;
+importing and using core annotations does not import the GUI or Flask.
+
+.. autoclass:: Annotation
+   :members: for_model
+
+.. autofunction:: annotate
+
+.. autofunction:: annotate_model
+
 .. _errors:
 
 Errors

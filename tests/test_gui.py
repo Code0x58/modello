@@ -12,7 +12,7 @@ from modello import InstanceDummy, Modello, component, inspect_model
 from modello._gui.inputs import parse_scalar
 from modello.diagnostics import ConstraintKind
 from modello.errors import ModelInputError
-from modello.gui import BindingError, Explorer, FieldInfo, ModelInfo, Scenario, create_app
+from modello.gui import BindingError, Explorer, FieldInfo, ModelInfo, Scenario, create_app, gui
 
 
 class Panel(Modello):
@@ -372,6 +372,82 @@ def test_model_info_rejects_ambiguous_declarations():
         Explorer(WrongType)
     with pytest.raises(ModelInputError, match="empty field path"):
         Explorer(EmptyPath)
+
+
+def test_inline_annotations_supply_model_component_and_scalar_presentation():
+    @ModelInfo(title="A panel", description="Annotated geometry.")
+    class AnnotatedPanel(Modello):
+        width = gui(InstanceDummy("width", positive=True), title="Clear width", symbol="w", unit="m")
+        height = gui(InstanceDummy("height", positive=True), title="Clear height", symbol="h", unit="m")
+        area = gui(width * height, title="Surface", symbol="A", unit="m²")
+
+    @ModelInfo(title="A project", highlights=("panel.area",), initial_field="panel.width")
+    class Project(Modello):
+        panel = gui(component(AnnotatedPanel), title="Geometry", description="A nested panel.")
+        total = gui(panel.area * 10, title="Cost", unit="USD")
+
+    data = Explorer(Project, inputs={"panel.width": 2, "panel.height": 3}).snapshot()
+    assert data["title"] == "A project"
+    assert data["highlights"] == ["panel.area"]
+    assert data["components"][0] == {"path": "panel", "title": "Geometry", "description": "A nested panel."}
+    assert rows(data)["panel.width"]["title"] == "Clear width"
+    assert rows(data)["panel.area"]["unit"] == "m²"
+    assert rows(data)["total"]["value"] == "60"
+    assert FieldInfo.for_model(Project)["panel.width"].symbol == "w"
+    assert Project.__modello_annotations__[ModelInfo]["panel"].title == "A panel"
+    assert "__gui__" not in vars(Project) and "__gui__" not in vars(AnnotatedPanel)
+    original = AnnotatedPanel("case", width=2, height=3)
+    assert original.area == 6
+    assert Project("case", panel=original).total == 60
+
+
+def test_inline_gui_hidden_metadata_still_protects_all_aliases():
+    class Model(Modello):
+        value = gui(InstanceDummy("value", positive=True), title="Background value", hidden=True)
+        alias = value
+        result = gui(value * 2, title="Visible result")
+
+    client = create_app(Model, inputs={"value": 3}).test_client()
+    data = client.post("/api/explore", json={}).json
+    assert set(rows(data)) == {"result"}
+    assert data["hidden_inputs"] == 1
+    assert rows(data)["result"]["value"] == "6"
+    for path in ("value", "alias"):
+        assert client.post("/api/explore", json={"bindings": {path: None}}).status_code == 422
+
+
+def test_decorator_and_external_overrides_take_precedence_over_inline_metadata():
+    @ModelInfo(title="Decorated", fields={"width": FieldInfo(title="Model override")})
+    class Model(Modello):
+        width = gui(InstanceDummy("width", positive=True), title="Inline")
+        __gui__ = ModelInfo(title="Legacy")
+
+    data = Explorer(Model).snapshot(raw=True)
+    assert data["title"] == "Decorated"
+    assert rows(data)["width"]["title"] == "Model override"
+    overridden = Explorer(Model, metadata={"width": FieldInfo(title="Application override")}).snapshot(raw=True)
+    assert rows(overridden)["width"]["title"] == "Application override"
+
+
+def test_gui_annotations_follow_inherited_fields_and_replaced_components():
+    class First(Modello):
+        width = gui(InstanceDummy("width"), title="First width")
+
+    class Second(Modello):
+        height = gui(InstanceDummy("height"), title="Second height")
+
+    class Parent(Modello):
+        panel = gui(component(First), title="Geometry")
+        price = gui(InstanceDummy("price"), title="Price")
+
+    class Child(Parent):
+        panel = component(Second)
+
+    data = Explorer(Child).snapshot(raw=True)
+    assert data["components"][0]["title"] == "Geometry"
+    assert rows(data)["panel.height"]["title"] == "Second height"
+    assert rows(data)["price"]["title"] == "Price"
+    assert "panel.width" not in FieldInfo.for_model(Child)
 
 
 def test_field_provenance_distinguishes_calculations_from_recorded_observations():

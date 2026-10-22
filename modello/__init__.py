@@ -5,11 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from fractions import Fraction
-from typing import Any, ClassVar, MutableMapping, Protocol, TypeAlias, TypeVar, cast
+from typing import Any, ClassVar, Mapping, MutableMapping, Protocol, TypeAlias, TypeVar, cast
 
 from sympy import Basic, Dummy, Eq, Expr, S, Symbol, SympifyError, solve
 from sympy.simplify.simplify import simplify
 
+from modello.annotations import Annotation as Annotation
+from modello.annotations import _Annotated, _freeze
+from modello.annotations import annotate as annotate
+from modello.annotations import annotate_model as annotate_model
 from modello.diagnostics import (
     Candidate,
     ConstraintKind,
@@ -118,6 +122,7 @@ class ModelloMetaNamespace(dict):
         self.attrs: dict[str, Basic] = {}
         self.dummies: dict[str, InstanceDummy] = {}
         self.nested_models: dict[str, _ModelReference] = {}
+        self.annotations: dict[type[Annotation], dict[str, Annotation]] = {}
         self._replacements: dict[InstanceDummy, InstanceDummy] = {}
         self._missing: dict[InstanceDummy, str] = {}
         # Preserve the existing precedence: later model bases override earlier ones.
@@ -125,6 +130,12 @@ class ModelloMetaNamespace(dict):
             parent = getattr(base, "_modello_namespace", None)
             if not isinstance(parent, ModelloMetaNamespace):
                 continue
+            for kind, fields in parent.annotations.items():
+                self.annotations.setdefault(kind, {}).update(fields)
+            # Model decorators run after namespace compilation.
+            for kind, fields in getattr(base, "__modello_annotations__", {}).items():
+                if "" in fields:
+                    self.annotations.setdefault(kind, {})[""] = fields[""]
             conflicts = (self.dummies.keys() & parent.nested_models.keys()) | (
                 self.nested_models.keys() & parent.dummies.keys()
             )
@@ -179,6 +190,12 @@ class ModelloMetaNamespace(dict):
 
     def __setitem__(self, key: str, value: object) -> None:
         """Record expressions or create a scoped reference for a model class."""
+        if key == "__modello_annotations__":
+            raise ModelDefinitionError("__modello_annotations__ is managed by Modello")
+        annotations: tuple[Annotation, ...] = ()
+        if isinstance(value, _Annotated):
+            annotations = value.annotations
+            value = value.value
         is_model = isinstance(value, ModelloMeta)
         if (isinstance(value, Basic) or is_model) and key.startswith("_modello_"):
             raise ModelDefinitionError("The _modello_ prefix is reserved for model metadata")
@@ -207,6 +224,8 @@ class ModelloMetaNamespace(dict):
             raise ModelInputError("Declare a component using its model class, not another component reference")
         elif key in self.dummies or key in self.nested_models:
             raise ModelDefinitionError(f"Cannot assign {self.name}.{key} to a non-model value")
+        for annotation in annotations:
+            self.annotations.setdefault(type(annotation), {})[key] = annotation
         super().__setitem__(key, value)
 
     def fields(self) -> dict[FieldPath, InstanceDummy]:
@@ -257,6 +276,15 @@ class ModelloMeta(type):
         namespace["_modello_fields"] = meta_namespace.fields()
         namespace["_modello_class_constraints"] = tuple(constraints)
         namespace["_modello_constraint_paths"] = tuple(paths)
+        annotations: dict[type[Annotation], dict[str, Annotation]] = {}
+        for attr, child in meta_namespace.nested_models.items():
+            for kind, fields in child._modello_model.__modello_annotations__.items():
+                annotations.setdefault(kind, {}).update(
+                    (f"{attr}.{path}" if path else attr, annotation) for path, annotation in fields.items()
+                )
+        for kind, fields in meta_namespace.annotations.items():
+            annotations.setdefault(kind, {}).update(fields)
+        namespace["__modello_annotations__"] = _freeze(annotations)
         return super().__new__(mcs, name, bases, namespace)
 
 
@@ -268,6 +296,7 @@ class Modello(metaclass=ModelloMeta):
     _modello_class_constraints: ClassVar[tuple[tuple[InstanceDummy, Basic], ...]] = ()
     _modello_constraint_paths: ClassVar[tuple[FieldPath, ...]] = ()
     _modello_bound_fields: dict[InstanceDummy, _BoundField]
+    __modello_annotations__: ClassVar[Mapping[type[Annotation], Mapping[str, Annotation]]]
 
     def __init__(self, name: str, **value_map: ScalarValue | Modello) -> None:
         """Accept scalar values and compatible child model instances."""
