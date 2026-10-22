@@ -45,13 +45,13 @@ from sympy.core.relational import Relational
 from sympy.logic.boolalg import Boolean
 from sympy.solvers.solveset import NonlinearError
 
-from modello.diagnostics import (
+from modello._model import InstanceDummy, _populate
+from modello._problem import (
     Candidate,
     CandidateCheck,
     ConstraintKind,
     FieldValue,
     ModelField,
-    ModelProblem,
     ModelT,
     Verdict,
     _canonical_fields,
@@ -62,6 +62,7 @@ from modello.errors import ModelInputError, ModelValidationError, SolutionSelect
 
 if TYPE_CHECKING:
     from modello import Modello, ScalarValue, SymbolicCondition, SymbolicScalar
+    from modello.diagnostics import ModelProblem
 
 
 @dataclass(frozen=True)
@@ -380,8 +381,6 @@ class SolutionFamily(Generic[ModelT]):
         return expression
 
     def _require_symbols(self, expression: Basic) -> None:
-        from modello import InstanceDummy
-
         allowed = {field.symbol for field in self.problem.fields} | set().union(
             *(c.symbols for c in self.problem.constraints)
         )
@@ -432,11 +431,9 @@ class SolutionFamily(Generic[ModelT]):
         Observations accumulate as constraints. Use ``where(Eq(...))`` for a
         relation involving nested quantities without constructing a component.
         """
-        from modello import _with_inputs
-
         if not inputs:
             return self
-        problem = _with_inputs(self.problem, inputs)
+        problem = self.problem._capture_inputs(**inputs)
         for constraint in problem.constraints[len(self.problem.constraints) :]:
             self._scalar(constraint.right)
         return self._prepare(problem, self._preferred, self.conditions)
@@ -498,8 +495,6 @@ class SolutionFamily(Generic[ModelT]):
         Like solved components, cases use Modello's population mechanism;
         custom constructor hooks are not invoked.
         """
-        from modello import _populate, inspect_model
-
         if self.parameter_domain is S.EmptySet:
             return ()
         if not isinstance(self.parameter_domain, FiniteSet):
@@ -518,7 +513,7 @@ class SolutionFamily(Generic[ModelT]):
             check, verdict = self._check_state(candidate)
             if verdict != "satisfied":
                 raise UnresolvedSolutionError(self, "A state could not be verified against the original model.", check)
-            fresh = inspect_model(self.problem.model, self.problem.name)
+            fresh = self.problem._fresh()
             fields = {field.path: field.symbol for field in fresh.fields}
             solution = {fields[value.field.path]: value.value for value in values}
             inputs = frozenset(fields[path] for path in input_paths)
