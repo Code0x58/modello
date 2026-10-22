@@ -19,7 +19,7 @@ import re
 import sys
 
 import modello
-from sympy import sqrt
+from sympy import FiniteSet, Tuple, sqrt
 
 assert Path(modello.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
 distribution = metadata.distribution("modello")
@@ -31,7 +31,7 @@ assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
 assert not any(str(path).startswith("tests/") for path in distribution.files or ())
 assert not any(name == "examples" or name.startswith("examples.") for name in sys.modules)
 namespace = {}
-readme = distribution.metadata.get_payload()
+readme = distribution.metadata["Description"]
 blocks = re.findall(r"^```python\n(.*?)^```", readme, re.MULTILINE | re.DOTALL)
 assert blocks
 for source in blocks:
@@ -47,6 +47,14 @@ class RightAngleTriangle(modello.Modello):
 
 assert RightAngleTriangle("T", a=3, b=4).c == 5
 assert RightAngleTriangle("T", b=4, c=5).a == 3
+
+problem = modello.inspect_model(RightAngleTriangle, "family", b=4)
+family = problem.solutions()
+observed = family.observe(c=5)
+assert observed.values(family.symbols.a, family.symbols.c) == FiniteSet(Tuple(3, 5))
+point = observed.one()
+assert isinstance(point, RightAngleTriangle)
+assert (point.a, point.b, point.c) == (3, 4, 5)
 
 class Box(modello.Modello):
     base = modello.component(RightAngleTriangle)
@@ -115,6 +123,8 @@ def check_wheel(
     for module in (
         "examples.portfolio",
         "examples.portfolio.optimal_execution",
+        "examples.solution_families",
+        "examples.solution_views",
     ):
         arguments = [str(python), "-I", "-m", module]
         if module == "examples.portfolio":

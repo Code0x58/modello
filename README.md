@@ -128,6 +128,9 @@ tax models. The [API reference](https://modello.readthedocs.io/en/latest/api.htm
 describes the available classes and functions.
 The [debugging guide](https://modello.readthedocs.io/en/latest/debugging.html)
 explains symbolic results, conflicting observations, and ambiguous solutions.
+The [solution-family guide](https://modello.readthedocs.io/en/latest/solutions.html)
+explores remaining freedom, bounded observations, and possible outputs before
+selecting concrete model states.
 
 The [portfolio research example](https://modello.readthedocs.io/en/latest/examples/portfolio/index.html)
 develops this pattern in one short walkthrough: nest transitions, join a
