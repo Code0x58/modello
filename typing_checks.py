@@ -17,7 +17,9 @@ from modello import (
     ModelSolveError,
     ScalarValue,
     SolutionCountError,
+    SolutionFamily,
     SolverBackendError,
+    SymbolicCondition,
     annotate,
     annotate_model,
     component,
@@ -147,3 +149,40 @@ def check_diagnostics() -> None:
     inspect_model(Line("instance"), "case")  # type: ignore[arg-type]
     FieldValue(field, {})  # type: ignore[arg-type]
     problem.name = "changed"  # type: ignore[misc]
+
+
+def check_solution_families() -> None:
+    """Family selection retains the model type, including nested components."""
+    problem: ModelProblem[Drawing] = inspect_model(Drawing, "family")
+    family: SolutionFamily[Drawing] = problem.solutions()
+    _coordinates: tuple[ModelField, ...] = family.parameters
+    _cases: tuple[Drawing, ...] = family.cases()
+    case: Drawing = family.one()
+    point: Point = case.line.start
+    assert point.label() == "point"
+    symbols: Drawing = problem.symbols
+    start: Point = family.symbols.line.start
+    problem.solutions(start.x)
+    family.expression(symbols.extent)
+    family.values(start.x, symbols.extent)
+    condition: SymbolicCondition = symbols.extent > 0
+    family.where(condition, True)
+    family.observe(line=Line("line", start=Point("start", x=2)))
+    _section: SolutionFamily[Drawing] = family.section(start.x, through=case)
+    family.observe(line={"start": {"x": 2}})  # type: ignore[arg-type]
+    family.observe(extent=[])  # type: ignore[arg-type]
+    problem.solutions("line.start.x")  # type: ignore[arg-type]
+    family.values({"x": 2})  # type: ignore[arg-type]
+    family.expression({"x": 2})  # type: ignore[arg-type]
+    family.where({"extent": 2})  # type: ignore[arg-type]
+    family.where([True])  # type: ignore[arg-type]
+    family.where("extent > 0")  # type: ignore[arg-type]
+    family.where(1)  # type: ignore[arg-type]
+    family.section("line.start.x", through=case)  # type: ignore[arg-type]
+    family.section(start.x, through=Line("line"))  # type: ignore[arg-type]
+    family.section(start.x, through={})  # type: ignore[arg-type]
+    _wrong_symbols: Line = problem.symbols  # type: ignore[assignment]
+    _wrong_component: Box = family.symbols.line.start  # type: ignore[assignment]
+    _unknown = symbols.line.start.missing  # type: ignore[attr-defined]
+    _wrong: Line = family.one()  # type: ignore[assignment]
+    _wrong_section: SolutionFamily[Line] = family.section(start.x, through=case)  # type: ignore[assignment]

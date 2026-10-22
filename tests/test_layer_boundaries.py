@@ -1,21 +1,65 @@
-"""Research layers stay independent of finance, tutorials, and presentation."""
+"""Core imports point downwards; research layers stay independent of presentation."""
 
+import ast
 import subprocess
 import sys
 
 import pytest
 
 
+def test_core_imports_follow_the_dependency_layers(pytestconfig: pytest.Config) -> None:
+    layers = {
+        name: index
+        for index, name in enumerate(
+            (
+                "modello.errors",
+                "modello._problem",
+                "modello._model",
+                "modello.solutions",
+                "modello.diagnostics",
+                "modello",
+            )
+        )
+    }
+    for module, level in layers.items():
+        filename = "__init__.py" if module == "modello" else module.rsplit(".", 1)[1] + ".py"
+        tree = ast.parse((pytestconfig.rootpath / "modello" / filename).read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING":
+                node.body = []
+        for node in ast.walk(tree):
+            dependencies: tuple[str, ...]
+            if isinstance(node, ast.ImportFrom):
+                dependency = node.module or ""
+                if node.level:
+                    dependency = "modello" + ("." + dependency if dependency else "")
+                dependencies = (dependency,)
+            elif isinstance(node, ast.Import):
+                dependencies = tuple(alias.name for alias in node.names)
+            else:
+                continue
+            for dependency in dependencies:
+                if dependency in layers:
+                    assert layers[dependency] < level, f"{module} imports the higher layer {dependency}"
+
+
 def test_layer_imports(pytestconfig: pytest.Config) -> None:
     # A fresh process makes accidental imports visible regardless of test order.
     program = """
 import sys
+from typing import get_type_hints
+
 import examples.data
 assert not {'modello', 'sympy', 'examples.portfolio'} & sys.modules.keys()
 
+import modello
+assert get_type_hints(modello.inspect_model)["value_map"] == modello.ScalarValue | modello.Modello
+assert get_type_hints(modello.component)["return"].__bound__ is modello.Modello
+
 import examples.symbolic
 import examples.named_members
-assert 'examples.portfolio' not in sys.modules
+import examples.reconcile
+assert not {'examples.portfolio', 'examples.reconciliation'} & sys.modules.keys()
 
 import examples.portfolio.account
 import examples.portfolio.reporting

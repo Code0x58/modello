@@ -197,6 +197,10 @@ exclude values; a nonempty set alone does not establish whole-model consistency.
 An unresolved set is not evidence of inconsistency. See :doc:`diagnostics` for
 the scope of these results.
 
+To retain the joint family, add observations, inspect possible outputs, or
+select several valid model instances, see :doc:`solutions`. That exploration
+starts from the same recorded problem, including one retained on an exception.
+
 Inspect components and their connections
 -----------------------------------------
 

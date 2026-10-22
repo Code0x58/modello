@@ -35,6 +35,13 @@ shares the synthetic scenario; ``_data.py`` locates fixtures through the example
 package, independently of the tests' location. Cross-layer import checks live
 in ``tests/test_layer_boundaries.py``.
 
+Core imports also follow layers: shared records in ``modello/_problem.py``,
+declarations and population in ``_model.py``, solution families, then problem
+preparation and diagnosis. The public namespace exposes these APIs and keeps
+the constructor's solving path. Runtime imports point downwards; reverse type
+references use ``TYPE_CHECKING``. Problem snapshots own constructor-input
+capture, shared by construction and immutable family observations.
+
 Executable walkthroughs cover the examples' ordinary usage. Focus additional
 tests on distinct regressions, accounting and chronology invariants, and
 independent mathematical checks. Test shared validation and compilation behavior

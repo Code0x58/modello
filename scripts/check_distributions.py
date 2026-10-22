@@ -19,7 +19,7 @@ import re
 import sys
 
 import modello
-from sympy import sqrt
+from sympy import FiniteSet, Tuple, sqrt
 
 assert Path(modello.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
 distribution = metadata.distribution("modello")
@@ -37,7 +37,7 @@ assert "flask" not in sys.modules
 assert not any(str(path).startswith("tests/") for path in distribution.files or ())
 assert not any(name == "examples" or name.startswith("examples.") for name in sys.modules)
 namespace = {}
-readme = distribution.metadata.get_payload()
+readme = distribution.metadata["Description"]
 blocks = re.findall(r"^```python\n(.*?)^```", readme, re.MULTILINE | re.DOTALL)
 assert blocks
 for source in blocks:
@@ -58,6 +58,14 @@ assert RightAngleTriangle("T", b=4, c=5).a == 3
 assert FieldInfo.for_model(RightAngleTriangle)["a"].unit == "m"
 assert RightAngleTriangle.__modello_annotations__[ModelInfo][""].title == "A triangle"
 assert "flask" not in sys.modules
+
+problem = modello.inspect_model(RightAngleTriangle, "family", b=4)
+family = problem.solutions()
+observed = family.observe(c=5)
+assert observed.values(family.symbols.a, family.symbols.c) == FiniteSet(Tuple(3, 5))
+point = observed.one()
+assert isinstance(point, RightAngleTriangle)
+assert (point.a, point.b, point.c) == (3, 4, 5)
 
 class Box(modello.Modello):
     base = modello.component(RightAngleTriangle)
@@ -132,6 +140,10 @@ def check_wheel(
     for module in (
         "examples.portfolio",
         "examples.portfolio.optimal_execution",
+        "examples.solution_families",
+        "examples.solution_views",
+        "examples.applications",
+        "examples.reconciliation",
     ):
         arguments = [str(python), "-I", "-m", module]
         if module == "examples.portfolio":
@@ -139,13 +151,14 @@ def check_wheel(
         subprocess.run(arguments, cwd=directory, check=True, stdout=subprocess.DEVNULL)
     assert json.loads((directory / "report.json").read_text())["snapshots"][-1]["nav"] == 3066.9
     assert (directory / "report.html").read_text().startswith("<!doctype html>")
-    print(f"Validated all installed portfolio runners from {wheel.name}", flush=True)
+    print(f"Validated all installed example runners from {wheel.name}", flush=True)
     typing_checks = []
     for path in (
         "typing_checks.py",
         "tests/examples/test_named_members.py",
         "tests/examples/test_symbolic.py",
         "tests/examples/test_data.py",
+        "tests/examples/reconcile_typing.py",
         "tests/examples/portfolio/typing_contracts.py",
     ):
         source = Path(__file__).resolve().parents[1] / path

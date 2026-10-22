@@ -6,7 +6,8 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from modello.diagnostics import Candidate, ModelProblem
+    from modello.diagnostics import Candidate, CandidateCheck, ModelProblem
+    from modello.solutions import SolutionFamily
 
 
 class ModelloError(Exception):
@@ -70,3 +71,24 @@ class SolverBackendError(ModelSolveError):
         super().__init__(problem, None)
         self.backend_error = backend_error
         self.__cause__ = backend_error
+
+
+class SolutionSelectionError(ModelValidationError):
+    """A family contains zero or several checked points when one was requested."""
+
+    __match_args__ = ("solution_count",)
+
+    def __init__(self, family: SolutionFamily, solution_count: int) -> None:
+        self.family = family
+        self.solution_count = solution_count
+        super().__init__(f"Expected one model state, found {solution_count}. Inspect .family or add observations.")
+
+
+class UnresolvedSolutionError(ModelValidationError):
+    """A requested operation needs explicit, checked numerical points."""
+
+    def __init__(self, family: SolutionFamily, reason: str, check: CandidateCheck | None = None) -> None:
+        self.family = family
+        self.reason = reason
+        self.check = check
+        super().__init__(f"{reason} Inspect .family, or add observations before selecting model states.")

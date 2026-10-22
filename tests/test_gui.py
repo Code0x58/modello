@@ -146,6 +146,20 @@ def test_snapshot_keeps_inferred_component_observations():
         Explorer(problem).snapshot({"panel.width": 6})
 
 
+def test_reopen_solution_family_case_preserves_annotations_and_observed_targets():
+    case = inspect_model(Panel, "target", height=3).solutions().observe(area=6).one()
+    assert case.width == 2
+    explorer = Explorer(case)
+    initial = rows(explorer.snapshot())
+    assert initial["width"]["description"] == "Width in metres."
+    assert initial["width"]["kind"] == "derived"
+    assert initial["area"]["kind"] == "input"
+    changed = rows(explorer.snapshot({"height": 4}))
+    assert changed["area"]["value"] == "6"
+    assert changed["width"]["value"] == "3/2"
+    assert case.width == 2 and case.height == 3
+
+
 def test_alias_bindings_and_deep_paths():
     class Alias(Modello):
         value = InstanceDummy("value", real=True)

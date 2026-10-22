@@ -74,6 +74,9 @@ API reference
    invoke the solver. Component instances supplied as inputs have already been
    constructed separately.
    See :doc:`diagnostics` for the structured snapshot, report types, and guarantees.
+   ``problem.symbols`` exposes a read-only symbol tree with the model's component
+   types. Use its attributes to write conditions and select outputs when
+   ``problem.solutions()`` explores a joint solution family; see :doc:`solutions`.
 
 .. autofunction:: component
 
@@ -94,6 +97,8 @@ API reference
 .. autoclass:: BoundInstanceDummy
 
 .. autoclass:: SymbolicScalar
+
+.. autoclass:: SymbolicCondition
 
 .. _extension-annotations:
 
@@ -182,7 +187,9 @@ handlers still apply. Ordinary key and attribute lookups retain their Python
    ModelloError
    ├── ModelInputError (also TypeError)
    ├── ModelValidationError (also ValueError)
-   │   └── ModelDefinitionError
+   │   ├── ModelDefinitionError
+   │   ├── SolutionSelectionError
+   │   └── UnresolvedSolutionError
    └── ModelSolveError (also ValueError)
        ├── SolutionCountError
        └── SolverBackendError
@@ -204,6 +211,8 @@ For example, ``case SolutionCountError(solution_count=0)`` selects a zero-count
 failure. Positional ``case SolutionCountError(0)`` is supported too.
 ``case SolverBackendError(backend_error=NotImplementedError())`` selects a
 particular backend exception type. See :doc:`debugging` for a complete workflow.
+The :doc:`solution-family guide <solutions>` describes the selection errors and
+their retained families, counts, and candidate checks.
 
 .. currentmodule:: modello.errors
 

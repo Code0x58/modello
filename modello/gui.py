@@ -6,8 +6,7 @@ browser edits are exact scalars parsed without evaluating expression strings.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from dataclasses import field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace
 from typing import TYPE_CHECKING, Any, Literal, Mapping, TypeVar
 
 from sympy import Expr, S, Symbol, factor_terms
