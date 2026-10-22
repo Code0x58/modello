@@ -35,6 +35,7 @@ Issues = "https://github.com/Code0x58/modello/issues"
 
 [project.optional-dependencies]
 examples = []
+gui = ["flask>=3.1.3"]
 test = [
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
@@ -42,7 +43,7 @@ test = [
 
 [dependency-groups]
 dev = [
-    "modello[examples,test]",
+    "modello[examples,gui,test]",
     "build>=1.6.1",
     "mypy>=2.4.0",
     "packaging>=26.3",
@@ -74,11 +75,12 @@ docs = { requires-python = ">=3.12" }
 notebooks = { requires-python = ">=3.11" }
 
 [tool.setuptools.packages.find]
-include = ["modello", "examples", "examples.*"]
+include = ["modello", "modello._gui", "examples", "examples.*"]
 namespaces = false
 
 [tool.setuptools.package-data]
 modello = ["py.typed"]
+"modello._gui" = ["templates/*.html", "static/*.css", "static/*.js"]
 examples = ["py.typed"]
 "examples.portfolio" = ["data/*.csv"]
 

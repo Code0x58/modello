@@ -11,6 +11,7 @@ from sympy import Basic, Dummy, Expr, Symbol
 from sympy.simplify.simplify import simplify
 
 from modello._problem import ConstraintKind, FieldPath
+from modello.annotations import Annotation, _Annotated, _freeze
 from modello.errors import ModelDefinitionError, ModelInputError
 
 if TYPE_CHECKING:
@@ -112,6 +113,8 @@ class ModelloMetaNamespace(dict):
         self.attrs: dict[str, Basic] = {}
         self.dummies: dict[str, InstanceDummy] = {}
         self.nested_models: dict[str, _ModelReference] = {}
+        self.annotations: dict[type[Annotation], dict[str, Annotation]] = {}
+        self._declared_annotations: set[tuple[type[Annotation], str]] = set()
         self._replacements: dict[InstanceDummy, InstanceDummy] = {}
         self._missing: dict[InstanceDummy, str] = {}
         # Preserve the existing precedence: later model bases override earlier ones.
@@ -119,6 +122,8 @@ class ModelloMetaNamespace(dict):
             parent = getattr(base, "_modello_namespace", None)
             if not isinstance(parent, ModelloMetaNamespace):
                 continue
+            for kind, fields in parent.annotations.items():
+                self.annotations.setdefault(kind, {}).update(fields)
             conflicts = (self.dummies.keys() & parent.nested_models.keys()) | (
                 self.nested_models.keys() & parent.dummies.keys()
             )
@@ -173,6 +178,13 @@ class ModelloMetaNamespace(dict):
 
     def __setitem__(self, key: str, value: object) -> None:
         """Record expressions or create a scoped reference for a model class."""
+        if key == "__modello_annotations__":
+            raise ModelDefinitionError("__modello_annotations__ is managed by Modello")
+        annotations: tuple[Annotation, ...] = ()
+        if isinstance(value, _Annotated):
+            annotations = value.annotations
+            value = value.value
+        self.add_annotations(key, annotations)
         is_model = isinstance(value, ModelloMeta)
         if (isinstance(value, Basic) or is_model) and key.startswith("_modello_"):
             raise ModelDefinitionError("The _modello_ prefix is reserved for model metadata")
@@ -202,6 +214,16 @@ class ModelloMetaNamespace(dict):
         elif key in self.dummies or key in self.nested_models:
             raise ModelDefinitionError(f"Cannot assign {self.name}.{key} to a non-model value")
         super().__setitem__(key, value)
+
+    def add_annotations(self, field: str, annotations: tuple[Annotation, ...]) -> None:
+        """Reject duplicate declarations while allowing inherited metadata to be refined."""
+        for annotation in annotations:
+            if (type(annotation), field) in self._declared_annotations:
+                path = f"{self.name}.{field}" if field else self.name
+                raise ModelDefinitionError(f"Duplicate {type(annotation).__name__} annotation on {path}")
+        for annotation in annotations:
+            self.annotations.setdefault(type(annotation), {})[field] = annotation
+            self._declared_annotations.add((type(annotation), field))
 
     def fields(self) -> dict[FieldPath, InstanceDummy]:
         """Flatten scalar fields while retaining their attribute paths."""
@@ -251,6 +273,15 @@ class ModelloMeta(type):
         namespace["_modello_fields"] = meta_namespace.fields()
         namespace["_modello_class_constraints"] = tuple(constraints)
         namespace["_modello_constraint_paths"] = tuple(paths)
+        annotations: dict[type[Annotation], dict[str, Annotation]] = {}
+        for attr, child in meta_namespace.nested_models.items():
+            for kind, fields in child._modello_model.__modello_annotations__.items():
+                annotations.setdefault(kind, {}).update(
+                    (f"{attr}.{path}" if path else attr, annotation) for path, annotation in fields.items()
+                )
+        for kind, fields in meta_namespace.annotations.items():
+            annotations.setdefault(kind, {}).update(fields)
+        namespace["__modello_annotations__"] = _freeze(annotations)
         return super().__new__(mcs, name, bases, namespace)
 
 
