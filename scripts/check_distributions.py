@@ -85,6 +85,22 @@ else:
 first = RightAngleTriangle("T")
 second = RightAngleTriangle("T")
 assert first.a != second.a
+
+class Window(modello.Modello):
+    samples = modello.Vector("x", size=3, real=True)
+    i = modello.Index("i")
+    total = samples.sum(i)
+    changes = modello.vector(samples[i] - samples[i - 1], (i, 1, 2))
+
+window = Window("observed", samples=[1, None, 3], total=6)
+assert window.samples == modello.Vector(1, 2, 3)
+assert window.changes == modello.Vector(1, 1)
+family = modello.inspect_model(Window, "family", samples=[1, None, 3]).solutions().observe(total=6)
+assert family.values(family.symbols.samples) == FiniteSet(Tuple(1, 2, 3))
+vector_snapshot = Explorer(window).snapshot()
+assert vector_snapshot["vectors"][0]["shape"] == [3]
+assert "mover" in vector_snapshot["vectors"][0]["symbol_mathml"]
+assert "flask" not in sys.modules
 print(f"Validated {distribution.metadata['Name']} {distribution.version}")
 """
 
@@ -97,6 +113,7 @@ import examples
 from examples.geometry import RightAngleTriangle
 from examples.data import NamedMap
 from examples.gui_quickstart import ReturnModel
+from examples.timeseries import rolling_window
 from modello.gui import Explorer
 
 assert Path(examples.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
@@ -104,6 +121,7 @@ assert Path(examples.__file__).with_name("py.typed").is_file()
 assert RightAngleTriangle("T", a=3, b=4).c == 5
 assert NamedMap({"a": 2}).map(lambda value: value * 3) == {"a": 6}
 assert ReturnModel("example", capital=100_000, expected_return="2/25").gain == 8_000
+assert tuple(rolling_window(4, 2)("window", samples=[1, 3, 5, 7]).means) == (2, 4, 6)
 assert Explorer(ReturnModel, inputs={"capital": 100_000}).snapshot(raw=True)["raw"]
 assert "flask" not in sys.modules
 data = resources.files("examples.portfolio").joinpath("data")
@@ -144,6 +162,7 @@ def check_wheel(
         "examples.solution_views",
         "examples.applications",
         "examples.reconciliation",
+        "examples.timeseries",
     ):
         arguments = [str(python), "-I", "-m", module]
         if module == "examples.portfolio":

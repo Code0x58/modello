@@ -13,6 +13,11 @@ def test_core_imports_follow_the_dependency_layers(pytestconfig: pytest.Config) 
         for index, name in enumerate(
             (
                 "modello.errors",
+                "modello._paths",
+                "modello._symbols",
+                "modello._values",
+                "modello.vectors",
+                "modello._expressions",
                 "modello._problem",
                 "modello._model",
                 "modello._inputs",
@@ -54,7 +59,7 @@ import examples.data
 assert not {'modello', 'sympy', 'examples.portfolio'} & sys.modules.keys()
 
 import modello
-assert get_type_hints(modello.inspect_model)["value_map"] == modello.ScalarValue | modello.Modello
+assert get_type_hints(modello.inspect_model)["value_map"] == modello.ScalarValue | modello.VectorValue | modello.Modello
 assert get_type_hints(modello.component)["return"].__bound__ is modello.Modello
 
 import examples.symbolic

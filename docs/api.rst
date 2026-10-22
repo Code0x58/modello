@@ -7,7 +7,7 @@ API reference
    :special-members: __init__
 
    Define quantities and their relationships as class attributes. Pass known
-   scalar values and component instances as constructor keyword arguments.
+   scalar values, finite vectors, and component instances as constructor keyword arguments.
    The model and its components are solved together; omitted inputs remain
    symbolic unless the supplied equations determine them.
 
@@ -23,6 +23,11 @@ API reference
    :class:`SymbolicScalar` provides the expression protocol for static typing.
    Components accept instances of their declared model class, including
    subclasses with the same field paths.
+
+   ``VectorValue`` describes vector observations: a ``Vector`` or a sequence of
+   scalar values with optional ``None`` entries for unobserved coordinates.
+   Shape and field kind are checked at runtime. See :doc:`vectors` for indexed
+   formulas, coordinate assumptions, and joint vector solving.
 
    Scalar expressions can use the model class's quantities or a parent's
    component paths. Other SymPy symbols remain external parameters.
@@ -99,6 +104,16 @@ API reference
 .. autoclass:: SymbolicScalar
 
 .. autoclass:: SymbolicCondition
+
+Vectors and indices
+--------------------
+
+.. autoclass:: Vector
+   :members: elements, sum, product, dot, doit
+
+.. autofunction:: vector
+
+.. autoclass:: Index
 
 .. _extension-annotations:
 

@@ -3,62 +3,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
-from fractions import Fraction
-from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, cast
 
-from sympy import Basic, Dummy, Expr, Symbol
-from sympy.simplify.simplify import simplify
+from sympy import Basic, Expr, Symbol
 
+from modello._expressions import _declaration
+from modello._paths import _path_label
 from modello._problem import ConstraintKind, FieldPath
+from modello._symbols import BoundInstanceDummy as BoundInstanceDummy, Index, InstanceDummy as InstanceDummy
+from modello._values import (
+    ScalarValue as ScalarValue,
+    SymbolicCondition as SymbolicCondition,
+    SymbolicScalar as SymbolicScalar,
+)
 from modello.annotations import Annotation, _Annotated, _freeze
 from modello.errors import ModelDefinitionError, ModelInputError
+from modello.vectors import Vector, VectorValue as VectorValue
 
 if TYPE_CHECKING:
     from modello import Modello
     from modello.diagnostics import ModelProblem
-
-
-class SymbolicScalar(Protocol):
-    """A scalar expression accepted by the constructor's input annotations."""
-
-    @property
-    def free_symbols(self) -> set[Any]:
-        """Return the expression's free symbols."""
-        ...
-
-    @property
-    def is_commutative(self) -> bool | None:
-        """Return the expression's commutativity assumption."""
-        ...
-
-
-class SymbolicCondition(Protocol):
-    """A symbolic relation or Boolean accepted by solution-family refinement."""
-
-    @property
-    def free_symbols(self) -> set[Any]:
-        """Return the condition's free symbols."""
-        ...
-
-    def as_set(self) -> object:
-        """Return the condition's set representation, when available."""
-        ...
-
-
-ScalarValue: TypeAlias = SymbolicScalar | int | float | complex | str | Decimal | Fraction
-
-
-class InstanceDummy(Dummy):
-    """A symbol that is rebound independently for each model instance."""
-
-    def bound(self, model_name: str) -> BoundInstanceDummy:
-        """Return a fresh symbol with this symbol's assumptions."""
-        return BoundInstanceDummy(model_name + "_" + self.name, **self.assumptions0)
-
-
-class BoundInstanceDummy(InstanceDummy):
-    """A symbol belonging to a particular model instance."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +53,7 @@ class _ModelDefinition:
 
     fields: Mapping[FieldPath, InstanceDummy]
     constraints: tuple[_Definition, ...]
+    vectors: Mapping[FieldPath, Vector]
 
 
 @dataclass(frozen=True)
@@ -107,10 +72,13 @@ class _ModelReference:
         }
         return cls(model, {path: replacements[d] for path, d in model._modello_definition.fields.items()})
 
-    def __getattr__(self, name: str) -> InstanceDummy | _ModelReference:
+    def __getattr__(self, name: str) -> InstanceDummy | Vector | _ModelReference:
         """Resolve a scalar or a reference to a deeper child."""
         if (name,) in self._modello_fields:
             return self._modello_fields[(name,)]
+        vector = self._modello_model._modello_namespace.vectors.get(name)
+        if vector is not None:
+            return Vector(*(self._modello_fields[(name, str(i))] for i in range(len(vector))))
         child = self._modello_model._modello_namespace.nested_models.get(name)
         if child is None:
             raise AttributeError(f"{self._modello_model.__name__} has no model attribute {name!r}")
@@ -129,6 +97,8 @@ class ModelloMetaNamespace(dict):
         self.name = name
         self.attrs: dict[str, Basic] = {}
         self.dummies: dict[str, InstanceDummy] = {}
+        self.vectors: dict[str, Vector] = {}
+        self.vector_attrs: dict[str, Vector] = {}
         self.nested_models: dict[str, _ModelReference] = {}
         self.annotations: dict[type[Annotation], dict[str, Annotation]] = {}
         self._declared_annotations: set[tuple[type[Annotation], str]] = set()
@@ -141,18 +111,29 @@ class ModelloMetaNamespace(dict):
                 continue
             for kind, fields in parent.annotations.items():
                 self.annotations.setdefault(kind, {}).update(fields)
-            conflicts = (self.dummies.keys() & parent.nested_models.keys()) | (
-                self.nested_models.keys() & parent.dummies.keys()
+            conflicts = (
+                self.dummies.keys() & (parent.nested_models.keys() | parent.vectors.keys())
+                | self.vectors.keys() & (parent.nested_models.keys() | parent.dummies.keys())
+                | self.nested_models.keys() & (parent.dummies.keys() | parent.vectors.keys())
             )
             if conflicts:
-                raise ModelDefinitionError(
-                    f"Cannot merge scalar and nested model fields: {', '.join(sorted(conflicts))}"
+                kinds = (
+                    "vector and scalar or nested model"
+                    if conflicts & (self.vectors.keys() | parent.vectors.keys())
+                    else "scalar and nested model"
                 )
+                raise ModelDefinitionError(f"Cannot merge {kinds} fields: {', '.join(sorted(conflicts))}")
             replacements = {self.dummies[key]: dummy for key, dummy in parent.dummies.items() if key in self.dummies}
+            for key, vector in parent.vectors.items():
+                if key in self.vectors:
+                    self._require_shape(key, self.vectors[key], vector)
+                    replacements.update(zip(self.vectors[key], vector))
             for key, child in parent.nested_models.items():
                 replacements.update(self._child_replacements(key, child))
             self.attrs.update(parent.attrs)
             self.dummies.update(parent.dummies)
+            self.vectors.update(parent.vectors)
+            self.vector_attrs.update(parent.vector_attrs)
             self.nested_models.update(parent.nested_models)
             self._replacements.update(parent._replacements)
             self._missing.update(parent._missing)
@@ -163,10 +144,16 @@ class ModelloMetaNamespace(dict):
         old = self.nested_models.get(name)
         replacements: dict[InstanceDummy, InstanceDummy] = {}
         if old is not None:
+            for path, vector in old._modello_model._modello_definition.vectors.items():
+                target = child._modello_model._modello_definition.vectors.get(path)
+                if target is not None and len(target) != len(vector):
+                    raise ModelDefinitionError(
+                        f"Cannot change the size of {_path_label((name, *path))}; declare a new model shape"
+                    )
             for path, dummy in old._modello_fields.items():
                 target = child._modello_fields.get(path)
                 if target is None:
-                    self._missing[dummy] = ".".join((name, *path))
+                    self._missing[dummy] = _path_label((name, *path))
                 elif dummy in replacements and replacements[dummy] != target:
                     self._missing[dummy] = f"{name} (changed field aliases)"
                 else:
@@ -181,6 +168,8 @@ class ModelloMetaNamespace(dict):
         self._replacements.update(replacements)
         self.attrs = {key: expr.xreplace(replacements) for key, expr in self.attrs.items()}
         self.dummies = {key: replacements.get(d, d) for key, d in self.dummies.items()}
+        self.vectors = {key: value.xreplace(replacements) for key, value in self.vectors.items()}
+        self.vector_attrs = {key: value.xreplace(replacements) for key, value in self.vector_attrs.items()}
         self.nested_models = {
             key: _ModelReference(
                 child._modello_model,
@@ -190,6 +179,8 @@ class ModelloMetaNamespace(dict):
         }
         for key, dummy in self.dummies.items():
             super().__setitem__(key, dummy)
+        for key, vector in self.vectors.items():
+            super().__setitem__(key, vector)
         for key, child in self.nested_models.items():
             super().__setitem__(key, child)
 
@@ -205,21 +196,25 @@ class ModelloMetaNamespace(dict):
         is_model = isinstance(value, ModelloMeta)
         if (isinstance(value, Basic) or is_model) and key.startswith("_modello_"):
             raise ModelDefinitionError("The _modello_ prefix is reserved for model metadata")
-        if isinstance(value, Basic):
+        if isinstance(value, Index):
+            pass  # A local binder is not an observable quantity.
+        elif isinstance(value, Vector):
+            value = self._declare_vector(key, value)
+        elif isinstance(value, Basic):
             value = self._declare_scalar(key, value)
         elif is_model:
             value = self._declare_component(key, cast("type[Modello]", value))
         elif isinstance(value, _ModelReference):
             raise ModelInputError("Declare a component using its model class, not another component reference")
-        elif key in self.dummies or key in self.nested_models:
+        elif key in self.dummies or key in self.vectors or key in self.nested_models:
             raise ModelDefinitionError(f"Cannot assign {self.name}.{key} to a non-model value")
         super().__setitem__(key, value)
 
     def _declare_scalar(self, key: str, value: Basic) -> InstanceDummy:
         """Bind an expression and propagate changes to inherited aliases."""
-        if key in self.nested_models:
+        if key in self.nested_models or key in self.vectors:
             raise ModelDefinitionError(f"Cannot replace nested model {self.name}.{key} with a scalar")
-        expr = simplify(value).xreplace(self._replacements)
+        expr = _declaration(value).xreplace(self._replacements)
         dummy = expr if isinstance(expr, InstanceDummy) else self.dummies.get(key)
         if dummy is None:
             dummy = InstanceDummy(key, **expr.assumptions0)
@@ -229,9 +224,37 @@ class ModelloMetaNamespace(dict):
         self.dummies[key] = dummy
         return dummy
 
+    def _require_shape(self, key: str, previous: Vector, replacement: Vector) -> None:
+        if len(previous) != len(replacement):
+            raise ModelDefinitionError(f"Cannot change the size of {self.name}.{key}; declare a new model shape")
+
+    def _declare_vector(self, key: str, value: Vector) -> Vector:
+        """Keep the indexed formula while giving each coordinate a scalar identity."""
+        if key in self.dummies or key in self.nested_models:
+            raise ModelDefinitionError(f"Cannot replace scalar or nested model {self.name}.{key} with a vector")
+        expression = value.xreplace(self._replacements)
+        previous = self.vectors.get(key)
+        if previous is not None:
+            self._require_shape(key, previous, expression)
+        fields = Vector(
+            *(
+                entry
+                if isinstance(entry, InstanceDummy)
+                else previous[i]
+                if previous is not None
+                else InstanceDummy(f"{key}[{i}]", **entry.assumptions0)
+                for i, entry in enumerate(expression)
+            )
+        )
+        if previous is not None:
+            self._replace(dict(zip(previous, fields)))
+        self.vector_attrs[key] = expression
+        self.vectors[key] = fields
+        return fields
+
     def _declare_component(self, key: str, model: type[Modello]) -> _ModelReference:
         """Scope a component and rebind any inherited references to its fields."""
-        if key in self.dummies:
+        if key in self.dummies or key in self.vectors:
             raise ModelDefinitionError(f"Cannot replace scalar {self.name}.{key} with a nested model")
         child = _ModelReference._modello_create(model, key)
         replacements = self._child_replacements(key, child)
@@ -253,6 +276,7 @@ class ModelloMetaNamespace(dict):
     def fields(self) -> dict[FieldPath, InstanceDummy]:
         """Flatten scalar fields while retaining their attribute paths."""
         fields: dict[FieldPath, InstanceDummy] = {(key,): dummy for key, dummy in self.dummies.items()}
+        fields.update(((key, str(i)), dummy) for key, vector in self.vectors.items() for i, dummy in enumerate(vector))
         fields.update(
             ((key, *path), dummy)
             for key, child in self.nested_models.items()
@@ -267,6 +291,12 @@ class ModelloMetaNamespace(dict):
             for attr, expr in self.attrs.items()
             if expr != self.dummies[attr]
         ]
+        constraints.extend(
+            _Definition((attr, str(i)), self.vectors[attr][i], expression)
+            for attr, value in self.vector_attrs.items()
+            for i, expression in enumerate(value)
+            if expression != self.vectors[attr][i]
+        )
         for attr, child in self.nested_models.items():
             definition = child._modello_model._modello_definition
             replacements = {d: child._modello_fields[path] for path, d in definition.fields.items()}
@@ -278,13 +308,22 @@ class ModelloMetaNamespace(dict):
                 )
                 for constraint in definition.constraints
             )
-        expressions = [*self.attrs.values(), *(constraint.right for constraint in constraints)]
+        expressions = [
+            *self.attrs.values(),
+            *self.vector_attrs.values(),
+            *(constraint.right for constraint in constraints),
+        ]
         used = set().union(*(expr.free_symbols for expr in expressions))
         for dummy in used & self._missing.keys():
             raise ModelDefinitionError(
                 f"{self.name} references removed or ambiguous child field {self._missing[dummy]}"
             )
-        return _ModelDefinition(self.fields(), tuple(constraints))
+        vectors: dict[FieldPath, Vector] = {(name,): vector for name, vector in self.vectors.items()}
+        for name, child in self.nested_models.items():
+            definition = child._modello_model._modello_definition
+            replacements = {d: child._modello_fields[path] for path, d in definition.fields.items()}
+            vectors.update(((name, *path), value.xreplace(replacements)) for path, value in definition.vectors.items())
+        return _ModelDefinition(self.fields(), tuple(constraints), vectors)
 
     def compiled_annotations(self) -> Mapping[type[Annotation], Mapping[str, Annotation]]:
         """Scope child annotations before applying this class's refinements."""
@@ -333,6 +372,8 @@ def _populate(
         }
         for attr in model._modello_namespace.dummies:
             setattr(instance, attr, solution[fields[prefix + (attr,)]])
+        for attr, vector in model._modello_namespace.vectors.items():
+            setattr(instance, attr, Vector(*(solution[fields[prefix + (attr, str(i))]] for i in range(len(vector)))))
         for attr, child in model._modello_namespace.nested_models.items():
             child_instance = object.__new__(child._modello_model)
             populate(child_instance, child._modello_model, (*prefix, attr))

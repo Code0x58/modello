@@ -63,6 +63,7 @@ illustrate symbolic modeling with fixed historical rates.
 
    api
    nesting
+   vectors
    debugging
    solutions
    diagnostics
@@ -75,6 +76,7 @@ illustrate symbolic modeling with fixed historical rates.
    examples/applications/index
    examples/reconciliation/index
    examples/portfolio/index
+   examples/timeseries/index
    examples/solution_families/index
 
 .. toctree::

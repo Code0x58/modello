@@ -148,6 +148,42 @@ together avoids passing through that contradictory intermediate case.
    :width: 260px
    :alt: The mobile editor supplies expected return while other results remain unobserved.
 
+Vectors and indexed formulas
+------------------------------
+
+The explorer recognises declared vectors automatically. Their symbols carry an
+arrow, scalar coordinates use subscripts, and values appear as columns. Sums,
+products, integrals, derivatives, and limits retain mathematical notation.
+An indexed vector definition includes its iteration domain, for example
+``for i ∈ {0, …, 4}``. Sum and product bounds are inclusive, like SymPy limits.
+
+Choose **Inspect vector** to see its complete values, formula, connected
+quantities, and individual entry sources. **Mixed** means its entries have
+different sources, such as two observations and one inferred result; each entry
+keeps its own Input, Free, Calculated, or Recorded label.
+
+Supply an entire vector with ``[1, ?, 3/2]``. A ``?`` leaves that entry
+unobserved, retaining its equation. Percentages are accepted per entry, such as
+``[10%, ?, -2%]``. Applying a vector checks all entries together. Subsequent
+individual edits compose with that proposal. **Drop observations** releases
+the whole vector, and **Restore original input** restores its original
+observation pattern. The **Inputs** view also supports changing coordinates
+together with other model observations.
+
+Whole-vector editing is available when all its coordinates can be edited.
+Hidden entries are omitted from summaries and disable whole-vector editing;
+Recorded entries retain their snapshot policy. Visible coordinates remain
+independently inspectable. Vector metadata supplies default labels, units, and
+number formatting to entries; explicit coordinate metadata replaces that
+default. Python initial inputs and scenarios accept vectors or sequences at a
+vector path, including nested paths such as ``"window.samples"``. The browser
+uses bracketed coordinate paths such as ``"window.samples[2]"``.
+
+Run ``python -m examples.gui_timeseries`` and open http://127.0.0.1:5059 to explore
+inventory transitions. Use ``--example returns``, ``rolling``, or ``exposure``
+for compounding, rolling windows, or a continuous integral. See :doc:`vectors`
+and :doc:`examples/timeseries/index` for model definitions and their assumptions.
+
 Understanding the interface
 ---------------------------
 

@@ -122,6 +122,49 @@ main {
   margin: auto;
   padding: 35px 4% 26px;
 }
+.vector-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.vector-heading .component-head {
+  flex: 1;
+  min-width: 0;
+}
+.vector-inspect {
+  border: 0;
+  background: transparent;
+  color: #4c6eaa;
+  font-size: 11px;
+  padding: 10px;
+  flex-shrink: 0;
+}
+.vector-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+}
+.observation-form textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid #dce4f2;
+  border-radius: 6px;
+  padding: 10px;
+  color: inherit;
+  background: #fff;
+  font: inherit;
+  line-height: 1.7;
+}
+.badge.mixed {
+  color: #6f628b;
+  background: #f1edf8;
+}
+.current-value:has(mtable) .quantity-value {
+  max-height: 260px;
+  overflow: auto;
+}
 .eyebrow {
   font-size: 9px;
   font-weight: 650;
@@ -645,8 +688,17 @@ input[type="checkbox"] {
 .component.collapsed > .component-body {
   display: none;
 }
-.component.collapsed > .component-head > .chevron {
+.component.collapsed > .component-head > .chevron,
+.component.collapsed > .vector-heading > .component-head > .chevron {
   transform: rotate(-90deg);
+}
+.component.vector.selected > .vector-heading {
+  background: #f3f7ff;
+  box-shadow: inset 3px 0 #7ea5e3;
+}
+.component.vector.error > .vector-heading {
+  background: #fff4f1;
+  box-shadow: inset 3px 0 #cb735f;
 }
 .canvas-foot {
   display: flex;

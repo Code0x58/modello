@@ -20,7 +20,7 @@ from examples.named_members import (
 from examples.portfolio.models import Equity, EquityPosition, EquityPrice, EquityPrices, USDCash
 from examples.portfolio.sources import EquityProvider, PriceHistory
 from examples.symbolic import Known, ModelPlan, SymbolicModel
-from modello import InstanceDummy, Modello, component
+from modello import InstanceDummy, Modello, Vector, component
 
 equity = ModelFactory(EquityPosition, EquityProvider)  # type: ignore[type-abstract]
 
@@ -74,6 +74,7 @@ class EquityBasket(Modello, Generic[_Members]):
     """Named holdings, their provider bindings, and weights in a common capital base."""
 
     members: _Members
+    market_values: Vector
     capital = InstanceDummy("capital", positive=True)
     market_value = InstanceDummy("market_value", nonnegative=True)
     weight = market_value / capital
@@ -128,7 +129,10 @@ class EquityBasket(Modello, Generic[_Members]):
 
         class Basket(EquityBasket[_Declared]):
             members = component(member_type)
-            market_value = EquityBasket.total(members)
+            market_values = Vector(
+                *(position.market_value for position in component_members(members, EquityPosition).values())
+            )
+            market_value = market_values.sum()
 
         return Basket
 

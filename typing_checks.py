@@ -11,6 +11,7 @@ from sympy import Symbol
 from modello import (
     Annotation,
     ConstraintKind,
+    Index,
     InstanceDummy,
     Modello,
     ModelProblem,
@@ -20,10 +21,14 @@ from modello import (
     SolutionFamily,
     SolverBackendError,
     SymbolicCondition,
+    SymbolicScalar,
+    Vector,
+    VectorValue,
     annotate,
     annotate_model,
     component,
     inspect_model,
+    vector,
 )
 from modello.diagnostics import ComponentView, FieldValue, ModelField, ProblemAnalysis, SolutionSet
 from modello.gui import FieldInfo, ModelInfo, Scenario, gui
@@ -56,6 +61,32 @@ class Drawing(Modello):
 
     line = component(Line)
     extent = line.end.x - line.start.x
+
+
+def check_vector_contracts() -> None:
+    """Vectors keep their type through indexing, construction, and family queries."""
+
+    class Window(Modello):
+        samples = Vector("x", size=3, real=True)
+        i = Index("i")
+        total = samples.sum(i)
+        changes = vector(samples[i] - samples[i - 1], (i, 1, 2))
+
+    inputs: VectorValue = [1, None, "3/2"]
+    case: Window = Window("window", samples=inputs)
+    samples: Vector = case.samples
+    coordinate: SymbolicScalar = samples[0]
+    sliced: Vector = samples[1:]
+    problem: ModelProblem[Window] = inspect_model(Window, "family", samples=inputs)
+    family: SolutionFamily[Window] = problem.solutions(problem.symbols.samples)
+    selected: Vector = problem.vector("samples")
+    assert selected == problem.vectors[("samples",)]
+    resolved: Vector = family.expression(family.symbols.samples)
+    family.values(family.symbols.samples, family.symbols.total)
+    assert len(resolved) == len(sliced) + 1
+    Window("scalar", total=coordinate)
+    Vector([object()])  # type: ignore[list-item]
+    Window("invalid", samples=[{}])  # type: ignore[list-item]
 
 
 @dataclass(frozen=True)
@@ -113,7 +144,7 @@ def check_inputs() -> None:
     Line("L", start=UserDict(x=1))  # type: ignore[arg-type]
     Line("L", start={"x": {"nested": 1}})  # type: ignore[arg-type]
     Drawing("D", line={"start": {"x": 1}})  # type: ignore[arg-type]
-    Point("P", x=[])  # type: ignore[arg-type]
+    Point("P", x=[object()])  # type: ignore[list-item]
     Point("P", x=None)  # type: ignore[arg-type]
     drawing.line.start = Box("B")  # type: ignore[assignment]
     _point_class: type[Point] = drawing.line.start  # type: ignore[assignment]
@@ -170,10 +201,10 @@ def check_solution_families() -> None:
     family.observe(line=Line("line", start=Point("start", x=2)))
     _section: SolutionFamily[Drawing] = family.section(start.x, through=case)
     family.observe(line={"start": {"x": 2}})  # type: ignore[arg-type]
-    family.observe(extent=[])  # type: ignore[arg-type]
+    family.observe(extent=[object()])  # type: ignore[list-item]
     problem.solutions("line.start.x")  # type: ignore[arg-type]
     family.values({"x": 2})  # type: ignore[arg-type]
-    family.expression({"x": 2})  # type: ignore[arg-type]
+    family.expression({"x": 2})  # type: ignore[call-overload]
     family.where({"extent": 2})  # type: ignore[arg-type]
     family.where([True])  # type: ignore[arg-type]
     family.where("extent > 0")  # type: ignore[arg-type]

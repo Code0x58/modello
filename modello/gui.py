@@ -7,14 +7,26 @@ browser edits are exact scalars parsed without evaluating expression strings.
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field, replace
-from typing import TYPE_CHECKING, Any, Literal, Mapping, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, Mapping, TypeVar, cast
 
 from sympy import Expr, S, Symbol, factor_terms
 
-from modello import Annotation, Modello, ScalarValue, _solve_problem, annotate, annotate_model, inspect_model
+from modello import (
+    Annotation,
+    Modello,
+    ScalarValue,
+    VectorValue,
+    _solve_problem,
+    annotate,
+    annotate_model,
+    inspect_model,
+)
 from modello._gui.formatting import display_number
-from modello._gui.inputs import parse_scalar
+from modello._gui.inputs import parse_scalar, parse_vector
 from modello._gui.mathml import EquationPrinter
+from modello._gui.vectors import vector_view
+from modello._inputs import _validate_vector_values
+from modello._paths import _path_label, _path_value
 from modello.diagnostics import Candidate, ConstraintKind, FieldValue, ModelConstraint, ModelField, ModelProblem
 from modello.errors import ModelInputError, ModelValidationError, SolverBackendError
 
@@ -91,7 +103,7 @@ class Scenario:
 
     title: str
     description: str
-    bindings: Mapping[str, ScalarValue | None] = dataclass_field(default_factory=dict)
+    bindings: Mapping[str, ScalarValue | VectorValue | None] = dataclass_field(default_factory=dict)
     select: str = ""
 
 
@@ -141,6 +153,7 @@ class BindingError(ModelValidationError):
 def _instance_problem(instance: Modello, name: str) -> ModelProblem:
     """Reopen original inputs; solved outputs must not become observations."""
     model = type(instance)
+    _validate_vector_values(model, instance)
     problem = inspect_model(model, name)
     bindings = {
         instance._modello_bound_fields[d].symbol: problem.field(*path).symbol
@@ -149,9 +162,7 @@ def _instance_problem(instance: Modello, name: str) -> ModelProblem:
     constraints = list(problem.constraints)
     seen: set[Symbol] = set()
     for path, dummy in model._modello_definition.fields.items():
-        value: Any = instance
-        for part in path:
-            value = getattr(value, part)
+        value = _path_value(instance, path)
         source = instance._modello_bound_fields[dummy]
         field = problem.field(*path)
         if source.copied_kind(value) is ConstraintKind.INPUT and field.symbol not in seen:
@@ -162,7 +173,7 @@ def _instance_problem(instance: Modello, name: str) -> ModelProblem:
                     ConstraintKind.INPUT,
                     field.symbol,
                     FieldValue(field, value).value.xreplace(bindings),
-                    ".".join(path),
+                    _path_label(path),
                 )
             )
             seen.add(field.symbol)
@@ -183,12 +194,12 @@ def _preview(problem: ModelProblem) -> tuple[dict[Symbol, Expr], str]:
             accepted.append((values, audit.verdict))
             continue
         rejected_paths.update(
-            ".".join(check.value.field.path)
+            _path_label(check.value.field.path)
             for check in audit.assumptions
             if check.actual not in (None, check.expected)
         )
         rejected_paths.update(
-            ".".join(check.constraint.path) for check in audit.residuals if check.verdict == "violated"
+            _path_label(check.constraint.path) for check in audit.residuals if check.verdict == "violated"
         )
     if len(accepted) != 1:
         message = (
@@ -214,7 +225,7 @@ class Explorer:
         model: type[Modello] | Modello | ModelProblem,
         name: str = "exploration",
         *,
-        inputs: Mapping[str, ScalarValue] | None = None,
+        inputs: Mapping[str, ScalarValue | VectorValue] | None = None,
         metadata: Mapping[str, FieldInfo] | None = None,
     ) -> None:
         from modello._gui.presentation import Layout
@@ -230,13 +241,17 @@ class Explorer:
         self._initial_inputs = {c.left: c.right for c in self._initial.constraints if c.kind is ConstraintKind.INPUT}
 
     def _bind(
-        self, initial: ModelProblem, bindings: Mapping[str, ScalarValue | None], *, context: str = "bindings"
+        self,
+        initial: ModelProblem,
+        bindings: Mapping[str, ScalarValue | VectorValue | None],
+        *,
+        context: str = "bindings",
     ) -> ModelProblem:
         changes: dict[Symbol, tuple[ModelField, Expr | None]] = {}
-        for path, raw in bindings.items():
+        for path, scalar in self._layout.expand_bindings(bindings):
             try:
                 field = self._layout.field(path, context=context)
-                value = None if raw is None else FieldValue(field, raw).value
+                value = None if scalar is None else FieldValue(field, cast(ScalarValue, scalar)).value
             except ModelInputError as error:
                 raise BindingError(str(error), (path,)) from error
             if field.symbol in changes and changes[field.symbol][1] != value:
@@ -255,7 +270,7 @@ class Explorer:
             changes[field.symbol] = (field, value)
         constraints = [c for c in initial.constraints if c.kind is not ConstraintKind.INPUT or c.left not in changes]
         constraints.extend(
-            ModelConstraint(0, field.path, ConstraintKind.INPUT, field.symbol, value, ".".join(field.path))
+            ModelConstraint(0, field.path, ConstraintKind.INPUT, field.symbol, value, _path_label(field.path))
             for field, value in changes.values()
             if value is not None
         )
@@ -263,22 +278,28 @@ class Explorer:
             initial, constraints=tuple(replace(c, index=i) for i, c in enumerate(constraints)), candidates=()
         )
 
-    def _browser_bindings(self, bindings: Mapping[str, str | None]) -> dict[str, Expr | None]:
+    def _browser_bindings(self, bindings: Mapping[str, str | None]) -> dict[str, ScalarValue | VectorValue | None]:
         """Apply the same edit policy used to decide which fields have editors."""
-        parsed = {}
+        parsed: dict[str, ScalarValue | VectorValue | None] = {}
         for path, text in bindings.items():
-            if path not in self._layout.editable:
+            if path not in self._layout.editable and path not in self._layout.editable_vectors:
                 raise BindingError("This field cannot be edited.", (path,))
             if text is not None and not isinstance(text, str):
                 raise BindingError("Enter input values as text.", (path,))
             try:
-                parsed[path] = None if text is None or not text.strip() else parse_scalar(text)
+                parsed[path] = (
+                    None
+                    if text is None or not text.strip()
+                    else parse_vector(text, len(self._layout.vectors[path]))
+                    if path in self._layout.vectors
+                    else parse_scalar(text)
+                )
             except ModelInputError as error:
                 raise BindingError(str(error), (path,)) from error
         return parsed
 
     def snapshot(
-        self, bindings: Mapping[str, ScalarValue | None] | None = None, *, raw: bool = False
+        self, bindings: Mapping[str, ScalarValue | VectorValue | None] | None = None, *, raw: bool = False
     ) -> dict[str, Any]:
         """Return a JSON-ready view; invalid edits raise without changing state.
 
@@ -295,11 +316,11 @@ class Explorer:
         printer = self._layout.printer()
         constraints: dict[Symbol, list[dict[str, str]]] = {}
         for c in problem.constraints:
-            if ".".join(c.path) in self._layout.hidden:
+            if _path_label(c.path) in self._layout.hidden:
                 continue
             entry = {
                 "kind": str(c.kind),
-                "path": ".".join(c.path),
+                "path": _path_label(c.path),
                 "text": f"{problem.format(c.left)} = {problem.format(c.right)}",
                 "mathml": printer.equation(c.left, c.right),
             }
@@ -314,6 +335,14 @@ class Explorer:
             (symbols if path in self._layout.hidden else rows).append(row)
         status, message = _preview_status(raw, verdict)
         root = self._layout.metadata[""]
+        indexed_rows = {row["path"]: row for row in [*rows, *symbols]}
+        vector_rows = [
+            vector_view(path, self._layout, context, values, indexed_rows, raw) for path in self._layout.vectors
+        ]
+        for row in vector_rows:
+            if row["path"] in self._layout.hidden:
+                row.update(value="Hidden vector", value_state="hidden", value_mathml="", exact_mathml="")
+                symbols.append(row)
         return {
             "title": root.title or problem.model.__name__,
             "name": problem.name,
@@ -322,6 +351,7 @@ class Explorer:
             "raw": raw,
             "fields": rows,
             "symbols": symbols,
+            "vectors": [row for row in vector_rows if row["path"] not in self._layout.hidden],
             "components": [
                 {
                     "path": path,
@@ -344,14 +374,17 @@ class Explorer:
                     "bindings": {
                         path: None
                         if value is None
-                        else self._input_text(path, FieldValue(self._layout.field(path), value).value)
-                        for path, value in scenario.bindings.items()
+                        else self._input_text(
+                            path, FieldValue(self._layout.field(path), cast(ScalarValue, value)).value
+                        )
+                        for path, value in self._layout.expand_bindings(scenario.bindings)
                     },
                 }
                 for scenario in self._layout.model_info.scenarios
             ],
             "hidden_inputs": sum(
-                c.kind is ConstraintKind.INPUT and ".".join(c.path) in self._layout.hidden for c in problem.constraints
+                c.kind is ConstraintKind.INPUT and _path_label(c.path) in self._layout.hidden
+                for c in problem.constraints
             ),
         }
 
@@ -383,6 +416,7 @@ class Explorer:
             "path": path,
             "name": field.path[-1],
             "depth": len(field.path) - 1,
+            "parent": _path_label(field.path[:-1]),
             "title": info.title or field.path[-1].replace("_", " "),
             "description": info.description,
             "info": info.info,
@@ -460,7 +494,7 @@ def create_app(
     model: type[Modello] | Modello | ModelProblem,
     name: str = "exploration",
     *,
-    inputs: Mapping[str, ScalarValue] | None = None,
+    inputs: Mapping[str, ScalarValue | VectorValue] | None = None,
     metadata: Mapping[str, FieldInfo] | None = None,
 ) -> Flask:
     """Create a local Flask app; each browser holds its own trial bindings.
@@ -491,7 +525,13 @@ def create_app(
         if not isinstance(bindings, dict) or not isinstance(raw, bool) or len(bindings) > len(explorer.problem.fields):
             return jsonify(error="Invalid bindings or raw flag.", paths=[]), 400
         try:
-            return jsonify(explorer.snapshot(explorer._browser_bindings(bindings), raw=raw))
+            parsed = explorer._browser_bindings(bindings)
+            snapshot = explorer.snapshot(parsed, raw=raw)
+            snapshot["bindings"] = {
+                path: None if value is None else explorer._input_text(path, cast(Expr, value))
+                for path, value in explorer._layout.expand_bindings(parsed)
+            }
+            return jsonify(snapshot)
         except BindingError as error:
             return jsonify(error=str(error), paths=list(dict.fromkeys([*bindings, *error.paths]))), 422
         except (ModelInputError, ModelValidationError) as error:

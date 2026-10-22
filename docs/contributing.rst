@@ -11,7 +11,7 @@ Reading the core
 Follow a model from its class body to its populated instances:
 
 1. ``ModelloMetaNamespace`` in ``modello/_model.py`` collects scalar expressions,
-   components, and inherited replacements. ``compile()`` produces one
+   vectors, components, and inherited replacements. ``compile()`` produces one
    ``_ModelDefinition`` containing the field paths and scoped equations. Each
    ``_Definition`` keeps an equation together with its origin path, including
    separate definitions of the same aliased quantity. ``ModelloMeta`` attaches
@@ -21,12 +21,18 @@ Follow a model from its class body to its populated instances:
    ``_inputs.py`` appends scalar and component observations in that scope. It
    retains each copied value's supplied or inferred origin and groups all values
    from a component under its constructor argument. Preparation does not solve.
-3. ``Modello.__init__()`` prepares the problem, generates joint candidates,
+3. ``_algebra()`` in ``_problem.py`` creates an evaluated view of those equations.
+   ``_expressions.py`` resolves directed definitions within local binder scopes,
+   evaluates SymPy operators, and leaves ordinary algebraic cycles for the joint
+   solver. This view is shared by construction, audits, and solution families;
+   the original snapshot remains unchanged. A per-problem memo prevents repeated
+   expansion of shared dependency graphs.
+4. ``Modello.__init__()`` prepares the problem, generates joint candidates,
    selects one compatible with the declared assumptions, and calls ``_populate()``
    to materialize the complete component tree. Symbolic construction accepts
    undecided assumptions. Diagnostic audits require a checked, closed witness
    before claiming consistency.
-4. ``SolutionFamily._prepare()`` in ``solutions.py`` gives the same snapshot an
+5. ``SolutionFamily._prepare()`` in ``solutions.py`` gives the same snapshot an
    explicit coordinate domain. ``_FamilyReduction`` owns the evolving coordinate
    expressions: first substitute isolated quantities, then eliminate rational
    affine joins. The family retains all original equations and every field's
@@ -38,6 +44,15 @@ Shared problem records live in ``_problem.py``. Runtime imports point downwards
 through records, declarations, input capture, solution families, diagnosis, and
 the public namespace; reverse type references use ``TYPE_CHECKING``. The GUI and
 numerical example adapters consume the compiled declaration's fields.
+
+``_values.py`` holds structural input types; ``_symbols.py`` owns independent
+quantity identities and local indices. ``vectors.py`` implements immutable
+scalar containers and finite comprehensions without importing model or GUI
+machinery. Vector coordinates use normal scalar field records. ``_paths.py``
+shares coordinate traversal and bracketed display paths across consumers.
+The GUI separates layout and permissions, MathML printing, bounded input parsing,
+and vector summaries under ``_gui/``. Finance and time-series examples stay above
+these layers.
 
 Validation
 ----------
@@ -58,6 +73,12 @@ distribution formats. The commands are maintained in ``AGENTS.md`` and
 Mirror source packages under ``tests/`` and use ``test_<module>.py``, omitting a
 module's leading underscore. Use ``test_init.py`` for package entry points and
 keep repository-wide checks at the test root.
+
+When Node.js is available, pytest also exercises the frontend's proposal state
+against real Flask response fixtures. It covers bulk vector edits, subsequent
+coordinate edits, restoring a vector while retaining a separate target, and
+preserving the applied case after rejection. This optional check does not
+replace visual browser review and adds no runtime dependency to the library.
 
 Keep regressions focused on distinct behavior and independent mathematical
 checks. Refresh dependencies with ``uv lock --upgrade`` and commit ``uv.lock``.

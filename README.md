@@ -162,6 +162,34 @@ pip install "modello[examples]"
 python -m examples.portfolio --html account.html --json account.json
 ```
 
+## Vectors and full formulas
+
+Retain indexed sums and vector comprehensions while solving individual entries:
+
+```python
+from sympy import Sum
+from modello import Index, Modello, Vector, vector
+
+
+class Window(Modello):
+    samples = Vector("x", size=3, real=True)
+    i = Index("i")
+    total = Sum(samples[i], (i, 0, len(samples) - 1))
+    changes = vector(samples[i] - samples[i - 1], (i, 1, len(samples) - 1))
+
+
+window = Window("observed", samples=[1, None, 3], total=6)
+assert window.samples == Vector(1, 2, 3)
+assert window.changes == Vector(1, 1)
+```
+
+Vectors share scalar domains, aliases, component scopes, and solution families.
+Use SymPy `Product`, `Integral`, `Derivative`, and `Limit` directly; the explorer
+keeps their mathematical notation and gives vector symbols an arrow. The
+[vector guide](docs/vectors.rst) explains indices and observations. The
+[finite-path examples](docs/examples/timeseries/index.rst) demonstrate inventory
+transitions, compounding, rolling windows, and integrated exposure.
+
 ## Development
 
 See [Contributing and releases](docs/contributing.rst) for environment setup,
@@ -179,3 +207,7 @@ declarations with `gui(field, title=..., ...)`, using the core's generic annotat
 registry. Start with the [runnable quickstart](docs/gui.rst#quickstart-your-own-explorer)
 to build your own explorer. The [GUI guide](docs/gui.rst) covers metadata, hidden
 inputs, validation, and the prototype's scope. The base install remains SymPy only.
+
+Run `python -m examples.gui_timeseries` and open <http://127.0.0.1:5059> for indexed
+paths, vector entry editing, and Σ/Π/∫ formulas. Select `--example returns`,
+`rolling`, or `exposure` to explore the other examples.

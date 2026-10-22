@@ -73,3 +73,24 @@ def parse_scalar(text: str) -> Expr:
     if result.is_finite is not True:
         raise ModelInputError("Inputs must be finite scalar values.")
     return result / 100 if percent else result
+
+
+def parse_vector(text: str, size: int) -> tuple[Expr | None, ...]:
+    """Parse exact scalar entries; '?' explicitly leaves a coordinate unobserved."""
+    text = text.strip()
+    if not text.startswith("[") or not text.endswith("]") or len(text) > 16_000:
+        raise ModelInputError("Enter a vector such as [1, ?, 3/2]; ? leaves an entry unobserved.")
+    body = text[1:-1].strip()
+    entries = body.split(",") if body else []
+    if len(entries) != size:
+        raise ModelInputError(f"Enter exactly {size} vector entries; received {len(entries)}.")
+    values: list[Expr | None] = []
+    for i, entry in enumerate(entries):
+        if entry.strip() == "?":
+            values.append(None)
+        else:
+            try:
+                values.append(parse_scalar(entry))
+            except ModelInputError as error:
+                raise ModelInputError(f"Entry {i}: {error}") from error
+    return tuple(values)

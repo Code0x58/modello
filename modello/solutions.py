@@ -8,7 +8,7 @@ No solver candidate list is promoted to a complete nonlinear solution family.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Generic, cast
+from typing import TYPE_CHECKING, Generic, cast, overload
 
 from sympy import (
     And,
@@ -45,7 +45,9 @@ from sympy.core.relational import Relational
 from sympy.logic.boolalg import Boolean
 from sympy.solvers.solveset import NonlinearError
 
+from modello._expressions import _evaluate
 from modello._model import InstanceDummy, _populate
+from modello._paths import _path_label
 from modello._problem import (
     Candidate,
     CandidateCheck,
@@ -54,14 +56,16 @@ from modello._problem import (
     ModelField,
     ModelT,
     Verdict,
+    _algebra,
     _canonical_fields,
     _domain,
     _FieldPrinter,
 )
 from modello.errors import ModelInputError, ModelValidationError, SolutionSelectionError, UnresolvedSolutionError
+from modello.vectors import Vector
 
 if TYPE_CHECKING:
-    from modello import Modello, ScalarValue, SymbolicCondition, SymbolicScalar
+    from modello import Modello, ScalarValue, SymbolicCondition, SymbolicScalar, VectorValue
     from modello.diagnostics import ModelProblem
 
 
@@ -101,6 +105,7 @@ def _exact_scalar(value: object) -> Expr:
         raise ModelInputError("Expected a commutative scalar expression") from error
     if not isinstance(expression, Expr) or expression.is_commutative is not True:
         raise ModelInputError("Expected a commutative scalar expression")
+    expression = _evaluate(expression)
     _require_exact(expression)
     return expression
 
@@ -294,22 +299,28 @@ class SolutionFamily(Generic[ModelT]):
         fields = _canonical_fields(problem)
         if any(field.symbol.is_commutative is not True for field in fields):
             raise ModelInputError("Solution families currently require commutative scalar fields")
-        for constraint in problem.constraints:
-            _exact_scalar(constraint.right)
+        try:
+            algebra = _algebra(problem.constraints)
+        except NotImplementedError as error:
+            raise ModelInputError(str(error)) from error
+        for constraint, (_, right) in zip(problem.constraints, algebra.equations, strict=True):
+            if constraint.right.has(Float):
+                raise ModelInputError("Solution families require exact expressions; use Rational for decimal values")
+            _exact_scalar(right)
         _require_exact(*conditions)
         domains = tuple(_field_domain(field.symbol) for field in fields)
         # Work symbols explicitly carry the finite-scalar universe, in addition
         # to the model's assumptions. Those assumptions remain in explicit sets.
         symbols = tuple(
             Dummy(
-                ".".join(field.path),
+                _path_label(field.path),
                 **({**field.symbol.assumptions0, "complex": True} if domain is not S.EmptySet else {}),
             )
             for field, domain in zip(fields, domains, strict=True)
         )
         bindings = {field.symbol: symbol for field, symbol in zip(fields, symbols, strict=True)}
         protected = frozenset(bindings[field.symbol] for field in preferred)
-        equations = [(bindings[c.left], c.right.xreplace(bindings)) for c in problem.constraints]
+        equations = [(bindings[left], right.xreplace(bindings)) for left, right in algebra.equations]
         equations.extend(
             (condition.lhs.xreplace(bindings), condition.rhs.xreplace(bindings))
             for condition in conditions
@@ -386,7 +397,7 @@ class SolutionFamily(Generic[ModelT]):
         for binding in self._bindings:
             field, expr = binding.field, binding.expression
             printer = self._printer(expr, field.path[:-1])
-            path = ".".join(field.path[len(printer.scope) :])
+            path = _path_label(field.path[len(printer.scope) :])
             text = f"{path} [coordinate]" if field in self.parameters else f"{path} = {printer.doprint(expr)}"
             entries.append((field.path[:-1], text))
         lines.extend(self.problem._tree_lines(tuple(entries), 2))
@@ -395,10 +406,18 @@ class SolutionFamily(Generic[ModelT]):
         )
         return "\n".join(lines)
 
-    def expression(self, expression: ScalarValue) -> Expr:
-        """Express a scalar in the remaining coordinates, using public symbols."""
-        (reduced,) = self._chart_expressions(expression)
+    @overload
+    def expression(self, expression: Vector) -> Vector: ...
+
+    @overload
+    def expression(self, expression: ScalarValue) -> Expr: ...
+
+    def expression(self, expression: ScalarValue | Vector) -> Expr | Vector:
+        """Express a scalar or vector in the remaining public coordinates."""
         reverse = {binding.symbol: binding.field.symbol for binding in self._bindings}
+        if isinstance(expression, Vector):
+            return Vector(*(entry.xreplace(reverse) for entry in self._chart_expressions(*expression)))
+        (reduced,) = self._chart_expressions(expression)
         return cast(Expr, reduced.xreplace(reverse))
 
     def _scalar(self, value: object) -> Expr:
@@ -417,11 +436,16 @@ class SolutionFamily(Generic[ModelT]):
         bindings = {binding.field.symbol: binding.expression for binding in self._bindings}
         return tuple(self._scalar(expression).xreplace(bindings) for expression in expressions)
 
-    def values(self, *expressions: ScalarValue) -> Set:
-        """Return possible scalar values, or coupled tuples for multiple outputs."""
+    def values(self, *expressions: ScalarValue | Vector) -> Set:
+        """Return scalar values or coupled tuples, retaining vector order."""
         if not expressions:
             raise ModelInputError("Select at least one output expression")
-        outputs = self._chart_expressions(*expressions)
+        outputs = tuple(
+            Tuple(*self._chart_expressions(*expression))
+            if isinstance(expression, Vector)
+            else self._chart_expressions(expression)[0]
+            for expression in expressions
+        )
         output = outputs[0] if len(outputs) == 1 else Tuple(*outputs)
         parameters = self._coordinates
         if not parameters:
@@ -451,7 +475,7 @@ class SolutionFamily(Generic[ModelT]):
             checked.append(value)
         return self._prepare(self.problem, self._preferred, (*self.conditions, *checked))
 
-    def observe(self, **inputs: ScalarValue | Modello) -> SolutionFamily[ModelT]:
+    def observe(self, **inputs: ScalarValue | VectorValue | Modello) -> SolutionFamily[ModelT]:
         """Add constructor-style scalar or component observations immutably.
 
         Observations accumulate as constraints. Use ``where(Eq(...))`` for a
