@@ -3,13 +3,13 @@
 import json
 
 import pytest
-from sympy import Eq, Rational, Symbol
+from sympy import Eq, Rational, S, Symbol
 
 from examples.gui import DEMO_INPUTS, Portfolio
 from examples.solution_families import ImpactStudy
 from modello import InstanceDummy, Modello, inspect_model
 from modello.errors import ModelInputError
-from modello.gui import BindingError, Explorer, FieldInfo, ModelInfo, Scenario, create_app
+from modello.gui import BindingError, Explorer, FieldInfo, ModelInfo, PlotInfo, Scenario, create_app
 
 
 class Response(Modello):
@@ -86,7 +86,8 @@ def test_calibration_ranges_predictions_and_point_selection_retain_whole_family(
     assert rows(data)["planned.cost"]["possible_values"]["text"] == "[1,026, 1,076]"
     selected = explorer.snapshot(point={"impact": Rational(1, 2)})
     assert rows(selected)["planned.cost"]["value"] == "1051"
-    assert rows(selected)["impact"]["kind"] == "fixed"
+    # A shared, unspecified component quantity is inferred in this preview, not recorded.
+    assert rows(selected)["impact"]["kind"] == "derived"
     assert selected["exploration"]["coordinate_count"] == 1
     assert selected["exploration"]["selection"]["coordinates"] == {"impact": "1/2"}
     json.dumps(selected)
@@ -141,9 +142,9 @@ def test_two_coordinate_chart_retains_coupled_constraints():
     summary = explorer.snapshot()["exploration"]
     assert summary["coordinate_count"] == 2 and summary["kind"] == "region"
     chart = explorer.plot(controls=["x", "y"], output="total", windows={"x": (-1, 1), "y": (-1, 1)})
-    assert chart["samples"] == 121
+    assert chart["samples"] == 441 and chart["grid_size"] == 21
     assert len(chart["points"]) == 2
-    assert chart["rejected"] == 119
+    assert chart["rejected"] == 439
     assert all(point["axes"][0] * point["axes"][1] == 1 for point in chart["points"])
 
 
@@ -284,8 +285,111 @@ def test_exact_response_insight_and_three_coordinate_demo():
         windows={"x": (-40, 40), "y": (-40, 40)},
         point={"x": 0, "y": 0, "target_height": 0},
     )
-    assert chart["section"] and len(chart["points"]) == 81
-    assert chart["rejected"] == 40 and chart["unknown"] == 0
+    assert chart["section"] and len(chart["points"]) == 317
+    assert chart["rejected"] == 124 and chart["unknown"] == 0
+
+
+def test_projectile_guided_curve_area_surface_and_elevated_band():
+    from examples.gui_families import demo_family
+
+    client = create_app(demo_family("projectile")).test_client()
+    initial = client.post("/api/explore", json={}).json
+    assert initial["exploration"]["coordinate_count"] == 1
+    curve = client.post("/api/plot", json={key: initial["plot"][key] for key in ("controls", "output", "windows")}).json
+    assert curve["points"][0]["axes"] == [-40, 0]
+    assert curve["points"][20]["axes"] == [0, 20]
+    assert curve["points"][-1]["axes"] == [40, 0]
+    assert all(abs(point["axes"][1] - (20 - point["axes"][0] ** 2 / 80)) < 1e-12 for point in curve["points"])
+    for index in (1, 2, 3):
+        scenario = initial["scenarios"][index]
+        options = {key: scenario[key] for key in ("bindings", "bounds")}
+        preview = client.post("/api/explore", json=options)
+        assert preview.status_code == 200
+        assert preview.json["exploration"]["coordinate_count"] == 2
+        plot = scenario["plot"]
+        response = client.post(
+            "/api/plot", json={**options, **{key: plot[key] for key in ("controls", "output", "windows")}}
+        )
+        assert response.status_code == 200
+        chart = response.json
+        assert chart["unknown"] == 0 and chart["rejected"] > 0
+        assert not chart["section"]
+        if index == 2:
+            assert plot["view"] == "surface"
+            assert len(chart["points"]) == 317
+            assert next(point for point in chart["points"] if point["index"] == 220)["axes"] == [0, 0, 20]
+            assert all(abs(z - (20 - (x * x + y * y) / 80)) < 1e-12 for x, y, z in (p["axes"] for p in chart["points"]))
+        else:
+            assert all(z >= 0 for _, _, z in (p["axes"] for p in chart["points"]))
+            assert all(abs(z - (20 - x * x / 80 - y)) < 1e-12 for x, y, z in (p["axes"] for p in chart["points"]))
+            if index == 3:
+                assert all(8 <= point["axes"][1] <= 12 for point in chart["points"])
+        selected = client.post("/api/explore", json={**options, "point": chart["points"][0]["point"]}).json
+        assert selected["status"] == "checked"
+        assert selected["exploration"]["coordinate_count"] == 2
+    scenario = initial["scenarios"][4]
+    choices = client.post("/api/explore", json={"bindings": scenario["bindings"]}).json
+    assert choices["exploration"]["case_count"] == 2
+    assert {candidate["values"]["x"]["value"] for candidate in choices["exploration"]["cases"]} == {
+        "-20*sqrt(2)",
+        "20*sqrt(2)",
+    }
+    # Reset returns to the original curved boundary, including its bound observations.
+    assert client.post("/api/explore", json={}).json["exploration"]["coordinate_count"] == 1
+
+
+def test_plot_presets_use_display_units_and_raw_view_does_not_solve(monkeypatch):
+    from modello import SolutionFamily
+
+    plot = PlotInfo(controls=("x",), output="squared", windows={"x": (Rational(1, 4), Rational(3, 4))})
+
+    @ModelInfo(plot=plot, scenarios=(Scenario(title="Curve", description="A curved response", plot=plot),))
+    class Percent(Modello):
+        x = InstanceDummy("x", real=True)
+        squared = x**2
+
+    monkeypatch.setattr(SolutionFamily, "_prepare", lambda *args: pytest.fail("Raw presets must not solve"))
+    data = Explorer(Percent, metadata={"x": FieldInfo(number_format="percent")}).snapshot(raw=True)
+    assert data["plot"] == data["scenarios"][0]["plot"]
+    assert data["plot"]["windows"] == {"x": ["25%", "75%"]}
+
+
+@pytest.mark.parametrize(
+    ("plot", "message"),
+    [
+        (PlotInfo(controls=(), output="total", windows={}), "one or two distinct"),
+        (PlotInfo(controls=("x", "x"), output="total", windows={"x": (0, 1)}), "one or two distinct"),
+        (PlotInfo(controls=("typo",), output="total", windows={"typo": (0, 1)}), "Unknown field path"),
+        (PlotInfo(controls=("x",), output="total", windows={}), "window endpoints"),
+        (PlotInfo(controls=("x",), output="total", windows={"x": (1, 0)}), "increasing finite real"),
+        (PlotInfo(controls=("x",), output="total", windows={"x": (0, S.Infinity)}), "increasing finite real"),
+    ],
+)
+def test_invalid_plot_presets_fail_at_authoring(plot, message):
+    @ModelInfo(plot=plot)
+    class Invalid(Response):
+        pass
+
+    with pytest.raises(ModelInputError, match=message):
+        Explorer(Invalid)
+
+
+def test_plot_presets_respect_hidden_quantities_and_aliases():
+    @ModelInfo(plot=PlotInfo(controls=("x",), output="total", windows={"x": (0, 1)}))
+    class Guided(Response):
+        pass
+
+    with pytest.raises(ModelInputError, match="visible"):
+        Explorer(Guided, metadata={"x": FieldInfo(hidden=True)})
+
+    @ModelInfo(plot=PlotInfo(controls=("x", "alias"), output="squared", windows={"x": (0, 1), "alias": (0, 1)}))
+    class Alias(Modello):
+        x = InstanceDummy("x", real=True)
+        alias = x
+        squared = x**2
+
+    with pytest.raises(ModelInputError, match="rather than aliases"):
+        Explorer(Alias)
 
 
 def test_highlighted_alias_is_used_for_alternatives_and_comparison():

@@ -558,6 +558,7 @@ function renderScenarios() {
       refresh(scenario.bindings, {
         bounds: scenario.bounds,
         select: scenario.select,
+        plot: scenario.plot,
         scenario: index,
       }),
     );
@@ -856,6 +857,7 @@ $("reset").addEventListener("click", () =>
         (scenario) => !Object.keys(scenario.bindings).length,
       ),
       select: state.initial_field,
+      plot: state.plot,
     },
   ),
 );

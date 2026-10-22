@@ -354,7 +354,7 @@ class FamilyView:
             family = family.section(*(field.symbol for field in fields), through=self.reference)
         grids = []
         window_axes = []
-        samples = 41 if len(fields) == 1 else 11
+        samples = 41 if len(fields) == 1 else 21
         for path, field in zip(controls, fields):
             endpoints = windows.get(path, ())
             if len(endpoints) != 2:
@@ -403,6 +403,7 @@ class FamilyView:
             "rejected": rejected,
             "unknown": unknown,
             "samples": samples ** len(fields),
+            "grid_size": samples,
             "windows": window_axes,
             "fixed": {
                 ".".join(field.path): self.scalar(field, reference[field.symbol])

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     from modello._gui.families import FamilyView
 
-__all__ = ["BindingError", "Explorer", "FieldInfo", "ModelInfo", "Scenario", "create_app", "gui"]
+__all__ = ["BindingError", "Explorer", "FieldInfo", "ModelInfo", "PlotInfo", "Scenario", "create_app", "gui"]
 
 _ValueT = TypeVar("_ValueT")
 _ModelT = TypeVar("_ModelT", bound=Modello)
@@ -84,6 +84,21 @@ def gui(
 
 
 @dataclass(frozen=True, kw_only=True)
+class PlotInfo:
+    """An initial chart of one or two controls, with display windows in model units.
+
+    Windows do not constrain the family. ``view`` selects a flat map or a
+    rotatable surface for two controls; one control always gives a curve.
+    The browser checks the samples when this exploration is opened.
+    """
+
+    controls: tuple[str, ...]
+    output: str
+    windows: Mapping[str, tuple[ScalarValue, ScalarValue]]
+    view: Literal["map", "surface"] = "map"
+
+
+@dataclass(frozen=True, kw_only=True)
 class Scenario:
     """A named exploration that restores initial inputs, then applies bindings.
 
@@ -97,6 +112,7 @@ class Scenario:
     bindings: Mapping[str, ScalarValue | None] = dataclass_field(default_factory=dict)
     bounds: Mapping[str, tuple[ScalarValue | None, ScalarValue | None]] = dataclass_field(default_factory=dict)
     select: str = ""
+    plot: PlotInfo | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -118,6 +134,7 @@ class ModelInfo(Annotation):
     highlights: tuple[str, ...] = ()
     initial_field: str = ""
     scenarios: tuple[Scenario, ...] = ()
+    plot: PlotInfo | None = None
 
     def __call__(self, model: type[_ModelT]) -> type[_ModelT]:
         """Keep the decorated class intact and register its model metadata."""
@@ -240,6 +257,19 @@ class Explorer:
                 self._ranges(scenario.bounds)
             except (ModelInputError, ModelValidationError) as error:
                 raise ModelInputError(f"Scenario {scenario.title!r}.bounds: {error}") from error
+        for plot in (self._layout.model_info.plot, *(s.plot for s in self._layout.model_info.scenarios)):
+            if plot is not None:
+                # Validate numeric windows at authoring time, without reducing or solving the model.
+                for path, endpoints in plot.windows.items():
+                    lower, upper = (FieldValue(self._layout.field(path), value).value for value in endpoints)
+                    if (
+                        any(
+                            v.is_number is not True or v.is_real is not True or v.is_finite is not True
+                            for v in (lower, upper)
+                        )
+                        or (lower < upper) is not S.true
+                    ):
+                        raise ModelInputError(f"PlotInfo.windows: {path!r} needs increasing finite real bounds")
 
     def _bind(
         self, initial: ModelProblem, bindings: Mapping[str, ScalarValue | None], *, context: str = "bindings"
@@ -393,11 +423,13 @@ class Explorer:
             "exploration": exploration,
             "highlights": list(self._layout.model_info.highlights),
             "initial_field": self._layout.model_info.initial_field,
+            "plot": self._plot_info(self._layout.model_info.plot),
             "scenarios": [
                 {
                     "title": scenario.title,
                     "description": scenario.description,
                     "select": scenario.select,
+                    "plot": self._plot_info(scenario.plot),
                     "bindings": {
                         path: None
                         if value is None
@@ -419,6 +451,19 @@ class Explorer:
             "hidden_inputs": sum(
                 c.kind is ConstraintKind.INPUT and ".".join(c.path) in self._layout.hidden for c in problem.constraints
             ),
+        }
+
+    def _plot_info(self, plot: PlotInfo | None) -> dict[str, Any] | None:
+        if plot is None:
+            return None
+        return {
+            "controls": list(plot.controls),
+            "output": plot.output,
+            "windows": {
+                path: [self._input_text(path, FieldValue(self._layout.field(path), value).value) for value in endpoints]
+                for path, endpoints in plot.windows.items()
+            },
+            "view": plot.view,
         }
 
     def _ranges(

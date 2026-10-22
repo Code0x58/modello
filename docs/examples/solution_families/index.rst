@@ -71,6 +71,8 @@ family; numerical plotting does not establish additional guarantees.
 .. image:: impact-cost.png
    :alt: Planned execution cost increases from 1026 to 1076 as impact varies from one quarter to three quarters.
 
+.. _projectile-views:
+
 Discover where a projectile can reach
 -------------------------------------
 

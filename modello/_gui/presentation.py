@@ -10,7 +10,7 @@ from sympy import Symbol
 from modello._gui.mathml import EquationPrinter
 from modello.diagnostics import ConstraintKind, ModelField, ModelProblem
 from modello.errors import ModelInputError
-from modello.gui import FieldInfo, ModelInfo, Scenario
+from modello.gui import FieldInfo, ModelInfo, PlotInfo, Scenario
 
 if TYPE_CHECKING:
     from modello import Modello
@@ -36,7 +36,11 @@ class Layout:
         hidden_symbols = {field.symbol for path, field in self.fields.items() if path in hidden}
         hidden.update(path for path, field in self.fields.items() if field.symbol in hidden_symbols)
         self.hidden = frozenset(hidden)
-        self.copied = frozenset(c.left for c in problem.constraints if c.kind is ConstraintKind.INFERRED)
+        # An unbound quantity copied from a component contributes only x = x;
+        # it is still editable. Nontrivial recorded observations remain protected.
+        self.copied = frozenset(
+            c.left for c in problem.constraints if c.kind is ConstraintKind.INFERRED and c.left != c.right
+        )
         self.editable = frozenset(
             path for path, field in self.fields.items() if path not in hidden and field.symbol not in self.copied
         )
@@ -106,10 +110,12 @@ class Layout:
                 raise ModelInputError(f"ModelInfo.highlights: hidden field {path!r} cannot be highlighted")
         if self.model_info.initial_field:
             self.field(self.model_info.initial_field, context="ModelInfo.initial_field")
+        self._validate_plot(self.model_info.plot, "ModelInfo.plot")
         for index, scenario in enumerate(self.model_info.scenarios):
             if not isinstance(scenario, Scenario):
                 raise ModelInputError(f"ModelInfo.scenarios[{index}]: expected a Scenario declaration")
             context = f"Scenario {scenario.title!r}"
+            self._validate_plot(scenario.plot, f"{context}.plot")
             if scenario.select:
                 self.field(scenario.select, context=f"{context}.select")
             for option, mapping in (("bindings", scenario.bindings), ("bounds", scenario.bounds)):
@@ -118,6 +124,25 @@ class Layout:
                     if path in self.hidden or (option == "bindings" and path not in self.editable):
                         source = "hidden" if path in self.hidden else "Recorded"
                         raise ModelInputError(f"{context}.{option}: cannot edit {source} field {path!r}")
+
+    def _validate_plot(self, plot: PlotInfo | None, context: str) -> None:
+        if plot is None:
+            return
+        if not isinstance(plot, PlotInfo):
+            raise ModelInputError(f"{context}: expected PlotInfo")
+        if not 1 <= len(plot.controls) <= 2 or len(set(plot.controls)) != len(plot.controls):
+            raise ModelInputError(f"{context}: choose one or two distinct controls")
+        fields = [self.field(path, context=context) for path in (*plot.controls, plot.output)]
+        if any(path in self.hidden for path in (*plot.controls, plot.output)):
+            raise ModelInputError(f"{context}: plotted quantities must be visible")
+        if len({field.symbol for field in fields[:-1]}) != len(plot.controls):
+            raise ModelInputError(f"{context}: choose distinct controls rather than aliases")
+        if any(field.symbol.is_real is not True for field in fields[:-1]):
+            raise ModelInputError(f"{context}: controls must be real quantities")
+        if set(plot.windows) != set(plot.controls) or any(len(bounds) != 2 for bounds in plot.windows.values()):
+            raise ModelInputError(f"{context}: supply two window endpoints for every control")
+        if plot.view not in {"map", "surface"}:
+            raise ModelInputError(f"{context}: view must be 'map' or 'surface'")
 
     def field(self, path: str, *, context: str = "bindings") -> ModelField:
         """Resolve a leaf; component paths cannot be used as scalar inputs."""

@@ -1828,6 +1828,72 @@ footer {
   fill: var(--blue);
   cursor: pointer;
 }
+.sample-point:hover {
+  stroke: #172f55;
+  stroke-width: 2;
+}
+.chart-grid {
+  stroke: #e5ebf5;
+  stroke-width: 0.7;
+}
+.sample-cell {
+  pointer-events: none;
+}
+.surface-cell {
+  stroke: #ffffff80;
+  stroke-width: 0.7;
+}
+.map-cell {
+  stroke: none;
+}
+.surface-axis {
+  stroke: #8c9bb1;
+  stroke-width: 1;
+}
+.surface-axis-label {
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.chart-views {
+  display: flex;
+  gap: 6px;
+  margin: 12px 0;
+}
+.chart-views [aria-pressed="true"] {
+  background: #e7effc;
+  color: #244f94;
+}
+.surface-rotation {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.surface-rotation input {
+  padding: 0;
+  accent-color: var(--blue);
+}
+.chart-axis-key {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #435b7a;
+}
+.chart-colour-key {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: #435b7a;
+}
+.chart-gradient {
+  display: inline-block;
+  width: 100px;
+  height: 9px;
+  border-radius: 3px;
+}
 .plot-caption,
 .plot-readout {
   color: #536782;

@@ -31,7 +31,9 @@ assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
 assert "gui" in distribution.metadata.get_all("Provides-Extra", ())
 assert "flask" not in sys.modules
 from modello.gui import Explorer, FieldInfo, ModelInfo, gui
-for name in ("templates/index.html", "static/explorer.css", "static/explorer.js", "static/families.js"):
+for name in (
+    "templates/index.html", "static/explorer.css", "static/explorer.js", "static/families.js", "static/charts.js"
+):
     assert Path(modello.__file__).with_name("_gui").joinpath(name).is_file()
 assert "flask" not in sys.modules
 assert not any(str(path).startswith("tests/") for path in distribution.files or ())
@@ -113,6 +115,9 @@ assert NamedMap({"a": 2}).map(lambda value: value * 3) == {"a": 6}
 assert ReturnModel("example", capital=100_000, expected_return="2/25").gain == 8_000
 assert Explorer(ReturnModel, inputs={"capital": 100_000}).snapshot(raw=True)["raw"]
 assert Explorer(demo_family("calibration")).snapshot()["exploration"]["coordinate_count"] == 1
+projectile = Explorer(demo_family("projectile"))
+assert projectile.snapshot()["plot"]["output"] == "height"
+assert projectile.plot(controls=["x"], output="height", windows={"x": (-40, 40)})["points"][20]["axes"] == [0, 20]
 assert "flask" not in sys.modules
 data = resources.files("examples.portfolio").joinpath("data")
 for name in ("market.csv", "transactions.csv", "benchmark.csv"):

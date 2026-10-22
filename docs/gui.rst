@@ -12,6 +12,46 @@ Install its separate extra; the base library still depends only on SymPy:
 From a checkout, use ``uv run --extra gui python -m examples.gui``. Open
 http://127.0.0.1:5058.
 
+Curves, areas, and surfaces from one projectile
+-----------------------------------------------
+
+The default demo reuses :mod:`examples.projectile`, the mechanics model behind
+the :ref:`solution-view gallery <projectile-views>`. A ball leaves ground level
+at 20 m/s, under uniform gravity of 10 m/s², with no air resistance. Combining
+every launch direction gives the highest reachable target at each horizontal
+location:
+
+.. math::
+
+   h(x,y) = 20 - \frac{x^2+y^2}{80}.
+
+This is an envelope of many possible throws. The guided questions open checked
+charts automatically, with useful display windows:
+
+* **Safety parabola** fixes sideways distance to zero. The curved ceiling peaks
+  at 20 m and meets the ground at horizontal distances of ±40 m.
+* **Reachable area** releases target height. The shaded samples describe targets
+  above ground and below that ceiling; colour shows clearance above each target.
+* **Safety paraboloid** releases sideways distance instead. Rotate and tilt the
+  curved surface, or switch to **Map** to inspect its circular ground footprint.
+* **Targets 8–12 m high** narrows the reachable area to an elevated band.
+* **Boundary at 10 m** observes an envelope height. The same equations now give
+  two symmetric checked horizontal positions, ±20√2 m.
+
+.. image:: _static/gui/family-area.png
+   :alt: A curved reachable area beneath the projectile envelope, coloured by clearance above each target.
+
+.. image:: _static/gui/family-surface.png
+   :alt: A rotatable sampled safety paraboloid over horizontal and sideways distances.
+
+The browser displays curves with one varied control and maps or surfaces with
+two. A surface is two-dimensional even though its graph uses three axes.
+Families with three or more remaining coordinates can still be inspected
+through one- or two-control sections. The browser does not draw volumes;
+the earlier :mod:`examples.solution_views` exporter includes a voxel volume
+illustration. Coordinate count alone does not certify the dimension of an
+implicitly constrained family.
+
 Quickstart: your own explorer
 ------------------------------
 
@@ -37,7 +77,8 @@ the GUI extra; core annotations and Python snapshots work without Flask.
 A portfolio to explore
 ----------------------
 
-The demo is a familiar two-asset mean–variance portfolio. Equity and bond
+Run ``python -m examples.gui --demo portfolio`` for the two-asset mean–variance
+portfolio. Equity and bond
 assumptions live in nested components, and allocation weights must be
 non-negative and sum to 100%. It starts with the equity allocation **free**,
 so the results remain expressions in that unknown.
@@ -155,8 +196,9 @@ have been accounted for:
 * A small explicit finite family shows **checked alternatives** side by side.
   Choose a case to inspect its values. The whole family and all filters remain
   available; the preview does not turn its coordinates into supplied inputs.
-* One remaining coordinate offers a response curve. Two offer a joint sample
-  view, with the selected output encoded by point darkness.
+* One remaining coordinate offers a response curve. Two offer a flat map or
+  rotatable surface, with the selected output encoded by colour and, on the
+  surface, height.
 * With more coordinates, preview a checked reference case and choose one or
   two controls. The other coordinates stay at the reference, producing a
   **section**, with those fixed values stated beside the plot.
@@ -200,16 +242,21 @@ conditions too. While inspecting one checked case, these sets continue to
 describe the surrounding family.
 
 .. image:: _static/gui/family-curve.png
-   :alt: A response curve with checked sample points and an exact point preview in the quantity inspector.
+   :alt: The nonlinear safety parabola with checked sample points and an exact point preview in the inspector.
 
 Plot windows are display choices. Finite enclosing coordinate bounds seed the
 window where available; unbounded coordinates require explicit endpoints.
 Every plotted point is audited against all equations, assumptions, and family
 filters. Selecting a point, including through the keyboard-accessible sample
 picker, opens a checked preview in the original family. One-coordinate plots
-retain gaps at rejected or undecided samples. Two-coordinate plots show points
-without filling cells or claiming an exact region boundary. Empty samples do
-not establish an empty family, and pictures do not establish global extrema.
+retain gaps at rejected or undecided samples. Two-coordinate plots audit a
+21-by-21 grid and shade only cells with four checked corners. Surface faces
+interpolate those corners; boundaries and interiors remain approximations.
+Missing corners leave open cells. The legend gives the sampled output range.
+The **Map** and **Surface** buttons reuse the same checked points without
+another solve. Native rotation and tilt sliders work with the keyboard too.
+Empty samples do not establish an empty family, and pictures do not establish
+global extrema.
 
 Further runnable questions use the same existing example equations:
 
@@ -250,6 +297,7 @@ its current value is numeric or symbolic:
   as a target, making it an input instead.
 * **Recorded** is a copied component result retained in a recorded problem.
   Its editor is disabled because that observation is held in the snapshot.
+  Copying an unspecified quantity leaves it editable.
 
 Hover or focus a colour key to read its explanation. Touch users can tap a key;
 tap elsewhere or press Escape to dismiss it. The case-status key also explains
@@ -305,7 +353,8 @@ With an instance, original inputs are reopened as observations and solved
 outputs are recomputed when inputs change. An overwritten instance field
 becomes an input, as with component copies. The source instance is never
 mutated. With a recorded problem, all its constraints remain, including
-inferred component observations. Those are labelled Recorded and held fixed.
+inferred component observations. Observations that constrain quantities are
+labelled Recorded and held fixed; copying an unknown's own symbol leaves it open.
 Reopen the instance when you want its outputs to recompute from original inputs.
 Each browser holds its own edits and cannot change another browser's state.
 
@@ -385,6 +434,29 @@ other initial observations remain active.
 ``Scenario(bounds={"expected_return": (Rational(7, 200), None)}, ...)``
 adds a lower bound. Guided questions restore initial observations and replace
 browser-added bounds; they retain any filters on a supplied source family.
+
+``ModelInfo(plot=...)`` opens an initial chart; ``Scenario(plot=...)`` opens one
+for that guided question. Both accept a ``PlotInfo`` declaration:
+
+.. code-block:: python
+
+   from modello.gui import PlotInfo
+
+   ceiling = PlotInfo(
+       controls=("x", "y"),
+       output="height",
+       windows={"x": (-40, 40), "y": (-40, 40)},
+       view="surface",
+   )
+
+The one or two controls and the output must be visible field paths. Window
+endpoints are increasing, finite real numbers in model units; percentage
+notation is generated for percentage editors. Windows affect only the picture.
+They do not add observations or bounds. The browser checks samples on opening
+the chart; serialising metadata or requesting a raw snapshot never solves it.
+Presets should select coordinates left free by the scenario. A preset for a
+larger family still needs a checked reference before taking a section.
+
 Presentation paths are checked when constructing ``Explorer`` or ``create_app``,
 before serving any requests. Errors name the offending option or scenario,
 include the full nested path, and suggest similar field names when available.
@@ -483,4 +555,4 @@ API
 ---
 
 .. automodule:: modello.gui
-   :members: gui, ModelInfo, FieldInfo, Scenario, Explorer, BindingError, create_app
+   :members: gui, ModelInfo, FieldInfo, PlotInfo, Scenario, Explorer, BindingError, create_app

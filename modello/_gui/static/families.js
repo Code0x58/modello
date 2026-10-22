@@ -6,6 +6,8 @@ const familyUI = (() => {
     baseline = null,
     plotData = null,
     plotPreferences = null,
+    pendingPlot = null,
+    initialised = false,
     revision = 0;
   const get = (id) => document.getElementById(id);
   const button = (label, action, className = "ghost") => {
@@ -46,6 +48,19 @@ const familyUI = (() => {
         data.raw)
     )
       plotData = null;
+    const preset =
+      options.plot !== undefined
+        ? options.plot
+        : !initialised
+          ? data.plot
+          : undefined;
+    initialised = true;
+    if (preset !== undefined) {
+      plotPreferences = preset;
+      pendingPlot = preset;
+      plotData = null;
+    }
+    if (data.raw) pendingPlot = null;
   }
   function currentSelection() {
     return selection?.kind === "case"
@@ -329,9 +344,9 @@ const familyUI = (() => {
     }
     const plot = node("details", "plot-options");
     plot.open =
-      ["curve", "region"].includes(info.kind) ||
-      Boolean(plotData) ||
-      (info.kind === "section" && state.status === "checked");
+      !plotPreferences &&
+      (["curve", "region"].includes(info.kind) ||
+        (info.kind === "section" && state.status === "checked"));
     plot.append(
       node(
         "summary",
@@ -378,6 +393,9 @@ const familyUI = (() => {
             "Choose at most two coordinates. Uncheck a control before choosing another.";
         }
         windows.forEach((input) => (input.disabled = !checkbox.checked));
+        viewLabel.hidden =
+          [...controls.values()].filter((value) => value.checkbox.checked)
+            .length < 2;
       });
       row.append(label, ...windows);
       controls.set(coordinate.path, { checkbox, windows });
@@ -393,6 +411,7 @@ const familyUI = (() => {
       output.append(option);
     });
     output.value =
+      plotPreferences?.output ??
       plotData?.output ??
       (fieldsByPath.get(state.initial_field)?.depends_on.length
         ? state.initial_field
@@ -404,6 +423,22 @@ const familyUI = (() => {
       choices[0]?.path;
     output.addEventListener("change", () => choose(output.value, false, false));
     label.append(output);
+    const viewLabel = node("label", "range-label", "Chart presentation");
+    const view = node("select");
+    view.setAttribute("aria-label", "Plot view");
+    for (const [value, title] of [
+      ["map", "Map"],
+      ["surface", "3D surface"],
+    ]) {
+      const option = node("option", "", title);
+      option.value = value;
+      view.append(option);
+    }
+    view.value = plotPreferences?.view ?? "map";
+    viewLabel.hidden =
+      [...controls.values()].filter((value) => value.checkbox.checked).length <
+      2;
+    viewLabel.append(view);
     const action = node("button", "primary", "Plot checked samples");
     action.type = "submit";
     const message = node("p", "input-help");
@@ -411,6 +446,7 @@ const familyUI = (() => {
     message.setAttribute("role", "status");
     form.append(
       label,
+      viewLabel,
       action,
       message,
       node(
@@ -419,7 +455,7 @@ const familyUI = (() => {
         "Windows affect the picture only. Every plotted point is checked; gaps and missing samples do not prove infeasibility.",
       ),
     );
-    form.addEventListener("submit", async (event) => {
+    form.addEventListener("submit", (event) => {
       event.preventDefault();
       const selectedControls = [...controls].filter(
         ([, value]) => value.checkbox.checked,
@@ -428,10 +464,7 @@ const familyUI = (() => {
         message.textContent = "Choose at least one coordinate.";
         return;
       }
-      action.disabled = true;
-      const requestedRevision = revision;
-      message.textContent = "Checking the sample points…";
-      plotPreferences = {
+      loadPlot({
         controls: selectedControls.map(([path]) => path),
         windows: Object.fromEntries(
           selectedControls.map(([path, value]) => [
@@ -439,37 +472,52 @@ const familyUI = (() => {
             value.windows.map((input) => input.value),
           ]),
         ),
-      };
-      try {
-        const response = await fetch("/api/plot", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            bindings,
-            bounds,
-            ...currentSelection(),
-            ...plotPreferences,
-            output: output.value,
-          }),
-        });
-        const result = await response.json();
-        if (requestedRevision !== revision) return;
-        if (!response.ok) {
-          message.textContent = result.error;
-          return;
-        }
-        plotData = result;
-        drawPlot();
-        message.textContent = "";
-      } catch (_) {
-        message.textContent =
-          "The plot could not be loaded. Your exploration is retained.";
-      } finally {
-        action.disabled = false;
-      }
+        output: output.value,
+        view: view.value,
+      });
     });
     plot.append(form);
     container.append(plot);
+  }
+  async function loadPlot(preferences) {
+    const message = get("plot-message");
+    if (!message) return;
+    const action = get("family-controls").querySelector(
+      ".plot-form button[type=submit]",
+    );
+    action.disabled = true;
+    const requestedRevision = revision;
+    message.textContent = "Checking the sample points…";
+    plotPreferences = preferences;
+    try {
+      const response = await fetch("/api/plot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bindings,
+          bounds,
+          ...currentSelection(),
+          controls: preferences.controls,
+          windows: preferences.windows,
+          output: preferences.output,
+        }),
+      });
+      const result = await response.json();
+      if (requestedRevision !== revision) return;
+      if (!response.ok) {
+        message.textContent = result.error;
+        return;
+      }
+      plotData = result;
+      drawPlot();
+      message.textContent = "";
+    } catch (_) {
+      if (requestedRevision !== revision) return;
+      message.textContent =
+        "The plot could not be loaded. Your exploration is retained.";
+    } finally {
+      action.disabled = false;
+    }
   }
   function drawPlot() {
     const container = get("family-plot");
@@ -508,184 +556,21 @@ const familyUI = (() => {
       );
       return;
     }
-    const width = Math.max(260, container.getBoundingClientRect().width),
-      height = 270;
-    const margin = { left: 65, right: 24, top: 20, bottom: 65 };
-    const make = (name, attributes = {}, text) => {
-      const element = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        name,
-      );
-      for (const [key, value] of Object.entries(attributes))
-        element.setAttribute(key, value);
-      if (text !== undefined) element.textContent = text;
-      return element;
-    };
-    const two = data.controls.length === 2,
-      outputIndex = data.controls.length;
-    const yValues = points.map((point) => point.axes[two ? 1 : outputIndex]);
-    let minimum = Math.min(...yValues),
-      maximum = Math.max(...yValues);
-    const padding =
-      maximum === minimum
-        ? Math.max(Math.abs(minimum) * 0.05, 1)
-        : (maximum - minimum) * 0.08;
-    const xDomain = data.windows[0],
-      yDomain = two ? data.windows[1] : [minimum - padding, maximum + padding];
-    const x = (value) =>
-      margin.left +
-      ((value - xDomain[0]) / (xDomain[1] - xDomain[0])) *
-        (width - margin.left - margin.right);
-    const y = (value) =>
-      height -
-      margin.bottom -
-      ((value - yDomain[0]) / (yDomain[1] - yDomain[0])) *
-        (height - margin.top - margin.bottom);
-    const svg = make("svg", {
-      viewBox: `0 0 ${width} ${height}`,
-      class: "family-chart",
-      role: "img",
-      "aria-label": `${fieldsByPath.get(data.output).title} across checked ${data.section ? "section" : "family"} samples`,
-    });
-    svg.append(
-      make("rect", {
-        x: margin.left,
-        y: margin.top,
-        width: width - margin.left - margin.right,
-        height: height - margin.top - margin.bottom,
-        class: "chart-frame",
-      }),
-    );
-    const tickText = (value) =>
-      value.toLocaleString(undefined, {
-        maximumFractionDigits: 2,
-        maximumSignificantDigits: 4,
-      });
-    const tickCount = width < 400 ? 3 : 4;
-    for (let i = 0; i < tickCount; i++) {
-      const fraction = i / (tickCount - 1),
-        xv = xDomain[0] + fraction * (xDomain[1] - xDomain[0]),
-        yv = yDomain[0] + fraction * (yDomain[1] - yDomain[0]);
-      svg.append(
-        make(
-          "text",
-          {
-            x: x(xv),
-            y: height - margin.bottom + 22,
-            "text-anchor":
-              i === 0 ? "start" : i === tickCount - 1 ? "end" : "middle",
-          },
-          tickText(xv),
-        ),
-      );
-      svg.append(
-        make(
-          "text",
-          { x: margin.left - 9, y: y(yv) + 4, "text-anchor": "end" },
-          tickText(yv),
-        ),
-      );
-    }
-    const axisLabel = (path) => {
-      const field = fieldsByPath.get(path);
-      return (
-        field.title +
-        (field.number_format === "percent"
-          ? " (%)"
-          : field.unit
-            ? ` (${field.unit})`
-            : "")
-      );
-    };
-    svg.append(
-      make(
-        "text",
-        { x: margin.left, y: height - 14, "text-anchor": "start" },
-        axisLabel(data.controls[0]),
-      ),
-    );
-    svg.append(
-      make(
-        "text",
-        { x: margin.left, y: 12, "text-anchor": "start" },
-        axisLabel(two ? data.controls[1] : data.output),
-      ),
-    );
-    if (!two) {
-      let previous = -2;
-      const path = points
-        .map((point) => {
-          const command = point.index === previous + 1 ? "L" : "M";
-          previous = point.index;
-          return `${command}${x(point.axes[0])},${y(point.axes[outputIndex])}`;
-        })
-        .join(" ");
-      svg.append(make("path", { d: path, class: "response-line" }));
-    }
-    const outputValues = points.map((point) => point.axes[outputIndex]);
-    const lower = Math.min(...outputValues),
-      upper = Math.max(...outputValues);
-    const readout = node("p", "plot-readout");
-    readout.setAttribute("role", "status");
-    const sampleSelect = node("select");
-    sampleSelect.setAttribute("aria-label", "Inspect a plotted sample");
-    const placeholder = node(
-      "option",
-      "",
-      "Choose a checked sample to inspect",
-    );
-    placeholder.value = "";
-    sampleSelect.append(placeholder);
-    points.forEach((point, index) => {
-      const coordinates = data.controls
-        .map(
-          (path, axis) =>
-            `${fieldsByPath.get(path).title}: ${tickText(point.axes[axis])}`,
-        )
-        .join(" · ");
-      const text = `${coordinates} · ${fieldsByPath.get(data.output).title}: ${tickText(point.axes[outputIndex])}`;
-      const circle = make("circle", {
-        cx: x(point.axes[0]),
-        cy: y(point.axes[two ? 1 : outputIndex]),
-        r: two ? 5 : 3.5,
-        class: "sample-point",
-      });
-      if (two)
-        circle.style.opacity = String(
-          upper === lower
-            ? 1
-            : 0.25 +
-                (0.75 * (point.axes[outputIndex] - lower)) / (upper - lower),
+    familyCharts.render(
+      container,
+      data,
+      fieldsByPath,
+      plotPreferences?.view ?? "map",
+      (point) => refresh(bindings, { point, fromPlot: true }),
+      (view) => {
+        plotPreferences = { ...plotPreferences, view };
+        const input = get("family-controls").querySelector(
+          '[aria-label="Plot view"]',
         );
-      circle.append(make("title", {}, text));
-      circle.addEventListener("pointerenter", () => {
-        readout.textContent = text;
-      });
-      circle.addEventListener("click", () =>
-        refresh(bindings, { point: point.point, fromPlot: true }),
-      );
-      svg.append(circle);
-      const option = node("option", "", text);
-      option.value = index;
-      sampleSelect.append(option);
-    });
-    sampleSelect.addEventListener("change", () => {
-      if (sampleSelect.value !== "")
-        refresh(bindings, {
-          point: points[Number(sampleSelect.value)].point,
-          fromPlot: true,
-        });
-    });
-    container.append(svg);
-    if (two)
-      container.append(
-        node(
-          "p",
-          "input-help",
-          `${fieldsByPath.get(data.output).title}: ${tickText(lower)} to ${tickText(upper)} · darker points indicate higher values`,
-        ),
-      );
-    container.append(sampleSelect, readout);
+        if (input) input.value = view;
+        drawPlot();
+      },
+    );
   }
   function render() {
     const root = get("family");
@@ -794,6 +679,11 @@ const familyUI = (() => {
     coordinateForms(info ?? {});
     compare();
     drawPlot();
+    if (pendingPlot) {
+      const preset = pendingPlot;
+      pendingPlot = null;
+      loadPlot(preset);
+    }
   }
   new ResizeObserver(() => {
     if (plotData) drawPlot();

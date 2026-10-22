@@ -1,4 +1,4 @@
-"""Explore a two-asset portfolio with metadata beside its model declarations."""
+"""Explore projectile curves, reachable areas, and surfaces, or a two-asset portfolio."""
 
 import argparse
 
@@ -219,7 +219,9 @@ DEMO_INPUTS = {
 def main() -> None:
     """Start the demo at http://127.0.0.1:5058."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--demo", choices=("portfolio", "calibration", "reachability"), default="portfolio")
+    parser.add_argument(
+        "--demo", choices=("projectile", "portfolio", "calibration", "reachability"), default="projectile"
+    )
     arguments = parser.parse_args()
     if arguments.demo == "portfolio":
         app = create_app(Portfolio, "Two-asset portfolio · one-year horizon", inputs=DEMO_INPUTS)
