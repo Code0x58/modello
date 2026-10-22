@@ -71,101 +71,114 @@ family; numerical plotting does not establish additional guarantees.
 .. image:: impact-cost.png
    :alt: Planned execution cost increases from 1026 to 1076 as impact varies from one quarter to three quarters.
 
-Discover named risk views
--------------------------
+Discover where a projectile can reach
+-------------------------------------
 
-.. figure:: risk-views.png
-   :alt: One quadratic risk model gives a parabola, a bowl, an ellipse, a filled elliptical disk, and an ellipsoidal volume.
+A thrown ball gives familiar, nonlinear geometry from one physical model.
+Assume uniform gravity and no air resistance. ``FreeFlight`` describes where
+it would be at the same time without gravity: ``x, y`` are horizontal and
+``z`` is vertical. At a fixed speed, squared distance determines squared
+travel time. ``Projectile`` subtracts the gravitational drop:
 
-   The same equations viewed through free inputs, an equal-risk constraint,
-   and a risk budget. The solid is a voxel approximation.
+.. literalinclude:: ../../../examples/projectile.py
+   :start-at: class FreeFlight
+   :end-before:     @classmethod
 
-A quadratic risk model gives more revealing geometry. Define signed exposures,
-their variance, and a component layer naming a common risk level:
+Fix launch speed at 20 m/s and gravity at 10 m/s², leaving destinations unknown:
 
-.. literalinclude:: ../../../examples/solution_families.py
-   :start-at: class Exposure
-   :end-before: class ImpactStudy
+>>> from examples.projectile import FreeFlight, Projectile
+>>> from sympy import Eq, FiniteSet, diff, factor
+>>> problem = Projectile.prepare()
+>>> flight = problem.symbols
+>>> family = problem.solutions(flight.x, flight.y, flight.free.z, flight.target_height)
 
-Leave the exposures unknown, then take sections through a typed reference:
+First solve backwards: which launch directions reach a target 16 metres
+away and 16 metres high? Both a lower and a higher throw satisfy the same model:
 
->>> from modello import inspect_model
->>> from examples.solution_families import Exposure, Risk, IsoRisk
->>> from examples.solution_views import ModelViews
->>> problem = inspect_model(Risk, "risk views")
->>> risk = problem.symbols
->>> family = problem.solutions(risk.exposure.x, risk.exposure.y, risk.exposure.z)
->>> reference = Risk("zero risk", exposure=Exposure("zero exposures", x=0, y=0, z=0))
->>> curve = family.section(risk.exposure.x, through=reference)
->>> curve.expression(risk.variance) == risk.exposure.x**2
+>>> hits = family.observe(x=16, y=0, target_height=16).where(Eq(flight.clearance, 0))
+>>> hits.values(flight.free.z) == FiniteSet(32, 48)
+True
+>>> len(hits.cases())
+2
+
+To find the boundary of all reachable targets, expand the height expression
+before differentiating its vertical free-flight coordinate. Varying that
+coordinate changes launch direction and travel time while holding the
+horizontal destination fixed:
+
+>>> height = family.expression(flight.height)
+>>> stationary = diff(height, flight.free.z)
+>>> envelope = family.where(Eq(stationary, 0))
+
+SymPy derives the maximum reachable height at every horizontal location:
+
+>>> ceiling = envelope.expression(flight.height)
+>>> ceiling == 20 - flight.x**2 / 80 - flight.y**2 / 80
+True
+>>> factor(ceiling - height) == (flight.free.z - 40)**2 / 80
 True
 
-Varying ``x`` traces a **parabola**; varying ``x, y`` traces an **elliptic
-paraboloid**. ``ModelViews.sections()`` lazily enumerates all seven combinations
-of these three controls. A scalar response still has only one image dimension:
+The nonnegative square proves this is a global maximum, rather than merely a
+stationary point. This **trajectory envelope** bounds a family of throws; it
+is not itself one ball's trajectory. ``Projectile.envelope()`` packages these
+same derivation steps, without introducing another height formula.
 
->>> whole = tuple(ModelViews(family, through=reference).sections())[-1]
->>> whole.control_dimension, whole.image_dimension(risk.variance)
-(3, 1)
+Take sections through a typed reference. With sideways displacement zero,
+the envelope is the **parabola of safety**:
 
-The named ``IsoRisk`` layer selects a different view: supply its level while
-leaving its nested exposures unknown. At level one, the solutions form an
-**ellipsoid boundary**:
-
->>> from sympy import Eq, Tuple, diff
->>> unit = inspect_model(IsoRisk, "unit risk", level=1)
->>> contour = unit.solutions()
->>> exposure = unit.symbols.risk.exposure
->>> contour.values(exposure.x, exposure.y, exposure.z).contains(Tuple(1, 0, 0))
+>>> reference = envelope.observe(x=0, y=0, target_height=0).one()
+>>> curve = envelope.section(flight.x, through=reference)
+>>> curve.expression(flight.height) == 20 - flight.x**2 / 80
 True
 
-An inequality retains the interior too: ``variance <= 1`` gives an **ellipsoidal
-risk-budget region**. Fixing ``z=0`` cuts an **elliptical disk**; equality instead
-of inequality gives its ellipse boundary:
+Instead, vary horizontal distance and target height. Keeping targets above
+ground and below the envelope selects the **reachable area** in that plane:
 
->>> budget = family.where(risk.variance <= 1)
->>> disk = budget.where(Eq(risk.exposure.z, 0))
->>> disk.values(risk.exposure.x, risk.exposure.y).contains(Tuple(0, 0))
-True
->>> disk.values(risk.exposure.x, risk.exposure.y).contains(Tuple(2, 0))
-False
+>>> plane = envelope.section(flight.x, flight.target_height, through=reference)
+>>> area = plane.where(flight.target_height >= 0, flight.clearance >= 0)
 
-The same expression reveals a **conditional minimum-risk hedge**. Constrain its
-``x`` sensitivity to zero; SymPy supplies the relationship, rather than a second
-implementation of the risk model:
+Allow both horizontal coordinates to vary for the **safety paraboloid**.
+Allow target height to vary too, under the same constraints, for the
+**reachable volume**:
 
->>> variance = family.expression(risk.variance)
->>> hedged = family.where(Eq(diff(variance, risk.exposure.x), 0))
->>> hedged.expression(risk.exposure.x) == -risk.exposure.y / 2
-True
->>> hedged.expression(risk.variance) == 7 * risk.exposure.y**2 / 4 + 3 * risk.exposure.z**2
-True
+>>> surface = envelope.section(flight.x, flight.y, through=reference)
+>>> volume = envelope.where(flight.target_height >= 0, flight.clearance >= 0)
 
-Its second derivative in ``x`` is positive, so this is the unique minimum for
-each fixed ``y, z``. The cross term makes opposite exposures partly offset one
-another; the hedge appears as the valley through the risk surface.
+.. figure:: projectile-views.png
+   :alt: A safety parabola, the reachable area beneath it, a safety paraboloid, and the reachable volume beneath that surface.
 
-Export the story with the optional notebook dependencies:
+   One motion model supplies a curve, area, surface, and volume. The volume
+   uses occupied voxel centres; cells may cross the exact boundary. The
+   surface also shows its continuation below ground.
+
+A surface has two independent controls even though its scalar height response
+has a one-dimensional image. Include the coordinates when measuring its graph:
+
+>>> from examples.solution_views import ModelView
+>>> view = ModelView(surface.parameters, surface)
+>>> view.control_dimension, view.image_dimension(flight.x, flight.y, flight.height)
+(2, 2)
+
+``ModelViews.sections()`` lazily enumerates coordinate sections through the
+reference. Export these four named views with optional notebook dependencies:
 
 .. code-block:: console
 
    $ uv run --group notebooks python -m examples.solution_views --plot-dir views
 
-Open ``views/index.html`` for the parabola, paraboloid, ellipse, filled disk,
-and ellipsoidal budget. ``ModelView.plot(response, ...)`` draws a response over
-box controls; ``plot_region(...)`` uses
-`SymPy's implicit plotting data <https://docs.sympy.org/latest/modules/plotting.html#sympy.plotting.series.ImplicitSeries.get_data>`_
-for two-control sets, or approximates a three-control inequality region with
-voxels, whose cells can cross the boundary. Both take
-typed ``lower`` and ``upper`` models for their sampling windows. Three-control
-equality surfaces are not supported by this renderer.
+Open ``views/index.html``. ``ModelView.plot(...)`` draws polynomial responses;
+``plot_region(...)`` draws planar implicit sets or approximates spatial
+inequality regions. Both take typed ``lower`` and ``upper`` models as windows.
+Numerical pictures do not establish dimensions or exact boundaries.
 
-These constraints define exact solution sets even when SymPy retains a
-``ConditionSet``. Numerical pictures do not certify their dimensions. Dimension
-reporting covers real interval boxes and finite point sets; polynomial image
-dimension uses an exact rational-function Jacobian rank
+Dimension reporting covers real interval boxes and finite point sets;
+polynomial image dimension uses exact rational-function Jacobian rank
 (`Geiger et al., Lemma 9 and Theorem 10 <https://doi.org/10.1214/aos/1009210550>`_).
-Coupled domains remain ``None``: three coordinates can describe an ellipsoid's
-two-dimensional boundary. To explore an already supplied input, prepare a new
-problem leaving it unknown; observations add constraints rather than unpinning
-existing inputs.
+Coupled domains remain ``None`` even when their geometry looks clear. These
+constraints still define exact sets when SymPy retains a ``ConditionSet``.
+To explore a supplied input, prepare a new problem leaving it unknown;
+observations add constraints rather than unpinning existing inputs.
+
+The equations follow `OpenStax's projectile motion model <https://openstax.org/books/university-physics-volume-1/pages/4-3-projectile-motion>`_.
+The gravity-free coordinates and envelope construction follow
+`Mark Levi's Parabola of Safety and the Jacobian <https://www.siam.org/publications/siam-news/articles/parabola-of-safety-and-the-jacobian/>`_.

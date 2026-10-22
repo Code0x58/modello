@@ -34,28 +34,6 @@ class Execution(Modello):
     cost = quantity * price + fee
 
 
-class Exposure(Modello):
-    """Three signed exposures to illustrative risk factors."""
-
-    x = InstanceDummy("x", real=True)
-    y = InstanceDummy("y", real=True)
-    z = InstanceDummy("z", real=True)
-
-
-class Risk(Modello):
-    """A positive quadratic variance, including correlated exposures."""
-
-    exposure = component(Exposure)
-    variance = exposure.x**2 + exposure.x * exposure.y + 2 * exposure.y**2 + 3 * exposure.z**2
-
-
-class IsoRisk(Modello):
-    """Name the level shared by every exposure combination on a risk contour."""
-
-    risk = component(Risk)
-    level = risk.variance
-
-
 class ImpactStudy(Modello):
     """Recorded and planned executions share their impact coefficient."""
 
