@@ -125,6 +125,8 @@ def check_wheel(
         "examples.portfolio.optimal_execution",
         "examples.solution_families",
         "examples.solution_views",
+        "examples.applications",
+        "examples.reconciliation",
     ):
         arguments = [str(python), "-I", "-m", module]
         if module == "examples.portfolio":
@@ -132,13 +134,14 @@ def check_wheel(
         subprocess.run(arguments, cwd=directory, check=True, stdout=subprocess.DEVNULL)
     assert json.loads((directory / "report.json").read_text())["snapshots"][-1]["nav"] == 3066.9
     assert (directory / "report.html").read_text().startswith("<!doctype html>")
-    print(f"Validated all installed portfolio runners from {wheel.name}", flush=True)
+    print(f"Validated all installed example runners from {wheel.name}", flush=True)
     typing_checks = []
     for path in (
         "typing_checks.py",
         "tests/examples/test_named_members.py",
         "tests/examples/test_symbolic.py",
         "tests/examples/test_data.py",
+        "tests/examples/reconcile_typing.py",
         "tests/examples/portfolio/typing_contracts.py",
     ):
         source = Path(__file__).resolve().parents[1] / path

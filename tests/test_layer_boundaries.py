@@ -58,7 +58,8 @@ assert get_type_hints(modello.component)["return"].__bound__ is modello.Modello
 
 import examples.symbolic
 import examples.named_members
-assert 'examples.portfolio' not in sys.modules
+import examples.reconcile
+assert not {'examples.portfolio', 'examples.reconciliation'} & sys.modules.keys()
 
 import examples.portfolio.account
 import examples.portfolio.reporting
