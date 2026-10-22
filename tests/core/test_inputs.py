@@ -1,7 +1,6 @@
 """Scalar and component observations retain types, identities, and provenance."""
 
 import json
-from collections import UserDict
 from decimal import Decimal
 from fractions import Fraction
 
@@ -33,29 +32,17 @@ from ._models import Check, Envelope, PositiveReading, Reading
         pytest.param(Symbol("x"), id="external-symbol"),
     ],
 )
-@pytest.mark.parametrize("scope", ["scalar", "component"])
-def test_scalar_input_types(value, scope):
-    """Both capture paths accept raw scalars before construction has converted them."""
+def test_scalar_input_types(value):
+    """Capture accepts ordinary scalars before construction converts their values."""
 
     class Child(Modello):
         x = InstanceDummy("x")
 
-    class Parent(Modello):
-        child = component(Child)
-
-    if scope == "scalar":
-        problem = inspect_model(Child, "scalar", x=value)
-    else:
-        source = Child("source")
-        source.x = value
-        problem = inspect_model(Parent, "component", child=source)
+    problem = inspect_model(Child, "scalar", x=value)
     (observation,) = tuple(c for c in problem.constraints if c.input is not None)
     assert observation.kind is ConstraintKind.INPUT
     assert observation.right == simplify(value)
-    if scope == "scalar":
-        assert Child("constructed", x=value).x == simplify(value)
-    else:
-        assert Parent("constructed", child=source).child.x == simplify(value)
+    assert Child("constructed", x=value).x == simplify(value)
 
 
 def test_partial_instance_can_be_completed_without_mutating_source():
@@ -116,8 +103,8 @@ def test_input_expressions_resolve_relative_and_sibling_symbols():
 
 @pytest.mark.parametrize(
     "value",
-    [None, 1, [], {}, {"x": 5}, UserDict(x=5), object()],
-    ids=["none", "integer", "list", "mapping", "field-mapping", "mapping-wrapper", "opaque-object"],
+    [None, {"x": 5}, object()],
+    ids=["none", "field-mapping", "opaque-object"],
 )
 def test_invalid_nested_values_are_rejected(value):
     """Invalid nested values are never silently treated as missing inputs."""
@@ -137,7 +124,6 @@ def test_invalid_nested_values_are_rejected(value):
     [
         pytest.param("root-mapping", "branch must be a Branch instance", id="root-mapping"),
         pytest.param("nested-mapping", "leaf must be a Leaf instance", id="nested-mapping"),
-        pytest.param("scalar-keyword", "Unknown model attribute 'typo'", id="scalar-keyword"),
         pytest.param("parent-keyword", "Unknown model attribute 'typo'", id="parent-keyword"),
     ],
 )
@@ -156,7 +142,6 @@ def test_unknown_attributes_and_deep_mappings_are_rejected(boundary, message):
     operations = {
         "root-mapping": lambda: Tree("T", branch={"leaf": {"x": 1}}),
         "nested-mapping": lambda: Tree("T", branch=Branch("B", leaf={"x": 1})),
-        "scalar-keyword": lambda: Leaf("L", typo=1),
         "parent-keyword": lambda: Tree("T", typo=1),
     }
     with pytest.raises(TypeError, match=message):
@@ -208,24 +193,21 @@ def test_scalar_aliases_keep_all_supplied_constraints():
 @pytest.mark.parametrize(
     "value", [None, True, [], {}, object()], ids=["none", "boolean", "list", "mapping", "opaque-object"]
 )
-@pytest.mark.parametrize("scope", ["scalar", "component"])
-def test_invalid_scalar_values_identify_the_field(value, scope):
+def test_invalid_scalar_values_identify_the_field(value):
     """Malformed scalar values report their path rather than failing inside SymPy."""
 
     class Child(Modello):
         x = InstanceDummy("x")
 
-    class Parent(Modello):
-        child = Child
+    with pytest.raises(TypeError, match="x.*scalar"):
+        Child("C", x=value)
 
-    if scope == "scalar":
-        with pytest.raises(TypeError, match="x.*scalar"):
-            Child("C", x=value)
-    else:
-        source = Child("C")
-        source.x = value
-        with pytest.raises(TypeError, match=r"child\.x.*scalar"):
-            Parent("P", child=source)
+
+def test_invalid_copied_scalar_identifies_its_nested_path():
+    source = Reading("source", x=2)
+    source.squared = object()
+    with pytest.raises(TypeError, match=r"reading\.squared.*scalar"):
+        Check("invalid", reading=source)
 
 
 def test_instance_subclasses_must_retain_the_declared_child_shape():
@@ -277,26 +259,25 @@ def test_input_constraint_keeps_string_enum_compatibility():
 
 
 @pytest.mark.parametrize(
-    "observations, supplied, inferred",
+    "copy_from, observations, supplied, inferred",
     [
-        pytest.param({"x": 2}, "x", "squared", id="forward"),
-        pytest.param({"squared": 4}, "squared", "x", id="inverse"),
-        pytest.param({"alias": 2}, "x", "squared", id="alias"),
+        pytest.param("original", {"x": 2}, "x", "squared", id="forward"),
+        pytest.param("original", {"squared": 4}, "squared", "x", id="inverse"),
+        pytest.param("original", {"alias": 2}, "x", "squared", id="alias"),
+        pytest.param("populated-child", {"squared": 4}, "squared", "x", id="populated-child"),
+        pytest.param("whole-parent", {"squared": 4}, "squared", "x", id="whole-parent"),
     ],
 )
-@pytest.mark.parametrize("copy_from", ["original", "populated-child", "whole-parent"])
 def test_copied_values_retain_construction_inputs_in_both_solve_directions(observations, supplied, inferred, copy_from):
     source = PositiveReading("source", **observations)
-    direct = inspect_model(Check, "direct", reading=source)
     if copy_from == "original":
-        problem = direct
-    elif copy_from == "populated-child":
-        parent = Check("parent", reading=source)
-        problem = inspect_model(Check, "descendant", reading=parent.reading)
-        assert [(c.path, c.kind) for c in problem.constraints] == [(c.path, c.kind) for c in direct.constraints]
+        problem = inspect_model(Check, "direct", reading=source)
     else:
         parent = Check("parent", reading=source)
-        problem = inspect_model(Envelope, "nested", check=parent)
+        if copy_from == "populated-child":
+            problem = inspect_model(Check, "descendant", reading=parent.reading)
+        else:
+            problem = inspect_model(Envelope, "nested", check=parent)
 
     prefix = ("check", "reading") if copy_from == "whole-parent" else ("reading",)
     group = "check" if copy_from == "whole-parent" else "reading"

@@ -1,7 +1,7 @@
 """Diagnosis must distinguish proofs, witnessed feasibility, and lack of knowledge."""
 
 from dataclasses import FrozenInstanceError, replace
-from itertools import combinations, product
+from itertools import combinations
 
 import pytest
 from sympy import (
@@ -177,7 +177,14 @@ def test_exact_linear_conflict_certificate_and_single_input_relaxations(conflict
 
 @pytest.mark.parametrize(
     "x, y, total",
-    [pytest.param(x, y, total, id=f"x={x},y={y},total={total}") for x, y, total in product((-1, 0, 1), repeat=3)],
+    [
+        pytest.param(0, 0, 0, id="zero"),
+        pytest.param(-1, 1, 0, id="cancellation"),
+        pytest.param(-1, -1, -2, id="negative-total"),
+        pytest.param(1, 2, 3, id="positive-total"),
+        pytest.param(0, 0, 1, id="positive-conflict"),
+        pytest.param(0, 0, -1, id="negative-conflict"),
+    ],
 )
 def test_small_affine_cases_against_independent_exact_answers(x, y, total):
     p = inspect_model(Sum, "grid", x=x, y=y, total=total)

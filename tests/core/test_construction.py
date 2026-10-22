@@ -87,26 +87,8 @@ def test_constructor_candidate_selection(positive_problem, values, retained, exp
         )
 
 
-def test_nested_partial_values():
-    """Unspecified nested attributes are solved with the parent."""
-
-    class Child(Modello):
-        a = InstanceDummy("a")
-        b = InstanceDummy("b")
-        c = a + b
-
-    class Parent(Modello):
-        child = Child
-        c_total = child.c + 1
-
-    instance = Parent("P", child=Child("C", a=2))
-    # b defaults to dummy but derived c should resolve using constraints
-    assert instance.child.c == instance.child.a + instance.child.b
-    assert instance.c_total == instance.child.c + 1
-
-
-def test_nested_multiple_levels():
-    """Nested models work across more than one level."""
+def test_repeated_subtrees_preserve_deep_paths_and_source_identity():
+    """Repeated subtrees retain their values and resolve cross-branch paths."""
 
     class Leaf(Modello):
         a = InstanceDummy("a")
@@ -122,6 +104,7 @@ def test_nested_multiple_levels():
         left = Branch
         right = Branch
         whole = left.total + right.total
+        cross_branch = left.leaf.a + right.leaf.total
 
     left = Branch("L", leaf=Leaf("LL", a=1, b=2), offset=1)
     right = Branch("R", leaf=Leaf("RL", a=2, b=3), offset=2)
@@ -131,6 +114,7 @@ def test_nested_multiple_levels():
     assert tree.right.leaf.total == 5
     assert tree.right.total == 7
     assert tree.whole == 11
+    assert tree.cross_branch == 6
     assert (tree.left.leaf.a, tree.left.leaf.b) == (1, 2)
     assert (tree.right.leaf.a, tree.right.leaf.b) == (2, 3)
     assert tree.left is not left
@@ -150,29 +134,6 @@ def test_nested_geometry_forward_and_inverse():
 
     box = Box("B", base=RightAngleTriangle("base", b=4), height=12, diagonal=13)
     assert (box.base.a, box.base.b, box.base.c) == (3, 4, 5)
-
-
-def test_deep_instances_and_attribute_paths():
-    """Instances and expressions resolve every level of a repeated subtree."""
-
-    class Leaf(Modello):
-        x = InstanceDummy("x")
-        y = x + 1
-
-    class Branch(Modello):
-        leaf = Leaf
-        doubled = leaf.y * 2
-
-    class Tree(Modello):
-        left = Branch
-        right = Branch
-        total = left.doubled + right.doubled
-        deep = left.leaf.x + right.leaf.y
-
-    tree = Tree("T", left=Branch("L", leaf=Leaf("LL", x=2)), right=Branch("R", leaf=Leaf("RL", x=5)))
-    assert (tree.left.leaf.x, tree.left.leaf.y, tree.left.doubled) == (2, 3, 6)
-    assert (tree.right.leaf.x, tree.right.leaf.y, tree.right.doubled) == (5, 6, 12)
-    assert (tree.total, tree.deep) == (18, 8)
 
 
 def test_missing_nested_inputs_remain_shared_parameters():

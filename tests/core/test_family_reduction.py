@@ -107,6 +107,15 @@ def test_declared_domains_remain_explicit_for_every_point(assumptions, valid, in
     assert family.observe(x=invalid).cases() == ()
 
 
+def test_a_field_with_no_finite_values_makes_the_family_empty():
+    class Infinite(Modello):
+        x = InstanceDummy("x", infinite=True)
+
+    family = inspect_model(Infinite, "finite-universe").solutions()
+    assert family.is_empty is True
+    assert family.cases() == ()
+
+
 def test_reciprocal_cycle_retains_its_excluded_zero():
     class Reciprocal(Modello):
         x = InstanceDummy("x")

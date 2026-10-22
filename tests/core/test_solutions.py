@@ -261,76 +261,85 @@ def test_unsupported_expression_kinds_fail_with_owned_input_errors(kind, message
         pytest.param(Symbol("operator", commutative=False), id="noncommutative-symbol"),
     ],
 )
-@pytest.mark.parametrize("operation", ["prepare", "values", "observe"])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        pytest.param(lambda p, value: inspect_model(p.model, p.name, x=value).solutions(), id="prepare"),
+        pytest.param(lambda p, value: p.solutions().values(value), id="values"),
+        pytest.param(lambda p, value: p.solutions().observe(x=value), id="observe"),
+    ],
+)
 def test_family_scalar_boundaries_require_commutative_expressions(reading_problem, value, operation):
-    family = reading_problem.solutions()
-    operations = {
-        "prepare": lambda: inspect_model(Reading, "unsupported input", x=value).solutions(),
-        "values": lambda: family.values(value),
-        "observe": lambda: family.observe(x=value),
-    }
     with pytest.raises(ModelInputError, match="commutative scalar"):
-        operations[operation]()
+        operation(reading_problem, value)
 
 
-@pytest.mark.parametrize("operation", ["coordinates", "values", "observe", "expression", "where", "section"])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        pytest.param(lambda family, other: family.problem.solutions(other), id="coordinates"),
+        pytest.param(lambda family, other: family.values(other), id="values"),
+        pytest.param(lambda family, other: family.observe(x=other), id="observe"),
+        pytest.param(lambda family, other: family.expression(other), id="expression"),
+        pytest.param(lambda family, other: family.where(other > 0), id="where"),
+        pytest.param(lambda family, other: family.section(other, through=Reading("reference", x=2)), id="section"),
+    ],
+)
 def test_family_operations_reject_fields_from_another_problem(reading_problem, operation):
-    p = reading_problem
-    family = p.solutions()
-    other = inspect_model(Reading, p.name).symbols.x
-    reference = Reading("reference", x=2)
-    operations = {
-        "coordinates": lambda: p.solutions(other),
-        "values": lambda: family.values(other),
-        "observe": lambda: family.observe(x=other),
-        "expression": lambda: family.expression(other),
-        "where": lambda: family.where(other > 0),
-        "section": lambda: family.section(other, through=reference),
-    }
+    other = inspect_model(Reading, reading_problem.name).symbols.x
     with pytest.raises(ModelValidationError, match="another model problem"):
-        operations[operation]()
+        operation(reading_problem.solutions(), other)
 
 
-@pytest.mark.parametrize("operation", ["prepare", "values", "observe", "expression"])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        pytest.param(lambda p: inspect_model(p.model, p.name, x=0.1).solutions(), id="prepare"),
+        pytest.param(lambda p: p.solutions().values(0.1), id="values"),
+        pytest.param(lambda p: p.solutions().observe(x=0.1), id="observe"),
+        pytest.param(lambda p: p.solutions().expression(0.1), id="expression"),
+    ],
+)
 def test_family_operations_require_exact_scalars(reading_problem, operation):
-    family = reading_problem.solutions()
-    operations = {
-        "prepare": lambda: inspect_model(Reading, "float", x=0.1).solutions(),
-        "values": lambda: family.values(0.1),
-        "observe": lambda: family.observe(x=0.1),
-        "expression": lambda: family.expression(0.1),
-    }
     with pytest.raises(ModelInputError, match="exact"):
-        operations[operation]()
+        operation(reading_problem)
 
 
 @pytest.mark.parametrize(
     "operation, message",
     [
-        pytest.param("unknown-input", "Unknown model attribute", id="unknown-input"),
-        pytest.param("mapping-value", "scalar", id="mapping-value"),
-        pytest.param("no-output", "at least one", id="no-output"),
-        pytest.param("coordinate-expression", "field symbols", id="coordinate-expression"),
-        pytest.param("dependent-control", "remaining coordinates", id="dependent-control"),
-        pytest.param("wrong-reference-type", "reference state must be a Reading", id="wrong-reference-type"),
-        pytest.param("scalar-condition", "relations", id="scalar-condition"),
+        pytest.param(lambda f: f.observe(missing=2), "Unknown model attribute", id="unknown-input"),
+        pytest.param(lambda f: f.observe(x={"x": 2}), "scalar", id="mapping-value"),
+        pytest.param(lambda f: f.values(), "at least one", id="no-output"),
+        pytest.param(lambda f: f.problem.solutions(f.symbols.x + 1), "field symbols", id="coordinate-expression"),
+        pytest.param(
+            lambda f: f.section(f.symbols.squared, through=Reading("reference", x=2)),
+            "remaining coordinates",
+            id="dependent-control",
+        ),
+        pytest.param(
+            lambda f: f.section(f.symbols.x + 1, through=Reading("reference", x=2)),
+            "remaining coordinate symbols",
+            id="control-expression",
+        ),
+        pytest.param(
+            lambda f: f.section(f.symbols.x, through=Check("other type", reading=Reading("reference", x=2))),
+            "reference state must be a Reading",
+            id="wrong-reference-type",
+        ),
+        pytest.param(lambda f: f.where(f.symbols.x + 1), "relations", id="scalar-condition"),
     ],
 )
 def test_family_input_errors_identify_the_boundary(reading_problem, operation, message):
-    p = reading_problem
-    family = p.solutions()
-    reference = Reading("reference", x=2)
-    operations = {
-        "unknown-input": lambda: family.observe(missing=2),
-        "mapping-value": lambda: family.observe(x={"x": 2}),
-        "no-output": lambda: family.values(),
-        "coordinate-expression": lambda: p.solutions(p.symbols.x + 1),
-        "dependent-control": lambda: family.section(p.symbols.squared, through=reference),
-        "wrong-reference-type": lambda: family.section(p.symbols.x, through=Check("other type", reading=reference)),
-        "scalar-condition": lambda: family.where(p.symbols.x + 1),
-    }
     with pytest.raises(ModelInputError, match=message):
-        operations[operation]()
+        operation(reading_problem.solutions())
+
+
+def test_family_sections_identify_a_missing_nested_reference_field(check_problem):
+    reference = Check("reference", reading=Reading("reading", x=2))
+    reference.reading = object()
+    with pytest.raises(ModelInputError, match=r"reference state is missing reading\.x"):
+        check_problem.solutions().section(through=reference)
 
 
 @pytest.mark.parametrize("operation", ["expression", "values", "where"])

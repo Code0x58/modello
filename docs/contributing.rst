@@ -36,100 +36,35 @@ Follow a model from its class body to its populated instances:
 
 Shared problem records live in ``_problem.py``. Runtime imports point downwards
 through records, declarations, input capture, solution families, diagnosis, and
-the public namespace; reverse type references use ``TYPE_CHECKING``. The import
-checks in ``tests/test_layer_boundaries.py`` enforce this order. The GUI and
+the public namespace; reverse type references use ``TYPE_CHECKING``. The GUI and
 numerical example adapters consume the compiled declaration's fields.
 
 Validation
 ----------
 
-Install the locked environment and run the same checks as CI:
+Install the locked development environment and run the complete test suite,
+including doctests:
 
 .. code-block:: console
 
    $ uv sync --locked --dev --group docs --python 3.12
-   $ uv run --locked --dev ruff format --check --diff .
-   $ uv run --locked --dev ruff check .
-   $ uv run --locked --dev mypy .
-   $ uv run --locked --dev pytest --verbosity=2 --cov=modello --cov-report=xml --junit-xml=test-results.xml
-   $ uv run --locked --group docs sphinx-build --fail-on-warning --keep-going --builder=html docs docs/_build/html
+   $ uv run --locked --dev pytest
 
 Unset ``PYTEST_DISABLE_PLUGIN_AUTOLOAD`` before running pytest if your shell
-defines it. Format code with ``uv run --dev ruff format .``. Refresh dependencies
-with ``uv lock --upgrade`` and commit ``uv.lock``. Dependabot proposes grouped
-weekly dependency and GitHub Actions updates. Workflows do not schedule rebuilds.
+defines it. CI also checks formatting, lint, types, documentation, and both
+distribution formats. The commands are maintained in ``AGENTS.md`` and
+``.github/workflows/ci.yml``.
 
-Tests follow the source layers. Core coverage lives in ``tests/core/``:
+Keep regressions focused on distinct behavior and independent mathematical
+checks. Refresh dependencies with ``uv lock --upgrade`` and commit ``uv.lock``.
+Dependabot proposes grouped weekly dependency and GitHub Actions updates.
+Workflows do not schedule rebuilds.
 
-* ``test_declarations.py`` covers class compilation, aliases, inheritance,
-  component replacement, and definition errors.
-* ``test_inputs.py`` covers scalar and component capture, independent symbol
-  scopes, copied-value provenance, and input validation.
-* ``test_construction.py`` covers candidate selection and joint population,
-  including cycles, poles, domain filtering, and symbolic results.
-* ``test_diagnostics.py`` covers candidate audits, consistency witnesses,
-  conflict certificates, bounded searches, and diagnostic rendering.
-* ``test_family_reduction.py`` covers isolated substitution, rational affine
-  joins, coordinate domains, singularities, and backend fallbacks.
-* ``test_solutions.py`` covers observations, output queries, ownership checks,
-  checked materialization, and connected model views.
-
-``_models.py`` supplies small shared declarations. Function-scoped fixtures in
-``conftest.py`` create fresh bound problems, so one test's observations cannot
-affect another test's symbol identities. Parameterize behavioral cases with
-descriptive IDs so each input boundary, copy direction, or exact mathematical
-case has its own result. Keep declarations local when their unusual shape is
-the regression being tested. Constructor candidate filtering has a direct
-input/output table; integration tests retain the complete solve and population
-path. Public typing contracts remain in ``typing_checks.py``.
-
-Example tests live under ``tests/examples/``: ``test_data.py`` covers the independent data
-helpers, ``test_symbolic.py`` covers numerical views, and
-``test_named_members.py`` covers bound declarations and projections.
-Financial tests live under ``portfolio/`` and follow its equation, valuation,
-source, account, decision, analytics, and reporting layers. Their ``conftest.py``
-shares the synthetic scenario; ``_data.py`` locates fixtures through the example
-package, independently of the tests' location. Cross-layer import checks live
-in ``tests/test_layer_boundaries.py``.
-
-Executable walkthroughs cover the examples' ordinary usage. Focus additional
-tests on distinct regressions, accounting and chronology invariants, and
-independent mathematical checks. Test shared validation and compilation behavior
-at their owning layer. Portfolio typing contracts are collected in
-``tests/examples/portfolio/typing_contracts.py`` and checked against installed
-packages as well as the checkout.
-
-Existing jobs and streaming checks retain their original locations alongside
-those examples. Example source modules retain their executable doctests.
-
-Run a subtree while working on one layer:
-
-.. code-block:: console
-
-   $ uv run --locked --dev pytest tests/examples/portfolio
-   $ uv run --locked --dev pytest tests/examples/test_data.py
-   $ uv run --locked --dev pytest tests/core
-   $ uv run --locked --dev pytest tests/core/test_inputs.py
-   $ uv run --locked --dev pytest --collect-only -q tests/core
-
-Build and validate both distribution formats:
-
-.. code-block:: console
-
-   $ uv build --no-build-isolation --python .venv/bin/python
-   $ uv run --locked --dev twine check --strict dist/*
-   $ uv run --locked --dev python scripts/check_distributions.py dist
-
-Start with an empty ``dist`` directory so that it contains exactly one wheel
-and one source distribution. Builds use the installed, locked backend. The
-distribution check installs locked runtime dependencies and the wheel in a fresh
-environment outside the checkout, checks metadata, forward/inverse solving, and
-the installed type annotations, then rebuilds the source distribution and repeats
-the checks. It also selects the ``examples`` extra on both installed wheels,
-checks the packaged CSV fixtures, and runs the portfolio entry points,
-including HTML and JSON output. The core and generic-example typing contracts
-include valid calls and expected type errors; unused-ignore checks ensure mypy
-continues to catch those errors against the installed packages.
+Distribution checks install the wheel outside the checkout, rebuild the source
+distribution, and repeat the runtime and typing checks. They also exercise the
+packaged examples and fixtures. Builds use the installed, locked backend. Start
+with an empty ``dist`` directory so the checks receive exactly one wheel and
+one source distribution.
 
 The wheel bundles the ``examples`` modules and fixtures. ``modello[examples]``
 selects their optional runtime requirements; currently these are satisfied by
