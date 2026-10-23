@@ -4,9 +4,11 @@ from copy import deepcopy
 
 import pytest
 from sympy import (
+    Eq,
     FiniteSet,
     Interval,
     MatrixSymbol,
+    Piecewise,
     Product,
     Rational,
     S,
@@ -144,6 +146,38 @@ def test_vector_overrides_rebind_inherited_formulas_and_aliases():
 
         class WrongShape(Window):
             samples = Vector("x", size=4)
+
+
+@pytest.mark.parametrize("indexed", [False, True])
+def test_recursive_vector_formulas_keep_boundary_coordinates_in_scope(indexed):
+    class Path(Modello):
+        opening = InstanceDummy("opening", real=True)
+        fills = Vector("f", size=3, real=True)
+        quantities = Vector("q", size=4, real=True)
+        if indexed:
+            i = Index("i")
+            quantities = vector(Piecewise((opening, Eq(i, 0)), (quantities[i - 1] + fills[i - 1], True)), (i, 0, 3))
+        else:
+            quantities = Vector(opening, quantities[0] + fills[0], quantities[1] + fills[1], quantities[2] + fills[2])
+
+    problem = inspect_model(Path, "path", opening=5, fills=[2, -1, 3])
+    assert problem.vector_definitions[("quantities",)].free_symbols <= {field.symbol for field in problem.fields}
+    assert Path("forward", opening=5, fills=[2, -1, 3]).quantities == Vector(5, 7, 6, 9)
+    assert problem.solutions().one().quantities == Vector(5, 7, 6, 9)
+    inverse = Path("inverse", opening=5, fills=[2, None, 3], quantities=[None, None, None, 9])
+    assert inverse.fills == Vector(2, -1, 3)
+
+
+def test_a_vector_formula_constrains_previously_declared_coordinate_domains():
+    class Positive(Modello):
+        source = Vector("x", size=2, real=True)
+        target = Vector("y", size=2, positive=True)
+        target = source
+
+    assert Positive("valid", source=[1, 2]).target == Vector(1, 2)
+    with pytest.raises(SolutionCountError):
+        Positive("invalid", source=[-1, 2])
+    assert inspect_model(Positive, "invalid", source=[-1, 2]).solutions().is_empty is True
 
 
 def test_exact_family_and_diagnostics_use_the_same_indexed_equations():

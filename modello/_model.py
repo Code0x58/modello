@@ -237,17 +237,22 @@ class ModelloMetaNamespace(dict):
         previous = self.vectors.get(key)
         if previous is not None:
             self._require_shape(key, previous, expression)
-        fields = Vector(
-            *(
-                entry
-                if isinstance(entry, InstanceDummy)
-                else previous[i]
-                if previous is not None
-                else InstanceDummy(f"{key}[{i}]", **entry.assumptions0)
-                for i, entry in enumerate(expression)
+        if previous is not None and (
+            not all(isinstance(entry, InstanceDummy) for entry in expression)
+            or expression.free_symbols & set(self.fields().values())
+        ):
+            # A formula constrains the declared coordinates, including their
+            # domains. Merging a boundary alias here could leave later entries
+            # referring to an old, unbound coordinate of a recurrence.
+            fields = previous
+        else:
+            fields = Vector(
+                *(
+                    entry if isinstance(entry, InstanceDummy) else InstanceDummy(f"{key}[{i}]", **entry.assumptions0)
+                    for i, entry in enumerate(expression)
+                )
             )
-        )
-        if previous is not None:
+        if previous is not None and fields != previous:
             self._replace(dict(zip(previous, fields)))
         self.vector_attrs[key] = expression
         self.vectors[key] = fields

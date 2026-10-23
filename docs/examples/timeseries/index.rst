@@ -118,6 +118,49 @@ corresponds to the first complete window, ending at input ``width-1``:
 A missing observation remains an unknown quantity. A supplied window statistic
 can determine it; no imputation policy is applied automatically.
 
+Recursive state equations
+--------------------------
+
+A state can depend on its predecessor rather than an explicit prefix sum.
+Declare its vector first, then constrain those coordinates with a formula.
+``Piecewise`` states the opening boundary explicitly:
+
+.. math::
+
+   s_0=s_{\mathrm{initial}},\qquad
+   s_{k}=\rho s_{k-1}+u_{k-1},\qquad k\in\{1,2,3\}.
+
+.. code-block:: pycon
+
+   >>> from sympy import Eq, Piecewise
+   >>> from modello import Index, InstanceDummy, Modello, Vector, vector
+   >>> class DrivenState(Modello):
+   ...     initial = InstanceDummy("initial", real=True)
+   ...     retention = InstanceDummy("retention", real=True)
+   ...     innovations = Vector("u", size=3, real=True)
+   ...     levels = Vector("s", size=4, real=True)
+   ...     i = Index("i")
+   ...     levels = vector(
+   ...         Piecewise((initial, Eq(i, 0)),
+   ...                   (retention * levels[i - 1] + innovations[i - 1], True)),
+   ...         (i, 0, 3),
+   ...     )
+   >>> path = DrivenState("forward", initial=2, retention=Rational(1, 2), innovations=[1, 0, 2])
+   >>> path.levels
+   [2, 2, 1, 5/2]
+   >>> inverse = DrivenState(
+   ...     "inverse", initial=2, retention=Rational(1, 2),
+   ...     innovations=[1, 0, None], levels=[None, None, None, Rational(5, 2)],
+   ... )
+   >>> inverse.innovations
+   [1, 0, 2]
+
+The recurrence is a finite joint equation system, so a later boundary can
+constrain earlier unknowns. Innovations here are deterministic unknown inputs;
+the model assigns no distribution to them. More general coupled recurrences can
+leave multiple states or an implicit family. No causal solution order or
+uniqueness is assumed merely because a formula references a predecessor.
+
 Continuous exposure
 --------------------
 

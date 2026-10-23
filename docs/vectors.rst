@@ -123,6 +123,14 @@ contradictory observations remain constraints. Component copies preserve vector
 shape and supplied/inferred provenance without mutating their sources. Reusing
 the same source component twice still gives independent scopes.
 
+A formula assigned to an already declared vector constrains its coordinates
+and retains their assumptions. This includes direct references to other fields:
+declaring a positive vector before assigning it another vector's formula still
+requires positive entries. A fresh ``Vector(name, size=..., ...)`` declaration
+can refine inherited coordinate assumptions. See the
+:doc:`recursive state example <examples/timeseries/index>` for a formula that
+relates each coordinate to its predecessor.
+
 Inspection does not evaluate the declared operators:
 
 .. code-block:: pycon
