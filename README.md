@@ -186,7 +186,8 @@ assert window.changes == Vector(1, 1)
 Vectors share scalar domains, aliases, component scopes, and solution families.
 Use SymPy `Product`, `Integral`, `Derivative`, and `Limit` directly; the explorer
 keeps their mathematical notation and gives vector symbols an arrow. The
-[vector guide](docs/vectors.rst) explains indices and observations. The
+[vector guide](docs/vectors.rst) explains indices, observations, and symbolic
+vector sizes such as `size=N`, where supplied lengths determine the finite horizon. The
 [finite-path examples](docs/examples/timeseries/index.rst) demonstrate inventory
 transitions, compounding, rolling windows, integrated exposure, and analytic calibration.
 

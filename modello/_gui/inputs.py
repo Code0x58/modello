@@ -79,7 +79,7 @@ def parse_scalar(text: str) -> Expr:
     return result / 100 if percent else result
 
 
-def parse_vector(text: str, size: int) -> tuple[Expr | None, ...]:
+def parse_vector(text: str, size: int | None) -> tuple[Expr | None, ...]:
     """Parse exact scalar entries; '?' explicitly leaves a coordinate unobserved."""
     values: list[Expr | None] = []
     for i, entry in enumerate(vector_entries(text, size)):
@@ -90,23 +90,28 @@ def parse_vector(text: str, size: int) -> tuple[Expr | None, ...]:
     return tuple(values)
 
 
-def vector_entries(text: str, size: int) -> tuple[str | None, ...]:
+def vector_entries(text: str, size: int | None) -> tuple[str | None, ...]:
     """Keep accepted arithmetic text when a whole-vector edit is flattened."""
     text = text.strip()
-    limit = max(16_000, size * (_MAX_SCALAR_LENGTH + 2) + 2)
+    limit = max(16_000, (size or 0) * (_MAX_SCALAR_LENGTH + 2) + 2)
     if not text.startswith("[") or not text.endswith("]") or len(text) > limit:
         raise ModelInputError("Enter a vector such as [1, ?, 3/2]; ? leaves an entry unobserved.")
     body = text[1:-1].strip()
     entries = body.split(",") if body else []
-    if len(entries) != size:
+    if size is not None and len(entries) != size:
         raise ModelInputError(f"Enter exactly {size} vector entries; received {len(entries)}.")
     return tuple(None if entry.strip() == "?" else entry.strip() for entry in entries)
 
 
-def binding_texts(bindings: Mapping[str, str | None], sizes: Mapping[str, int]) -> dict[str, str | None]:
+def binding_texts(
+    bindings: Mapping[str, str | None], sizes: Mapping[str, int], *, preserve: frozenset[str] = frozenset()
+) -> dict[str, str | None]:
     """Normalize paths while preserving the caller's bounded scalar syntax."""
     result: dict[str, str | None] = {}
     for path, text in bindings.items():
+        if path in preserve:
+            result[path] = None if text is None or not text.strip() else text.strip()
+            continue
         if path in sizes:
             entries = (None,) * sizes[path] if text is None or not text.strip() else vector_entries(text, sizes[path])
             result.update((f"{path}[{i}]", entry) for i, entry in enumerate(entries))

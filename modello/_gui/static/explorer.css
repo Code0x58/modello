@@ -1,3 +1,15 @@
+@font-face {
+  font-family: "STIX Two Math";
+  src: url("fonts/STIXTwoMath-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+math {
+  font-family: "STIX Two Math", "Cambria Math", math;
+  font-weight: 400;
+  line-height: normal;
+}
 :root {
   font-family:
     Inter,
@@ -567,7 +579,8 @@ input[type="checkbox"] {
   gap: 5px;
   min-width: 0;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
+  padding-block: 0.15em;
   color: #324e77;
   font-size: 15px;
   line-height: 1.7;

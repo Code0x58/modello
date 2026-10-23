@@ -7,7 +7,7 @@ from typing import Mapping
 
 from sympy import Rational
 
-from examples.relative_series import GeometricDiffusion, MeanReversion, autoregressive_path
+from examples.relative_series import GeometricDiffusion, MeanReversion, ObservedAutoregression
 from examples.timeseries import LinearExposure, inventory_path, linear_trend, return_path, rolling_window
 from modello import Modello, ScalarValue, VectorValue
 from modello.gui import FieldInfo, ModelInfo, Scenario, create_app
@@ -243,42 +243,58 @@ class TrendLab(linear_trend(4)):  # type: ignore[misc]  # Runtime-selected finit
     title="Relative state equations",
     description="Follow Tₙ from Tₙ₋₁ and infer an earlier innovation from a later boundary.",
     info=(
-        "The recurrence is written once in relative coordinates. The vectors supply a finite innovation window "
-        "and a view of the resulting state positions. Innovations here are supplied or unknown values; "
+        "The recurrence is written once in relative coordinates. Paste any nonempty state vector: "
+        "its length determines "
+        "N, the number of transitions. The opening state and innovations are inferred from those observations. "
+        "Supplying innovations as well constrains the same path, so inconsistent observations are rejected. "
         "no probability distribution is assigned to them."
     ),
-    initial_field="closing",
-    highlights=("closing", "levels"),
+    initial_field="levels",
+    highlights=("N", "closing"),
     fields={
         "opening": FieldInfo(title="Opening state", symbol="a"),
         "retention": FieldInfo(title="Retention coefficient", symbol="ρ"),
         "innovations": FieldInfo(title="Innovations", symbol="ε"),
-        "levels": FieldInfo(title="State observations", symbol="v"),
+        "levels": FieldInfo(
+            title="State observations",
+            symbol="v",
+            description=(
+                "Paste a state vector of any length. Its N + 1 entries determine the horizon N. "
+                "Use ? for an unobserved state."
+            ),
+        ),
+        "N": FieldInfo(title="Transitions in the observed window", symbol="N"),
         "T": FieldInfo(symbol="T"),
         "law": FieldInfo(title="Relative recurrence and boundary"),
         "closing": FieldInfo(title="Closing state", symbol="c"),
     },
     scenarios=(
         Scenario(
-            title="Inspect the relative law",
-            description="Keep the third innovation open and inspect its later effects.",
-            select="closing",
+            title="Infer innovations from states",
+            description="Observe five states and infer the opening boundary and four innovations.",
+            select="levels",
         ),
         Scenario(
-            title="Supply the innovation",
-            description="Supply an innovation of two at position two.",
-            bindings={"innovations[2]": 2},
+            title="A longer observation window",
+            description="Seven observed states determine N = 6 without changing the recurrence.",
+            bindings={"levels": [2, 3, 5, 8, 13, 21, 34]},
+            select="N",
+        ),
+        Scenario(
+            title="Drive the path with innovations",
+            description="Release the state observations, then supply the opening boundary and innovations.",
+            bindings={"levels": None, "opening": 2, "innovations": [1, 0, 2, 0]},
             select="levels",
         ),
         Scenario(
             title="Infer from the later boundary",
-            description="Observe a closing state of five quarters and infer the missing innovation.",
-            bindings={"closing": Rational(5, 4)},
+            description="Release the state observations and infer one missing innovation from the closing boundary.",
+            bindings={"levels": None, "opening": 2, "innovations": [1, 0, None, 0], "closing": Rational(5, 4)},
             select="innovations[2]",
         ),
     ),
 )
-class RelativeLab(autoregressive_path(4)):  # type: ignore[misc]  # Runtime-selected observation window.
+class RelativeLab(ObservedAutoregression):
     pass
 
 
@@ -375,7 +391,7 @@ DEMOS: Mapping[str, tuple[type[Modello], Mapping[str, ScalarValue | VectorValue]
     "rolling": (WindowLab, {"samples": [1, 2, None, 4, 5]}),
     "exposure": (ExposureLab, {"opening": 2, "duration": 3}),
     "trend": (TrendLab, {"times": [0, 1, 2, 3], "observations": [1, 2, 2, 4]}),
-    "relative": (RelativeLab, {"opening": 2, "retention": Rational(1, 2), "innovations": [1, 0, None, 0]}),
+    "relative": (RelativeLab, {"retention": Rational(1, 2), "levels": [2, 2, 1, Rational(5, 2), Rational(5, 4)]}),
     "diffusion": (
         DiffusionLab,
         {"growth": Rational(1, 10), "volatility": Rational(1, 5), "opening": 100, "duration": 1, "wiener_increment": 0},

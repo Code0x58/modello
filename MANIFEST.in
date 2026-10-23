@@ -5,3 +5,5 @@ recursive-include docs *.py *.rst *.png
 prune docs/_build
 recursive-include examples *.py *.csv
 recursive-include scripts *.py
+
+recursive-include modello/_gui/static/fonts *.woff2 *.txt

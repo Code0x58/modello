@@ -23,7 +23,7 @@ from sympy import FiniteSet, Tuple, sqrt
 
 assert Path(modello.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
 distribution = metadata.distribution("modello")
-assert distribution.metadata["License-Expression"] == "MIT"
+assert distribution.metadata["License-Expression"] == "MIT AND OFL-1.1"
 assert distribution.metadata.get_all("License-File")
 assert distribution.metadata["Requires-Python"] == ">=3.10"
 assert Path(modello.__file__).with_name("py.typed").is_file()
@@ -31,7 +31,8 @@ assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
 assert "gui" in distribution.metadata.get_all("Provides-Extra", ())
 assert "flask" not in sys.modules
 from modello.gui import Explorer, FieldInfo, ModelInfo, gui
-for name in ("templates/index.html", "static/explorer.css", "static/explorer.js"):
+for name in ("templates/index.html", "static/explorer.css", "static/explorer.js",
+             "static/fonts/STIXTwoMath-Regular.woff2", "static/fonts/OFL.txt"):
     assert Path(modello.__file__).with_name("_gui").joinpath(name).is_file()
 assert "flask" not in sys.modules
 assert not any(str(path).startswith("tests/") for path in distribution.files or ())
@@ -113,6 +114,12 @@ assert ("law",) in modello.inspect_model(Relative, "law").templates
 t = modello.Coordinate("t", real=True)
 x = modello.Coordinate("x", real=True)
 assert modello.ItoProcess(x,0,1,t).drift(x**2).doit() == 1
+class Sized(modello.Modello):
+    N = modello.InstanceDummy("N", integer=True, nonnegative=True)
+    samples = modello.Vector("x", size=N, real=True)
+    total = samples.sum()
+assert Sized("sized", samples=[1,2,3]).N == 3
+assert Sized("sized", samples=[1,2,3]).total == 6
 vector_snapshot = Explorer(window).snapshot()
 assert vector_snapshot["vectors"][0]["shape"] == [3]
 assert "mover" in vector_snapshot["vectors"][0]["symbol_mathml"]

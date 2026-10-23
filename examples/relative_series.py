@@ -52,6 +52,20 @@ def autoregressive_path(periods: int) -> type[AutoregressivePath]:
     return Path
 
 
+class ObservedAutoregression(AutoregressivePath):
+    """Infer the observation horizon from either states or innovations."""
+
+    N = InstanceDummy("N", integer=True, nonnegative=True)
+    n = Index("n", nonnegative=True)
+    T = Series("T", n, real=True)
+    innovations = Vector("epsilon", size=N, real=True)
+    law = Recurrence(
+        T[n], AutoregressivePath.retention * T[n - 1] + innovations[n - 1], initial={0: AutoregressivePath.opening}
+    )
+    levels = law.window(0, N)
+    closing = T[N]
+
+
 class GeometricDiffusion(SymbolicModel):
     """A geometric Brownian law, transformed coefficients, and conditional moments."""
 

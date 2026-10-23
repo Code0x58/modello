@@ -129,6 +129,41 @@ does not assign them independence, Gaussian distributions, or a time-spacing
 rule. A larger data window changes the available inputs, while retaining the
 relative equation. Missing innovations remain unknowns in that equation.
 
+An observation-selected horizon
+---------------------------------
+
+The same recurrence can use an arbitrary finite ``N``. Here the state vector
+has ``N+1`` entries and the innovation vector has ``N``:
+
+.. code-block:: pycon
+
+   >>> from examples.relative_series import ObservedAutoregression
+   >>> case = ObservedAutoregression("states", retention=1, levels=[1, 3, 6, 10, 15])
+   >>> case.N, case.opening, case.innovations
+   (4, 1, [2, 3, 4, 5])
+   >>> ObservedAutoregression("longer", retention=1, levels=[1, 2, 3, 4, 5, 6, 7]).N
+   6
+
+The declaration contains ``innovations = Vector("epsilon", size=N)`` and
+``levels = law.window(0, N)``; it does not choose four periods. The vector length
+supplies ``N+1 = len(levels)``. Alternatively, an innovation vector supplies
+``N = len(innovations)``, or the caller can specify ``N`` directly. Partially
+observed vectors still supply their complete length.
+
+States and innovations are observations of the same equation, so supplying
+both can overdetermine it. Consistent observations are checked together;
+contradictions are rejected. The GUI's state-driven example starts with inferred
+innovations. Its innovation-driven scenarios explicitly release the state
+observations before supplying innovations.
+
+A recurrence of order ``p`` needs ``p`` initial-history positions for causal
+evaluation. That history is declared independently of the observation window.
+There is therefore no universal rule requiring every observation vector to
+contain ``p`` states, nor does a length of at least ``p`` ensure that unknown
+coefficients or innovations are identifiable. A shorter window can be a valid
+partial observation of a law with separately declared history. In this first-order
+example, one state describes the opening boundary, with ``N=0`` and no transitions.
+
 Continuous Itô laws
 -------------------
 

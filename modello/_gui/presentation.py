@@ -23,7 +23,10 @@ if TYPE_CHECKING:
 class Layout:
     """One index for names, aliases, visibility, edit policy, and raw equations."""
 
-    def __init__(self, problem: ModelProblem, overrides: Mapping[str, FieldInfo]) -> None:
+    def __init__(
+        self, problem: ModelProblem, overrides: Mapping[str, FieldInfo], *, resizable: frozenset[str] = frozenset()
+    ) -> None:
+        self.resizable = resizable
         self.fields = {_path_label(field.path): field for field in problem.fields}
         self.metadata = dict.fromkeys(self.fields, FieldInfo())
         self._explicit_metadata: set[str] = set()
@@ -53,7 +56,8 @@ class Layout:
         self.editable_vectors = frozenset(
             path
             for path, vector in self.vectors.items()
-            if len(vector) and all(f"{path}[{i}]" in self.editable for i in range(len(vector)))
+            if (len(vector) or path in self.resizable)
+            and all(f"{path}[{i}]" in self.editable for i in range(len(vector)))
         )
         self.aliases: dict[Symbol, list[str]] = {}
         for path, field in self.fields.items():
@@ -186,9 +190,22 @@ class Layout:
             if not isinstance(scenario, Scenario):
                 raise ModelInputError(f"ModelInfo.scenarios[{index}]: expected a Scenario declaration")
             context = f"Scenario {scenario.title!r}"
-            if scenario.select:
+            variable_selection = any(
+                scenario.select.startswith(path + "[")
+                and scenario.select.endswith("]")
+                and scenario.select[len(path) + 1 : -1].isdigit()
+                for path in self.resizable
+            )
+            if scenario.select and not variable_selection:
                 _require_path(scenario.select, quantities, f"{context}.select")
-            for path, _ in self.expand_bindings(scenario.bindings):
+            fixed_bindings = {}
+            for path, raw in scenario.bindings.items():
+                if path in self.resizable:
+                    if path not in self.editable_vectors:
+                        raise ModelInputError(f"{context}.bindings: cannot edit vector {path!r}")
+                else:
+                    fixed_bindings[path] = raw
+            for path, _ in self.expand_bindings(fixed_bindings):
                 self.field(path, context=f"{context}.bindings")
                 if path not in self.editable:
                     source = "hidden" if path in self.hidden else "Recorded"

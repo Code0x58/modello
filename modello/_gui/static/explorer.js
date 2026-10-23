@@ -211,13 +211,28 @@ function withoutAliases(base, field) {
   (field.observation_paths || field.aliases).forEach((alias) => delete next[alias]);
   return next;
 }
-function apply(field, text) {
+function vectorEntryProposal(field, text) {
+  const vector = (state.vectors || []).find(
+    item => item.resizable && item.entries.includes(field.path) && typeof bindings[item.path] === "string",
+  );
+  if (!vector) return null;
   const next = withoutAliases(bindings, field);
-  next[field.path] = text.trim() || null;
+  const entries = bindings[vector.path].slice(1, -1).split(",").map(entry => entry.trim());
+  entries[vector.entries.indexOf(field.path)] = text?.trim() || "?";
+  next[vector.path] = `[${entries.join(", ")}]`;
+  return next;
+}
+function apply(field, text) {
+  const entry = vectorEntryProposal(field, text);
+  if (entry) return refresh(entry, { edit: true });
+  const next = withoutAliases(bindings, field);
+  next[field.path] = text.trim() || (field.resizable
+    ? `[${field.entries.map(() => "?").join(", ")}]`
+    : null);
   return refresh(next, { edit: true });
 }
 function restore(field) {
-  return refresh(withoutAliases(bindings, field), { edit: true });
+  return refresh(vectorEntryProposal(field, field.initial_input) || withoutAliases(bindings, field), { edit: true });
 }
 function section(title) {
   const element = node("section", "detail-section");
@@ -247,11 +262,13 @@ function details() {
   detail.append(current);
   if (
     field.editable &&
-    field.initial_input &&
-    field.input_state !== "initial"
+    ((field.initial_input && field.input_state !== "initial") || field.window_changed)
   ) {
     const history = node("div", "input-history");
-    history.append(node("p", "", `Original input: ${field.initial_input}.`));
+    if (field.initial_input)
+      history.append(node("p", "", `Original input: ${field.initial_input}.`));
+    if (field.window_changed)
+      history.append(node("p", "", `Original window: ${field.initial_shape[0]} entries.`));
     if (field.input_state === "dropped")
       history.append(
         node(
@@ -308,7 +325,9 @@ function details() {
       "p",
       "input-help",
       field.shape
-        ? "Use brackets and comma-separated exact values, such as [1, ?, 3/2]. A ? leaves that entry unobserved. You can also edit entries individually below."
+        ? (field.resizable
+          ? "Paste any length, such as [1, ?, 3/2]. Its length determines the observation window. A ? leaves a state unknown; other observed quantities still constrain the same path."
+          : "Use brackets and comma-separated exact values, such as [1, ?, 3/2]. A ? leaves that entry unobserved. You can also edit entries individually below.")
         : field.number_format === "percent"
         ? "Use 70% or 7/10. Clear to stop supplying a value; the equations still apply."
         : "Exact arithmetic, such as 3/2 or sqrt(2). Clear to stop supplying a value; the equations still apply.",

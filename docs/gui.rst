@@ -187,7 +187,8 @@ inventory transitions. Use ``--example returns``, ``rolling``, ``exposure``, or
 See :doc:`vectors`
 and :doc:`examples/timeseries/index` for model definitions and their assumptions.
 
-Select ``--example relative`` for a relative recurrence with a missing innovation,
+Select ``--example relative`` to paste state vectors of different lengths and infer
+the recurrence horizon and innovations,
 ``--example diffusion`` for Itô transformations and a geometric Brownian law, or
 ``--example reversion`` for exact mean-reverting conditional moments. Their
 equations view retains the relative law or SDE and its boundary information.
@@ -378,7 +379,8 @@ failure to validate a case, not as proof of inconsistency.
 Scope of this draft
 -------------------
 
-The interface serves bundled HTML, CSS, JavaScript, and MathML without a CDN or
+The interface serves bundled HTML, CSS, JavaScript, MathML, and the STIX Two Math
+font without a CDN or
 JavaScript build. The local Flask server is intended for small trusted models
 on loopback. Symbolic work is synchronous; arithmetic limits are not a solver
 timeout. There is no deployment, authentication, persistence, multi-branch
@@ -407,3 +409,15 @@ API
 
 .. automodule:: modello.gui
    :members: gui, ModelInfo, FieldInfo, Scenario, Explorer, BindingError, create_app
+
+Mathematical typography
+-----------------------
+
+The explorer uses native MathML with the bundled, unmodified STIX Two Math
+2.13 b171 font. Its OpenType MATH table provides stretchy vector brackets,
+boundary braces, and accents consistently across machines. Fences declare their
+stretch and symmetry explicitly. The font and its SIL Open Font License are
+served locally under ``/assets/fonts/``. Source and attribution are recorded in
+``modello/_gui/static/fonts/README.txt``; see the
+`STIX project <https://github.com/stipub/stixfonts/tree/v2.13b171>`_ and
+`MathML Core operator rules <https://www.w3.org/TR/mathml-core/#operator-fence-separator-or-accent-mo>`_.

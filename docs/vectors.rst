@@ -32,8 +32,10 @@ unobserved. It does not assign a special symbolic value or replace its defining
 equation. Observing the total determines the missing sample. Without that
 observation the entry stays symbolic, and the other results depend on it.
 
-Each vector has a fixed, nonnegative integer size. An input sequence must have
-exactly that many entries. Inputs may also be explicit ``Vector`` values;
+Each prepared model has a finite, nonnegative integer size for every vector.
+A literal ``size=3`` fixes that size in the declaration. A symbolic ``size=N``
+lets observed lengths determine it; see `Observation-sized vectors`_ below.
+Input sequences must agree with the resolved shape. Inputs may also be explicit ``Vector`` values;
 ``Vector(1, 2, 3)`` and ``Vector([1, 2, 3])`` are equivalent. Assumptions on a
 declared vector apply to **every coordinate**. Declare an assumed vector first,
 then constrain it with a formula to enforce requirements on derived entries:
@@ -113,11 +115,52 @@ The original function and iteration domain remain available for rendering.
 equality follows SymPy's structural convention, so use evaluated vectors when
 comparing a comprehension with an explicit list of expressions.
 
-Use model factories for different finite shapes; see
+Use symbolic sizes when observation lengths should select the horizon. Model
+factories remain useful for explicitly selected shapes; see
 :doc:`examples/timeseries/index`. A subclass may refine assumptions or a formula
 without changing the inherited size. Changing the size of an inherited vector
 raises ``ModelDefinitionError`` so inherited indices cannot silently change
 meaning.
+
+Observation-sized vectors
+--------------------------
+
+Declare the finite axis with an integer model field:
+
+.. code-block:: pycon
+
+   >>> from modello import InstanceDummy
+   >>> class ObservedWindow(Modello):
+   ...     N = InstanceDummy("N", integer=True, nonnegative=True)
+   ...     samples = Vector("x", size=N, real=True)
+   ...     total = samples.sum()
+   >>> case = ObservedWindow("data", samples=[1, None, 3, 4], total=10)
+   >>> case.N, case.samples
+   (4, [1, 2, 3, 4])
+   >>> ObservedWindow("shorter", samples=[2, 5]).N
+   2
+
+The input's length contributes a shape equation, including when some or all
+entries are ``None``. SymPy solves the length equations together with supplied
+size values before finite coordinates are compiled. A size must resolve to a
+unique integer satisfying the field assumptions and all related vector shapes.
+Conflicting lengths are errors; they are never padded or truncated as model
+observations. An explicit ``N=4`` also permits a model with four unobserved
+coordinates and no supplied sample vector.
+
+``N`` remains an ordinary model field with its resolved value retained as a
+structural definition. The reusable class stays symbolic; each finite case is
+an instance of a cached subclass with that shape. Components can use independently
+sized instances of the same declaration. Supply those typed child instances
+when preparing a parent whose component sizes are not otherwise known.
+
+Before binding a symbolic axis, use ``v.shape[0]`` to obtain its size expression.
+Python's ``len(v)`` must return an integer and therefore raises ``TypeError``
+until the size is known. Comprehensions can use symbolic integer bounds, such
+as ``vector(2*x[i], (i, 0, N-1))``. A prepared problem or solution family has one
+finite shape; prepare the reusable declaration again to analyse another window.
+The explorer does this for each whole-vector proposal and can restore the
+original window without mutating another case.
 
 Composition, observations, and inspection
 -----------------------------------------

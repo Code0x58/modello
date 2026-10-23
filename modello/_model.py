@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, cast
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, TypeVar, cast
 
 from sympy import Basic, Expr, Symbol
 
@@ -11,6 +12,7 @@ from modello._expressions import _declaration, _substitute
 from modello._operators import _FunctionSymbol, _SymbolicTemplate
 from modello._paths import _path_label
 from modello._problem import ConstraintKind, FieldPath
+from modello._shapes import _dimensions
 from modello._symbols import BoundInstanceDummy as BoundInstanceDummy, Coordinate, InstanceDummy as InstanceDummy
 from modello._values import (
     ScalarValue as ScalarValue,
@@ -20,7 +22,7 @@ from modello._values import (
 from modello.annotations import Annotation, _Annotated, _freeze
 from modello.errors import ModelDefinitionError, ModelInputError
 from modello.series import _project_series
-from modello.vectors import Vector, VectorValue as VectorValue
+from modello.vectors import Vector, VectorValue as VectorValue, _VectorSymbol
 
 if TYPE_CHECKING:
     from modello import Modello
@@ -64,7 +66,7 @@ class _ModelDefinition:
         return frozenset().union(
             *(
                 value.atoms(_FunctionSymbol)
-                for value in (*self.templates.values(), *(c.right for c in self.constraints))
+                for value in (*self.templates.values(), *self.vectors.values(), *(c.right for c in self.constraints))
             )
         )
 
@@ -100,6 +102,8 @@ class _ModelReference:
             return self._modello_fields[(name,)]
         vector = self._modello_model._modello_namespace.vectors.get(name)
         if vector is not None:
+            if not vector._finite:
+                return vector.xreplace(self._modello_bindings)
             return Vector(*(self._modello_fields[(name, str(i))] for i in range(len(vector))))
         if (name,) in self._modello_templates:
             return self._modello_templates[(name,)]
@@ -166,7 +170,10 @@ class ModelloMetaNamespace(dict):
             for key, vector in parent.vectors.items():
                 if key in self.vectors:
                     self._require_shape(key, self.vectors[key], vector)
-                    replacements.update(zip(self.vectors[key], vector))
+                    if vector._finite:
+                        replacements.update(zip(self.vectors[key], vector))
+                    else:
+                        replacements[self.vectors[key]] = vector
             for key, child in parent.nested_models.items():
                 replacements.update(self._child_replacements(key, child))
             self.attrs.update(parent.attrs)
@@ -192,10 +199,12 @@ class ModelloMetaNamespace(dict):
                     self._missing[template] = _path_label((name, *path))
             for path, vector in old._modello_model._modello_definition.vectors.items():
                 target = child._modello_model._modello_definition.vectors.get(path)
-                if target is not None and len(target) != len(vector):
+                if target is not None and vector._finite and target._finite and len(target) != len(vector):
                     raise ModelDefinitionError(
                         f"Cannot change the size of {_path_label((name, *path))}; declare a new model shape"
                     )
+                if target is not None and not vector._finite:
+                    replacements[vector.xreplace(old._modello_bindings)] = target.xreplace(child._modello_bindings)
             for path, dummy in old._modello_fields.items():
                 target = child._modello_fields.get(path)
                 if target is None:
@@ -287,7 +296,7 @@ class ModelloMetaNamespace(dict):
         return dummy
 
     def _require_shape(self, key: str, previous: Vector, replacement: Vector) -> None:
-        if len(previous) != len(replacement):
+        if previous.shape != replacement.shape:
             raise ModelDefinitionError(f"Cannot change the size of {self.name}.{key}; declare a new model shape")
 
     def _declare_vector(self, key: str, value: Vector) -> Vector:
@@ -298,6 +307,15 @@ class ModelloMetaNamespace(dict):
         previous = self.vectors.get(key)
         if previous is not None:
             self._require_shape(key, previous, expression)
+        if not expression._finite:
+            fields = (
+                previous
+                if previous is not None
+                else (expression if isinstance(expression, _VectorSymbol) else Vector(key, size=expression.shape[0]))
+            )
+            self.vector_attrs[key] = expression
+            self.vectors[key] = fields
+            return fields
         if previous is not None and (
             not all(isinstance(entry, InstanceDummy) for entry in expression)
             or expression.free_symbols & set(self.fields().values())
@@ -343,7 +361,12 @@ class ModelloMetaNamespace(dict):
     def fields(self) -> dict[FieldPath, InstanceDummy]:
         """Flatten scalar fields while retaining their attribute paths."""
         fields: dict[FieldPath, InstanceDummy] = {(key,): dummy for key, dummy in self.dummies.items()}
-        fields.update(((key, str(i)), dummy) for key, vector in self.vectors.items() for i, dummy in enumerate(vector))
+        fields.update(
+            ((key, str(i)), dummy)
+            for key, vector in self.vectors.items()
+            if vector._finite
+            for i, dummy in enumerate(vector)
+        )
         fields.update(
             ((key, *path), dummy)
             for key, child in self.nested_models.items()
@@ -361,6 +384,7 @@ class ModelloMetaNamespace(dict):
         constraints.extend(
             _Definition((attr, str(i)), self.vectors[attr][i], expression)
             for attr, value in self.vector_attrs.items()
+            if value._finite
             for i, expression in enumerate(value)
             if expression != self.vectors[attr][i]
         )
@@ -438,6 +462,57 @@ class ModelloMeta(type):
         namespace["_modello_definition"] = meta_namespace.compile()
         namespace["__modello_annotations__"] = meta_namespace.compiled_annotations()
         return super().__new__(mcs, name, bases, namespace)
+
+    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
+        concrete = _specialize_model(cast("type[Modello]", cls), kwargs)
+        if concrete is not cls:
+            return concrete(*args, **kwargs)
+        return super().__call__(*args, **kwargs)
+
+
+ShapeModel = TypeVar("ShapeModel", bound="Modello")
+
+
+def _specialize_model(model: type[ShapeModel], values: Mapping[str, object]) -> type[ShapeModel]:
+    """Choose a finite declaration without changing the reusable model class."""
+    namespace = model._modello_namespace
+    children = []
+    for name, child in namespace.nested_models.items():
+        if any(not vector._finite for vector in child._modello_model._modello_definition.vectors.values()):
+            value = values.get(name)
+            if not isinstance(value, child._modello_model):
+                raise ModelInputError(
+                    f"Supply a {child._modello_model.__name__} instance to determine {name}'s vector sizes"
+                )
+            children.append((name, type(value)))
+    if all(vector._finite for vector in namespace.vectors.values()) and not children:
+        return model
+    dimensions = _dimensions(namespace.vectors, namespace.dummies, namespace.attrs, values)
+    return cast(
+        type[ShapeModel],
+        _concrete_model(model, tuple(sorted(dimensions.items(), key=lambda item: str(item[0]))), tuple(children)),
+    )
+
+
+@lru_cache(maxsize=128)
+def _concrete_model(
+    model: type[Modello], dimensions: tuple[tuple[Symbol, Basic], ...], children: tuple[tuple[str, type[Modello]], ...]
+) -> type[Modello]:
+    bindings = dict(dimensions)
+    namespace = ModelloMetaNamespace(model.__name__, (model,))
+    for name, child in children:
+        namespace[name] = child
+    fields = {vector: vector.xreplace(bindings) for vector in namespace.vectors.values() if not vector._finite}
+    namespace._replace(fields)
+    namespace.vector_attrs = {
+        name: expression.xreplace(bindings) for name, expression in namespace.vector_attrs.items()
+    }
+    for name, symbol in namespace.dummies.items():
+        if symbol in bindings:
+            namespace[name] = bindings[symbol]
+    dict.__setitem__(namespace, "_modello_shape_source", model)
+    namespace["__module__"] = model.__module__
+    return ModelloMeta(model.__name__, (model,), namespace)
 
 
 def _populate(

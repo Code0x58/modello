@@ -67,6 +67,11 @@ and vector summaries under ``_gui/``. Finance and time-series examples stay abov
 these layers.
 
 ``series.py`` and ``stochastic.py`` declare relative recurrences and Itô laws.
+``_shapes.py`` solves symbolic finite axes from observation lengths before scalar
+coordinates are compiled. Shape specialization produces a cached subclass; it
+does not mutate the reusable declaration. The GUI creates a fresh finite context
+for each proposed window, preserving original observations and restore behavior.
+
 ``_operators.py`` supplies their common scoped-expression protocol: operators
 identify local coordinates and the arguments in which those coordinates are
 protected while model definitions expand. They produce scalar expressions for

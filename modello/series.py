@@ -26,7 +26,7 @@ from sympy import (
 
 from modello._operators import _FunctionSymbol, _ScopedOperator, _SymbolicTemplate, _value_condition
 from modello._symbols import Index, _minimal_assumptions
-from modello._values import ScalarValue
+from modello._values import ScalarValue, SymbolicScalar
 from modello.errors import ModelInputError
 from modello.vectors import Vector, _invalid_index, _VectorElement, vector
 
@@ -240,7 +240,7 @@ class Recurrence(_SymbolicTemplate):
     def at(self, index: ScalarValue) -> Expr:
         return _RecurrenceValue(self, index)
 
-    def window(self, first: int, last: int) -> Vector:
+    def window(self, first: int | SymbolicScalar, last: int | SymbolicScalar) -> Vector:
         i = Index(self.target.index.name)
         return vector(self.at(i), (i, first, last))
 

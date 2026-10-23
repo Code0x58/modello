@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, TypeVar, cast
 
-from sympy import Basic, Expr, Symbol, factor_terms
+from sympy import Basic, Expr, Symbol, factor_terms, sympify
 
 from modello import (
     Annotation,
@@ -24,6 +24,7 @@ from modello import (
 from modello._gui.formatting import display_number
 from modello._gui.inputs import binding_texts, parse_scalar, parse_vector, request_limit
 from modello._gui.mathml import EquationPrinter
+from modello._gui.shapes import ShapePlan, _entries
 from modello._gui.vectors import vector_input_text, vector_view
 from modello._inputs import _validate_vector_values
 from modello._operators import _definitely_undefined
@@ -234,6 +235,23 @@ class Explorer:
         inputs: Mapping[str, ScalarValue | VectorValue] | None = None,
         metadata: Mapping[str, FieldInfo] | None = None,
     ) -> None:
+        self._shape_plan: ShapePlan | None = None
+        if isinstance(model, type):
+            source = getattr(model, "_modello_shape_source", model)
+            if any(not vector._finite for vector in source._modello_definition.vectors.values()):
+                self._shape_plan = ShapePlan(model, inputs or {})
+                model, inputs = self._shape_plan.select({})
+        resizable = self._shape_plan.vectors if self._shape_plan is not None else frozenset()
+        self._initialize(model, name, inputs or {}, metadata or {}, resizable)
+
+    def _initialize(
+        self,
+        model: type[Modello] | Modello | ModelProblem,
+        name: str,
+        inputs: Mapping[str, ScalarValue | VectorValue],
+        metadata: Mapping[str, FieldInfo],
+        resizable: frozenset[str],
+    ) -> None:
         from modello._gui.presentation import Layout
 
         if isinstance(model, ModelProblem):
@@ -242,9 +260,40 @@ class Explorer:
             self.problem = _instance_problem(model, name)
         else:
             self.problem = inspect_model(model, name)
-        self._layout = Layout(self.problem, metadata or {})
-        self._initial = self._bind(self.problem, inputs or {}, context="inputs")
+        self._metadata = metadata
+        self._layout = Layout(self.problem, metadata, resizable=resizable)
+        self._initial = self._bind(self.problem, inputs, context="inputs")
         self._initial_inputs = {c.left: c.right for c in self._initial.constraints if c.kind is ConstraintKind.INPUT}
+
+    def _finite_context(self, bindings: Mapping[str, object]) -> Explorer:
+        if self._shape_plan is None:
+            return self
+        model, baseline = self._shape_plan.select(bindings)
+        target = object.__new__(Explorer)
+        target._shape_plan = None
+        target._initialize(model, self.problem.name, baseline, self._metadata, self._shape_plan.vectors)
+        return target
+
+    def _window_history(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Describe the original window even when the finite context is shorter."""
+        observed = {row["path"] for row in data["fields"] if row["kind"] == "input"}
+        for row in data["vectors"]:
+            if not row["resizable"]:
+                continue
+            original = self._layout.vectors[row["path"]]
+            entries = [self._initial_inputs.get(symbol) for symbol in original]
+            row["initial_shape"] = list(original.shape)
+            row["window_changed"] = row["shape"] != row["initial_shape"]
+            row["initial_input"] = (
+                "["
+                + ", ".join("?" if value is None else self._input_text(row["path"], value) for value in entries)
+                + "]"
+                if any(value is not None for value in entries)
+                else ""
+            )
+            if row["window_changed"] and row["initial_input"]:
+                row["input_state"] = "overridden" if observed.intersection(row["entries"]) else "dropped"
+        return data
 
     def _bind(
         self,
@@ -306,10 +355,21 @@ class Explorer:
 
     def _browser_snapshot(self, bindings: Mapping[str, str | None], *, raw: bool) -> dict[str, Any]:
         """Retain accepted arithmetic instead of seeding an unparseable large literal."""
+        if self._shape_plan is not None:
+            shape_bindings = {}
+            for path, text in bindings.items():
+                if text is not None and not isinstance(text, str):
+                    raise BindingError("Enter input values as text.", (path,))
+                if path in self._shape_plan.vectors:
+                    shape_bindings[path] = None if text is None or not text.strip() else parse_vector(text, None)
+                elif path in self._shape_plan.dimensions:
+                    shape_bindings[path] = None if text is None or not text.strip() else parse_scalar(text)
+            return self._window_history(self._finite_context(shape_bindings)._browser_snapshot(bindings, raw=raw))
         parsed = self._browser_bindings(bindings)
-        texts = binding_texts(bindings, {path: len(value) for path, value in self._layout.vectors.items()})
+        sizes = {path: len(value) for path, value in self._layout.vectors.items()}
+        texts = binding_texts(bindings, sizes)
         data = self.snapshot(parsed, raw=raw)
-        data["bindings"] = texts
+        data["bindings"] = binding_texts(bindings, sizes, preserve=self._layout.resizable)
         rows = {row["path"]: row for row in data["fields"]}
         for row in rows.values():
             if row["kind"] == "input":
@@ -319,6 +379,8 @@ class Explorer:
         for row in data["vectors"]:
             if len(row["entries"]) == row["shape"][0]:
                 row["input"] = vector_input_text(row["entries"], rows, "input")
+            if row["path"] in self._layout.resizable and bindings.get(row["path"]):
+                row["input"] = bindings[row["path"]]
         return data
 
     def snapshot(
@@ -332,6 +394,8 @@ class Explorer:
         Raw views show definitions without solving. Bound views label an
         undecided audit as a conditional preview.
         """
+        if self._shape_plan is not None:
+            return self._window_history(self._finite_context(bindings or {}).snapshot(bindings, raw=raw))
         problem = self._bind(self._initial, bindings or {})
         values, verdict = ({}, "raw") if raw else _preview(problem)
         definitions = {c.left: c.right for c in problem.constraints if c.kind is ConstraintKind.DEFINITION}
@@ -369,6 +433,7 @@ class Explorer:
             vector_view(path, self._layout, context, values, indexed_rows, raw) for path in self._layout.vectors
         ]
         for row in vector_rows:
+            row["resizable"] = row["path"] in self._layout.resizable
             if row["path"] in self._layout.hidden:
                 row.update(value="Hidden vector", value_state="hidden", value_mathml="", exact_mathml="")
                 symbols.append(row)
@@ -400,14 +465,7 @@ class Explorer:
                     "title": scenario.title,
                     "description": scenario.description,
                     "select": scenario.select,
-                    "bindings": {
-                        path: None
-                        if value is None
-                        else self._input_text(
-                            path, FieldValue(self._layout.field(path), cast(ScalarValue, value)).value, context.format
-                        )
-                        for path, value in self._layout.expand_bindings(scenario.bindings)
-                    },
+                    "bindings": self._scenario_bindings(scenario, context),
                 }
                 for scenario in self._layout.model_info.scenarios
             ],
@@ -416,6 +474,28 @@ class Explorer:
                 for c in problem.constraints
             ),
         }
+
+    def _scenario_bindings(self, scenario: Scenario, context: _Snapshot) -> dict[str, str | None]:
+        result: dict[str, str | None] = {}
+        for path, value in scenario.bindings.items():
+            if path in self._layout.resizable:
+                result[path] = (
+                    None
+                    if value is None
+                    else "["
+                    + ", ".join("?" if entry is None else context.format(sympify(entry)) for entry in _entries(value))
+                    + "]"
+                )
+            else:
+                for name, entry in self._layout.expand_bindings({path: value}):
+                    result[name] = (
+                        None
+                        if entry is None
+                        else self._input_text(
+                            name, FieldValue(self._layout.field(name), cast(ScalarValue, entry)).value, context.format
+                        )
+                    )
+        return result
 
     def _input_text(self, path: str, value: Expr, formatter: Callable[[Basic], str] | None = None) -> str:
         render = self.problem.format if formatter is None else formatter
@@ -561,7 +641,11 @@ def create_app(
         if not isinstance(payload, dict) or set(payload) - {"bindings", "raw"}:
             return jsonify(error="Expected bindings and an optional raw flag.", paths=[]), 400
         bindings, raw = payload.get("bindings", {}), payload.get("raw", False)
-        if not isinstance(bindings, dict) or not isinstance(raw, bool) or len(bindings) > len(explorer.problem.fields):
+        if (
+            not isinstance(bindings, dict)
+            or not isinstance(raw, bool)
+            or len(bindings) > max(256, len(explorer.problem.fields))
+        ):
             return jsonify(error="Invalid bindings or raw flag.", paths=[]), 400
         try:
             return jsonify(explorer._browser_snapshot(bindings, raw=raw))

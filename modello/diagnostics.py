@@ -382,6 +382,9 @@ def _prepare_problem(
     """Capture a declaration and its constructor inputs as one bound snapshot."""
     if not isinstance(model, ModelloMeta):
         raise ModelInputError("inspect_model requires a Modello class and constructor inputs")
+    from modello._model import _specialize_model
+
+    model = _specialize_model(model, value_map)
     definition = model._modello_definition
     bindings = {d: d.bound(name) for d in dict.fromkeys(definition.fields.values())}
     template_bindings = {symbol: symbol.bound(name) for symbol in definition.template_symbols}

@@ -54,6 +54,19 @@ class EquationPrinter(MathMLPresentationPrinter):
             node.setAttribute("aria-label", f"Inspect {path}")
         return node
 
+    def _fence(self, glyph: str, *, opening: bool) -> Any:
+        node = self._node("mo", text=glyph)
+        for key, value in {
+            "fence": "true",
+            "stretchy": "true",
+            "symmetric": "true",
+            "form": "prefix" if opening else "postfix",
+            "lspace": "0",
+            "rspace": "0",
+        }.items():
+            node.setAttribute(key, value)
+        return node
+
     def _print_Symbol(self, expression: Symbol) -> Any:
         path, label = self.labels.get(expression, ("", expression.name))
         if expression in self.coordinates:
@@ -95,9 +108,9 @@ class EquationPrinter(MathMLPresentationPrinter):
             rows.append(self._node("mtr", self._node("mtd", self._print(equation)), self._node("mtd", condition)))
         table = self._node("mtable", *rows)
         table.setAttribute("columnalign", "left left")
-        brace = self._node("mo", text="{")
-        brace.setAttribute("stretchy", "true")
-        return self._node("mrow", brace, table)
+        table.setAttribute("columnspacing", "1em")
+        table.setAttribute("rowspacing", "0.4em")
+        return self._node("mrow", self._fence("{", opening=True), table)
 
     def _print_ItoProcess(self, expression: Any) -> Any:
         terms: list[Any] = []
@@ -185,7 +198,8 @@ class EquationPrinter(MathMLPresentationPrinter):
     def vector_values(self, expression: Vector) -> Any:
         """Display values as a column, independently of their vector identity."""
         table = self._node("mtable", *(self._node("mtr", self._node("mtd", self._print(v))) for v in expression))
-        return self._node("mrow", self._node("mo", text="["), table, self._node("mo", text="]"))
+        table.setAttribute("rowspacing", "0.35em")
+        return self._node("mrow", self._fence("[", opening=True), table, self._fence("]", opening=False))
 
     def _print__VectorElement(self, expression: _VectorElement) -> Any:
         if expression.vector in self.vectors:
@@ -325,10 +339,7 @@ class EquationPrinter(MathMLPresentationPrinter):
         table = self._node("mtable", *rows)
         table.setAttribute("columnalign", "left left")
         table.setAttribute("columnspacing", "0.8em")
-        brace = self._node("mo", text="{")
-        brace.setAttribute("stretchy", "true")
-        brace.setAttribute("fence", "true")
-        return self._node("mrow", brace, table)
+        return self._node("mrow", self._fence("{", opening=True), table)
 
     def _print_IndexedBase(self, expression: Any) -> Any:
         label = self._print(expression.label)
