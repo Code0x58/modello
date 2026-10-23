@@ -277,8 +277,38 @@ Queries and conditions use the same formula expansion:
    >>> family.observe(x=3).expression(gradient)
    6
 
-The derivative is taken before substituting the observed point. Unresolved
-operators remain symbolic when the constructor's backend can retain them;
+The derivative is taken before substituting the observed point. It follows
+the quantity's declared formula, treating the differentiation variable as
+independent. To study a response along a constrained family, first obtain its
+reduced expression. For example, fixing the total of two allocation weights
+means that increasing one weight decreases the other:
+
+.. code-block:: pycon
+
+   >>> class Allocation(Modello):
+   ...     weights = Vector("w", size=2, nonnegative=True)
+   ...     total = weights.sum()
+   ...     concentration = weights.dot(weights)
+   >>> problem = inspect_model(Allocation, "allocation", total=1)
+   >>> family = problem.solutions(problem.symbols.weights)
+   >>> coordinate = family.parameters[0].symbol
+   >>> response = family.expression(family.symbols.concentration)
+   >>> response == coordinate**2 + (1 - coordinate)**2
+   True
+   >>> gradient = Derivative(response, coordinate)
+   >>> family.expression(gradient) == 4 * coordinate - 2
+   True
+   >>> family.where(Eq(gradient, 0)).one().weights
+   [1/2, 1/2]
+
+Here the reduced family has one independent coordinate. More general family
+coordinates may remain coupled by conditions; obtain a suitable parameterization
+before interpreting their derivatives as sensitivities along that family.
+The stationary-point condition is explicit, as in the
+:doc:`calibration example <examples/timeseries/index>`; the solver does not
+choose an objective or optimize one automatically.
+
+Unresolved operators remain symbolic when the constructor's backend can retain them;
 the exact solution-family API requires them to evaluate. Calculus through
 cyclic or multiply defined model quantities is unsupported, including through
 intermediate formulas. Several defining equations can jointly constrain one

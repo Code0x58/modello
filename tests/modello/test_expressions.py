@@ -112,6 +112,26 @@ def test_family_queries_and_conditions_differentiate_model_formulas_before_obser
     assert preferred.expression(symbols.square + gradient) == symbols.square + 2 * symbols.x
 
 
+def test_reduced_response_derivative_follows_a_constrained_vector_family():
+    class Allocation(Modello):
+        weights = Vector("w", size=2, nonnegative=True)
+        total = weights.sum()
+        concentration = weights.dot(weights)
+
+    problem = inspect_model(Allocation, "allocation", total=1)
+    family = problem.solutions(problem.symbols.weights)
+    coordinate = family.parameters[0].symbol
+    declared = Derivative(family.symbols.concentration, coordinate)
+    response = family.expression(family.symbols.concentration)
+    constrained = Derivative(response, coordinate)
+
+    assert family.expression(declared) == 2 * coordinate
+    assert family.expression(constrained) == 4 * coordinate - 2
+    balanced = family.where(Eq(constrained, 0))
+    assert balanced.one().weights == Vector(Rational(1, 2), Rational(1, 2))
+    assert balanced.values(family.symbols.concentration) == FiniteSet(Rational(1, 2))
+
+
 def test_differentiation_expands_definitions_before_substituting_observations():
     class Sensitivity(Modello):
         offset = InstanceDummy("offset", real=True)

@@ -45,6 +45,9 @@ values. Both accept model symbols or expressions built from them. For example:
 Coordinate count is not generally a dimension: a
 coordinate domain can still contain equations, discrete alternatives, or
 unresolved conditions.
+The :doc:`calculus examples <vectors>` explain how to differentiate a reduced
+response along a parameterized family, as distinct from a quantity's declared
+formula.
 
 Refine observations and select a state
 ---------------------------------------
