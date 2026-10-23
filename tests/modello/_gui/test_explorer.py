@@ -40,7 +40,7 @@ def test_frontend_vector_proposal_state(tmp_path: Path, pytestconfig: pytest.Con
     result = subprocess.run(
         [
             node,
-            str(pytestconfig.rootpath / "tests/gui_state.cjs"),
+            str(pytestconfig.rootpath / "tests/modello/_gui/test_explorer.cjs"),
             str(pytestconfig.rootpath / "modello/_gui/static/explorer.js"),
             str(fixtures),
         ],

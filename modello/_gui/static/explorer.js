@@ -169,7 +169,7 @@ async function refresh(next = bindings, options = {}) {
       return;
     }
     changed = new Set(
-      data.fields
+      [...data.fields, ...(data.vectors || [])]
         .filter(
           (field) =>
             fieldsByPath.has(field.path) &&

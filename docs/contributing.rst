@@ -51,6 +51,9 @@ numerical example adapters consume the compiled declaration's fields.
 scope. Both GUI equations and LaTeX exports consume this public view instead of
 reconstructing formulas from scalar constraints. ``_printing.py`` adds scoped
 LaTeX labels; native vector printing remains in ``vectors.py``.
+Text and LaTeX contexts receive the explicit vector schema, including public and
+chart aliases. They choose names within the current component without guessing
+vector identities from their scalar coordinate paths.
 
 ``_values.py`` holds structural input types; ``_symbols.py`` owns independent
 quantity identities and local indices. ``vectors.py`` implements immutable

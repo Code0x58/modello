@@ -128,6 +128,8 @@ def test_family_latex_accepts_both_public_symbols_and_internal_chart_coordinates
     assert family.latex(family.symbols.samples) == r"\vec{\mathrm{samples}}"
     chart = Vector(*(binding.expression for binding in family._bindings if binding.field.path[0] == "samples"))
     assert family.latex(chart) == r"\vec{\mathrm{samples}}"
+    assert family.format(family.symbols.samples) == family.format(chart) == "samples"
+    assert family.format(family.problem.constraints[0].right) == "Sum(samples[i], (i, 0, 2))"
     observed = family.observe(samples=[1, 2, 3])
     assert observed.latex(observed.expression(observed.symbols.samples)) == r"\begin{bmatrix}1\\ 2\\ 3\end{bmatrix}"
 
@@ -157,3 +159,17 @@ def test_a_repeated_vector_coordinate_retains_one_canonical_export_name():
     values = problem.symbols.repeated
     assert problem.latex(values[0], vector_names={values: "v"}) == "v_{0}"
     assert problem.latex(values[1], vector_names={values: "v"}) == "v_{0}"
+
+
+def test_vector_aliases_prefer_the_current_component_in_both_printing_contexts():
+    class Parent(Modello):
+        window = component(Window)
+        alias = window.samples
+
+    problem = inspect_model(Parent, "scope")
+    formula = problem.constraints[0].right
+    family = problem.solutions()
+    assert problem.format(formula) == family.format(formula) == "Sum(alias[i], (i, 0, 2))"
+    expected = "Sum(samples[i], (i, 0, 2))"
+    assert problem._printer(formula, scope=("window",)).doprint(formula) == expected
+    assert family._printer(formula, scope=("window",)).doprint(formula) == expected

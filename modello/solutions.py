@@ -411,7 +411,12 @@ class SolutionFamily(Generic[ModelT]):
         fields = tuple(
             alias for field in self.problem.fields for alias in (field, ModelField(field.path, bindings[field.symbol]))
         )
-        return _FieldPrinter(fields, symbols, scope, referenced)
+        vectors = tuple(
+            (path, vector)
+            for path, value in self.problem.vectors.items()
+            for vector in (value, value.xreplace(bindings))
+        )
+        return _FieldPrinter(fields, symbols, scope, referenced, vectors)
 
     def format(self, expression: Basic) -> str:
         """Format chart symbols as the model's named paths without substitution."""
@@ -427,11 +432,8 @@ class SolutionFamily(Generic[ModelT]):
         """Export model or chart coordinates, with optional LaTeX name overrides."""
         from modello._printing import _latex
 
-        bindings = {binding.field.symbol: binding.symbol for binding in self._bindings}
-        vectors = {}
-        for path, value in reversed(tuple(self.problem.vectors.items())):
-            vectors[value] = vectors[value.xreplace(bindings)] = _path_label(path)
-        return _latex(expression, self._printer(expression), vectors, symbol_names, vector_names)
+        printer = self._printer(expression)
+        return _latex(expression, printer, printer.vector_labels, symbol_names, vector_names)
 
     def __str__(self) -> str:
         lines = [f"{self.problem.model.__name__}({self.problem.name!r}): solution family"]

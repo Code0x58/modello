@@ -54,7 +54,9 @@ const context = vm.createContext({
 vm.runInContext(source, context);
 booting = false;
 textarea.disabled = false;
-vm.runInContext("busy = false; render = () => {};", context);
+vm.runInContext(`busy = false; render = () => {
+  fieldsByPath = new Map([...state.fields, ...(state.vectors || [])].map(field => [field.path, field]));
+};`, context);
 
 const evaluate = (code) => vm.runInContext(`(async () => { ${code} })()`, context);
 const bindings = () => JSON.parse(vm.runInContext("JSON.stringify(bindings)", context));
@@ -68,6 +70,8 @@ const queue = (data, ok = true) => responses.push({ data, ok });
   await evaluate("await refresh({samples: '[1, ?, 3]', total: '6'}, {edit: true});");
   assert.deepEqual(bindings(), fixtures.bulk.bindings);
   assert.ok(!Object.hasOwn(bindings(), "samples"), "Vector edits must normalize to coordinates");
+  assert.equal(vm.runInContext("changed.has('samples')", context), true, "Vector highlights must reflect changed entries");
+  assert.equal(vm.runInContext("changed.has('samples[1]')", context), true);
   assert.equal(textarea.disabled, false);
   queue(fixtures.edited);
   await evaluate("await apply(state.fields.find(field => field.path === 'samples[1]'), '2');");

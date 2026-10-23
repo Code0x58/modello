@@ -227,14 +227,14 @@ class ModelProblem(Generic[ModelT]):
         """Export scoped paths and vector notation, with optional LaTeX name overrides."""
         from modello._printing import _latex
 
-        vectors = {value: _path_label(path) for path, value in reversed(tuple(self.vectors.items()))}
-        return _latex(expression, self._printer(expression), vectors, symbol_names, vector_names)
+        printer = self._printer(expression)
+        return _latex(expression, printer, printer.vector_labels, symbol_names, vector_names)
 
     def _printer(self, *expressions: Basic, scope: FieldPath = ()) -> _FieldPrinter:
         # Bound variables in a ConditionSet need the same labels as free symbols.
         referenced: frozenset[Symbol] = frozenset().union(*(expression.atoms(Symbol) for expression in expressions))
         symbols = frozenset().union(*(c.symbols for c in self.constraints), referenced)
-        return _FieldPrinter(self.fields, symbols, scope, referenced)
+        return _FieldPrinter(self.fields, symbols, scope, referenced, self.vectors.items())
 
     def __str__(self) -> str:
         return "\n".join([f"{self.model.__name__}({self.name!r})", *self._constraint_lines(self.constraints)])

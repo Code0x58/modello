@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, TypeVar
 
 from sympy import Basic, Expr, FiniteSet, Interval, S, Set, Symbol, SympifyError, sympify
 from sympy.printing.str import StrPrinter
@@ -180,6 +180,7 @@ class _FieldPrinter(StrPrinter):
         symbols: frozenset[Symbol],
         scope: FieldPath,
         referenced: frozenset[Symbol],
+        vectors: Iterable[tuple[FieldPath, Vector]] = (),
     ) -> None:
         super().__init__()
         paths: dict[Symbol, FieldPath] = {}
@@ -190,6 +191,11 @@ class _FieldPrinter(StrPrinter):
                 _common_prefix(scope, previous[:-1])
             ):
                 paths[field.symbol] = field.path
+        vector_paths: dict[Vector, FieldPath] = {}
+        for path, vector in vectors:
+            previous = vector_paths.get(vector)
+            if previous is None or len(_common_prefix(scope, path)) > len(_common_prefix(scope, previous)):
+                vector_paths[vector] = path
         self.scope = scope
         self._bound_symbols: frozenset[Symbol] = frozenset()
         self._field_symbols = frozenset(paths)
@@ -197,16 +203,8 @@ class _FieldPrinter(StrPrinter):
         for symbol in referenced & paths.keys():
             self.scope = _common_prefix(self.scope, paths[symbol][:-1])
         self.labels = {symbol: _path_label(path[len(self.scope) :]) for symbol, path in paths.items()}
-        groups: dict[FieldPath, list[ModelField]] = {}
-        for field in fields:
-            if field.path[-1].isdecimal():
-                groups.setdefault(field.path[:-1], []).append(field)
         self.vector_labels = {
-            Vector(*(field.symbol for field in sorted(group, key=lambda field: int(field.path[-1])))): _path_label(
-                prefix[len(self.scope) :]
-            )
-            or prefix[-1]
-            for prefix, group in reversed(tuple(groups.items()))
+            vector: _path_label(path[len(self.scope) :]) or path[-1] for vector, path in vector_paths.items()
         }
         external: dict[str, list[Symbol]] = {}
         for symbol in sorted(
