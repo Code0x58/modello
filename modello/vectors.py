@@ -188,14 +188,12 @@ class _VectorSymbol(Vector):
         if isinstance(size, Integer):
             if size < 0:
                 raise ModelInputError("Vector size must be a nonnegative integer")
-            entries = []
-            for i in range(size):
-                # Pair the function identity and position into this private
-                # coordinate class's index space; reconstruction stays equal.
-                total = symbol.dummy_index + i
-                identity = -(total * (total + 1) // 2 + i + 1)
-                entries.append(_VectorCoordinate(f"{symbol.name}[{i}]", dummy_index=identity, **symbol.assumptions0))
-            return Vector(*entries)
+            return Vector(
+                *(
+                    _VectorCoordinate(f"{symbol.name}[{i}]", dummy_index=symbol.dummy_index, **symbol.assumptions0)
+                    for i in range(size)
+                )
+            )
         return Basic.__new__(cls, symbol, size)
 
     @property
@@ -333,8 +331,7 @@ class _VectorFormula(Vector):
 
     @cached_property
     def _elements(self) -> tuple[Expr, ...]:
-        i, first, last = self.limits
-        return tuple(self.function.subs(i, value) for value in range(int(first), int(last) + 1))
+        return tuple(self._at(position) for position in range(len(self)))
 
     def _at(self, position: int) -> Expr:
         if not self._finite:
@@ -373,7 +370,7 @@ class _VectorFormula(Vector):
         domain = (
             r"\varnothing"
             if self.shape[0] == 0
-            else r"\{" + ", ".join(str(value) for value in range(int(first), int(last) + 1)) + r"\}"
+            else r"\{" + ", ".join(printer._print(first + offset) for offset in range(len(self))) + r"\}"
             if self._finite and len(self) <= 3
             else rf"\{{{printer._print(first)}, \ldots, {printer._print(last)}\}}"
         )
@@ -424,10 +421,13 @@ def _local_index(*vectors: Vector) -> Index:
     return Index(f"i{suffix}")
 
 
-def _vector_input(value: object, size: int, path: str) -> tuple[object, ...]:
-    """Validate a complete shape; None marks an unobserved coordinate."""
+def _vector_input(value: object, size: int | None, path: str) -> tuple[object, ...]:
+    """Read finite observations, optionally checking their resolved shape."""
     if not isinstance(value, (Vector, Sequence, Tuple)) or isinstance(value, (str, bytes)):
-        raise ModelInputError(f"{path} must be a vector or a sequence of {size} scalar values")
-    if len(value) != size:
+        count = "" if size is None else f"{size} "
+        raise ModelInputError(f"{path} must be a vector or a sequence of {count}scalar values")
+    if isinstance(value, Vector) and not value._finite:
+        raise ModelInputError(f"{path} observations must have a known finite length")
+    if size is not None and len(value) != size:
         raise ModelInputError(f"{path} needs {size} entries; received {len(value)}")
     return tuple(value)

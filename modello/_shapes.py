@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 
-from sympy import Basic, Eq, Integer, Symbol, Tuple, solve, sympify
+from sympy import Basic, Eq, Integer, Symbol, check_assumptions, solve, sympify
 
 from modello.errors import ModelInputError
-from modello.vectors import Vector
+from modello.vectors import Vector, _vector_input
 
 
 def _dimensions(
@@ -26,10 +26,7 @@ def _dimensions(
     equations = []
     for name, axis in axes.items():
         if name in values and values[name] is not None:
-            value = values[name]
-            if not isinstance(value, (Vector, Sequence, Tuple)) or isinstance(value, (str, bytes)):
-                raise ModelInputError(f"{name} must be a vector or a sequence of scalar observations")
-            equations.append(Eq(axis, len(value)))
+            equations.append(Eq(axis, len(_vector_input(values[name], None, name))))
     for name, symbol in fields.items():
         if symbol in symbols:
             value = values.get(name, definitions.get(name, symbol))
@@ -41,11 +38,7 @@ def _dimensions(
         for candidate in candidates
         if all(isinstance(candidate.get(symbol), Integer) for symbol in symbols)
         and all(axis.subs(candidate).is_nonnegative is True for axis in axes.values())
-        and all(
-            getattr(candidate[symbol], f"is_{key}", None) in (None, expected)
-            for symbol in symbols
-            for key, expected in symbol.assumptions0.items()
-        )
+        and all(check_assumptions(candidate[symbol], against=symbol) is not False for symbol in symbols)
     ]
     if len(complete) != 1:
         names = ", ".join(name for name, field in fields.items() if field in symbols)

@@ -4,7 +4,7 @@ import pickle
 from copy import deepcopy
 
 import pytest
-from sympy import Rational, S, Symbol, simplify
+from sympy import Piecewise, Rational, S, Symbol, simplify
 
 from modello import Coordinate, Index, InstanceDummy, Modello, Recurrence, Series, Vector, component, inspect_model
 from modello.errors import ModelDefinitionError, ModelInputError, SolutionCountError
@@ -52,6 +52,19 @@ def test_recurrence_finite_values_and_windows_preserve_zero_and_unit_coefficient
     formula = law.at(n).doit()
     assert formula.subs({n: 3, a: 0}) == 1
     assert formula.subs({n: 3, a: 1}) == 5
+
+
+def test_native_geometric_sum_preserves_conditional_zero_and_unit_coefficients():
+    n = Index("n", nonnegative=True)
+    T = Series("T", n, real=True)
+    switch = Symbol("switch", real=True)
+    coefficient = Piecewise((0, switch < 0), (1, True))
+    law = Recurrence(T[n], coefficient * T[n - 1] + 1, initial={0: 2})
+    formula = law.at(n).doit()
+    assert formula != law.at(n)
+    for position in (0, 1, 4):
+        assert formula.subs({switch: -1, n: position}) == (2 if position == 0 else 1)
+        assert formula.subs({switch: 1, n: position}) == 2 + position
 
 
 def test_second_order_history_and_shifted_origin():

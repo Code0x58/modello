@@ -81,6 +81,21 @@ the compiled model, with fresh function identities in each component and problem
 equations. Population and numerical views retain the originals and bind their
 scalar parameters together, so a copied law cannot keep obsolete coefficients.
 
+Delegate scalar algebra to SymPy: ``check_assumptions`` checks compatibility,
+``Sum`` evaluates geometric weights in affine recurrences, and a shared
+derivative-based recognizer identifies affine drift and diffusion. Keep the
+recognizer independent of polynomial syntax: parameter-dependent ``Piecewise``
+expressions can be affine without being accepted by ``as_poly``. Local state
+variables retain the declared domain and the Itô law's real-state premise.
+
+The remaining adapters preserve model semantics. Recurrence evaluation keeps
+shifted, contiguous history and checks hidden intermediate states; replacing it
+with an unrestricted sequence solver must preserve those requirements. Scoped
+expansion protects local coordinates and diagnoses implicit calculus through
+cyclic definitions. Unknown assumptions remain distinct from disproven ones.
+Finite data reductions and explicit zero-rate kernels avoid slower generic
+symbolic work while retaining exceptional parameter cases.
+
 Validation
 ----------
 

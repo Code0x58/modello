@@ -1,7 +1,7 @@
 """Itô corrections, conditional Brownian moments, and flat parameter inference."""
 
 import pytest
-from sympy import Rational, S, Symbol, exp, log, simplify
+from sympy import Abs, Piecewise, Rational, S, Symbol, conjugate, exp, log, simplify
 
 from modello import Coordinate, InstanceDummy, ItoProcess, Modello, Series, inspect_model
 
@@ -24,6 +24,32 @@ def test_geometric_brownian_transform_includes_the_second_order_correction():
     law = ItoProcess(x, mu * x, sigma * x, t)
     assert law.drift(log(x)).doit() == mu - sigma**2 / 2
     assert law.diffusion(log(x)).doit() == sigma
+
+
+def test_the_laws_real_state_premise_applies_to_coefficients_and_transforms():
+    x, t = Coordinate("x"), Coordinate("t", real=True)
+    mu, sigma = Symbol("mu", real=True), Symbol("sigma", positive=True)
+    law = ItoProcess(x, mu * conjugate(x), sigma * conjugate(x), t)
+    assert law.mean(1, 1).doit() == exp(mu)
+    assert simplify(law.drift(conjugate(x) ** 2).doit() - (2 * mu + sigma**2) * x**2) == 0
+
+
+def test_the_declared_positive_state_domain_is_retained_in_coefficient_recognition():
+    t = Coordinate("t", real=True)
+    x = Series("X", t, positive=True)[t]
+    mu, sigma = Symbol("mu", real=True), Symbol("sigma", positive=True)
+    law = ItoProcess(x, mu * Abs(x), sigma * Abs(x), t)
+    assert law.mean(1, 1).doit() == exp(mu)
+    assert law.drift(log(x)).doit() == mu - sigma**2 / 2
+
+
+def test_affine_coefficient_recognition_preserves_parameter_dependent_cases():
+    x, t = Coordinate("x", real=True), Coordinate("t", real=True)
+    switch = Symbol("switch", real=True)
+    law = ItoProcess(x, Piecewise((2 * x + 3, switch > 0), (3 * x + 1, True)), 2, t)
+    mean = law.mean(1, 1).doit()
+    assert simplify(mean.subs(switch, 1) - (5 * exp(2) - 3) / 2) == 0
+    assert simplify(mean.subs(switch, -1) - (4 * exp(3) - 1) / 3) == 0
 
 
 def test_named_formulas_are_expanded_before_the_ito_derivatives_and_observations():

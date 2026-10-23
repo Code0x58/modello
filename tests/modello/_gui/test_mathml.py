@@ -4,7 +4,7 @@ from xml.etree import ElementTree
 
 from sympy import Derivative, Eq, Function, IndexedBase, Integral, Limit, Ne, Piecewise, Product, Rational, Sum, Symbol
 
-from modello import InstanceDummy, Modello, Vector
+from modello import Index, InstanceDummy, Modello, Vector, vector
 from modello._gui.mathml import EquationPrinter
 from modello.gui import Explorer, FieldInfo
 from tests.modello._gui_models import NS, Estimate, Window, mathml_text, rows
@@ -53,6 +53,19 @@ def test_raw_vector_formulas_and_symbols_are_valid_navigable_mathml():
             assert root.tag.endswith("math")
     selected = ElementTree.fromstring(equations["total"]["mathml"]).find(".//m:msub", NS)
     assert selected.get("data-path") == "samples"
+
+
+def test_fixed_length_window_renders_its_symbolic_origin():
+    class ShiftedWindow(Modello):
+        offset = InstanceDummy("offset", integer=True)
+        i = Index("i")
+        values = vector(i**2, (i, offset, offset + 2))
+
+    data = Explorer(ShiftedWindow).snapshot(raw=True)
+    equation = rows(data, "equations")["values"]["mathml"]
+    root = ElementTree.fromstring(equation)
+    assert "fori∈{offset,offset+1,offset+2}" in "".join(root.itertext())
+    assert rows(data, "vectors")["values"]["shape"] == [3]
 
 
 def test_multiple_sum_and_product_limits_are_all_rendered():

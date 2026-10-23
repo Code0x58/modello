@@ -157,7 +157,9 @@ when preparing a parent whose component sizes are not otherwise known.
 Before binding a symbolic axis, use ``v.shape[0]`` to obtain its size expression.
 Python's ``len(v)`` must return an integer and therefore raises ``TypeError``
 until the size is known. Comprehensions can use symbolic integer bounds, such
-as ``vector(2*x[i], (i, 0, N-1))``. A prepared problem or solution family has one
+as ``vector(2*x[i], (i, 0, N-1))``. A window such as ``(i, n, n+2)`` has a known
+length of three even before its origin ``n`` is observed; materialization and
+rendering retain that symbolic offset. A prepared problem or solution family has one
 finite shape; prepare the reusable declaration again to analyse another window.
 The explorer does this for each whole-vector proposal and can restore the
 original window without mutating another case.

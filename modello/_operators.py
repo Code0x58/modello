@@ -5,7 +5,25 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from sympy import And, Basic, Derivative, Dummy, Eq, Expr, Integral, Limit, Piecewise, Product, Q, S, Subs, Sum
+from sympy import (
+    And,
+    Basic,
+    Derivative,
+    Dummy,
+    Eq,
+    Expr,
+    Integral,
+    Limit,
+    Piecewise,
+    Product,
+    Q,
+    S,
+    Subs,
+    Sum,
+    Symbol,
+    diff,
+    simplify,
+)
 
 from modello.errors import ModelInputError
 
@@ -23,6 +41,11 @@ class _ScopedExpression:
     @property
     def scoped_arguments(self) -> frozenset[int]:
         return frozenset()
+
+    @property
+    def calculus_expression(self) -> Basic | None:
+        """Body whose definitions must be explicit before differentiation."""
+        return None
 
 
 class _SymbolicTemplate(_ScopedExpression, Basic):
@@ -55,6 +78,13 @@ class _FunctionSymbol(Dummy):
 
     def bound(self, name: str) -> _FunctionSymbol:
         return _FunctionSymbol(self.name, **self.assumptions0)
+
+
+def _affine_coefficients(expression: Expr, variable: Symbol) -> tuple[Expr, Expr] | None:
+    """Return the slope and intercept when both are independent of ``variable``."""
+    slope = simplify(diff(expression, variable))
+    intercept = simplify(expression - slope * variable)
+    return None if variable in slope.free_symbols | intercept.free_symbols else (slope, intercept)
 
 
 def _definitely_undefined(expression: Basic) -> bool:

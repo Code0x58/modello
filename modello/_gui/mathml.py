@@ -245,10 +245,10 @@ class EquationPrinter(MathMLPresentationPrinter):
             return self._node("mo", text="∅")
         if last - first <= 2:
             entries: list[Any] = []
-            for value in range(int(first), int(last) + 1):
+            for offset in range(int(last - first + 1)):
                 if entries:
                     entries.append(self._node("mo", text=","))
-                entries.append(self._node("mn", text=str(value)))
+                entries.append(self._print(first + offset))
             return self._node("mrow", self._node("mo", text="{"), *entries, self._node("mo", text="}"))
         return self._node(
             "mrow",

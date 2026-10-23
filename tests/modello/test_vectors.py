@@ -244,6 +244,19 @@ def test_comprehension_retains_a_finite_domain_and_zero_based_result():
     assert result.doit() == Vector(4, 9, 16)
 
 
+def test_known_length_comprehension_can_start_at_a_symbolic_position():
+    from sympy import latex
+
+    n = Symbol("n", integer=True)
+    i = Index("i")
+    values = vector(i**2, (i, n, n + 2))
+    expected = Vector(n**2, (n + 1) ** 2, (n + 2) ** 2)
+    assert values.shape == (3,)
+    assert values.elements == expected.elements
+    assert values.doit() == expected
+    assert r"\{n, n + 1, n + 2\}" in latex(values)
+
+
 def test_comprehension_queries_are_lazy_and_respect_their_local_index():
     i = Index("i")
     coefficient = Symbol("a")

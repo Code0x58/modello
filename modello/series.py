@@ -16,15 +16,21 @@ from sympy import (
     Integer,
     Piecewise,
     S,
+    Sum,
     Symbol,
     Tuple,
-    diff,
     rsolve,
     simplify,
     sympify,
 )
 
-from modello._operators import _FunctionSymbol, _ScopedOperator, _SymbolicTemplate, _value_condition
+from modello._operators import (
+    _affine_coefficients,
+    _FunctionSymbol,
+    _ScopedOperator,
+    _SymbolicTemplate,
+    _value_condition,
+)
 from modello._symbols import Index, _minimal_assumptions
 from modello._values import ScalarValue, SymbolicScalar
 from modello.errors import ModelInputError
@@ -277,15 +283,16 @@ class Recurrence(_SymbolicTemplate):
         body = self.function.xreplace({self.target.series[n - 1]: previous})
         if body.has(_SeriesTerm):
             return None
-        a = diff(body, previous)
-        b = simplify(body - a * previous)
-        if (a.free_symbols | b.free_symbols) & {n, previous}:
+        coefficients = _affine_coefficients(body, previous)
+        if coefficients is None or any(n in value.free_symbols for value in coefficients):
             return None
+        a, b = coefficients
         opening = self.initial[self.origin]
         count = n - self.origin
         if b == 0:
             return opening * a**count
-        return Piecewise((opening + b * count, Eq(a, 1)), (opening * a**count + b * (a**count - 1) / (a - 1), True))
+        k = Index("k")
+        return opening * a**count + b * Sum(a**k, (k, 0, count - 1)).doit()
 
     def _at(self, point: int) -> Expr:
         if point < self.origin:

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
 from modello._model import _specialize_model
 from modello.errors import ModelInputError
-from modello.vectors import Vector
+from modello.vectors import _vector_input
 
 if TYPE_CHECKING:
     from modello import Modello, ScalarValue, VectorValue
@@ -22,26 +22,26 @@ class ShapePlan:
         self.vectors = frozenset(
             name for name, vector in self.model._modello_namespace.vectors.items() if not vector._finite
         )
-        self.symbols = set().union(*(self.model._modello_namespace.vectors[name].free_symbols for name in self.vectors))
-        self.dimensions = {
-            name for name, symbol in self.model._modello_namespace.dummies.items() if symbol in self.symbols
-        }
-        self.fallback = {
+        symbols = set().union(*(self.model._modello_namespace.vectors[name].free_symbols for name in self.vectors))
+        self.dimensions = {name for name, symbol in self.model._modello_namespace.dummies.items() if symbol in symbols}
+        known_sizes = {
             name: model._modello_namespace.attrs[name]
             for name in self.dimensions
             if model._modello_namespace.attrs[name].is_Integer
         }
-        concrete, _ = self.select({})
-        self.fallback.update({name: concrete._modello_namespace.attrs[name] for name in self.dimensions})
+        if not (self.vectors | self.dimensions).isdisjoint(inputs):
+            known_sizes = {}
+        self.initial_model = _specialize_model(self.model, {**known_sizes, **inputs})
+        self.fallback = {name: self.initial_model._modello_namespace.attrs[name] for name in self.dimensions}
 
     def select(self, bindings: Mapping[str, object]) -> tuple[type[Modello], dict[str, ScalarValue | VectorValue]]:
         shapes: dict[str, object] = dict(self.inputs)
         for path, value in bindings.items():
-            if path in self.vectors or path in self.dimensions:
-                if value is None:
-                    shapes.pop(path, None)
-                else:
-                    shapes[path] = value
+            if path not in self.vectors and path not in self.dimensions:
+                continue
+            shapes.pop(path, None)
+            if value is not None:
+                shapes[path] = value
         if any(path in bindings and bindings[path] is not None for path in self.vectors):
             for path in self.vectors - bindings.keys():
                 value = shapes.get(path)
@@ -62,6 +62,4 @@ class ShapePlan:
 
 
 def _entries(value: object) -> tuple[ScalarValue | None, ...]:
-    if not isinstance(value, (Vector, Sequence)) or isinstance(value, (str, bytes)):
-        raise ModelInputError("Vector observations must be a sequence of scalar entries")
-    return cast("tuple[ScalarValue | None, ...]", tuple(value))
+    return cast("tuple[ScalarValue | None, ...]", _vector_input(value, None, "Vector observations"))

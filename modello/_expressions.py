@@ -10,6 +10,7 @@ from modello._operators import _ScopedExpression, _ScopedOperator, _SymbolicTemp
 from modello.vectors import _VectorElement, _VectorFormula
 
 _OPERATORS = (Sum, Product, Integral, Derivative, Limit, _VectorElement, _ScopedOperator)
+_BINDERS = (Sum, Product, Integral, Derivative, Limit, _VectorFormula, _SymbolicTemplate, _ScopedOperator)
 
 
 def _declaration(expression: Basic) -> Basic:
@@ -76,10 +77,8 @@ def _substitute(expression: Basic, values: Mapping[Symbol, Basic]) -> Basic:
     SymPy uses Subs for an unresolved derivative evaluated at a numeric point;
     xreplace alone would attempt to differentiate with respect to that number.
     """
-    if expression.has(Sum, Product, Integral, Derivative, Limit, _VectorFormula, _SymbolicTemplate, _ScopedOperator):
-        for operator in expression.atoms(
-            Sum, Product, Integral, Derivative, Limit, _VectorFormula, _SymbolicTemplate, _ScopedOperator
-        ):
+    if expression.has(*_BINDERS):
+        for operator in expression.atoms(*_BINDERS):
             variables = [operator.args[1]] if isinstance(operator, Limit) else getattr(operator, "variables", ())
             if isinstance(operator, (_VectorFormula, _ScopedExpression)):
                 variables = operator.bound_symbols
@@ -128,13 +127,13 @@ class _DefinitionResolver:
         if expression in protected:
             return expression
         if isinstance(expression, Symbol):
-            if expression in self.definitions and expression not in protected:
+            if expression in self.definitions:
                 return self(self.definitions[expression], protected)
             return self.observations.get(expression, expression)
         if isinstance(expression, _ScopedExpression):
             scoped = protected | frozenset(expression.bound_symbols)
-            if hasattr(expression, "calculus_expression"):
-                self._check_calculus(expression, expression.calculus_expression, scoped)
+            if expression.calculus_expression is not None:
+                self._check_calculus(expression.calculus_expression, scoped)
             args = tuple(
                 self(arg, scoped if i in expression.scoped_arguments else protected)
                 for i, arg in enumerate(expression.args)
@@ -149,7 +148,8 @@ class _DefinitionResolver:
             return _VectorFormula(self(expression.function, protected | {variable}), (variable, first, last))
         if isinstance(expression, (Sum, Product, Integral)):
             variables = frozenset(expression.variables)
-            self._check_calculus(expression, expression.function, protected | variables)
+            if isinstance(expression, Integral):
+                self._check_calculus(expression.function, protected | variables)
             body = self(expression.function, protected | variables)
             limits = []
             for i, limit in enumerate(expression.limits):
@@ -159,12 +159,12 @@ class _DefinitionResolver:
             operator = expression.func(body, *limits)
         elif isinstance(expression, Derivative):
             variables = frozenset(expression.variables)
-            self._check_calculus(expression, expression.expr, protected | variables)
+            self._check_calculus(expression.expr, protected | variables)
             body = self(expression.expr, protected | variables)
             operator = Derivative(body, *expression.variable_count, evaluate=False)
         elif isinstance(expression, Limit):
             body, variable, point, direction = expression.args
-            self._check_calculus(expression, body, protected | {variable})
+            self._check_calculus(body, protected | {variable})
             operator = Limit(self(body, protected | {variable}), variable, self(point, protected), dir=str(direction))
         else:
             args = tuple(self(arg, protected) for arg in expression.args)
@@ -172,9 +172,7 @@ class _DefinitionResolver:
         evaluated = _evaluate(operator)
         return self(evaluated, protected) if evaluated != operator else operator
 
-    def _check_calculus(self, operator: Basic, body: Basic, protected: frozenset[Basic]) -> None:
-        if not isinstance(operator, (Derivative, Integral, Limit)) and not hasattr(operator, "calculus_expression"):
-            return
+    def _check_calculus(self, body: Basic, protected: frozenset[Basic]) -> None:
         pending = set(body.free_symbols - protected)
         visited = set()
         while pending:

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, TypeVar, cast
 
-from sympy import Basic, Expr, Symbol, factor_terms, sympify
+from sympy import Basic, Expr, Symbol, check_assumptions, factor_terms, sympify
 
 from modello import (
     Annotation,
@@ -240,7 +240,7 @@ class Explorer:
             source = getattr(model, "_modello_shape_source", model)
             if any(not vector._finite for vector in source._modello_definition.vectors.values()):
                 self._shape_plan = ShapePlan(model, inputs or {})
-                model, inputs = self._shape_plan.select({})
+                model = self._shape_plan.initial_model
         resizable = self._shape_plan.vectors if self._shape_plan is not None else frozenset()
         self._initialize(model, name, inputs or {}, metadata or {}, resizable)
 
@@ -312,12 +312,11 @@ class Explorer:
             if field.symbol in changes and changes[field.symbol][1] != value:
                 raise BindingError("Aliases must have the same input value.", (path,))
             if value is not None:
-                bad = [
-                    key
-                    for key, expected in field.symbol.assumptions0.items()
-                    if getattr(value, f"is_{key}", None) not in (None, expected)
-                ]
-                if value.is_finite is False or _definitely_undefined(value) or bad:
+                if (
+                    value.is_finite is False
+                    or _definitely_undefined(value)
+                    or check_assumptions(value, against=field.symbol) is False
+                ):
                     requirements = self._layout.assumptions[field.symbol] or ["finite"]
                     requirement = " and ".join(requirements).replace("nonnegative", "zero or greater").replace("_", " ")
                     title = self._layout.metadata[path].title or path

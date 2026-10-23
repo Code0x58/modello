@@ -1,6 +1,6 @@
 """Resized observation windows remain stateless, reversible proposals."""
 
-from sympy import Rational
+from sympy import Rational, Tuple
 
 from examples.gui_timeseries import DEMOS
 from modello.gui import create_app
@@ -47,3 +47,11 @@ def test_math_font_and_license_are_served_locally():
     assert font.status_code == 200
     assert font.data.startswith(b"wOF2")
     assert b"SIL OPEN FONT LICENSE" in client.get("/assets/fonts/OFL.txt").data
+
+
+def test_sympy_tuple_observations_use_the_same_shape_validation_as_python_sequences():
+    model, _ = DEMOS["relative"]
+    client = create_app(model, inputs={"retention": 1, "levels": Tuple(1, 3, 6)}).test_client()
+    response = client.post("/api/explore", json={"bindings": {"levels": "[1, 3, 6, 10]"}})
+    assert response.status_code == 200
+    assert next(row for row in response.json["fields"] if row["path"] == "N")["value"] == "3"

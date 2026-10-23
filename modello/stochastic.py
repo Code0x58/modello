@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from sympy import And, Basic, Dummy, Eq, Expr, Integer, Or, Piecewise, S, Symbol, diff, exp, simplify, sympify
 
-from modello._operators import _ScopedOperator, _SymbolicTemplate, _value_condition
+from modello._operators import _affine_coefficients, _ScopedOperator, _SymbolicTemplate, _value_condition
 from modello._symbols import _minimal_assumptions
 from modello._values import ScalarValue
 from modello.errors import ModelInputError
@@ -133,22 +133,27 @@ class ItoProcess(_SymbolicTemplate):
         """Conditional variance given the initial state for the supported exact laws."""
         return _ItoSolution(self, initial, elapsed, S.Zero, 2)
 
+    def _state_variable(self) -> Dummy:
+        """Use the real-state premise together with the declared state domain."""
+        return Dummy("state", **{"real": True, **self.state.assumptions0})
+
     def _coefficients(self) -> tuple[str, Expr, Expr, Expr]:
-        x = Dummy("state", real=True)
-        a = self.drift_expression.xreplace({self.state: x})
-        b = self.diffusion_expression.xreplace({self.state: x})
-        if not (a.free_symbols | b.free_symbols) & {x, self.time}:
-            return "arithmetic", a, b, S.Zero
-        mu, sigma = simplify(diff(a, x)), simplify(diff(b, x))
+        x = self._state_variable()
+        drift = _affine_coefficients(self.drift_expression.xreplace({self.state: x}), x)
+        diffusion = _affine_coefficients(self.diffusion_expression.xreplace({self.state: x}), x)
         if (
-            not (mu.free_symbols | sigma.free_symbols) & {x, self.time}
-            and simplify(a - mu * x) == 0
-            and simplify(b - sigma * x) == 0
+            drift is not None
+            and diffusion is not None
+            and not any(self.time in value.free_symbols for value in (*drift, *diffusion))
         ):
-            return "geometric", mu, sigma, S.Zero
-        intercept = simplify(a - mu * x)
-        if not (mu.free_symbols | intercept.free_symbols | b.free_symbols) & {x, self.time}:
-            return "affine", intercept, b, mu
+            mu, a = drift
+            sigma, b = diffusion
+            if mu == 0 and sigma == 0:
+                return "arithmetic", a, b, S.Zero
+            if a == 0 and b == 0:
+                return "geometric", mu, sigma, S.Zero
+            if sigma == 0:
+                return "affine", a, b, mu
         raise NotImplementedError(
             "Exact Itô values and moments support constant arithmetic, geometric, or affine additive coefficients"
         )
@@ -210,7 +215,7 @@ class _ItoQuantity(_ScopedOperator):
 
     def doit(self, **hints: Any) -> Expr:
         law, expression, operation = self.args
-        x = Dummy("state", **law.state.assumptions0)
+        x = law._state_variable()
         body = expression.xreplace({law.state: x})
         a = law.drift_expression.xreplace({law.state: x})
         b = law.diffusion_expression.xreplace({law.state: x})

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import ClassVar, Mapping, TypeVar, cast
 
-from sympy import Basic, Eq, Expr, S, Symbol, solve
+from sympy import Basic, Eq, Expr, S, Symbol, check_assumptions, solve
 
 from modello._expressions import _evaluate, _substitute
 from modello._model import (
@@ -129,11 +129,7 @@ def _select_candidate(problem: ModelProblem, reported: tuple[dict[Symbol, Expr],
     for resolved in reported:
         if any(_definitely_undefined(value) for value in resolved.values()):
             continue
-        if all(
-            getattr(value, f"is_{assumption}", None) in (None, expected)
-            for dummy, value in resolved.items()
-            for assumption, expected in dummy.assumptions0.items()
-        ):
+        if all(check_assumptions(value, against=dummy) is not False for dummy, value in resolved.items()):
             candidates.append(resolved)
     if len(candidates) != 1:
         snapshots = tuple(
