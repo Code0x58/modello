@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
+from html import unescape
 from html.entities import html5
 from typing import Any, Mapping
-from xml.dom.minidom import Text
+from xml.dom.minidom import Document, Text
 
-from sympy import Basic, Eq, Symbol
+from sympy import Basic, Eq, S, Symbol
 from sympy.printing.conventions import requires_partial
 from sympy.printing.mathml import MathMLPresentationPrinter
 
@@ -24,6 +25,10 @@ class EquationPrinter(MathMLPresentationPrinter):
         coordinates: Mapping[Symbol, tuple[str, str, int]] | None = None,
     ) -> None:
         super().__init__({"mul_symbol": "dot"})
+        # SymPy installs unescaped text nodes for its encoded operator glyphs.
+        # Decode those references and serialize normal XML text instead, so
+        # comparison signs and literal function names remain well-formed.
+        self.dom.createTextNode = lambda text: Document.createTextNode(self.dom, unescape(text))
         self.labels = labels
         self.vectors = vectors or {}
         self.coordinates = coordinates or {}
@@ -205,6 +210,24 @@ class EquationPrinter(MathMLPresentationPrinter):
         return self._node(
             "mrow", operator, self._node("mo", text="("), self._print(function), self._node("mo", text=")")
         )
+
+    def _print_Piecewise(self, expression: Any) -> Any:
+        rows = []
+        for value, condition in expression.args:
+            if condition is S.true:
+                qualifier = self._node("mtext", text="otherwise")
+            else:
+                space = self._node("mspace")
+                space.setAttribute("width", "0.3em")
+                qualifier = self._node("mrow", self._node("mtext", text="if"), space, self._print(condition))
+            rows.append(self._node("mtr", self._node("mtd", self._print(value)), self._node("mtd", qualifier)))
+        table = self._node("mtable", *rows)
+        table.setAttribute("columnalign", "left left")
+        table.setAttribute("columnspacing", "0.8em")
+        brace = self._node("mo", text="{")
+        brace.setAttribute("stretchy", "true")
+        brace.setAttribute("fence", "true")
+        return self._node("mrow", brace, table)
 
     def _print_IndexedBase(self, expression: Any) -> Any:
         label = self._print(expression.label)

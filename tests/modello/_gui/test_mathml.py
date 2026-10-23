@@ -2,7 +2,7 @@
 
 from xml.etree import ElementTree
 
-from sympy import Derivative, Function, IndexedBase, Integral, Limit, Product, Rational, Sum, Symbol
+from sympy import Derivative, Eq, Function, IndexedBase, Integral, Limit, Ne, Piecewise, Product, Rational, Sum, Symbol
 
 from modello import InstanceDummy, Modello, Vector
 from modello._gui.mathml import EquationPrinter
@@ -87,6 +87,38 @@ def test_one_sided_limit_renders_its_direction():
     x = Symbol("x")
     markup = EquationPrinter({}).expression(Limit(1 / x, x, 0, dir="-"))
     assert "limx→0-" in mathml_text(markup)
+
+
+def test_piecewise_uses_cases_with_navigable_conditions_and_an_explicit_default():
+    x = Symbol("x", real=True)
+    printer = EquationPrinter({x: ("input", "x")})
+    expression = Piecewise((x**2, x < 0), (x, True))
+    root = ElementTree.fromstring(printer.expression(expression))
+    assert root[0][0].text == "{"
+    cases = root.find("m:mrow/m:mtable", NS)
+    assert cases.get("columnalign") == "left left"
+    assert len(cases) == 2
+    assert [len(row) for row in cases] == [2, 2]
+    assert "".join(cases[0][1].itertext()) == "ifx<0"
+    assert "".join(cases[1][1].itertext()) == "otherwise"
+    assert cases[0][1].find(".//m:mi", NS).get("data-path") == "input"
+    conditional = ElementTree.fromstring(printer.expression(Piecewise((x**2, x < 0), (x, x > 1))))
+    assert "otherwise" not in "".join(conditional.itertext())
+
+
+def test_relations_are_xml_compatible_with_their_mathematical_operator():
+    x = Symbol("x", real=True)
+    comparisons = ((x < 0, "<"), (x > 0, ">"), (x <= 0, "≤"), (x >= 0, "≥"), (Eq(x, 0), "="), (Ne(x, 0), "≠"))
+    for expression, glyph in comparisons:
+        root = ElementTree.fromstring(EquationPrinter({}).expression(expression))
+        assert "".join(root.itertext()) == f"x{glyph}0"
+
+
+def test_literal_function_names_are_xml_text():
+    x = Symbol("x")
+    name = 'response<&"'
+    root = ElementTree.fromstring(EquationPrinter({}).expression(Function(name)(x)))
+    assert root.find("m:mrow/m:mi", NS).text == name
 
 
 def test_native_indexed_vectors_and_multivariate_calculus_are_well_formed():

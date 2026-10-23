@@ -355,7 +355,8 @@ The optional :doc:`gui` automatically shows vector symbols with an arrow,
 scalar coordinates with subscripts, sums with Σ, products with Π, and integrals
 with ∫. Vector comprehensions display an indexed equality and its explicit
 iteration domain. Multiple sum/product limits and integral differentials retain
-their full order.
+their full order. ``Piecewise`` formulas use a cases layout with their conditions
+and an explicit ``otherwise`` branch when supplied.
 
 Select **Inspect vector** for its values, entry roles, connected quantities,
 and defining formula. Supply an entire observation such as ``[1, ?, 3/2]`` or
