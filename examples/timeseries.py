@@ -36,8 +36,8 @@ class InventoryPath(HoldingState, SymbolicModel):
 
 @lru_cache(maxsize=None, typed=True)
 def inventory_path(periods: int) -> type[InventoryPath]:
-    """Declare one signed fill and execution price per period; fees are excluded."""
-    _positive_size(periods)
+    """Declare a finite fill path, including the identity path with no events."""
+    _finite_size(periods, minimum=0)
 
     class Path(InventoryPath):
         before = component(HoldingState)
@@ -71,8 +71,8 @@ class ReturnPath(SymbolicModel):
 
 @lru_cache(maxsize=None, typed=True)
 def return_path(periods: int) -> type[ReturnPath]:
-    """Compound simple period returns without an implicit annualization rule."""
-    _positive_size(periods)
+    """Compound simple returns; zero periods leave capital unchanged."""
+    _finite_size(periods, minimum=0)
 
     class Path(ReturnPath):
         returns = Vector("r", size=periods, real=True)
@@ -98,8 +98,8 @@ class RollingWindow(SymbolicModel):
 @lru_cache(maxsize=None, typed=True)
 def rolling_window(size: int, width: int) -> type[RollingWindow]:
     """Use complete, equally weighted windows, without padding or lookahead."""
-    _positive_size(size)
-    _positive_size(width)
+    _finite_size(size)
+    _finite_size(width)
     if width > size:
         raise ValueError("Window width cannot exceed the sample count")
 
@@ -134,7 +134,7 @@ def linear_trend(size: int) -> type[LinearTrend]:
     times determine a unique least-squares line; repeated times may leave a
     family. Missing observations remain unknowns in the same equations.
     """
-    _positive_size(size)
+    _finite_size(size)
 
     class Trend(LinearTrend):
         times = Vector("t", size=size, real=True)
@@ -161,9 +161,10 @@ class LinearExposure(SymbolicModel):
     exposure = Integral(opening + (closing - opening) * _time / duration, (_time, 0, duration))
 
 
-def _positive_size(size: int) -> None:
-    if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
-        raise ValueError("Path and window sizes must be positive integers")
+def _finite_size(size: int, *, minimum: int = 1) -> None:
+    if isinstance(size, bool) or not isinstance(size, int) or size < minimum:
+        requirement = "nonnegative" if minimum == 0 else "positive"
+        raise ValueError(f"Model sizes must be {requirement} integers")
 
 
 if __name__ == "__main__":

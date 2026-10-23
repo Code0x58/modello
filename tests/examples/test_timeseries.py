@@ -122,13 +122,40 @@ def test_a_longer_calibration_retains_all_vector_outputs_and_exact_gradients():
     assert family.expression(family.symbols.fitted) == Vector([2 * i + 1 for i in range(size)])
 
 
-@pytest.mark.parametrize("periods", [0, -1, True, 1.5])
-def test_path_factories_require_positive_finite_shapes(periods):
-    for factory in (inventory_path, return_path, linear_trend):
-        with pytest.raises(ValueError, match="positive integers"):
+def test_empty_event_paths_carry_the_opening_state_without_trades_or_returns():
+    opening = HoldingState("opening", quantity=5, cash=1000)
+    Inventory = inventory_path(0)
+    case = Inventory("idle", before=opening, fills=[], prices=[])
+    assert case.fills == case.prices == Vector()
+    assert case.quantities == Vector(5)
+    assert case.after.quantity == case.quantity == opening.quantity
+    assert case.after.cash == case.cash == opening.cash
+    assert case.notional == case.turnover == 0
+    inferred = inspect_model(Inventory, "inverse", quantity=5, cash=1000).solutions().one()
+    assert (inferred.before.quantity, inferred.before.cash) == (5, 1000)
+    Returns = return_path(0)
+    returns = Returns("idle", before=100, returns=[])
+    assert returns.wealth == Vector(100)
+    assert returns.growth == 1 and returns.total_return == 0
+    assert returns.after == returns.before == 100
+    assert inspect_model(Returns, "inverse", after=100).solutions().one().before == 100
+
+
+@pytest.mark.parametrize("periods", [-1, True, False, 1.5, "3"])
+def test_event_paths_require_nonnegative_integer_sizes(periods):
+    for factory in (inventory_path, return_path):
+        with pytest.raises(ValueError, match="nonnegative integers"):
             factory(periods)
-    with pytest.raises(ValueError):
+
+
+@pytest.mark.parametrize("periods", [0, -1, True, False, 1.5, "3"])
+def test_window_and_calibration_models_require_positive_sizes(periods):
+    with pytest.raises(ValueError, match="positive integers"):
+        linear_trend(periods)
+    with pytest.raises(ValueError, match="positive integers"):
         rolling_window(3, periods)
+    with pytest.raises(ValueError, match="positive integers"):
+        rolling_window(periods, 1)
 
 
 def test_rolling_width_cannot_exceed_the_observation_count():

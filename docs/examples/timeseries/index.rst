@@ -52,6 +52,16 @@ several prices and quantities remain coupled.
 The result retains typed opening and closing components and immutable vectors.
 An instance remains a holding state, so it can be composed with another model.
 
+An event batch may be empty. ``inventory_path(0)`` carries the opening inventory
+and cash forward unchanged, with zero trade value and turnover. Its inventory
+vector contains just the opening boundary:
+
+.. code-block:: pycon
+
+   >>> idle = inventory_path(0)("idle", before=opening, fills=[], prices=[])
+   >>> idle.quantity, idle.cash, idle.quantities
+   (5, 1000, [5])
+
 Compounding
 ------------
 
@@ -80,6 +90,8 @@ at every boundary:
 
 The positive-factor domain excludes total loss and negative capital in this
 example. No observation frequency or annualization convention is assumed.
+With ``return_path(0)``, the growth factor is one, the total return is zero,
+and the wealth vector contains just the opening capital.
 
 Rolling windows
 ----------------
