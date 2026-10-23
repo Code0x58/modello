@@ -27,6 +27,7 @@ from modello._gui.mathml import EquationPrinter
 from modello._gui.shapes import ShapePlan, _entries
 from modello._gui.vectors import vector_input_text, vector_view
 from modello._inputs import _validate_vector_values
+from modello._model import _has_symbolic_shape
 from modello._operators import _definitely_undefined
 from modello._paths import _path_label, _path_value
 from modello._problem import _FieldPrinter
@@ -238,7 +239,7 @@ class Explorer:
         self._shape_plan: ShapePlan | None = None
         if isinstance(model, type):
             source = getattr(model, "_modello_shape_source", model)
-            if any(not vector._finite for vector in source._modello_definition.vectors.values()):
+            if _has_symbolic_shape(source):
                 self._shape_plan = ShapePlan(model, inputs or {})
                 model = self._shape_plan.initial_model
         resizable = self._shape_plan.vectors if self._shape_plan is not None else frozenset()
@@ -448,8 +449,19 @@ class Explorer:
             "components": [
                 {
                     "path": path,
+                    "parent": self._layout.parents[path],
                     "title": self._layout.metadata[path].title or path.split(".")[-1],
                     "description": self._layout.metadata[path].description,
+                    "collapsed": path in self._layout.folded,
+                    **(
+                        {
+                            "collection": True,
+                            "shape": [int(self._layout.collections[path]._modello_collection_size)],
+                            "symbol_mathml": printer.vector_symbol("", self._layout.metadata[path].symbol or path),
+                        }
+                        if path in self._layout.collections
+                        else {}
+                    ),
                 }
                 for path in self._layout.components
                 if path not in self._layout.hidden
@@ -487,6 +499,12 @@ class Explorer:
                 )
             else:
                 for name, entry in self._layout.expand_bindings({path: value}):
+                    if entry is not None and name not in self._layout.fields:
+                        # Scenarios restore their original window. Retain editor
+                        # text for a coordinate beyond the current shorter one.
+                        parent = name.rpartition("[")[0]
+                        result[name] = self._input_text(parent, sympify(entry), context.format)
+                        continue
                     result[name] = (
                         None
                         if entry is None

@@ -18,7 +18,10 @@ from modello import (
     ItoProcess,
     Modello,
     ModelProblem,
+    ModelSequence,
     ModelSolveError,
+    ModelVector,
+    ModelVectorValue,
     Recurrence,
     ScalarValue,
     Series,
@@ -33,6 +36,8 @@ from modello import (
     annotate_model,
     component,
     inspect_model,
+    model_recurrence,
+    model_vector,
     vector,
 )
 from modello.diagnostics import ComponentView, FieldValue, ModelField, ProblemAnalysis, SolutionSet
@@ -98,7 +103,7 @@ def check_vector_contracts() -> None:
     assert len(resolved) == len(sliced) + 1
     Window("scalar", total=coordinate)
     Vector([object()])  # type: ignore[list-item]
-    Window("invalid", samples=[{}])  # type: ignore[list-item]
+    Window("invalid", samples=[{}])  # type: ignore[arg-type]
 
 
 def check_relative_law_contracts() -> None:
@@ -175,7 +180,7 @@ def check_inputs() -> None:
     Line("L", start=UserDict(x=1))  # type: ignore[arg-type]
     Line("L", start={"x": {"nested": 1}})  # type: ignore[arg-type]
     Drawing("D", line={"start": {"x": 1}})  # type: ignore[arg-type]
-    Point("P", x=[object()])  # type: ignore[list-item]
+    Point("P", x=[object()])  # type: ignore[arg-type]
     Point("P", x=None)  # type: ignore[arg-type]
     drawing.line.start = Box("B")  # type: ignore[assignment]
     _point_class: type[Point] = drawing.line.start  # type: ignore[assignment]
@@ -232,7 +237,7 @@ def check_solution_families() -> None:
     family.observe(line=Line("line", start=Point("start", x=2)))
     _section: SolutionFamily[Drawing] = family.section(start.x, through=case)
     family.observe(line={"start": {"x": 2}})  # type: ignore[arg-type]
-    family.observe(extent=[object()])  # type: ignore[list-item]
+    family.observe(extent=[object()])  # type: ignore[arg-type]
     problem.solutions("line.start.x")  # type: ignore[arg-type]
     family.values({"x": 2})  # type: ignore[arg-type]
     family.expression({"x": 2})  # type: ignore[call-overload]
@@ -248,3 +253,31 @@ def check_solution_families() -> None:
     _unknown = symbols.line.start.missing  # type: ignore[attr-defined]
     _wrong: Line = family.one()  # type: ignore[assignment]
     _wrong_section: SolutionFamily[Line] = family.section(start.x, through=case)  # type: ignore[assignment]
+
+
+def check_model_vector_contracts() -> None:
+    from examples.model_sequences import AccountSequence
+    from examples.portfolio.models import Execution, FillPosting, HoldingState
+
+    class Model(Modello):
+        opening = component(HoldingState)
+        fills = model_vector(Execution, size=2)
+        states = model_recurrence(FillPosting, initial=opening, fill=fills)
+        terminal = states[-1]
+        prices = fills.project(lambda fill: fill.price)
+
+    fills: ModelVectorValue[Execution] = [Execution("fill", price=100), None]
+    case = Model("typed", fills=fills)
+    member: Execution = case.fills[0]
+    state: HoldingState = case.states[-1]
+    step: FillPosting = case.states.steps[0]
+    sequence: ModelSequence[HoldingState, FillPosting] = case.states
+    vector: ModelVector[Execution] = case.fills
+    projection: Vector = vector.project(lambda fill: fill.price)
+    pair: tuple[Execution, ...] = vector[:2]
+    problem = inspect_model(AccountSequence, "typed", fills=fills)
+    problem.solutions().observe(fills=fills)
+    assert member and state and step and sequence and projection and pair
+    _wrong: HoldingState = case.fills[0]  # type: ignore[assignment]
+    _wrong_step: Execution = case.states.steps[0]  # type: ignore[assignment]
+    vector.project(lambda fill: fill)  # type: ignore[arg-type, return-value]

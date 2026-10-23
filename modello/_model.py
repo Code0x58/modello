@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, TypeVar, cast
 
-from sympy import Basic, Expr, Symbol
+from sympy import Basic, Expr, Integer, Symbol, sympify
 
+from modello._collections import _CollectionSpec, _Location, _Selection, _UnresolvedSelection
 from modello._expressions import _declaration, _substitute
 from modello._operators import _FunctionSymbol, _SymbolicTemplate
-from modello._paths import _path_label
+from modello._paths import _path_label, _path_value
 from modello._problem import ConstraintKind, FieldPath
 from modello._shapes import _dimensions
 from modello._symbols import BoundInstanceDummy as BoundInstanceDummy, Coordinate, InstanceDummy as InstanceDummy
@@ -60,6 +61,7 @@ class _ModelDefinition:
     vectors: Mapping[FieldPath, Vector]
     vector_definitions: Mapping[FieldPath, Vector]
     templates: Mapping[FieldPath, _SymbolicTemplate]
+    aliases: Mapping[FieldPath, FieldPath] = field(default_factory=dict)
 
     @property
     def template_symbols(self) -> frozenset[_FunctionSymbol]:
@@ -78,6 +80,8 @@ class _ModelReference:
     _modello_model: type[Modello]
     _modello_fields: dict[FieldPath, InstanceDummy]
     _modello_bindings: dict[Basic, Basic] = field(default_factory=dict)
+    _modello_path: FieldPath = ()
+    _modello_view: bool = False
 
     @classmethod
     def _modello_create(cls, model: type[Modello], name: str) -> _ModelReference:
@@ -87,7 +91,44 @@ class _ModelReference:
             for d in dict.fromkeys(model._modello_definition.fields.values())
         }
         replacements.update({symbol: symbol.bound(name) for symbol in model._modello_definition.template_symbols})
-        return cls(model, {path: replacements[d] for path, d in model._modello_definition.fields.items()}, replacements)
+        axes = list(model._modello_definition.vectors.values())
+        size = getattr(model, "_modello_collection_size", None)
+        external = set().union(*(value.free_symbols for value in axes))
+        if size is not None:
+            external.update(size.free_symbols)
+        replacements.update({symbol: symbol for symbol in external - replacements.keys()})
+        return cls(
+            model,
+            {path: replacements[d] for path, d in model._modello_definition.fields.items()},
+            replacements,
+            (name,),
+        )
+
+    @cached_property
+    def _modello_child_fields(self) -> dict[str, dict[FieldPath, InstanceDummy]]:
+        result: dict[str, dict[FieldPath, InstanceDummy]] = {}
+        for path, symbol in self._modello_fields.items():
+            if len(path) > 1:
+                result.setdefault(path[0], {})[path[1:]] = symbol
+        return result
+
+    def __len__(self) -> int:
+        size = getattr(self._modello_model, "_modello_collection_size", None)
+        if not isinstance(size, Integer):
+            raise TypeError("The model vector needs a known finite length")
+        return int(size)
+
+    def __bool__(self) -> bool:
+        return True if not hasattr(self._modello_model, "_modello_collection_size") else bool(len(self))
+
+    def __iter__(self) -> Any:
+        return (self[i] for i in range(len(self)))
+
+    def __getitem__(self, index: object) -> Any:
+        select = getattr(self._modello_model, "_modello_collection_item", None)
+        if select is None:
+            raise TypeError("Only a model vector supports indexing")
+        return select(self, index)
 
     @property
     def _modello_templates(self) -> dict[FieldPath, _SymbolicTemplate]:
@@ -96,7 +137,7 @@ class _ModelReference:
             for path, value in self._modello_model._modello_definition.templates.items()
         }
 
-    def __getattr__(self, name: str) -> InstanceDummy | Vector | _ModelReference | _SymbolicTemplate:
+    def __getattr__(self, name: str) -> Any:
         """Resolve a scalar or a reference to a deeper child."""
         if (name,) in self._modello_fields:
             return self._modello_fields[(name,)]
@@ -107,16 +148,39 @@ class _ModelReference:
             return Vector(*(self._modello_fields[(name, str(i))] for i in range(len(vector))))
         if (name,) in self._modello_templates:
             return self._modello_templates[(name,)]
+        if name == "project" and hasattr(self._modello_model, "_modello_collection_project"):
+            return lambda project: self._modello_model._modello_collection_project(self, project)
+        if name == "shape" and hasattr(self._modello_model, "_modello_collection_size"):
+            size = self._modello_model._modello_collection_size.xreplace(self._modello_bindings)
+            return (int(size) if isinstance(size, Integer) else size,)
+        pending = self._modello_model._modello_namespace.views.get(name)
+        if pending is not None and name not in self._modello_model._modello_namespace.nested_models:
+            owner = self
+            for part in pending.location.path:
+                owner = getattr(owner, part)
+            if pending.location.index is not None:
+                owner = owner[pending.location.index.xreplace(self._modello_bindings)]
+            for part in pending.location.suffix:
+                owner = getattr(owner, part)
+            return owner
         child = self._modello_model._modello_namespace.nested_models.get(name)
         if child is None:
             raise AttributeError(f"{self._modello_model.__name__} has no model attribute {name!r}")
+        bindings = {
+            original: self._modello_bindings.get(scoped, scoped) for original, scoped in child._modello_bindings.items()
+        }
+        external = set().union(
+            *(value.free_symbols for value in child._modello_model._modello_definition.vectors.values())
+        )
+        external.difference_update(child._modello_model._modello_definition.fields.values())
+        bindings.update(
+            {symbol: self._modello_bindings[symbol] for symbol in external if symbol in self._modello_bindings}
+        )
         return _ModelReference(
             child._modello_model,
-            {path[1:]: d for path, d in self._modello_fields.items() if path[0] == name},
-            {
-                original: self._modello_bindings.get(scoped, scoped)
-                for original, scoped in child._modello_bindings.items()
-            },
+            self._modello_child_fields.get(name, {}),
+            bindings,
+            (*self._modello_path, name),
         )
 
 
@@ -133,6 +197,11 @@ class ModelloMetaNamespace(dict):
         self.vector_attrs: dict[str, Vector] = {}
         self.templates: dict[str, _SymbolicTemplate] = {}
         self.nested_models: dict[str, _ModelReference] = {}
+        self.collections: dict[str, _CollectionSpec] = {}
+        self.views: dict[str, _Selection] = {}
+        self.aliases: dict[FieldPath, FieldPath] = {}
+        self.structural_indices: dict[Symbol, Basic] = {}
+        self.pending_wiring: set[str] = set()
         self.annotations: dict[type[Annotation], dict[str, Annotation]] = {}
         self._declared_annotations: set[tuple[type[Annotation], str]] = set()
         self._replacements: dict[Basic, Basic] = {}
@@ -142,6 +211,18 @@ class ModelloMetaNamespace(dict):
             parent = getattr(base, "_modello_namespace", None)
             if not isinstance(parent, ModelloMetaNamespace):
                 continue
+            for key in self.collections.keys() | self.views.keys() | parent.collections.keys() | parent.views.keys():
+                own, inherited = self._field_kind(key), parent._field_kind(key)
+                if own is not None and inherited is not None and own != inherited:
+                    raise ModelDefinitionError(f"Cannot merge incompatible field kinds for {key}")
+                if key in self.views and key in parent.views and self.views[key].location != parent.views[key].location:
+                    raise ModelDefinitionError(f"Cannot merge different component views for {key}")
+                if (
+                    key in self.collections
+                    and key in parent.collections
+                    and self.collections[key].model is not parent.collections[key].model
+                ):
+                    raise ModelDefinitionError(f"Cannot merge different collection schemas for {key}")
             for kind, fields in parent.annotations.items():
                 self.annotations.setdefault(kind, {}).update(fields)
             conflicts = (
@@ -150,6 +231,10 @@ class ModelloMetaNamespace(dict):
                 | self.nested_models.keys() & (parent.dummies.keys() | parent.vectors.keys())
                 | self.templates.keys() & (parent.dummies.keys() | parent.vectors.keys() | parent.nested_models.keys())
                 | parent.templates.keys() & (self.dummies.keys() | self.vectors.keys() | self.nested_models.keys())
+                | self.views.keys()
+                & (parent.dummies.keys() | parent.vectors.keys() | parent.templates.keys() | parent.collections.keys())
+                | parent.views.keys()
+                & (self.dummies.keys() | self.vectors.keys() | self.templates.keys() | self.collections.keys())
             )
             if conflicts:
                 kinds = (
@@ -182,9 +267,19 @@ class ModelloMetaNamespace(dict):
             self.vector_attrs.update(parent.vector_attrs)
             self.templates.update(parent.templates)
             self.nested_models.update(parent.nested_models)
+            self.collections.update(parent.collections)
+            self.views.update(parent.views)
+            self.aliases.update(parent.aliases)
+            self.structural_indices.update(parent.structural_indices)
             self._replacements.update(parent._replacements)
             self._missing.update(parent._missing)
             self._replace(replacements)
+
+    def _field_kind(self, name: str) -> str | None:
+        for kind in ("collections", "views", "dummies", "vectors", "templates", "nested_models"):
+            if name in getattr(self, kind):
+                return kind
+        return None
 
     def _child_replacements(self, name: str, child: _ModelReference) -> dict[Basic, Basic]:
         """Match inherited child symbols by their attribute paths."""
@@ -199,7 +294,14 @@ class ModelloMetaNamespace(dict):
                     self._missing[template] = _path_label((name, *path))
             for path, vector in old._modello_model._modello_definition.vectors.items():
                 target = child._modello_model._modello_definition.vectors.get(path)
-                if target is not None and vector._finite and target._finite and len(target) != len(vector):
+                collection = name in self.collections
+                if (
+                    target is not None
+                    and vector._finite
+                    and target._finite
+                    and len(target) != len(vector)
+                    and not collection
+                ):
                     raise ModelDefinitionError(
                         f"Cannot change the size of {_path_label((name, *path))}; declare a new model shape"
                     )
@@ -227,11 +329,19 @@ class ModelloMetaNamespace(dict):
         self.vectors = {key: value.xreplace(replacements) for key, value in self.vectors.items()}
         self.vector_attrs = {key: value.xreplace(replacements) for key, value in self.vector_attrs.items()}
         self.templates = {key: value.xreplace(replacements) for key, value in self.templates.items()}
+        self.collections = {key: value.substitute(replacements) for key, value in self.collections.items()}
+        self.views = {key: value.substitute(replacements) for key, value in self.views.items()}
+        self.structural_indices = {
+            replacements.get(symbol, symbol): value.xreplace(replacements)
+            for symbol, value in self.structural_indices.items()
+        }
         self.nested_models = {
             key: _ModelReference(
                 child._modello_model,
                 {path: replacements.get(d, d) for path, d in child._modello_fields.items()},
                 {symbol: value.xreplace(replacements) for symbol, value in child._modello_bindings.items()},
+                child._modello_path,
+                child._modello_view,
             )
             for key, child in self.nested_models.items()
         }
@@ -253,10 +363,51 @@ class ModelloMetaNamespace(dict):
             annotations = value.annotations
             value = value.value
         self.add_annotations(key, annotations)
+        if key in self.collections and not isinstance(value, _CollectionSpec):
+            raise ModelDefinitionError(f"Cannot replace model collection {self.name}.{key} with another field kind")
+        is_view = isinstance(value, _Selection) or isinstance(value, _ModelReference) and value._modello_view
+        if key in self.views and not is_view:
+            raise ModelDefinitionError(f"Cannot replace component view {self.name}.{key} with another field kind")
         is_model = isinstance(value, ModelloMeta)
-        if (isinstance(value, Basic) or is_model) and key.startswith("_modello_"):
+        if (isinstance(value, (Basic, _CollectionSpec, _Selection, _ModelReference)) or is_model) and key.startswith(
+            "_modello_"
+        ):
             raise ModelDefinitionError("The _modello_ prefix is reserved for model metadata")
-        if isinstance(value, Coordinate):
+        if isinstance(value, _CollectionSpec):
+            if (
+                key in self.dummies
+                or key in self.vectors
+                or key in self.templates
+                or key in self.views
+                or (key in self.nested_models and key not in self.collections)
+            ):
+                raise ModelDefinitionError(f"Cannot replace model field {self.name}.{key} with a model collection")
+            previous = self.collections.get(key)
+            if previous is not None and (previous.model is not value.model or bool(previous.wire) != bool(value.wire)):
+                raise ModelDefinitionError(f"Cannot change the component schema of {self.name}.{key}")
+            if previous is not None and previous._finite and value._finite and previous.size != value.size:
+                raise ModelDefinitionError(f"Cannot change the size of {self.name}.{key}; declare a new model shape")
+            self.collections[key] = value
+            value = self._declare_component(key, value.factory(value.size))
+        elif isinstance(value, _Selection) or (isinstance(value, _ModelReference) and value._modello_view):
+            if key in self.dummies or key in self.vectors or key in self.templates or key in self.collections:
+                raise ModelDefinitionError(f"Cannot replace model quantity {self.name}.{key} with a component view")
+            if key in self.nested_models and key not in self.views:
+                raise ModelDefinitionError(f"Cannot replace component {self.name}.{key} with a component view")
+            self.nested_models.pop(key, None)
+            self.aliases.pop((key,), None)
+            if isinstance(value, _ModelReference):
+                selection = _Selection(value._modello_model, _Location(value._modello_path))
+                self.nested_models[key] = value
+                self.aliases[(key,)] = value._modello_path
+            else:
+                selection = value
+            if key in self.views and selection.location != self.views[key].location:
+                raise ModelDefinitionError(
+                    f"Declare a new name instead of retargeting component view {self.name}.{key}"
+                )
+            self.views[key] = selection
+        elif isinstance(value, Coordinate):
             if key in self.dummies or key in self.vectors or key in self.nested_models or key in self.templates:
                 raise ModelDefinitionError(f"Cannot replace model field {self.name}.{key} with a local coordinate")
         elif isinstance(value, _SymbolicTemplate):
@@ -361,10 +512,11 @@ class ModelloMetaNamespace(dict):
     def fields(self) -> dict[FieldPath, InstanceDummy]:
         """Flatten scalar fields while retaining their attribute paths."""
         fields: dict[FieldPath, InstanceDummy] = {(key,): dummy for key, dummy in self.dummies.items()}
+        internal = self.get("_modello_internal_vectors", frozenset())
         fields.update(
             ((key, str(i)), dummy)
             for key, vector in self.vectors.items()
-            if vector._finite
+            if vector._finite and key not in internal
             for i, dummy in enumerate(vector)
         )
         fields.update(
@@ -372,15 +524,53 @@ class ModelloMetaNamespace(dict):
             for key, child in self.nested_models.items()
             for path, dummy in child._modello_fields.items()
         )
+        fields.update(
+            ((key, str(i)), dummy)
+            for key, vector in self.vectors.items()
+            if vector._finite and key in internal
+            for i, dummy in enumerate(vector)
+        )
         return fields
+
+    def reference_at(self, path: FieldPath) -> _ModelReference:
+        result = self.nested_models[path[0]]
+        for name in path[1:]:
+            result = getattr(result, name)
+        return result
+
+    def _resolve_views(self) -> None:
+        known = _known_integers(self)
+        for name, selection in self.views.items():
+            try:
+                target = selection.location.resolve(self, known)
+            except (_UnresolvedSelection, KeyError):
+                continue
+            if not isinstance(target, _ModelReference):
+                raise ModelDefinitionError("A model view must select a declared component")
+            self.nested_models[name] = target
+            self.aliases[(name,)] = target._modello_path
+            dict.__setitem__(self, name, target)
 
     def compile(self) -> _ModelDefinition:
         """Include descendants' equations, preserving their paths and aliases."""
+        self.pending_wiring.clear()
+        for name, spec in self.collections.items():
+            if spec._finite and spec.wire is not None:
+                try:
+                    spec.wire(self, name, spec)
+                except _UnresolvedSelection:
+                    self.pending_wiring.add(name)
+        self._resolve_views()
         constraints = [
             _Definition((attr,), self.dummies[attr], expr)
             for attr, expr in self.attrs.items()
             if expr != self.dummies[attr]
         ]
+        constraints.extend(
+            _Definition((name,), symbol, self.structural_indices[symbol])
+            for name, symbol in self.dummies.items()
+            if symbol in self.structural_indices
+        )
         constraints.extend(
             _Definition((attr, str(i)), self.vectors[attr][i], expression)
             for attr, value in self.vector_attrs.items()
@@ -389,6 +579,8 @@ class ModelloMetaNamespace(dict):
             if expression != self.vectors[attr][i]
         )
         for attr, child in self.nested_models.items():
+            if attr in self.views:
+                continue
             definition = child._modello_model._modello_definition
             replacements = child._modello_bindings
             constraints.extend(
@@ -398,6 +590,7 @@ class ModelloMetaNamespace(dict):
                     constraint.right.xreplace(replacements).xreplace(self._replacements),
                 )
                 for constraint in definition.constraints
+                if not any((attr, *constraint.path)[: len(path)] == path for path in self.aliases)
             )
         expressions = [
             *self.attrs.values(),
@@ -432,15 +625,19 @@ class ModelloMetaNamespace(dict):
         vector_definitions = {
             path: _project_series(value, templates.values()) for path, value in vector_definitions.items()
         }
-        return _ModelDefinition(self.fields(), tuple(constraints), vectors, vector_definitions, templates)
+        return _ModelDefinition(
+            self.fields(), tuple(constraints), vectors, vector_definitions, templates, dict(self.aliases)
+        )
 
     def compiled_annotations(self) -> Mapping[type[Annotation], Mapping[str, Annotation]]:
         """Scope child annotations before applying this class's refinements."""
         annotations: dict[type[Annotation], dict[str, Annotation]] = {}
         for attr, child in self.nested_models.items():
+            prefix = _path_label((attr,))
             for kind, fields in child._modello_model.__modello_annotations__.items():
                 annotations.setdefault(kind, {}).update(
-                    (f"{attr}.{path}" if path else attr, annotation) for path, annotation in fields.items()
+                    (prefix + ("" if path.startswith("[") else ".") + path if path else prefix, annotation)
+                    for path, annotation in fields.items()
                 )
         for kind, fields in self.annotations.items():
             annotations.setdefault(kind, {}).update(fields)
@@ -457,9 +654,10 @@ class ModelloMeta(type):
 
     def __new__(mcs, name: str, bases: tuple[type, ...], meta_namespace: ModelloMetaNamespace) -> Any:
         """Attach the compiled declaration and annotations to an ordinary class."""
+        definition = meta_namespace.compile()
         namespace = dict(meta_namespace)
         namespace["_modello_namespace"] = meta_namespace
-        namespace["_modello_definition"] = meta_namespace.compile()
+        namespace["_modello_definition"] = definition
         namespace["__modello_annotations__"] = meta_namespace.compiled_annotations()
         return super().__new__(mcs, name, bases, namespace)
 
@@ -473,37 +671,128 @@ class ModelloMeta(type):
 ShapeModel = TypeVar("ShapeModel", bound="Modello")
 
 
+def _known_integers(
+    namespace: ModelloMetaNamespace,
+    observations: Mapping[str, object] | None = None,
+    bindings: Mapping[Symbol, Basic] | None = None,
+) -> dict[Symbol, Integer]:
+    """Resolve declared integer expressions used to select component structure."""
+    known = dict(bindings or {})
+    for name, value in (observations or {}).items():
+        if name in namespace.dummies:
+            try:
+                scalar = sympify(value)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(scalar, Integer):
+                known[namespace.dummies[name]] = scalar
+    for _ in range(len(namespace.attrs) + 1):
+        additions = {
+            namespace.dummies[name]: value.xreplace(known)
+            for name, value in namespace.attrs.items()
+            if namespace.dummies[name] not in known and isinstance(value.xreplace(known), Integer)
+        }
+        if not additions:
+            break
+        known.update(additions)
+    return {symbol: value for symbol, value in known.items() if isinstance(value, Integer)}
+
+
+def _has_symbolic_shape(model: type[Modello]) -> bool:
+    namespace = model._modello_namespace
+    return (
+        bool(namespace.views.keys() - namespace.nested_models.keys())
+        or bool(namespace.pending_wiring)
+        or any(not value._finite for value in namespace.vectors.values())
+        or any(not value._finite for value in namespace.collections.values())
+        or any(
+            _has_symbolic_shape(child._modello_model)
+            for name, child in namespace.nested_models.items()
+            if name not in namespace.views
+        )
+    )
+
+
 def _specialize_model(model: type[ShapeModel], values: Mapping[str, object]) -> type[ShapeModel]:
     """Choose a finite declaration without changing the reusable model class."""
     namespace = model._modello_namespace
     children = []
     for name, child in namespace.nested_models.items():
-        if any(not vector._finite for vector in child._modello_model._modello_definition.vectors.values()):
+        if name in namespace.collections or name in namespace.views:
+            continue
+        if _has_symbolic_shape(child._modello_model):
             value = values.get(name)
             if not isinstance(value, child._modello_model):
                 raise ModelInputError(
                     f"Supply a {child._modello_model.__name__} instance to determine {name}'s vector sizes"
                 )
             children.append((name, type(value)))
-    if all(vector._finite for vector in namespace.vectors.values()) and not children:
+    axes: dict[str, Vector | _CollectionSpec] = {**namespace.vectors, **namespace.collections}
+    finite = all(vector._finite for vector in axes.values())
+    pending = namespace.views.keys() - namespace.nested_models.keys()
+    if finite and not children and not pending and not namespace.pending_wiring:
         return model
-    dimensions = _dimensions(namespace.vectors, namespace.dummies, namespace.attrs, values)
+    dimensions = (
+        {}
+        if finite
+        else _dimensions(
+            axes,
+            namespace.dummies,
+            namespace.attrs,
+            values,
+            tuple(relation for spec in namespace.collections.values() for relation in spec.relations),
+        )
+    )
+    known = _known_integers(namespace, values, dimensions)
+    selected = {}
+    locations = [namespace.views[name].location for name in pending]
+    for name in namespace.pending_wiring:
+        spec = namespace.collections[name]
+        locations.extend(spec.inputs.values())
+        if spec.initial is not None:
+            locations.append(spec.initial)
+    for location in locations:
+        index = location.index
+        if index is not None:
+            if not isinstance(index.xreplace(known), Integer):
+                raise ModelInputError("A model selection needs a known finite integer index")
+            selected.update({symbol: known[symbol] for symbol in index.free_symbols if symbol in known})
     return cast(
         type[ShapeModel],
-        _concrete_model(model, tuple(sorted(dimensions.items(), key=lambda item: str(item[0]))), tuple(children)),
+        _concrete_model(
+            model,
+            tuple(sorted(dimensions.items(), key=lambda item: str(item[0]))),
+            tuple(children),
+            tuple(sorted(selected.items(), key=lambda item: str(item[0]))),
+        ),
     )
 
 
 @lru_cache(maxsize=128)
 def _concrete_model(
-    model: type[Modello], dimensions: tuple[tuple[Symbol, Basic], ...], children: tuple[tuple[str, type[Modello]], ...]
+    model: type[Modello],
+    dimensions: tuple[tuple[Symbol, Basic], ...],
+    children: tuple[tuple[str, type[Modello]], ...],
+    selected: tuple[tuple[Symbol, Basic], ...] = (),
 ) -> type[Modello]:
     bindings = dict(dimensions)
     namespace = ModelloMetaNamespace(model.__name__, (model,))
     for name, child in children:
         namespace[name] = child
+    for name, spec in tuple(namespace.collections.items()):
+        if not spec._finite:
+            dict.__setitem__(
+                namespace, name, namespace._declare_component(name, spec.factory(spec.size.xreplace(bindings)))
+            )
     fields = {vector: vector.xreplace(bindings) for vector in namespace.vectors.values() if not vector._finite}
     namespace._replace(fields)
+    namespace.collections = {
+        name: spec.substitute({**bindings, **dict(selected)}) for name, spec in namespace.collections.items()
+    }
+    namespace.views = {
+        name: selection.substitute({**bindings, **dict(selected)}) for name, selection in namespace.views.items()
+    }
+    namespace.structural_indices.update(selected)
     namespace.vector_attrs = {
         name: expression.xreplace(bindings) for name, expression in namespace.vector_attrs.items()
     }
@@ -521,8 +810,36 @@ def _populate(
     """Materialize the model tree from one shared solution, without solving."""
     fields = {field.path: cast(BoundInstanceDummy, field.symbol) for field in problem.fields}
     input_symbols = inputs | {c.left for c in problem.constraints if c.kind is ConstraintKind.INPUT}
+    symbols = problem.symbols
+    aliases: dict[FieldPath, FieldPath] = {}
+
+    def collect_aliases(model: type[Modello], prefix: FieldPath) -> None:
+        aliases.update({prefix + path: prefix + target for path, target in model._modello_definition.aliases.items()})
+        for attr, child in model._modello_namespace.nested_models.items():
+            path = (*prefix, attr)
+            if path not in aliases:
+                collect_aliases(child._modello_model, path)
+
+    collect_aliases(type(instance), ())
+
+    def canonical(path: FieldPath) -> FieldPath:
+        seen = set()
+        while path not in seen:
+            seen.add(path)
+            match = next((part for part in sorted(aliases, key=len, reverse=True) if path[: len(part)] == part), None)
+            if match is None:
+                return path
+            path = (*aliases[match], *path[len(match) :])
+        raise ModelDefinitionError("Cyclic component views")
+
+    instances: dict[FieldPath, Modello] = {}
 
     def populate(instance: Modello, model: type[Modello], prefix: FieldPath) -> None:
+        instances[prefix] = instance
+        reference = _path_value(symbols, prefix)
+        instance._modello_bound_functions = {
+            symbol: reference._modello_bindings[symbol] for symbol in model._modello_definition.template_symbols
+        }
         bound_fields = {d: fields[prefix + path] for path, d in model._modello_definition.fields.items()}
         instance._modello_bound_fields = {
             d: _BoundField(
@@ -540,11 +857,16 @@ def _populate(
             solution,
         )
         for attr, child in model._modello_namespace.nested_models.items():
+            path = (*prefix, attr)
+            if path in aliases:
+                continue
             child_instance = object.__new__(child._modello_model)
-            populate(child_instance, child._modello_model, (*prefix, attr))
+            populate(child_instance, child._modello_model, path)
             setattr(instance, attr, child_instance)
 
     populate(instance, type(instance), ())
+    for path in aliases:
+        setattr(instances[canonical(path[:-1])], path[-1], instances[canonical(path)])
 
 
 def _populate_templates(

@@ -45,6 +45,13 @@ from modello.errors import (
     SolverBackendError,
     UnresolvedSolutionError as UnresolvedSolutionError,
 )
+from modello.model_vectors import (
+    ModelSequence as ModelSequence,
+    ModelVector as ModelVector,
+    ModelVectorValue as ModelVectorValue,
+    model_recurrence as model_recurrence,
+    model_vector as model_vector,
+)
 from modello.series import Recurrence as Recurrence, Series as Series
 from modello.solutions import SolutionFamily as SolutionFamily, SolutionIssue as SolutionIssue
 from modello.stochastic import ItoProcess as ItoProcess
@@ -58,9 +65,10 @@ class Modello(metaclass=ModelloMeta):
     _modello_definition: ClassVar[_ModelDefinition]
     _modello_bound_fields: dict[InstanceDummy, _BoundField]
     _modello_bound_templates: dict[str, Basic]
+    _modello_bound_functions: dict[Symbol, Symbol]
     __modello_annotations__: ClassVar[Mapping[type[Annotation], Mapping[str, Annotation]]]
 
-    def __init__(self, name: str, **value_map: ScalarValue | VectorValue | Modello) -> None:
+    def __init__(self, name: str, **value_map: ScalarValue | VectorValue | Modello | ModelVectorValue[Modello]) -> None:
         """Accept scalars, finite vectors, and compatible child model instances."""
         problem = inspect_model(type(self), name, **value_map)
         reported = _solve_problem(problem)
@@ -83,7 +91,7 @@ def component(model: type[_ModelT]) -> _ModelT:
 
 
 def inspect_model(
-    model: type[_ModelT], name: str, /, **value_map: ScalarValue | VectorValue | Modello
+    model: type[_ModelT], name: str, /, **value_map: ScalarValue | VectorValue | Modello | ModelVectorValue[Modello]
 ) -> ModelProblem[_ModelT]:
     """Prepare the constructor's actual problem without invoking the solver.
 

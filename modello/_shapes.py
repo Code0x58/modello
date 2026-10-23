@@ -6,15 +6,17 @@ from collections.abc import Mapping
 
 from sympy import Basic, Eq, Integer, Symbol, check_assumptions, solve, sympify
 
+from modello._collections import _CollectionSpec
 from modello.errors import ModelInputError
 from modello.vectors import Vector, _vector_input
 
 
 def _dimensions(
-    vectors: Mapping[str, Vector],
+    vectors: Mapping[str, Vector | _CollectionSpec],
     fields: Mapping[str, Symbol],
     definitions: Mapping[str, Basic],
     values: Mapping[str, object],
+    relations: tuple[Basic, ...] = (),
 ) -> dict[Symbol, Integer]:
     """Use supplied lengths and scalar observations as simultaneous shape equations."""
     axes = {name: sympify(vector.shape[0]) for name, vector in vectors.items()}
@@ -23,7 +25,7 @@ def _dimensions(
         return {}
     if symbols - set(fields.values()) or any(symbol.is_integer is not True for symbol in symbols):
         raise ModelInputError("Symbolic vector sizes must use declared integer model fields")
-    equations = []
+    equations = list(relations)
     for name, axis in axes.items():
         if name in values and values[name] is not None:
             equations.append(Eq(axis, len(_vector_input(values[name], None, name))))

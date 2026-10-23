@@ -410,6 +410,21 @@ API
 .. automodule:: modello.gui
    :members: gui, ModelInfo, FieldInfo, Scenario, Explorer, BindingError, create_app
 
+Typed model vectors
+-------------------
+
+The :doc:`account sequence demo <model-vectors>` reuses the portfolio's
+``FillPosting`` transition across a variable number of typed executions.
+Run ``python -m examples.gui_timeseries --example sequence --port 5071``.
+Each model vector has an arrow accent and bracketed member paths. Its scalar
+projections retain bulk editors, while each typed member remains inspectable.
+The equations view includes a relative transition rule and opening boundary;
+expanded transition details initially appear folded in the model tree.
+
+Run the diffusion separately with ``--example diffusion --port 5070``. Ports
+5060 and 5061 are restricted by common browsers; use the demo's default port
+or these alternatives.
+
 Mathematical typography
 -----------------------
 

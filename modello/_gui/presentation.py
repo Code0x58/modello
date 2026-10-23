@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 from difflib import get_close_matches
-from typing import TYPE_CHECKING, Iterator, Mapping
+from typing import TYPE_CHECKING, Any, Iterator, Mapping
 
 from sympy import Symbol
 
 from modello._gui.mathml import EquationPrinter
+from modello._model import _known_integers
 from modello._paths import _path_label, _within_path
 from modello._symbols import _minimal_assumptions
 from modello.diagnostics import ConstraintKind, ModelField, ModelProblem
@@ -27,11 +28,24 @@ class Layout:
         self, problem: ModelProblem, overrides: Mapping[str, FieldInfo], *, resizable: frozenset[str] = frozenset()
     ) -> None:
         self.resizable = resizable
-        self.fields = {_path_label(field.path): field for field in problem.fields}
+        internal = {
+            _join(path, name)
+            for path, child in _model_tree(problem.model)
+            for name in getattr(child, "_modello_internal_vectors", ())
+        }
+        self.fields = {
+            _path_label(field.path): field for field in problem.fields if _path_label(field.path[:-1]) not in internal
+        }
         self.metadata = dict.fromkeys(self.fields, FieldInfo())
         self._explicit_metadata: set[str] = set()
         self.components: list[str] = []
-        self.vectors = {_path_label(path): vector for path, vector in problem.vectors.items()}
+        self.parents: dict[str, str] = {}
+        self.collections: dict[str, Any] = {}
+        self.recurrences: dict[str, tuple[str, Any, Any]] = {}
+        self.folded: set[str] = set()
+        self.vectors = {
+            _path_label(path): vector for path, vector in problem.vectors.items() if _path_label(path) not in internal
+        }
         self.vector_definitions = {_path_label(path): value for path, value in problem.vector_definitions.items()}
         self.templates = {_path_label(path): value for path, value in problem.templates.items()}
         self._collect(problem.model)
@@ -113,12 +127,51 @@ class Layout:
             if template.equations and path not in hidden
         }
         self.equations += tuple(self.template_equations.values())
+        relative = []
+        for path, (prefix, namespace, spec) in self.recurrences.items():
+            if path in hidden:
+                continue
+            model = self.collections[path]
+            label = self.metadata[path].symbol or path
+            known = _known_integers(namespace)
+            initial = _join(prefix, _path_label(spec.initial.resolve(namespace, known)._modello_path))
+            sources = {
+                name: _join(prefix, _path_label(location.resolve(namespace, known)._modello_path))
+                for name, location in spec.inputs.items()
+            }
+            inputs = tuple((self._component_label(source), name in spec.indexed) for name, source in sources.items())
+            arguments = [
+                f"{path}[n - 1]",
+                *(f"{source}[n - 1]" if name in spec.indexed else source for name, source in sources.items()),
+            ]
+            transition = model._modello_transition.__name__ + "." + model._modello_result
+            relative.append(
+                {
+                    "path": path,
+                    "mathml": printer.model_recurrence(
+                        label, self._component_label(initial), transition, inputs, int(spec.size - 1)
+                    ),
+                    "text": f"{path}[0] = {initial}; {path}[n] = {transition}({', '.join(arguments)})",
+                }
+            )
+        self.equations = (*relative, *self.equations)
+
+    def _component_label(self, path: str) -> str:
+        if self.metadata[path].symbol:
+            return self.metadata[path].symbol
+        parent, _, index = path.rpartition("[")
+        if path.endswith("]") and parent in self.collections:
+            return f"{self.metadata[parent].symbol or parent}[{index[:-1]}]"
+        return path
 
     def _collect(self, model: type[Modello]) -> None:
         """Layer defaults, registry metadata, then overrides from children to parents."""
         annotated_models = ModelInfo.for_model(model)
         declarations: dict[str, ModelInfo] = {}
         for path, child in _model_tree(model):
+            for name, spec in child._modello_namespace.collections.items():
+                if spec.wire is not None:
+                    self.recurrences[_join(path, name)] = (path, child._modello_namespace, spec)
             if hasattr(child, "__gui__"):
                 raise ModelInputError(
                     f"{child.__name__}.__gui__ is unsupported; use @ModelInfo(...) and gui(field, ...)"
@@ -130,9 +183,15 @@ class Layout:
             )
             if path:
                 self.components.append(path)
+                self.parents[path] = _parent(path)
+                if hasattr(child, "_modello_collection_size"):
+                    self.collections[path] = child
+                    if getattr(child, "_modello_collection_kind") == "sequence":
+                        self.folded.update((_join(path, "initial"), _join(path, "steps")))
             for name in child._modello_namespace.vectors:
                 vector_path = _join(path, name)
-                self.metadata[vector_path] = FieldInfo()
+                if vector_path in self.vectors:
+                    self.metadata[vector_path] = FieldInfo()
             for name in child._modello_namespace.templates:
                 self.metadata[_join(path, name)] = FieldInfo()
         self.model_info = declarations[""]
@@ -190,12 +249,14 @@ class Layout:
             if not isinstance(scenario, Scenario):
                 raise ModelInputError(f"ModelInfo.scenarios[{index}]: expected a Scenario declaration")
             context = f"Scenario {scenario.title!r}"
-            variable_selection = any(
-                scenario.select.startswith(path + "[")
-                and scenario.select.endswith("]")
-                and scenario.select[len(path) + 1 : -1].isdigit()
-                for path in self.resizable
-            )
+
+            def variable_coordinate(name: str) -> bool:
+                return any(
+                    name.startswith(path + "[") and name.endswith("]") and name[len(path) + 1 : -1].isdigit()
+                    for path in self.resizable
+                )
+
+            variable_selection = variable_coordinate(scenario.select)
             if scenario.select and not variable_selection:
                 _require_path(scenario.select, quantities, f"{context}.select")
             fixed_bindings = {}
@@ -203,6 +264,10 @@ class Layout:
                 if path in self.resizable:
                     if path not in self.editable_vectors:
                         raise ModelInputError(f"{context}.bindings: cannot edit vector {path!r}")
+                elif path not in self.fields and variable_coordinate(path):
+                    # A scenario restores its original observation window before
+                    # applying edits, which may include coordinates absent here.
+                    continue
                 else:
                     fixed_bindings[path] = raw
             for path, _ in self.expand_bindings(fixed_bindings):
@@ -241,7 +306,13 @@ def _assumptions(symbol: Symbol) -> list[str]:
 
 
 def _join(prefix: str, name: str) -> str:
-    return f"{prefix}.{name}" if prefix else name
+    if name.isdecimal():
+        return f"{prefix}[{name}]"
+    return prefix + ("" if name.startswith("[") or not prefix else ".") + name
+
+
+def _parent(path: str) -> str:
+    return path.rpartition("[")[0] if path.endswith("]") else path.rpartition(".")[0]
 
 
 def _model_tree(model: type[Modello], prefix: str = "") -> Iterator[tuple[str, type[Modello]]]:

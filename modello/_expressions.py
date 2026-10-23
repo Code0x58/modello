@@ -145,7 +145,10 @@ class _DefinitionResolver:
             return self(evaluated, protected) if evaluated != operator else operator
         if isinstance(expression, _VectorFormula):
             variable, first, last = expression.limits
-            return _VectorFormula(self(expression.function, protected | {variable}), (variable, first, last))
+            return _VectorFormula(
+                self(expression.function, protected | {variable}),
+                (variable, self(first, protected), self(last, protected)),
+            )
         if isinstance(expression, (Sum, Product, Integral)):
             variables = frozenset(expression.variables)
             if isinstance(expression, Integral):

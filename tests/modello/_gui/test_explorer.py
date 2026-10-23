@@ -50,6 +50,9 @@ def test_frontend_vector_proposal_state(tmp_path: Path, pytestconfig: pytest.Con
         assert response.status_code == 200
         law_edits[name] = response.json
     fixtures = tmp_path / "state.json"
+    model, inputs = DEMOS["sequence"]
+    sequence = create_app(model, inputs=inputs).test_client().post("/api/explore", json={"bindings": {}})
+    assert sequence.status_code == 200
     fixtures.write_text(
         json.dumps(
             dict(
@@ -59,6 +62,7 @@ def test_frontend_vector_proposal_state(tmp_path: Path, pytestconfig: pytest.Con
                 restored=restored,
                 rejected=rejected.json,
                 laws=laws.json,
+                sequence=sequence.json,
                 **law_edits,
             )
         )

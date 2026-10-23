@@ -64,6 +64,7 @@ illustrate symbolic modeling with fixed historical rates.
    api
    nesting
    vectors
+   model-vectors
    series
    debugging
    solutions

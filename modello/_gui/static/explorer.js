@@ -47,7 +47,8 @@ let fieldsByPath = new Map(),
   errors = new Set();
 const drafts = new Map(),
   inputEdits = new Map(),
-  collapsed = new Set();
+  collapsed = new Set(),
+  seenComponents = new Set();
 const node = (tag, className, text) => {
   const element = document.createElement(tag);
   if (className) element.className = className;
@@ -483,9 +484,14 @@ function renderTree() {
   function ensure(path) {
     if (containers.has(path)) return containers.get(path);
     const group = node("section", "component");
+    group.dataset.component = path;
     const header = node("button", "component-head");
     header.type = "button";
     const info = components.get(path);
+    if (!seenComponents.has(path)) {
+      seenComponents.add(path);
+      if (info?.collapsed) collapsed.add(path);
+    }
     if (info?.shape) {
       group.classList.add("vector");
       group.dataset.field = path;
@@ -496,7 +502,9 @@ function renderTree() {
     const count = state.fields.filter((field) =>
       field.parent === path || field.path.startsWith(path + "."),
     ).length;
-    header.append(node("span", "component-count", `${count} ${info?.shape ? "entries" : "quantities"}`));
+    header.append(node("span", "component-count", info?.collection
+      ? `${info.shape[0]} models`
+      : `${count} ${info?.shape ? "entries" : "quantities"}`));
     header.title = info?.description || "Nested model";
     header.setAttribute("aria-expanded", String(!collapsed.has(path)));
     group.classList.toggle("collapsed", collapsed.has(path));
@@ -507,7 +515,7 @@ function renderTree() {
       header.setAttribute("aria-expanded", String(!collapsed.has(path)));
     });
     const body = node("div", "component-body");
-    if (info?.shape) {
+    if (info?.shape && !info.collection) {
       const heading = node("div", "vector-heading");
       const inspect = node("button", "vector-inspect", "Inspect vector");
       inspect.type = "button";
@@ -516,7 +524,7 @@ function renderTree() {
       heading.append(header, inspect);
       group.append(heading, body);
     } else group.append(header, body);
-    ensure(path.split(".").slice(0, -1).join(".")).append(group);
+    ensure(info?.parent ?? path.split(".").slice(0, -1).join(".")).append(group);
     containers.set(path, body);
     return body;
   }

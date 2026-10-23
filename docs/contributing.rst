@@ -96,6 +96,15 @@ cyclic definitions. Unknown assumptions remain distinct from disproven ones.
 Finite data reductions and explicit zero-rate kernels avoid slower generic
 symbolic work while retaining exceptional parameter cases.
 
+``model_vectors.py`` builds typed component collections from ordinary model
+declarations. Scalar projections use existing ``Vector`` identities. A model
+recurrence owns one transition vector; boundary and terminal components are
+views of its opening/result ports. ``_collections.py`` holds deferred declaration
+records without importing model construction. The compiler retains component
+alias paths and excludes repeated definitions. Population allocates canonical
+components once, then connects their views. Structural shape/index binding
+precedes scalar solving; it preserves scalar equations and input provenance.
+
 Validation
 ----------
 

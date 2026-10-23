@@ -70,7 +70,7 @@ from modello.series import _project_series
 from modello.vectors import Vector, _VectorElement
 
 if TYPE_CHECKING:
-    from modello import Modello, ScalarValue, SymbolicCondition, SymbolicScalar, VectorValue
+    from modello import Modello, ModelVectorValue, ScalarValue, SymbolicCondition, SymbolicScalar, VectorValue
     from modello.diagnostics import ModelProblem
 
 
@@ -555,7 +555,9 @@ class SolutionFamily(Generic[ModelT]):
             checked.append(value)
         return self._prepare(self.problem, self._preferred, (*self.conditions, *checked))
 
-    def observe(self, **inputs: ScalarValue | VectorValue | Modello) -> SolutionFamily[ModelT]:
+    def observe(
+        self, **inputs: ScalarValue | VectorValue | Modello | ModelVectorValue[Modello]
+    ) -> SolutionFamily[ModelT]:
         """Add constructor-style scalar or component observations immutably.
 
         Observations accumulate as constraints. Use ``where(Eq(...))`` for a

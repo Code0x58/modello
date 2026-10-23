@@ -115,6 +115,10 @@ Vectors and indices
 
 .. autoclass:: Index
 
+See :doc:`model-vectors` for typed ordered components, ``model_vector``, and
+``model_recurrence``. ``ModelVectorValue[Model]`` describes observations as a
+typed model vector or a sequence of compatible model instances and ``None``.
+
 .. _extension-annotations:
 
 Extension annotations

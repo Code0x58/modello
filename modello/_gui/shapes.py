@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
+from sympy import sympify
+
 from modello._model import _specialize_model
 from modello.errors import ModelInputError
 from modello.vectors import _vector_input
@@ -22,7 +24,8 @@ class ShapePlan:
         self.vectors = frozenset(
             name for name, vector in self.model._modello_namespace.vectors.items() if not vector._finite
         )
-        symbols = set().union(*(self.model._modello_namespace.vectors[name].free_symbols for name in self.vectors))
+        axes = {**self.model._modello_namespace.vectors, **self.model._modello_namespace.collections}
+        symbols = set().union(*(sympify(value.shape[0]).free_symbols for value in axes.values()))
         self.dimensions = {name for name, symbol in self.model._modello_namespace.dummies.items() if symbol in symbols}
         known_sizes = {
             name: model._modello_namespace.attrs[name]

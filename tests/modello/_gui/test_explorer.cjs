@@ -13,14 +13,15 @@ class Element {
     this.checked = false;
     this.isConnected = true;
     this.dataset = {};
+    this.children = [];
     this.classList = { toggle() {}, add() {}, remove() {} };
     this.listeners = new Map();
     created.push(this);
   }
   addEventListener(name, listener) { this.listeners.set(name, listener); }
   setAttribute() {}
-  append() {}
-  replaceChildren() {}
+  append(...children) { this.children.push(...children); }
+  replaceChildren(...children) { this.children = [...children]; }
   focus() {}
   querySelectorAll() { return []; }
   scrollIntoView() { scrolled.push(this); }
@@ -129,5 +130,14 @@ const queue = (data, ok = true) => responses.push({ data, ok });
   await evaluate("await restore(state.vectors.find(field => field.path === 'levels'));");
   assert.deepEqual(requests.at(-1).bindings, {});
   assert.equal(vm.runInContext("state.fields.find(field => field.path === 'N').value", context), "4");
-  console.log("Vector edits, normalization, restore, and rejection passed");
+  context.sequenceFixture = fixtures.sequence;
+  await evaluate("state = sequenceFixture; renderTree();");
+  const groups = created.filter(element => element.dataset.component);
+  const group = path => groups.findLast(element => element.dataset.component === path);
+  const body = path => group(path).children.at(-1);
+  assert.ok(body("fills").children.includes(group("fills[1]")), "Model-vector members belong inside the vector");
+  assert.ok(body("states").children.includes(group("states[2]")), "State views use their declared parent");
+  assert.ok(body("states.steps").children.includes(group("states.steps[1]")), "Steps retain their nested vector hierarchy");
+  assert.equal(vm.runInContext("collapsed.has('states.steps')", context), true);
+  console.log("Vector edits, normalization, restore, rejection, and model-vector hierarchy passed");
 })().catch(error => { console.error(error); process.exitCode = 1; });

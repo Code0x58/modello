@@ -63,7 +63,7 @@ from modello.solutions import SolutionFamily
 from modello.vectors import Vector
 
 if TYPE_CHECKING:
-    from modello import Modello, ScalarValue, SymbolicScalar, VectorValue
+    from modello import Modello, ModelVectorValue, ScalarValue, SymbolicScalar, VectorValue
 
 
 @dataclass(frozen=True)
@@ -181,7 +181,9 @@ class ModelProblem(Generic[ModelT]):
             }
         )
 
-    def _capture_inputs(self, **value_map: ScalarValue | VectorValue | Modello) -> ModelProblem[ModelT]:
+    def _capture_inputs(
+        self, **value_map: ScalarValue | VectorValue | Modello | ModelVectorValue[Modello]
+    ) -> ModelProblem[ModelT]:
         """Append constructor inputs without rebinding this snapshot."""
         if not value_map:
             return self
@@ -377,7 +379,7 @@ class ModelProblem(Generic[ModelT]):
 
 
 def _prepare_problem(
-    model: type[ModelT], name: str, /, **value_map: ScalarValue | VectorValue | Modello
+    model: type[ModelT], name: str, /, **value_map: ScalarValue | VectorValue | Modello | ModelVectorValue[Modello]
 ) -> ModelProblem[ModelT]:
     """Capture a declaration and its constructor inputs as one bound snapshot."""
     if not isinstance(model, ModelloMeta):

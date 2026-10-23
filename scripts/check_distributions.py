@@ -120,6 +120,30 @@ class Sized(modello.Modello):
     total = samples.sum()
 assert Sized("sized", samples=[1,2,3]).N == 3
 assert Sized("sized", samples=[1,2,3]).total == 6
+class AccountState(modello.Modello):
+    cash = modello.InstanceDummy("cash", real=True)
+class Debit(modello.Modello):
+    amount = modello.InstanceDummy("amount", real=True)
+class Posting(modello.Modello):
+    before = modello.component(AccountState)
+    fill = modello.component(Debit)
+    after = modello.component(AccountState)
+    cash = after.cash
+    cash = before.cash - fill.amount
+class Accounts(modello.Modello):
+    N = modello.InstanceDummy("N", integer=True, nonnegative=True)
+    opening = modello.component(AccountState)
+    fills = modello.model_vector(Debit, size=N)
+    states = modello.model_recurrence(Posting, initial=opening, fill=fills)
+    terminal = states[-1]
+    balances = states.project(lambda state: state.cash)
+accounts = Accounts("accounts", opening=AccountState("opening", cash=100),
+                    fills=[Debit("first", amount=10), Debit("next", amount=20)])
+assert accounts.N == 2
+assert accounts.balances == modello.Vector(100, 90, 70)
+assert accounts.terminal is accounts.states[-1]
+assert accounts.states.steps[1].before is accounts.states[1]
+assert Accounts("empty", opening=AccountState("opening", cash=100), fills=[]).terminal.cash == 100
 vector_snapshot = Explorer(window).snapshot()
 assert vector_snapshot["vectors"][0]["shape"] == [3]
 assert "mover" in vector_snapshot["vectors"][0]["symbol_mathml"]
@@ -137,6 +161,8 @@ from examples.geometry import RightAngleTriangle
 from examples.data import NamedMap
 from examples.gui_quickstart import ReturnModel
 from examples.timeseries import rolling_window
+from examples.model_sequences import AccountSequence
+from examples.portfolio.models import Execution, HoldingState
 from modello.gui import Explorer
 
 assert Path(examples.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
@@ -145,6 +171,10 @@ assert RightAngleTriangle("T", a=3, b=4).c == 5
 assert NamedMap({"a": 2}).map(lambda value: value * 3) == {"a": 6}
 assert ReturnModel("example", capital=100_000, expected_return="2/25").gain == 8_000
 assert tuple(rolling_window(4, 2)("window", samples=[1, 3, 5, 7]).means) == (2, 4, 6)
+sequence = AccountSequence("installed", opening=HoldingState("opening", quantity=3, cash=1000),
+                           fills=[Execution("fill", quantity=2, price=100, fee=1)])
+assert sequence.terminal.cash == 799
+assert sequence.terminal is sequence.states[-1]
 assert Explorer(ReturnModel, inputs={"capital": 100_000}).snapshot(raw=True)["raw"]
 assert "flask" not in sys.modules
 data = resources.files("examples.portfolio").joinpath("data")

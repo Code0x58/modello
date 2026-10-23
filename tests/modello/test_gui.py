@@ -273,7 +273,13 @@ def test_inline_annotations_supply_model_component_and_scalar_presentation():
     data = Explorer(Project, inputs={"panel.width": 2, "panel.height": 3}).snapshot()
     assert data["title"] == "A project"
     assert data["highlights"] == ["panel.area"]
-    assert data["components"][0] == {"path": "panel", "title": "Geometry", "description": "A nested panel."}
+    assert data["components"][0] == {
+        "path": "panel",
+        "parent": "",
+        "title": "Geometry",
+        "description": "A nested panel.",
+        "collapsed": False,
+    }
     assert rows(data)["panel.width"]["title"] == "Clear width"
     assert rows(data)["panel.area"]["unit"] == "m²"
     assert rows(data)["total"]["value"] == "60"

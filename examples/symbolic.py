@@ -134,8 +134,13 @@ def _copy_model(model: Model, values: dict[FieldPath, Expr], inputs: tuple[Expr,
     Cached properties must be recomputed for the copied field values.
     """
 
+    copies: dict[int, Modello] = {}
+
     def populate(source: Modello, prefix: FieldPath) -> Modello:
+        if id(source) in copies:
+            return copies[id(source)]
         result = copy(source)
+        copies[id(source)] = result
         result._modello_bound_fields = {}
         for path, dummy in type(source)._modello_definition.fields.items():
             binding = source._modello_bound_fields[dummy]
