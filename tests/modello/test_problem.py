@@ -19,17 +19,14 @@ from modello import (
 )
 from modello._problem import Candidate, ConstraintKind, FieldValue
 
-from ._models import Check, Reading
+from ._models import Check, Operators, Reading
 
 
 def test_error_labels_preserve_noncommutative_relationships():
     """Readable names must not turn an ordered product difference into zero."""
 
-    class Ordered(Modello):
+    class Ordered(Operators):
         scale = InstanceDummy("scale", positive=True)
-        x = InstanceDummy("x", commutative=False)
-        y = InstanceDummy("y", commutative=False)
-        commutator = x * y - y * x
 
     with pytest.raises(ModelSolveError, match="0 solutions") as error:
         Ordered("O", scale=0)

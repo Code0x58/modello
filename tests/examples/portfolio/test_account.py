@@ -6,8 +6,8 @@ import pytest
 
 from examples.data import NamedMap
 from examples.portfolio.account import Account, AccountEngine
-from examples.portfolio.demo import Basket, EquityMembers, asdict_snapshot
-from examples.portfolio.models import AccountFill, CapitalFlow, EquityPosition, IncomePosting, Quote, USDCash
+from examples.portfolio.demo import asdict_snapshot
+from examples.portfolio.models import AccountFill, CapitalFlow, IncomePosting
 from examples.portfolio.signals import TargetWeights
 from examples.portfolio.sources import (
     CashFlow,
@@ -16,9 +16,8 @@ from examples.portfolio.sources import (
     TransactionLog,
     timestamp,
 )
-from examples.portfolio.valuation import NamedPortfolio
 
-from ._data import AGE, DECISION, TIMES
+from ._data import AGE, DECISION, TIMES, fixed_portfolio
 
 
 def test_account_balances_pnl_and_time_weighted_returns(scenario):
@@ -198,17 +197,6 @@ def test_price_identity_staleness_and_mark_grid_are_checked(engine, market):
 
 
 def test_account_does_not_drop_opening_valuation_constraints(market):
-    opening = NamedPortfolio.define(Basket)(
-        "fixed quotes",
-        basket=Basket(
-            "basket",
-            members=EquityMembers(
-                "equities",
-                aapl=EquityPosition("apple", quantity=10, instrument=Quote("quote", price=100)),
-                msft=EquityPosition("microsoft", quantity=10, instrument=Quote("quote", price=50)),
-            ),
-        ),
-        cash=USDCash("cash", amount=1000),
-    )
+    opening = fixed_portfolio(quantities=(10, 10), cash=1000, prices=(100, 50))
     with pytest.raises(ValueError, match="opening prices as independent"):
         AccountEngine(Account("research", TIMES[0], opening), market, max_price_age=AGE)

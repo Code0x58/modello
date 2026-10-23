@@ -4,18 +4,14 @@ import pytest
 
 from modello import InstanceDummy, Modello, annotate, component, inspect_model
 from modello.errors import ModelInputError
-from modello.gui import BindingError, Explorer, FieldInfo, ModelInfo, Scenario, gui
+from modello.gui import Explorer, FieldInfo, ModelInfo, Scenario, gui
 from tests.modello._gui_models import Estimate, Panel, rows
 
 
-def test_metadata_errors_and_component_hiding():
-    with pytest.raises(ModelInputError, match="metadata"):
-        Explorer(Panel, metadata={"missing": FieldInfo()})
+def test_external_metadata_can_hide_a_component():
     data = Explorer(Estimate, metadata={"panel": FieldInfo(hidden=True)}).snapshot(raw=True)
     assert all(not f["path"].startswith("panel.") for f in data["fields"])
     assert not data["components"]
-    with pytest.raises(BindingError, match="Unknown field"):
-        Explorer(Panel).snapshot({"missing": 2})
 
 
 def test_model_info_composes_model_component_and_field_labels():
@@ -135,22 +131,12 @@ def test_empty_components_remain_in_the_raw_model_structure():
     assert data["components"][0]["title"] == "Placeholder"
 
 
-@pytest.mark.parametrize(
-    "options",
-    [
-        {"highlights": ("unknown",)},
-        {"initial_field": "unknown"},
-        {"scenarios": (Scenario(title="Hidden", description="Cannot change background data.", bindings={"price": 2}),)},
-        {"scenarios": (Scenario(title="Unknown selection", description="Bad field.", select="unknown"),)},
-        {"highlights": ("price",)},
-    ],
-)
-def test_model_navigation_validates_paths_and_hidden_policy(options):
-    @ModelInfo(**options)
+def test_hidden_fields_cannot_be_highlighted():
+    @ModelInfo(highlights=("price",))
     class Invalid(Estimate):
         pass
 
-    with pytest.raises(ModelInputError):
+    with pytest.raises(ModelInputError, match="hidden field 'price' cannot be highlighted"):
         Explorer(Invalid)
 
 

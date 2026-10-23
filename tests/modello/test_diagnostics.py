@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError, replace
 from itertools import combinations
 
 import pytest
-from sympy import ConditionSet, FiniteSet, Function, ImageSet, S, Symbol, cos, expand, linsolve, pi, sin, sqrt
+from sympy import ConditionSet, FiniteSet, Function, ImageSet, S, Symbol, cos, expand, linsolve, pi, sqrt
 
 import modello
 import modello.diagnostics as diagnostics
@@ -17,7 +17,7 @@ from modello import (
 )
 from modello.diagnostics import Candidate, FieldValue
 
-from ._models import Check, Reading, Sum
+from ._models import Check, Operators, Reading, Scalar, Sum, Wave
 
 
 def assert_witness(problem, witness, constraints=None):
@@ -49,13 +49,6 @@ def test_candidate_audit_rejects_fields_from_another_problem(positive_problem):
         p.check(foreign)
 
 
-@pytest.mark.parametrize(
-    "backend_error",
-    [
-        pytest.param(NotImplementedError("unsupported solver"), id="unsupported"),
-        pytest.param(ValueError("solver value error"), id="value-error"),
-    ],
-)
 def test_backend_failures_do_not_prove_inconsistency(monkeypatch, backend_error):
     def unsupported(*args, **kwargs):
         raise backend_error
@@ -250,7 +243,7 @@ def test_budget_keeps_a_proven_conflict_without_claiming_a_completed_search(conf
     assert not result.relaxations
     assert {check.status for check in result.input_checks} == {"unknown"}
     assert "check budget exhausted" in str(result)
-    with pytest.raises(ValueError, match="at least 1"):
+    with pytest.raises(ModelValidationError, match="at least 1"):
         p.analyse(max_checks=0)
 
 
@@ -337,30 +330,18 @@ def test_a_derived_pole_is_an_undefined_deduction():
 
 
 def test_unevaluated_function_values_are_not_numeric_witnesses():
-    class Scalar(Modello):
-        x = InstanceDummy("x")
-
     p = inspect_model(Scalar, "formal", x=Function("f")(1))
     assert p.analyse().status == "unknown"
 
 
 def test_noncommutative_algebra_remains_inspectable_without_scalar_proofs():
-    class Operators(Modello):
-        x = InstanceDummy("x", commutative=False)
-        y = InstanceDummy("y", commutative=False)
-        commutator = x * y - y * x
-
     p = inspect_model(Operators, "operators")
     assert "x*y - y*x" in str(p)
     assert p.analyse().status == "unknown"
 
 
 def test_solution_sets_preserve_infinite_families_and_unresolved_conditions():
-    class Periodic(Modello):
-        angle = InstanceDummy("angle", real=True)
-        sine = sin(angle)
-
-    p = inspect_model(Periodic, "periodic", sine=0)
+    p = inspect_model(Wave, "periodic", sine=0)
     report = p.analyse()
     (result,) = report.solution_sets
     assert result.field == p.field("angle")

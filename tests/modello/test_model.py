@@ -14,6 +14,8 @@ from modello import (
     inspect_model,
 )
 
+from ._models import Increment, Pair, Reading, Scalar, ScalarComponent
+
 
 def test_multiple_inheritance_expr_conflict():
     """Overrided modello attributes are replaced with new values."""
@@ -40,16 +42,12 @@ def test_multiple_inheritance_expr_conflict():
 def test_overriding_a_child_rebinds_inherited_expressions():
     """Replacing a component updates inherited references without changing bases."""
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-        y = x + 1
-
     class Replacement(Modello):
         x = InstanceDummy("x")
         y = x + 10
 
     class Parent(Modello):
-        child = Child
+        child = Increment
         total = child.y + 1
         alias = child.x
 
@@ -58,27 +56,23 @@ def test_overriding_a_child_rebinds_inherited_expressions():
         doubled = child.y * 2
 
     class Restored(Derived):
-        child = Child
+        child = Increment
 
     parent = Derived("D", child=Replacement("C", x=2))
     assert (parent.child.y, parent.total, parent.doubled, parent.alias) == (12, 13, 24, 2)
-    assert Parent("P", child=Child("C", x=2)).total == 4
-    assert Restored("R", child=Child("C", x=2)).total == 4
+    assert Parent("P", child=Increment("C", x=2)).total == 4
+    assert Restored("R", child=Increment("C", x=2)).total == 4
 
 
 def test_nested_overrides_follow_existing_multiple_base_precedence():
     """Later model bases override earlier model bases throughout the field tree."""
-
-    class Child(Modello):
-        x = InstanceDummy("x")
-        y = x + 1
 
     class Replacement(Modello):
         x = InstanceDummy("x")
         y = x + 10
 
     class First(Modello):
-        child = Child
+        child = Increment
         a = child.y
 
     class Second(Modello):
@@ -95,14 +89,11 @@ def test_nested_overrides_follow_existing_multiple_base_precedence():
 def test_removed_referenced_child_fields_are_rejected():
     """An inherited expression cannot silently keep a symbol from a removed field."""
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-
     class Replacement(Modello):
         y = InstanceDummy("y")
 
     class Parent(Modello):
-        child = Child
+        child = Scalar
         total = child.x + 1
 
     with pytest.raises(ValueError, match="child.x"):
@@ -120,16 +111,12 @@ def test_removed_referenced_child_fields_are_rejected():
 def test_overridden_scalar_assumptions_reach_inherited_expressions():
     """Replacing an independent scalar rebinds formulas and preserves new assumptions."""
 
-    class Base(Modello):
-        x = InstanceDummy("x", real=True)
-        squared = x**2
-
-    class Positive(Base):
+    class Positive(Reading):
         x = InstanceDummy("x", positive=True)
 
     assert Positive("P", squared=4).x == 2
     with pytest.raises(ValueError, match="2 solutions"):
-        Base("B", squared=4)
+        Reading("B", squared=4)
 
 
 def test_ordinary_method_inheritance_and_super_survive_nesting():
@@ -160,12 +147,8 @@ def test_ordinary_method_inheritance_and_super_survive_nesting():
 def test_alias_definitions_add_constraints_instead_of_overwriting_them():
     """A parent alias can constrain a child's existing derived relationship."""
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-        y = x + 1
-
     class Parent(Modello):
-        child = Child
+        child = Increment
         alias = child.y
         alias = child.x * 2
 
@@ -176,35 +159,26 @@ def test_alias_definitions_add_constraints_instead_of_overwriting_them():
 def test_nested_reference_unknown_attributes():
     """Unknown class reference attributes have a clear validation error."""
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-
-    class Parent(Modello):
-        child = Child
-
-    with pytest.raises(AttributeError, match="Child.*nope"):
-        Parent.child.nope
+    with pytest.raises(AttributeError, match="Scalar.*nope"):
+        ScalarComponent.child.nope
 
 
 def test_scalar_and_nested_fields_cannot_change_kinds():
     """Replacing a field with another kind cannot leave hidden stale equations."""
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-
     class Parent(Modello):
-        child = Child
+        child = Scalar
         x = InstanceDummy("x")
 
     with pytest.raises(ValueError, match="Cannot replace nested model"):
 
-        class Scalar(Parent):
+        class InvalidScalar(Parent):
             child = Symbol("scalar")
 
     with pytest.raises(ValueError, match="Cannot replace scalar"):
 
         class Nested(Parent):
-            x = Child
+            x = Scalar
 
     with pytest.raises(ValueError, match="non-model value"):
 
@@ -217,9 +191,6 @@ def test_incompatible_field_kinds_in_multiple_bases_are_rejected():
 
     class Child(Modello):
         value = InstanceDummy("value")
-
-    class Scalar(Modello):
-        x = InstanceDummy("x")
 
     class Nested(Modello):
         x = Child
@@ -275,13 +246,10 @@ def test_reference_helpers_do_not_shadow_public_model_fields():
 def test_class_body_component_aliases_require_an_explicit_model_class():
     """Copying a component reference must not leak an unbound template to instances."""
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-
     with pytest.raises(TypeError, match="using its model class"):
 
         class Invalid(Modello):
-            child = Child
+            child = Scalar
             alias = child
 
 
@@ -292,33 +260,23 @@ def test_class_body_component_aliases_require_an_explicit_model_class():
 def test_component_declarations_accept_preconstructed_children(declare):
     """Both declaration forms bind an independently constructed child."""
 
-    class Child(Modello):
-        a = InstanceDummy("a")
-        b = InstanceDummy("b")
-        c = a + b
-
-    child = Child("C", a=2, b=3)
+    child = Pair("C", a=2, b=3)
 
     class Parent(Modello):
-        child = declare(Child)
+        child = declare(Pair)
         d = InstanceDummy("d")
-        e = child.c + d
+        e = child.total + d
 
     instance = Parent("P", child=child, d=4)
-    assert instance.child.c == 5
+    assert instance.child.total == 5
     assert instance.e == 9
 
 
 def test_repeated_subtrees_preserve_deep_paths_and_source_identity():
     """Repeated subtrees retain their values and resolve cross-branch paths."""
 
-    class Leaf(Modello):
-        a = InstanceDummy("a")
-        b = InstanceDummy("b")
-        total = a + b
-
     class Branch(Modello):
-        leaf = Leaf
+        leaf = Pair
         offset = InstanceDummy("offset")
         total = leaf.total + offset
 
@@ -328,8 +286,8 @@ def test_repeated_subtrees_preserve_deep_paths_and_source_identity():
         whole = left.total + right.total
         cross_branch = left.leaf.a + right.leaf.total
 
-    left = Branch("L", leaf=Leaf("LL", a=1, b=2), offset=1)
-    right = Branch("R", leaf=Leaf("RL", a=2, b=3), offset=2)
+    left = Branch("L", leaf=Pair("LL", a=1, b=2), offset=1)
+    right = Branch("R", leaf=Pair("RL", a=2, b=3), offset=2)
     tree = Tree("T", left=left, right=right)
     assert tree.left.leaf.total == 3
     assert tree.left.total == 4
@@ -349,14 +307,11 @@ def test_empty_and_unconstrained_child_instances():
     class Empty(Modello):
         pass
 
-    class Child(Modello):
-        x = InstanceDummy("x")
-
     class Parent(Modello):
         empty = Empty
-        child = Child
+        child = Scalar
 
-    parent = Parent("P", child=Child("C", x=5), empty=Empty("E"))
+    parent = Parent("P", child=Scalar("C", x=5), empty=Empty("E"))
     assert parent.child.x == 5
     assert isinstance(parent.empty, Empty)
     assert isinstance(Parent("P").child.x, BoundInstanceDummy)

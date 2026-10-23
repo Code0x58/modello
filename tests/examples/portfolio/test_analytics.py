@@ -12,8 +12,8 @@ from sympy import ImmutableMatrix, ones
 
 from examples.data import NamedMap, Series
 from examples.portfolio.analytics import NamedPortfolioPath, PerformanceIndex, measure
-from examples.portfolio.demo import Basket, EquityMembers, Portfolio
-from examples.portfolio.models import AAPL, MSFT, EquityPosition, EquityPrices, USDCash
+from examples.portfolio.demo import Portfolio
+from examples.portfolio.models import AAPL, MSFT, EquityPrices
 from examples.portfolio.valuation import NamedMarketData
 from examples.symbolic import Known
 
@@ -88,16 +88,7 @@ def test_euler_contributions_and_reference_weights_risk():
 
 def test_opposite_asset_returns_diversify_reference_weights_risk():
     """Negative covariance can offset fixed-weight risk while buy-and-hold weights drift."""
-    portfolio = Portfolio(
-        "opposite returns",
-        basket=Basket(
-            "basket",
-            members=EquityMembers(
-                "members", aapl=EquityPosition("apple", quantity=1), msft=EquityPosition("microsoft", quantity=1)
-            ),
-        ),
-        cash=USDCash("cash", amount=0),
-    )
+    portfolio = fixed_portfolio(quantities=(1, 1), cash=0)
     dates = (date(2026, 1, 5), date(2026, 1, 6), date(2026, 1, 7))
     data = NamedMarketData(
         dates,
@@ -139,16 +130,7 @@ def test_named_covariance_and_risk_agree_with_independent_matrix_calculation():
 
 def test_cash_only_portfolio_and_zero_risk():
     """Zero equity positions have zero returns and risk without dividing by zero."""
-    portfolio = Portfolio(
-        "cash only",
-        basket=Basket(
-            "basket",
-            members=EquityMembers(
-                "members", aapl=EquityPosition("apple", quantity=0), msft=EquityPosition("microsoft", quantity=0)
-            ),
-        ),
-        cash=USDCash("cash", amount=100),
-    )
+    portfolio = fixed_portfolio(quantities=(0, 0))
     path = NamedPortfolioPath.from_model(portfolio.pricer().over(market_data()))
     result = path.analytics(periods_per_year=252)
     assert path.nav.values == (100,) * 5
