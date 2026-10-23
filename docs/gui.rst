@@ -178,6 +178,8 @@ number formatting to entries; explicit coordinate metadata replaces that
 default. Python initial inputs and scenarios accept vectors or sequences at a
 vector path, including nested paths such as ``"window.samples"``. The browser
 uses bracketed coordinate paths such as ``"window.samples[2]"``.
+An entry's **View in equations** action opens the complete indexed vector
+definition, including when the entry was reached through an alias.
 
 Run ``python -m examples.gui_timeseries`` and open http://127.0.0.1:5059 to explore
 inventory transitions. Use ``--example returns``, ``rolling``, ``exposure``, or

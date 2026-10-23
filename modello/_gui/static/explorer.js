@@ -378,7 +378,7 @@ function details() {
       activeView = "equations";
       setView();
       document
-        .querySelector(`[data-equation="${CSS.escape(own.path)}"]`)
+        .querySelector(`[data-equation="${CSS.escape(own.equation_path || own.path)}"]`)
         ?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
     definition.append(expand);

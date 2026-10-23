@@ -346,6 +346,9 @@ class Explorer:
             entry = {
                 "kind": str(c.kind),
                 "path": _path_label(c.path),
+                "equation_path": _path_label(c.path[:-1] if c.path[:-1] in problem.vectors else c.path)
+                if c.kind is ConstraintKind.DEFINITION
+                else "",
                 "text": f"{text.doprint(c.left)} = {text.doprint(c.right)}",
                 "mathml": printer.equation(c.left, c.right),
             }

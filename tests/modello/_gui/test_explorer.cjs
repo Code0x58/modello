@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const source = fs.readFileSync(process.argv[2], "utf8");
 const fixtures = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+const created = [], queries = [], scrolled = [];
 
 class Element {
   constructor() {
@@ -13,13 +14,16 @@ class Element {
     this.isConnected = true;
     this.dataset = {};
     this.classList = { toggle() {}, add() {}, remove() {} };
+    this.listeners = new Map();
+    created.push(this);
   }
-  addEventListener() {}
+  addEventListener(name, listener) { this.listeners.set(name, listener); }
   setAttribute() {}
   append() {}
   replaceChildren() {}
   focus() {}
-  scrollIntoView() {}
+  querySelectorAll() { return []; }
+  scrollIntoView() { scrolled.push(this); }
 }
 
 const elements = new Map();
@@ -38,9 +42,15 @@ const context = vm.createContext({
       return selector.includes("textarea") ? [textarea] : [];
     },
     createElement() { return new Element(); },
+    importNode(element) { return element; },
+    querySelector(selector) { queries.push(selector); return new Element(); },
     addEventListener() {},
   },
   window: { addEventListener() {} },
+  DOMParser: class {
+    parseFromString() { return { documentElement: Object.assign(new Element(), { localName: "math" }) }; }
+  },
+  CSS: { escape: value => value },
   fetch: async (_, options) => {
     // Hold the initial request while the isolated test takes control.
     if (booting) return new Promise(() => {});
@@ -87,5 +97,13 @@ const queue = (data, ok = true) => responses.push({ data, ok });
   assert.equal(vm.runInContext("state.fields.find(field => field.path === 'total').value", context), "6");
   assert.equal(textarea.disabled, false);
   assert.equal(responses.length, 0);
+  await evaluate("choose('doubled[0]', false, false);");
+  const showEquation = created.filter(element => element.className === "equation-expand").at(-1);
+  assert.ok(showEquation, "A defined vector entry must offer its original equation");
+  showEquation.listeners.get("click")();
+  assert.equal(vm.runInContext("activeView", context), "equations");
+  assert.equal(queries.at(-1), '[data-equation="doubled"]');
+  assert.ok(fixtures.restored.equations.some(equation => equation.path === "doubled"));
+  assert.ok(scrolled.length, "Equation navigation must scroll to the complete vector definition");
   console.log("Vector edits, normalization, restore, and rejection passed");
 })().catch(error => { console.error(error); process.exitCode = 1; });

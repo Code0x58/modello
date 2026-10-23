@@ -437,6 +437,23 @@ def test_browser_can_edit_each_coordinate_and_rejects_invalid_edits():
     assert rows(client.post("/api/explore", json={}).json)["total"]["value"] == "6"
 
 
+def test_coordinate_definitions_link_to_the_complete_formula_through_a_vector_alias():
+    class Parent(Modello):
+        window = component(Window)
+        alias = window.changes
+
+    data = Explorer(Parent).snapshot(raw=True)
+    coordinate = rows(data)["alias[0]"]
+    own = next(
+        constraint
+        for constraint in coordinate["constraints"]
+        if constraint["kind"] == "definition" and constraint["path"] in coordinate["aliases"]
+    )
+    assert own["path"] == "window.changes[0]"
+    assert own["equation_path"] == "window.changes"
+    assert own["equation_path"] in rows(data, "equations")
+
+
 def test_nested_vector_copy_can_be_reopened_without_turning_outputs_into_inputs():
     class Pair(Modello):
         window = component(Window)

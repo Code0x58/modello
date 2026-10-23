@@ -19,6 +19,7 @@ def test_frontend_vector_proposal_state(tmp_path: Path, pytestconfig: pytest.Con
     class Window(Modello):
         samples = Vector("x", size=3, real=True)
         total = samples.sum()
+        doubled = 2 * samples
 
     client = create_app(Window, inputs={"samples": [1, None, 3]}).test_client()
 
