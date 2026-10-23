@@ -6,7 +6,7 @@ from xml.etree import ElementTree as ET
 import pytest
 from sympy import Derivative, Function, IndexedBase, Integral, Limit, Product, Rational, Sum, Symbol
 
-from modello import Index, Modello, Vector, component, inspect_model, vector
+from modello import Index, InstanceDummy, Modello, Vector, component, inspect_model, vector
 from modello._gui.inputs import parse_vector
 from modello._gui.mathml import EquationPrinter
 from modello.errors import ModelInputError
@@ -248,6 +248,7 @@ def test_explicit_coordinate_metadata_replaces_inherited_vector_metadata():
     ).snapshot(raw=True)
     assert by_path(data)["samples[0]"]["unit"] == ""
     assert by_path(data)["samples[0]"]["number_format"] == "number"
+    assert by_path(data)["samples[0]"]["title"] == "samples[0]"
     assert by_path(data)["samples[1]"]["unit"] == "USD"
 
 
@@ -321,6 +322,95 @@ def test_temporary_vector_formulas_render_as_their_selected_scalar_expression():
     assert " for " not in text(markup)
     assert "mtable" not in markup
     assert "samples" in text(markup)
+
+
+def test_derived_vector_dependencies_link_to_free_inputs_in_other_vectors():
+    from examples.gui_timeseries import DEMOS
+
+    model, inputs = DEMOS["inventory"]
+    data = Explorer(model, inputs=inputs).snapshot()
+    dependencies = by_path(data, "vectors")["quantities"]["depends_on"]
+    assert [item["path"] for item in dependencies] == ["fills[2]"]
+
+
+@pytest.mark.parametrize("demo", ["inventory", "returns", "rolling", "exposure", "trend"])
+def test_timeseries_guided_scenarios_solve_and_retain_valid_formula_markup(demo):
+    from examples.gui_timeseries import DEMOS
+
+    model, inputs = DEMOS[demo]
+    explorer = Explorer(model, inputs=inputs)
+    initial = explorer.snapshot()
+    assert initial["fields"]
+    for scenario in explorer._layout.model_info.scenarios:
+        data = explorer.snapshot(scenario.bindings)
+        for row in [*data["fields"], *data["vectors"]]:
+            for constraint in row["constraints"]:
+                ET.fromstring(constraint["mathml"])
+        if scenario.title == "Fit the stationary line":
+            fields = by_path(data)
+            assert fields["slope"]["value"] == fields["intercept"]["value"] == "9/10"
+            assert "∑" in text(fields["squared_error"]["constraints"][0]["mathml"])
+            assert "d" in text(fields["slope_gradient"]["constraints"][0]["mathml"])
+
+
+def test_accepted_arithmetic_text_survives_repeated_browser_edits():
+    client = create_app(Window).test_client()
+    expression = "(1/3)**100"
+    response = client.post("/api/explore", json={"bindings": {"samples": f"[{expression}, 2, 3]"}})
+    assert response.status_code == 200
+    assert response.json["bindings"]["samples[0]"] == expression
+    assert by_path(response.json)["samples[0]"]["input"] == expression
+    seed = by_path(response.json, "vectors")["samples"]["input"]
+    assert expression in seed
+    assert client.post("/api/explore", json={"bindings": response.json["bindings"]}).status_code == 200
+    assert client.post("/api/explore", json={"bindings": {"samples": seed}}).status_code == 200
+
+
+def test_scalar_binding_normalization_preserves_the_accepted_expression():
+    class Scalar(Modello):
+        value = gui(InstanceDummy("value"))
+
+    client = create_app(Scalar).test_client()
+    expression = "2**100 * 2**100"
+    response = client.post("/api/explore", json={"bindings": {"value": expression}})
+    assert response.status_code == 200
+    assert response.json["bindings"]["value"] == expression
+    assert by_path(response.json)["value"]["input"] == expression
+    assert client.post("/api/explore", json={"bindings": response.json["bindings"]}).status_code == 200
+
+
+def test_large_bulk_edit_can_be_followed_by_an_individual_coordinate_edit():
+    class Large(Modello):
+        samples = Vector("x", size=1024, real=True)
+
+    client = create_app(Large).test_client()
+    bulk = "[" + ",".join(["1"] * 1024) + "]"
+    response = client.post("/api/explore", json={"raw": True, "bindings": {"samples": bulk}})
+    assert response.status_code == 200
+    proposal = {**response.json["bindings"], "samples[0]": "2"}
+    assert len(json.dumps(proposal)) > 16_384
+    response = client.post("/api/explore", json={"raw": True, "bindings": proposal})
+    assert response.status_code == 200
+    assert by_path(response.json)["samples[0]"]["input"] == "2"
+
+
+def test_vector_text_budget_scales_with_its_trusted_shape():
+    literal = "12345678901234567890123456789012"
+    text = "[" + ", ".join([literal] * 600) + "]"
+    assert len(text) > 16_000
+    values = parse_vector(text, 600)
+    assert len(values) == 600
+    assert values[0] == values[-1] == int(literal)
+
+
+def test_oversized_requests_return_a_json_validation_message():
+    app = create_app(Window)
+    response = app.test_client().post(
+        "/api/explore", data=" " * app.config["MAX_CONTENT_LENGTH"] + "{}", content_type="application/json"
+    )
+    assert response.status_code == 413
+    assert response.is_json
+    assert "too large" in response.json["error"]
 
 
 def test_reopening_an_instance_rejects_a_changed_vector_shape():

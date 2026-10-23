@@ -47,8 +47,8 @@ def vector_view(
         for constraint in rows[name]["constraints"]:
             if constraint not in related:
                 related.append(constraint)
-    current_input = _input_text(coordinates, rows, "input") if len(visible) == len(vector) else ""
-    initial_input = _input_text(coordinates, rows, "initial_input") if len(visible) == len(vector) else ""
+    current_input = vector_input_text(coordinates, rows, "input") if len(visible) == len(vector) else ""
+    initial_input = vector_input_text(coordinates, rows, "initial_input") if len(visible) == len(vector) else ""
     input_state = (
         "hidden"
         if len(visible) != len(vector)
@@ -65,22 +65,28 @@ def vector_view(
     scaled = elements * 100 if info.number_format == "percent" else elements
     aliases = [name for name, other in layout.vectors.items() if other == vector and name not in layout.hidden]
     observation_paths = list(dict.fromkeys([*aliases, *(alias for name in visible for alias in rows[name]["aliases"])]))
+    free = elements.free_symbols
+    dependencies = [
+        {"path": name, "title": layout.title(name)}
+        for name, field in layout.fields.items()
+        if field.symbol in free and name not in layout.hidden and name == layout.aliases[field.symbol][0]
+    ]
     return {
         "path": path,
         "parent": path.rpartition(".")[0],
         "name": path.rpartition(".")[2],
         "depth": path.count("."),
-        "title": info.title or path.rpartition(".")[2].replace("_", " "),
+        "title": layout.title(path),
         "description": info.description,
         "info": info.info,
         "symbol": info.symbol or path,
-        "shape": [len(vector)],
+        "shape": list(vector.shape),
         "entries": visible,
         "kind": kind,
         "provenance": provenance,
         "unit": info.unit,
         "number_format": info.number_format,
-        "value": context.problem.format(elements),
+        "value": context.format(elements),
         "value_state": "numeric" if all(entry.is_number for entry in elements) else "symbolic",
         "display_value": "",
         "approximate": False,
@@ -95,13 +101,11 @@ def vector_view(
         "aliases": aliases,
         "observation_paths": observation_paths,
         "constraints": related,
-        "depends_on": [
-            {"path": name, "title": rows[name]["title"]} for name in visible if rows[name]["kind"] == "free"
-        ],
+        "depends_on": dependencies,
     }
 
 
-def _input_text(coordinates: list[str], rows: Mapping[str, dict[str, Any]], key: str) -> str:
+def vector_input_text(coordinates: list[str], rows: Mapping[str, dict[str, Any]], key: str) -> str:
     if not any(rows[name][key] for name in coordinates):
         return ""
     return "[" + ", ".join(rows[name][key] or "?" for name in coordinates) + "]"

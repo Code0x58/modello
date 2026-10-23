@@ -8,6 +8,7 @@ No solver candidate list is promoted to a complete nonlinear solution family.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING, Generic, cast, overload
 
 from sympy import (
@@ -45,9 +46,9 @@ from sympy.core.relational import Relational
 from sympy.logic.boolalg import Boolean
 from sympy.solvers.solveset import NonlinearError
 
-from modello._expressions import _evaluate
+from modello._expressions import _evaluate, _substitute
 from modello._model import InstanceDummy, _populate
-from modello._paths import _path_label
+from modello._paths import _path_label, _path_value
 from modello._problem import (
     Candidate,
     CandidateCheck,
@@ -56,13 +57,14 @@ from modello._problem import (
     ModelField,
     ModelT,
     Verdict,
+    _Algebra,
     _algebra,
     _canonical_fields,
     _domain,
     _FieldPrinter,
 )
 from modello.errors import ModelInputError, ModelValidationError, SolutionSelectionError, UnresolvedSolutionError
-from modello.vectors import Vector
+from modello.vectors import Vector, _VectorElement
 
 if TYPE_CHECKING:
     from modello import Modello, ScalarValue, SymbolicCondition, SymbolicScalar, VectorValue
@@ -86,27 +88,30 @@ class _FamilyField:
     expression: Expr
 
 
-def _require_exact(*expressions: Basic) -> None:
+def _require_exact(*expressions: Basic, allow_operators: bool = False) -> None:
     """Share exactness and binder checks across scalars and Boolean conditions."""
     if any(expression.has(Float) for expression in expressions):
         raise ModelInputError("Solution families require exact expressions; use Rational for decimal values")
-    if any(
+    if not allow_operators and any(
         isinstance(node, Derivative) or bool(getattr(node, "bound_symbols", ()))
         for expression in expressions
         for node in preorder_traversal(expression)
     ):
         raise ModelInputError("Evaluate bound-variable expressions, such as integrals and derivatives, first")
+    if not allow_operators and any(expression.has(_VectorElement) for expression in expressions):
+        raise ModelInputError("Resolve vector indices to integers before exploring a solution family")
 
 
-def _exact_scalar(value: object) -> Expr:
+def _exact_scalar(value: object, *, allow_operators: bool = False) -> Expr:
     try:
         expression = sympify(value)
     except (TypeError, ValueError, AttributeError) as error:
         raise ModelInputError("Expected a commutative scalar expression") from error
     if not isinstance(expression, Expr) or expression.is_commutative is not True:
         raise ModelInputError("Expected a commutative scalar expression")
-    expression = _evaluate(expression)
-    _require_exact(expression)
+    if not allow_operators:
+        expression = _evaluate(expression)
+    _require_exact(expression, allow_operators=allow_operators)
     return expression
 
 
@@ -225,20 +230,32 @@ class _FamilyReduction:
     def substitute_isolated(self) -> None:
         """Eliminate explicit quantities while retaining preferred coordinates."""
         while True:
-            substitution = None
+            remaining = frozenset(self.remaining)
+            independent: dict[Symbol, Expr] = {}
+            fallback = None
             for left, right in self.equations:
-                a, b = left.xreplace(self.expressions), right.xreplace(self.expressions)
-                if a in self.remaining and a not in self.protected and a not in b.free_symbols:
-                    substitution = (a, b)
-                    break
-                if b in self.remaining and b not in self.protected and b not in a.free_symbols:
-                    substitution = (b, a)
-                    break
-            if substitution is None:
-                return
-            symbol, value = substitution
-            self.expressions = {key: expr.xreplace({symbol: value}) for key, expr in self.expressions.items()}
-            self.remaining.remove(symbol)
+                a = _evaluate(_substitute(left, self.expressions))
+                b = _evaluate(_substitute(right, self.expressions))
+                if a in remaining and (a not in self.protected or b.is_Rational) and a not in b.free_symbols:
+                    symbol, value = a, b
+                elif b in remaining and (b not in self.protected or a.is_Rational) and b not in a.free_symbols:
+                    symbol, value = b, a
+                else:
+                    continue
+                if fallback is None and symbol not in self.protected:
+                    fallback = (symbol, value)
+                if not value.free_symbols & remaining:
+                    independent.setdefault(symbol, value)
+            # Observe a whole vector in one pass. Dependent substitutions are
+            # applied singly so a cycle cannot erase all of its coordinates.
+            if not independent:
+                if fallback is None:
+                    return
+                independent[fallback[0]] = fallback[1]
+            self.expressions = {
+                key: _evaluate(_substitute(expr, independent)) for key, expr in self.expressions.items()
+            }
+            self.remaining = [symbol for symbol in self.remaining if symbol not in independent]
 
     def eliminate_affine(self) -> None:
         """Reduce rational affine joins, ordering preferred coordinates last."""
@@ -249,7 +266,7 @@ class _FamilyReduction:
         for left, right in self.equations:
             if not ordered:
                 return
-            residual = left.xreplace(self.expressions) - right.xreplace(self.expressions)
+            residual = _evaluate(_substitute(left, self.expressions) - _substitute(right, self.expressions))
             try:
                 matrix, constant = linear_eq_to_matrix([residual], ordered)
             except NonlinearError:
@@ -265,7 +282,9 @@ class _FamilyReduction:
             else:
                 (row,) = solved
                 replacements = dict(zip(ordered, row, strict=True))
-                self.expressions = {key: expr.xreplace(replacements) for key, expr in self.expressions.items()}
+                self.expressions = {
+                    key: _evaluate(_substitute(expr, replacements)) for key, expr in self.expressions.items()
+                }
                 self.remaining = [symbol for symbol in self.remaining if replacements[symbol] == symbol]
         except Exception as error:
             self.issues.append(SolutionIssue("rational affine reduction", error))
@@ -301,13 +320,14 @@ class SolutionFamily(Generic[ModelT]):
             raise ModelInputError("Solution families currently require commutative scalar fields")
         try:
             algebra = _algebra(problem.constraints)
+            resolved_conditions = tuple(algebra.resolve.operators(condition) for condition in conditions)
         except NotImplementedError as error:
             raise ModelInputError(str(error)) from error
         for constraint, (_, right) in zip(problem.constraints, algebra.equations, strict=True):
             if constraint.right.has(Float):
                 raise ModelInputError("Solution families require exact expressions; use Rational for decimal values")
-            _exact_scalar(right)
-        _require_exact(*conditions)
+            _exact_scalar(right, allow_operators=True)
+        _require_exact(*conditions, allow_operators=True)
         domains = tuple(_field_domain(field.symbol) for field in fields)
         # Work symbols explicitly carry the finite-scalar universe, in addition
         # to the model's assumptions. Those assumptions remain in explicit sets.
@@ -323,7 +343,7 @@ class SolutionFamily(Generic[ModelT]):
         equations = [(bindings[left], right.xreplace(bindings)) for left, right in algebra.equations]
         equations.extend(
             (condition.lhs.xreplace(bindings), condition.rhs.xreplace(bindings))
-            for condition in conditions
+            for condition in resolved_conditions
             if isinstance(condition, Eq)
         )
         reduction = _FamilyReduction(symbols, tuple(equations), protected)
@@ -334,8 +354,15 @@ class SolutionFamily(Generic[ModelT]):
         expressions = reduction.expressions
         parameters = tuple(reduction.remaining)
         values = tuple(expressions[symbol] for symbol in symbols)
-        predicates = [Eq(left.xreplace(expressions), right.xreplace(expressions)) for left, right in equations]
-        predicates.extend(condition.xreplace(bindings).xreplace(expressions) for condition in conditions)
+        _require_exact(*values)
+        predicates = [
+            Eq(_evaluate(_substitute(left, expressions)), _evaluate(_substitute(right, expressions)))
+            for left, right in equations
+        ]
+        predicates.extend(
+            _evaluate(_substitute(condition.xreplace(bindings), expressions)) for condition in resolved_conditions
+        )
+        _require_exact(*predicates)
         predicates.extend(_membership(value, domain, parameters) for value, domain in zip(values, domains, strict=True))
         parameter_fields = tuple(fields[symbols.index(symbol)] for symbol in parameters)
         parameter_domains = tuple(domains[symbols.index(symbol)] for symbol in parameters)
@@ -389,7 +416,7 @@ class SolutionFamily(Generic[ModelT]):
     def __str__(self) -> str:
         lines = [f"{self.problem.model.__name__}({self.problem.name!r}): solution family"]
         if self.parameters:
-            lines.append("  Coordinates: " + ", ".join(".".join(field.path) for field in self.parameters))
+            lines.append("  Coordinates: " + ", ".join(_path_label(field.path) for field in self.parameters))
         else:
             lines.append("  No remaining coordinates.")
         lines.append(f"  Coordinate domain: {self.format(self.parameter_domain)}")
@@ -420,8 +447,12 @@ class SolutionFamily(Generic[ModelT]):
         (reduced,) = self._chart_expressions(expression)
         return cast(Expr, reduced.xreplace(reverse))
 
-    def _scalar(self, value: object) -> Expr:
-        expression = _exact_scalar(value)
+    @cached_property
+    def _formulae(self) -> _Algebra:
+        return _algebra(self.problem.constraints)
+
+    def _scalar(self, value: object, *, allow_operators: bool = False) -> Expr:
+        expression = _exact_scalar(value, allow_operators=allow_operators)
         self._require_symbols(expression)
         return expression
 
@@ -434,7 +465,17 @@ class SolutionFamily(Generic[ModelT]):
 
     def _chart_expressions(self, *expressions: ScalarValue) -> tuple[Expr, ...]:
         bindings = {binding.field.symbol: binding.expression for binding in self._bindings}
-        return tuple(self._scalar(expression).xreplace(bindings) for expression in expressions)
+        resolved = []
+        for value in expressions:
+            expression = self._scalar(value, allow_operators=True)
+            try:
+                expression = self._formulae.resolve.operators(expression)
+            except NotImplementedError as error:
+                raise ModelInputError(str(error)) from error
+            expression = _evaluate(_substitute(expression, bindings))
+            _require_exact(expression)
+            resolved.append(expression)
+        return tuple(resolved)
 
     def values(self, *expressions: ScalarValue | Vector) -> Set:
         """Return scalar values or coupled tuples, retaining vector order."""
@@ -470,7 +511,7 @@ class SolutionFamily(Generic[ModelT]):
                 raise ModelInputError("Conditions must be relations or booleans; use Eq for equality") from error
             if not isinstance(value, Boolean) or isinstance(value, Expr):
                 raise ModelInputError("Conditions must be relations or booleans; use Eq for equality")
-            _require_exact(value)
+            _require_exact(value, allow_operators=True)
             self._require_symbols(value)
             checked.append(value)
         return self._prepare(self.problem, self._preferred, (*self.conditions, *checked))
@@ -485,14 +526,17 @@ class SolutionFamily(Generic[ModelT]):
             return self
         problem = self.problem._capture_inputs(**inputs)
         for constraint in problem.constraints[len(self.problem.constraints) :]:
-            self._scalar(constraint.right)
+            self._scalar(constraint.right, allow_operators=True)
         return self._prepare(problem, self._preferred, self.conditions)
 
     def _check_state(self, candidate: Candidate) -> tuple[CandidateCheck, Verdict]:
         """Combine the original model audit with the family's added relations."""
         check = self.problem.check(candidate)
         assignment = {value.field.symbol: value.value for value in candidate.values}
-        conditions = tuple(_evaluate_predicates(condition.xreplace(assignment)) for condition in self.conditions)
+        conditions = tuple(
+            _evaluate_predicates(_evaluate(_substitute(self._formulae.resolve.operators(condition), assignment)))
+            for condition in self.conditions
+        )
         if check.verdict == "violated" or any(condition is S.false for condition in conditions):
             return check, "violated"
         if check.verdict == "satisfied" and all(condition is S.true for condition in conditions):
@@ -523,12 +567,10 @@ class SolutionFamily(Generic[ModelT]):
             raise ModelInputError(f"The reference state must be a {self.problem.model.__name__} instance")
         values = []
         for field in self.problem.fields:
-            value: object = through
             try:
-                for part in field.path:
-                    value = getattr(value, part)
-            except AttributeError as error:
-                raise ModelInputError(f"The reference state is missing {'.'.join(field.path)}") from error
+                value = _path_value(through, field.path)
+            except (AttributeError, IndexError, TypeError) as error:
+                raise ModelInputError(f"The reference state is missing {_path_label(field.path)}") from error
             values.append(FieldValue(field, _exact_scalar(value)))
         candidate = Candidate(tuple(values))
         check, verdict = self._check_state(candidate)

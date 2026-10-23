@@ -16,7 +16,12 @@ def _path_label(path: tuple[str, ...]) -> str:
 def _path_value(value: Any, path: tuple[str, ...]) -> Any:
     """Traverse the same schema on a reference, a populated model, or a vector."""
     for part in path:
-        value = value[int(part)] if part.isdecimal() else getattr(value, part)
+        try:
+            value = getattr(value, part)
+        except AttributeError:
+            if not part.isdecimal():
+                raise
+            value = value[int(part)]
     return value
 
 

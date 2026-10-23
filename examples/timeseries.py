@@ -1,4 +1,4 @@
-"""Finite paths: state transitions, compounding, rolling windows, and exposure.
+"""Finite paths: state transitions, compounding, rolling windows, and calibration.
 
 The model factories choose a finite shape. Acquisition, timestamps, missing-data
 policies, and plotting belong to their callers; all relationships here remain
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from sympy import Abs, Integral, Product, Sum, Symbol
+from sympy import Abs, Derivative, Expr, Integral, Product, Sum, Symbol
 
 from examples.symbolic import SymbolicModel
 from modello import Index, InstanceDummy, Modello, Vector, component, vector
@@ -30,6 +30,8 @@ class InventoryPath(HoldingState, SymbolicModel):
     fills: Vector
     prices: Vector
     quantities: Vector
+    notional: Expr
+    turnover: Expr
 
 
 @lru_cache(maxsize=None, typed=True)
@@ -62,6 +64,9 @@ class ReturnPath(SymbolicModel):
     returns: Vector
     factors: Vector
     wealth: Vector
+    growth: Expr
+    total_return: Expr
+    after: Expr
 
 
 @lru_cache(maxsize=None, typed=True)
@@ -107,6 +112,43 @@ def rolling_window(size: int, width: int) -> type[RollingWindow]:
     return Window
 
 
+class LinearTrend(SymbolicModel):
+    """A line, its observation residuals, and its exact objective gradients."""
+
+    slope = InstanceDummy("slope", real=True)
+    intercept = InstanceDummy("intercept", real=True)
+    times: Vector
+    observations: Vector
+    fitted: Vector
+    residuals: Vector
+    squared_error: Expr
+    slope_gradient: Expr
+    intercept_gradient: Expr
+
+
+@lru_cache(maxsize=None, typed=True)
+def linear_trend(size: int) -> type[LinearTrend]:
+    """State an unweighted squared-error objective, without selecting a fit.
+
+    Observe both gradients as zero to obtain stationary lines. Distinct observed
+    times determine a unique least-squares line; repeated times may leave a
+    family. Missing observations remain unknowns in the same equations.
+    """
+    _positive_size(size)
+
+    class Trend(LinearTrend):
+        times = Vector("t", size=size, real=True)
+        observations = Vector("y", size=size, real=True)
+        i = Index("i")
+        fitted = vector(LinearTrend.intercept + LinearTrend.slope * times[i], (i, 0, size - 1))
+        residuals = observations - fitted
+        squared_error = residuals.dot(residuals, i)
+        slope_gradient = Derivative(squared_error, LinearTrend.slope)
+        intercept_gradient = Derivative(squared_error, LinearTrend.intercept)
+
+    return Trend
+
+
 _time = Symbol("t", real=True)
 
 
@@ -134,3 +176,7 @@ if __name__ == "__main__":
     print("Rolling means:", rolling_window(5, 3)("window", samples=[1, 2, 3, 4, 5]).means)
     print("Compounded wealth:", return_path(3)("returns", before=100, returns=["1/10", "-1/20", "1/5"]).wealth)
     print("Linear exposure:", LinearExposure("area", opening=2, closing=4, duration=3).exposure)
+    fitted = linear_trend(4)(
+        "fit", times=[0, 1, 2, 3], observations=[1, 2, 2, 4], slope_gradient=0, intercept_gradient=0
+    )
+    print("Fitted slope and intercept:", fitted.slope, fitted.intercept)

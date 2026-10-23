@@ -59,6 +59,7 @@ distinct identities, including two indices with the same printed name.
 Indexing and slicing use Python's zero-based order, including negative integer
 indices. Symbolic indexing creates a scalar expression; substituting an integer
 selects that coordinate. ``len(v)`` and iteration describe its finite shape.
+``v.shape`` returns its single axis as a tuple, such as ``(3,)`` or ``(0,)``.
 
 .. code-block:: pycon
 
@@ -162,6 +163,18 @@ coordinates, subject to the remaining relationships. This does not make them
 independent if constraints couple them. The :doc:`solutions` guide explains
 conditional families and finite-state selection.
 
+Individual coordinates also work as controls in ``family.section(...)`` and
+the plotting examples' model views. A section fixes the other coordinates at
+a checked reference case; vector results retain their original order.
+
+An observed bound may select a prefix of a fixed-size vector. Its sum or
+product evaluates after that observation is applied. Exact families require
+all remaining indexing and bound-variable operators to evaluate: supply an
+integer selection or finite bounds before calling ``solutions()``. They do
+not enumerate free symbolic vector indices. Bounds must select valid entries;
+substituting an out-of-range index gives an undefined scalar, excluded from
+finite solution states. Direct integer indexing still raises ``IndexError``.
+
 Family observations accumulate constraints. A ``None`` entry adds no new
 observation and does not release an earlier one. Explorer proposals instead
 replace the selected observation pattern; ``None`` or ``?`` there releases a
@@ -203,6 +216,20 @@ formula:
    >>> Sensitivity("point", x=3).slope
    6
 
+Queries and conditions use the same formula expansion:
+
+.. code-block:: pycon
+
+   >>> from sympy import Eq
+   >>> family = inspect_model(Sensitivity, "sensitivity").solutions()
+   >>> gradient = Derivative(family.symbols.square, family.symbols.x)
+   >>> family.expression(gradient) == 2 * family.symbols.x
+   True
+   >>> family.where(Eq(gradient, 6)).one().x
+   3
+   >>> family.observe(x=3).expression(gradient)
+   6
+
 The derivative is taken before substituting the observed point. Unresolved
 operators remain symbolic when the constructor's backend can retain them;
 the exact solution-family API requires them to evaluate. Calculus through
@@ -238,6 +265,7 @@ Run the finite-path examples locally:
    $ uv run --extra gui python -m examples.gui_timeseries --example returns
    $ uv run --extra gui python -m examples.gui_timeseries --example rolling
    $ uv run --extra gui python -m examples.gui_timeseries --example exposure
+   $ uv run --extra gui python -m examples.gui_timeseries --example trend
 
 Open http://127.0.0.1:5059. The guides explain the models' assumptions; the
 example data are illustrative. Vector positions do not acquire timestamps,

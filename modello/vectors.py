@@ -11,7 +11,7 @@ from collections.abc import Iterator, Sequence
 from functools import cached_property
 from typing import Any, TypeAlias, overload
 
-from sympy import Basic, Expr, Integer, Product, Sum, Symbol, Tuple, sympify
+from sympy import Basic, Expr, Integer, Product, S, Sum, Symbol, Tuple, sympify
 
 from modello._symbols import Index, InstanceDummy
 from modello._values import ScalarValue
@@ -64,6 +64,11 @@ class Vector(Basic):
     def __len__(self) -> int:
         return len(self.elements)
 
+    @property
+    def shape(self) -> tuple[int]:
+        """Return the single finite axis, including ``(0,)`` for an empty vector."""
+        return (len(self),)
+
     def __iter__(self) -> Iterator[Expr]:
         return iter(self.elements)
 
@@ -86,7 +91,7 @@ class Vector(Basic):
             position = sympify(index)
         except (TypeError, ValueError) as error:
             raise ModelInputError("A vector index must be an integer") from error
-        if not isinstance(position, Expr) or position.is_integer is False:
+        if not isinstance(position, Expr) or _invalid_index(position):
             raise ModelInputError("A vector index must be an integer")
         if isinstance(position, Integer):
             return self._at(int(position))
@@ -136,17 +141,17 @@ class Vector(Basic):
         return self * -1
 
     def __mul__(self, scalar: ScalarValue) -> Vector:
-        value = sympify(scalar)
-        if not isinstance(value, Expr) or value.is_Matrix:
-            raise ModelInputError("Scale a vector by a scalar; use dot for a contraction")
+        return self._scale(_factor(scalar))
+
+    def _scale(self, value: Expr, *, left: bool = False) -> Vector:
         i = _local_index(self)
-        return vector(self[i] * value, (i, 0, len(self) - 1))
+        return vector(value * self[i] if left else self[i] * value, (i, 0, len(self) - 1))
 
     def __rmul__(self, scalar: ScalarValue) -> Vector:
-        return self * scalar
+        return self._scale(_factor(scalar), left=True)
 
     def __truediv__(self, scalar: ScalarValue) -> Vector:
-        return self * (1 / sympify(scalar))
+        return self._scale(1 / _factor(scalar))
 
     def _sympystr(self, printer: Any) -> str:
         label = getattr(printer, "vector_labels", {}).get(self)
@@ -160,7 +165,12 @@ class _VectorElement(Expr):
 
     def __new__(cls, values: Vector, index: Expr) -> Expr:
         if isinstance(index, Integer):
-            return values[int(index)]
+            try:
+                return values[int(index)]
+            except IndexError:
+                return S.NaN
+        if _invalid_index(index):
+            return S.NaN
         return Expr.__new__(cls, values, index)
 
     @property
@@ -172,11 +182,16 @@ class _VectorElement(Expr):
         return self.args[1]
 
     def _eval_is_real(self) -> bool | None:
-        return True if all(value.is_real is True for value in self.vector) else None
+        valid = (
+            self.index.is_integer is True
+            and (self.index + len(self.vector)).is_nonnegative is True
+            and (len(self.vector) - 1 - self.index).is_nonnegative is True
+        )
+        return True if valid and all(value.is_real is True for value in self.vector) else None
 
     def _eval_is_commutative(self) -> bool | None:
         assumptions = {value.is_commutative for value in self.vector}
-        return False if False in assumptions else True if None not in assumptions else None
+        return next(iter(assumptions)) if len(assumptions) == 1 else None
 
     def _eval_subs(self, old: Basic, new: Basic) -> Expr | None:
         # A local index normally does not occur in the coordinates themselves.
@@ -268,6 +283,22 @@ def vector(expression: ScalarValue, limits: tuple[Symbol, int, int]) -> Vector:
 
 
 VectorValue: TypeAlias = Vector | Sequence[ScalarValue | None]
+
+
+def _invalid_index(index: Expr) -> bool:
+    return (
+        bool(index.is_Matrix) or index.is_integer is False or (index.is_number is True and index.is_integer is not True)
+    )
+
+
+def _factor(scalar: ScalarValue) -> Expr:
+    try:
+        value = sympify(scalar)
+    except (TypeError, ValueError) as error:
+        raise ModelInputError("Scale a vector by a scalar; use dot for a contraction") from error
+    if not isinstance(value, Expr) or value.is_Matrix:
+        raise ModelInputError("Scale a vector by a scalar; use dot for a contraction")
+    return value
 
 
 def _local_index(*vectors: Vector) -> Index:

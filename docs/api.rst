@@ -109,7 +109,7 @@ Vectors and indices
 --------------------
 
 .. autoclass:: Vector
-   :members: elements, sum, product, dot, doit
+   :members: shape, elements, sum, product, dot, doit
 
 .. autofunction:: vector
 

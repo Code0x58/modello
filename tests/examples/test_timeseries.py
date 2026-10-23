@@ -1,10 +1,10 @@
 """Finite path equations work forward, inversely, and through numeric views."""
 
 import pytest
-from sympy import Rational
+from sympy import Derivative, Rational, S, Sum, Tuple
 
 from examples.symbolic import Known
-from examples.timeseries import HoldingState, LinearExposure, inventory_path, return_path, rolling_window
+from examples.timeseries import HoldingState, LinearExposure, inventory_path, linear_trend, return_path, rolling_window
 from modello import Vector, inspect_model
 from modello.errors import ModelInputError, SolutionCountError
 
@@ -70,9 +70,42 @@ def test_continuous_exposure_integrates_the_declared_interpolation():
     assert inspect_model(LinearExposure, "family", opening=2, exposure=9, duration=3).solutions().one().closing == 4
 
 
+def test_linear_calibration_expands_vector_residuals_before_differentiation():
+    Trend = linear_trend(4)
+    inputs = {"times": [0, 1, 2, 3], "observations": [1, 2, 2, 4], "slope_gradient": 0, "intercept_gradient": 0}
+    case = Trend("fit", **inputs)
+    assert case.slope == case.intercept == Rational(9, 10)
+    assert case.fitted == Vector(Rational(9, 10), Rational(9, 5), Rational(27, 10), Rational(18, 5))
+    assert case.residuals == Vector(Rational(1, 10), Rational(1, 5), Rational(-7, 10), Rational(2, 5))
+    assert case.squared_error == Rational(7, 10)
+    problem = inspect_model(Trend, "fit", **inputs)
+    definitions = {
+        constraint.path: constraint.right for constraint in problem.constraints if constraint.kind == "definition"
+    }
+    assert isinstance(definitions[("squared_error",)], Sum)
+    assert isinstance(definitions[("slope_gradient",)], Derivative)
+    exact = problem.solutions().one()
+    assert exact.slope == case.slope and exact.intercept == case.intercept
+    assert problem.analyse().status == "consistent"
+
+
+def test_repeated_calibration_times_preserve_an_underdetermined_family():
+    problem = inspect_model(
+        linear_trend(3), "singular", times=[1, 1, 1], observations=[1, 2, 3], slope_gradient=0, intercept_gradient=0
+    )
+    family = problem.solutions()
+    assert len(family.parameters) == 1
+    assert family.is_empty is False
+    assert family.expression(family.symbols.slope + family.symbols.intercept) == 2
+    assert family.expression(family.symbols.squared_error) == 2
+    assert family.observe(slope=0).one().intercept == 2
+    assert family.observe(slope=1).one().intercept == 1
+    assert family.values(family.symbols.fitted).contains(Tuple(2, 2, 2)) is S.true
+
+
 @pytest.mark.parametrize("periods", [0, -1, True, 1.5])
 def test_path_factories_require_positive_finite_shapes(periods):
-    for factory in (inventory_path, return_path):
+    for factory in (inventory_path, return_path, linear_trend):
         with pytest.raises(ValueError, match="positive integers"):
             factory(periods)
     with pytest.raises(ValueError):

@@ -180,8 +180,9 @@ vector path, including nested paths such as ``"window.samples"``. The browser
 uses bracketed coordinate paths such as ``"window.samples[2]"``.
 
 Run ``python -m examples.gui_timeseries`` and open http://127.0.0.1:5059 to explore
-inventory transitions. Use ``--example returns``, ``rolling``, or ``exposure``
-for compounding, rolling windows, or a continuous integral. See :doc:`vectors`
+inventory transitions. Use ``--example returns``, ``rolling``, ``exposure``, or
+``trend`` for compounding, rolling windows, a continuous integral, or calibration.
+See :doc:`vectors`
 and :doc:`examples/timeseries/index` for model definitions and their assumptions.
 
 Understanding the interface
@@ -343,6 +344,12 @@ Input length, literal and arithmetic sizes, and powers are bounded. The parser
 uses Python's syntax tree without evaluating Python or SymPy expression strings.
 Arbitrary functions, attribute access, and new parameter names are not accepted.
 The trusted Python API continues to accept normal symbolic scalar inputs.
+
+Vector and request budgets scale with the declared, trusted model shape; each
+entry retains the scalar arithmetic limits. Accepted input expressions are kept
+as editor text, even when their exact values expand to much longer fractions or
+integers. This lets a later coordinate edit reuse the applied proposal without
+turning an accepted expression into an oversized literal.
 
 The proposed case is checked against original equations and all declared
 assumptions, including domains of calculated and hidden quantities. Invalid

@@ -7,7 +7,7 @@ from typing import Mapping
 
 from sympy import Rational
 
-from examples.timeseries import LinearExposure, inventory_path, return_path, rolling_window
+from examples.timeseries import LinearExposure, inventory_path, linear_trend, return_path, rolling_window
 from modello import Modello, ScalarValue, VectorValue
 from modello.gui import FieldInfo, ModelInfo, Scenario, create_app
 
@@ -193,6 +193,51 @@ class ExposureLab(LinearExposure):
     pass
 
 
+@ModelInfo(
+    title="Calibrating a linear trend",
+    description="Inspect vector residuals and fit a line by observing both objective gradients as zero.",
+    info=(
+        "Four equally weighted observations with explicitly supplied times. "
+        "The squared-error objective is convex; distinct times determine a unique stationary line. "
+        "The model retains the objective and its derivatives, so it can also describe other lines. "
+        "This example supplies no stochastic model or uncertainty estimate."
+    ),
+    initial_field="squared_error",
+    highlights=("slope", "intercept", "squared_error"),
+    fields={
+        "times": FieldInfo(title="Observation times", symbol="t"),
+        "observations": FieldInfo(title="Observed levels", symbol="y"),
+        "slope": FieldInfo(title="Slope", symbol="a"),
+        "intercept": FieldInfo(title="Intercept", symbol="b"),
+        "fitted": FieldInfo(title="Fitted levels", symbol="ŷ"),
+        "residuals": FieldInfo(title="Residuals", symbol="e", description="Observed minus fitted level at each time."),
+        "squared_error": FieldInfo(title="Sum of squared errors", symbol="L"),
+        "slope_gradient": FieldInfo(title="Slope gradient", symbol="Lₐ"),
+        "intercept_gradient": FieldInfo(title="Intercept gradient", symbol="Lᵦ"),
+    },
+    scenarios=(
+        Scenario(
+            title="Inspect the objective",
+            description="Keep slope and intercept open and inspect the sum of squared vector residuals.",
+        ),
+        Scenario(
+            title="Choose a line",
+            description="Supply slope one and intercept one, then inspect the residuals and objective.",
+            bindings={"slope": 1, "intercept": 1},
+            select="residuals",
+        ),
+        Scenario(
+            title="Fit the stationary line",
+            description="Observe both gradients as zero to infer slope and intercept of nine tenths.",
+            bindings={"slope_gradient": 0, "intercept_gradient": 0},
+            select="slope_gradient",
+        ),
+    ),
+)
+class TrendLab(linear_trend(4)):  # type: ignore[misc]  # Runtime-selected finite shape.
+    pass
+
+
 DEMOS: Mapping[str, tuple[type[Modello], Mapping[str, ScalarValue | VectorValue]]] = {
     "inventory": (
         InventoryLab,
@@ -201,6 +246,7 @@ DEMOS: Mapping[str, tuple[type[Modello], Mapping[str, ScalarValue | VectorValue]
     "returns": (ReturnLab, {"before": 100, "returns": [Rational(1, 50), Rational(-1, 100), None, Rational(3, 100)]}),
     "rolling": (WindowLab, {"samples": [1, 2, None, 4, 5]}),
     "exposure": (ExposureLab, {"opening": 2, "duration": 3}),
+    "trend": (TrendLab, {"times": [0, 1, 2, 3], "observations": [1, 2, 2, 4]}),
 }
 
 

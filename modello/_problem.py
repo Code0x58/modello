@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, TypeVar
 from sympy import Basic, Expr, FiniteSet, Interval, S, Set, Symbol, SympifyError, sympify
 from sympy.printing.str import StrPrinter
 
-from modello._expressions import _expand_definitions
+from modello._expressions import _DefinitionResolver, _expand_definitions
 from modello._paths import _path_label
 from modello._symbols import Index
 from modello.errors import ModelInputError, ModelValidationError
@@ -85,12 +85,13 @@ class _Algebra:
     definitions: dict[Symbol, Basic]
     cyclic: tuple[Symbol, ...]
     equations: tuple[tuple[Symbol, Basic], ...]
+    resolve: _DefinitionResolver
 
 
 def _algebra(constraints: tuple[ModelConstraint, ...]) -> _Algebra:
     definitions = {c.left: c.right for c in constraints if c.kind is ConstraintKind.DEFINITION}
     expanded, cyclic, resolve = _expand_definitions(definitions)
-    return _Algebra(expanded, cyclic, tuple((c.left, resolve(c.right)) for c in constraints))
+    return _Algebra(expanded, cyclic, tuple((c.left, resolve(c.right)) for c in constraints), resolve)
 
 
 @dataclass(frozen=True, init=False)

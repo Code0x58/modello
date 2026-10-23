@@ -7,9 +7,9 @@ browser edits are exact scalars parsed without evaluating expression strings.
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field, replace
-from typing import TYPE_CHECKING, Any, Literal, Mapping, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, TypeVar, cast
 
-from sympy import Expr, S, Symbol, factor_terms
+from sympy import Basic, Expr, S, Symbol, factor_terms
 
 from modello import (
     Annotation,
@@ -22,11 +22,12 @@ from modello import (
     inspect_model,
 )
 from modello._gui.formatting import display_number
-from modello._gui.inputs import parse_scalar, parse_vector
+from modello._gui.inputs import binding_texts, parse_scalar, parse_vector, request_limit
 from modello._gui.mathml import EquationPrinter
-from modello._gui.vectors import vector_view
+from modello._gui.vectors import vector_input_text, vector_view
 from modello._inputs import _validate_vector_values
 from modello._paths import _path_label, _path_value
+from modello._problem import _FieldPrinter
 from modello.diagnostics import Candidate, ConstraintKind, FieldValue, ModelConstraint, ModelField, ModelProblem
 from modello.errors import ModelInputError, ModelValidationError, SolverBackendError
 
@@ -136,10 +137,14 @@ class ModelInfo(Annotation):
 class _Snapshot:
     problem: ModelProblem
     printer: EquationPrinter
+    text: _FieldPrinter
     supplied: Mapping[Symbol, Expr]
     initial_inputs: Mapping[Symbol, Expr]
     definitions: Mapping[Symbol, Expr]
     constraints: Mapping[Symbol, list[dict[str, str]]]
+
+    def format(self, expression: Basic) -> str:
+        return self.text.doprint(expression)
 
 
 class BindingError(ModelValidationError):
@@ -298,6 +303,23 @@ class Explorer:
                 raise BindingError(str(error), (path,)) from error
         return parsed
 
+    def _browser_snapshot(self, bindings: Mapping[str, str | None], *, raw: bool) -> dict[str, Any]:
+        """Retain accepted arithmetic instead of seeding an unparseable large literal."""
+        parsed = self._browser_bindings(bindings)
+        texts = binding_texts(bindings, {path: len(value) for path, value in self._layout.vectors.items()})
+        data = self.snapshot(parsed, raw=raw)
+        data["bindings"] = texts
+        rows = {row["path"]: row for row in data["fields"]}
+        for row in rows.values():
+            if row["kind"] == "input":
+                text = next((texts[path] for path in row["aliases"] if path in texts), None)
+                if text is not None:
+                    row["input"] = text
+        for row in data["vectors"]:
+            if len(row["entries"]) == row["shape"][0]:
+                row["input"] = vector_input_text(row["entries"], rows, "input")
+        return data
+
     def snapshot(
         self, bindings: Mapping[str, ScalarValue | VectorValue | None] | None = None, *, raw: bool = False
     ) -> dict[str, Any]:
@@ -314,6 +336,9 @@ class Explorer:
         definitions = {c.left: c.right for c in problem.constraints if c.kind is ConstraintKind.DEFINITION}
         supplied = {c.left: c.right for c in problem.constraints if c.kind is ConstraintKind.INPUT}
         printer = self._layout.printer()
+        text = problem._printer(
+            *(c.right for c in problem.constraints), *values.values(), *self._initial_inputs.values()
+        )
         constraints: dict[Symbol, list[dict[str, str]]] = {}
         for c in problem.constraints:
             if _path_label(c.path) in self._layout.hidden:
@@ -321,12 +346,12 @@ class Explorer:
             entry = {
                 "kind": str(c.kind),
                 "path": _path_label(c.path),
-                "text": f"{problem.format(c.left)} = {problem.format(c.right)}",
+                "text": f"{text.doprint(c.left)} = {text.doprint(c.right)}",
                 "mathml": printer.equation(c.left, c.right),
             }
             for symbol in c.symbols:
                 constraints.setdefault(symbol, []).append(entry)
-        context = _Snapshot(problem, printer, supplied, self._initial_inputs, definitions, constraints)
+        context = _Snapshot(problem, printer, text, supplied, self._initial_inputs, definitions, constraints)
         rows: list[dict[str, Any]] = []
         symbols: list[dict[str, Any]] = []
         for path, field in self._layout.fields.items():
@@ -375,7 +400,7 @@ class Explorer:
                         path: None
                         if value is None
                         else self._input_text(
-                            path, FieldValue(self._layout.field(path), cast(ScalarValue, value)).value
+                            path, FieldValue(self._layout.field(path), cast(ScalarValue, value)).value, context.format
                         )
                         for path, value in self._layout.expand_bindings(scenario.bindings)
                     },
@@ -388,10 +413,11 @@ class Explorer:
             ),
         }
 
-    def _input_text(self, path: str, value: Expr) -> str:
+    def _input_text(self, path: str, value: Expr, formatter: Callable[[Basic], str] | None = None) -> str:
+        render = self.problem.format if formatter is None else formatter
         if self._layout.metadata[path].number_format == "percent":
-            return self.problem.format(value * 100) + "%"
-        return self.problem.format(value)
+            return render(value * 100) + "%"
+        return render(value)
 
     def _field_view(self, path: str, expression: Expr, context: _Snapshot) -> dict[str, Any]:
         field = self._layout.fields[path]
@@ -417,7 +443,7 @@ class Explorer:
             "name": field.path[-1],
             "depth": len(field.path) - 1,
             "parent": _path_label(field.path[:-1]),
-            "title": info.title or field.path[-1].replace("_", " "),
+            "title": self._layout.title(path),
             "description": info.description,
             "info": info.info,
             "symbol": info.symbol or path,
@@ -427,7 +453,7 @@ class Explorer:
             "number_format": info.number_format,
             "value": ("Hidden input" if symbol in context.supplied else "Hidden quantity")
             if hidden
-            else context.problem.format(expression),
+            else context.format(expression),
             "value_state": "hidden"
             if hidden
             else "free"
@@ -440,10 +466,10 @@ class Explorer:
             "value_mathml": "" if hidden else context.printer.expression(scaled, parenthesize=parenthesize),
             "exact_mathml": "" if hidden else context.printer.expression(scaled, parenthesize=parenthesize),
             "symbol_mathml": context.printer.expression(symbol),
-            "input": self._input_text(path, context.supplied[symbol])
+            "input": self._input_text(path, context.supplied[symbol], context.format)
             if symbol in context.supplied and not hidden
             else "",
-            "initial_input": self._input_text(path, context.initial_inputs[symbol])
+            "initial_input": self._input_text(path, context.initial_inputs[symbol], context.format)
             if symbol in context.initial_inputs and not hidden
             else "",
             "input_state": "hidden" if hidden else _input_state(symbol, context.supplied, context.initial_inputs),
@@ -456,7 +482,7 @@ class Explorer:
             "depends_on": []
             if hidden
             else [
-                {"path": name, "title": self._layout.metadata[name].title or item.path[-1].replace("_", " ")}
+                {"path": name, "title": self._layout.title(name)}
                 for name, item in self._layout.fields.items()
                 if item.symbol in expression.free_symbols
                 and name not in self._layout.hidden
@@ -510,7 +536,16 @@ def create_app(
 
     explorer = Explorer(model, name, inputs=inputs, metadata=metadata)
     app = Flask(__name__, template_folder="_gui/templates", static_folder="_gui/static", static_url_path="/assets")
-    app.config.update(MAX_CONTENT_LENGTH=16_384, TRUSTED_HOSTS=["localhost", "127.0.0.1", "[::1]"])
+    app.config.update(
+        MAX_CONTENT_LENGTH=request_limit(explorer._layout.editable),
+        TRUSTED_HOSTS=["localhost", "127.0.0.1", "[::1]"],
+    )
+
+    @app.errorhandler(413)
+    def too_large(_error: Exception) -> Any:
+        return jsonify(
+            error="The input request is too large. Use shorter values or change fewer entries.", paths=[]
+        ), 413
 
     @app.get("/")
     def index() -> str:
@@ -525,13 +560,7 @@ def create_app(
         if not isinstance(bindings, dict) or not isinstance(raw, bool) or len(bindings) > len(explorer.problem.fields):
             return jsonify(error="Invalid bindings or raw flag.", paths=[]), 400
         try:
-            parsed = explorer._browser_bindings(bindings)
-            snapshot = explorer.snapshot(parsed, raw=raw)
-            snapshot["bindings"] = {
-                path: None if value is None else explorer._input_text(path, cast(Expr, value))
-                for path, value in explorer._layout.expand_bindings(parsed)
-            }
-            return jsonify(snapshot)
+            return jsonify(explorer._browser_snapshot(bindings, raw=raw))
         except BindingError as error:
             return jsonify(error=str(error), paths=list(dict.fromkeys([*bindings, *error.paths]))), 422
         except (ModelInputError, ModelValidationError) as error:

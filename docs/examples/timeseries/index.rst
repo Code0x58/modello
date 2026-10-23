@@ -4,8 +4,9 @@ Finite paths and time-series formulas
 An ordered vector lets a model retain complete formulas across observation or
 event boundaries. The reusable definitions in ``examples.timeseries`` keep
 data acquisition and presentation separate. They demonstrate state transitions,
-compounding, complete trailing windows, and continuous exposure under a stated
-interpolation rule. See :doc:`../../vectors` for the underlying API.
+compounding, complete trailing windows, continuous exposure under a stated
+interpolation rule, and analytic calibration. See :doc:`../../vectors` for the
+underlying API.
 
 From one fill to a path
 -----------------------
@@ -127,6 +128,42 @@ An integral of an explicitly stated function differs from a sum of samples.
 Choose durations, interpolation, and units as part of the model; the vector
 layer does not supply them.
 
+Calibrating a line
+------------------
+
+``linear_trend(n)`` describes a line and an unweighted squared-error objective:
+
+.. math::
+
+   \hat y_i = b+a t_i,\qquad e_i = y_i-\hat y_i,\qquad
+   L = \sum_{i=0}^{n-1}e_i^2.
+
+The model retains fitted levels, residuals, the objective, and both derivatives
+of the objective. Observing the derivatives as zero selects stationary lines:
+
+.. code-block:: pycon
+
+   >>> from examples.timeseries import linear_trend
+   >>> Trend = linear_trend(4)
+   >>> fitted = Trend(
+   ...     "fit", times=[0, 1, 2, 3], observations=[1, 2, 2, 4],
+   ...     slope_gradient=0, intercept_gradient=0,
+   ... )
+   >>> fitted.slope, fitted.intercept, fitted.squared_error
+   (9/10, 9/10, 7/10)
+   >>> fitted.fitted
+   [9/10, 9/5, 27/10, 18/5]
+   >>> fitted.residuals
+   [1/10, 1/5, -7/10, 2/5]
+
+The squared-error objective is convex. At least two distinct observed times
+determine a unique stationary line. Repeated times can leave a coupled family
+of slope and intercept values, which the exact solution-family API preserves.
+The constructor does not choose a fit automatically: observing slope and
+intercept instead describes any other line and calculates its objective and
+gradients. Missing levels remain unknowns. This example assumes equal weights
+and supplies no noise model, uncertainty estimate, or implicit time spacing.
+
 Evaluation and exploration
 ---------------------------
 
@@ -142,6 +179,6 @@ with typed data adapters such as those in the portfolio example.
 
 Run the console walkthrough with ``python -m examples.timeseries``. For the
 interactive view, run ``python -m examples.gui_timeseries`` with the GUI extra
-and open http://127.0.0.1:5059. Select ``--example returns``, ``rolling``, or
-``exposure`` for the other models. Each example includes both forward and inverse
+and open http://127.0.0.1:5059. Select ``--example returns``, ``rolling``,
+``exposure``, or ``trend`` for the other models. Each example includes both forward and inverse
 guided questions. The :doc:`GUI guide <../../gui>` describes editing and validation.

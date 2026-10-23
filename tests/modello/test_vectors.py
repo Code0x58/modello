@@ -4,7 +4,22 @@ from copy import deepcopy
 from types import new_class
 
 import pytest
-from sympy import Derivative, FiniteSet, Integral, MatrixSymbol, Product, Rational, S, Sum, Symbol, Tuple, fibonacci
+from sympy import (
+    Derivative,
+    Eq,
+    FiniteSet,
+    Function,
+    Integral,
+    Interval,
+    MatrixSymbol,
+    Product,
+    Rational,
+    S,
+    Sum,
+    Symbol,
+    Tuple,
+    fibonacci,
+)
 
 from modello import Index, InstanceDummy, Modello, Vector, component, inspect_model, vector
 from modello.errors import ModelDefinitionError, ModelInputError, SolutionCountError, SolverBackendError
@@ -22,6 +37,8 @@ def test_vector_values_indexing_and_sympy_reconstruction():
     x = Vector("x", size=3, real=True)
     i = Index("i")
     assert len(x) == 3
+    assert x.shape == (3,)
+    assert Vector().shape == (0,)
     assert tuple(x[::-1]) == (x[2], x[1], x[0])
     assert x[-1] == x[2]
     assert x[i].subs(i, 1) == x[1]
@@ -33,6 +50,9 @@ def test_vector_values_indexing_and_sympy_reconstruction():
     assert Vector([1, "1/2", 3]) == Vector(1, Rational(1, 2), 3)
     with pytest.raises(IndexError):
         x[3]
+    assert x[i].subs(i, 3) is S.NaN
+    assert x[i].subs(i, Rational(1, 2)) is S.NaN
+    assert x[i].is_real is None
 
 
 def test_forward_inverse_and_partial_vector_observations():
@@ -169,6 +189,9 @@ def test_noncommutative_entries_keep_their_product_order():
     assert values[Index("i")].is_commutative is False
     assert values.product().doit() == a * b
     assert values.dot(Vector(b, a)).doit() == a * b + b * a
+    c = Symbol("c", commutative=False)
+    assert (c * values).doit() == Vector(c * a, c * b)
+    assert (values * c).doit() == Vector(a * c, b * c)
 
 
 def test_index_substitution_also_updates_coordinates_when_they_depend_on_it():
@@ -195,6 +218,7 @@ def test_comprehension_queries_are_lazy_and_respect_their_local_index():
     i = Index("i")
     coefficient = Symbol("a")
     result = vector(coefficient * i**2, (i, 0, 1_000_000))
+    assert result.shape == (1_000_001,)
     assert result[0] == 0
     assert result[-1] == coefficient * 1_000_000**2
     assert result[:2] == Vector(0, coefficient)
@@ -234,6 +258,90 @@ def test_vector_family_queries_preserve_order_and_coupled_values():
     observed = family.observe(weights=[Rational(1, 4), None])
     assert observed.values(family.symbols.weights) == FiniteSet(Tuple(Rational(1, 4), Rational(3, 4)))
     assert observed.one().weights == Vector(Rational(1, 4), Rational(3, 4))
+
+
+def test_large_vector_observations_close_an_exact_family_even_when_preferred():
+    class Large(Modello):
+        samples = Vector("x", size=1024, real=True)
+        total = samples.sum()
+
+    problem = inspect_model(Large, "large", samples=[1] * 1024)
+    family = problem.solutions(problem.symbols.samples)
+    assert family.parameters == ()
+    assert family.expression(family.symbols.total) == 1024
+    assert family.expression(family.symbols.samples) == Vector([1] * 1024)
+
+
+@pytest.mark.parametrize("count, total, growth", [(0, 0, 1), (1, 1, 2), (3, 6, 24), (4, 10, 120)])
+def test_observed_bounds_evaluate_before_exact_family_validation(count, total, growth):
+    class Prefix(Modello):
+        samples = Vector("x", size=4, real=True)
+        count = InstanceDummy("count", integer=True, nonnegative=True)
+        i = Index("i")
+        total = Sum(samples[i], (i, 0, count - 1))
+        growth = Product(1 + samples[i], (i, 0, count - 1))
+
+    family = inspect_model(Prefix, "prefix", samples=[1, 2, 3, 4], count=count).solutions()
+    case = family.one()
+    assert (case.total, case.growth) == (total, growth)
+    symbols = family.symbols
+    query = Sum(symbols.samples[Prefix.i], (Prefix.i, 0, symbols.count - 1))
+    assert family.expression(query) == total
+    assert family.values(query) == FiniteSet(total)
+
+
+def test_free_vector_indices_are_explicitly_unsupported_by_exact_families():
+    class Selection(Modello):
+        samples = Vector("x", size=2, real=True)
+        index = InstanceDummy("index", integer=True)
+        selected = samples[index]
+
+    problem = inspect_model(Selection, "selection", samples=[10, 20])
+    with pytest.raises(ModelInputError, match="indices"):
+        problem.solutions()
+    assert inspect_model(Selection, "valid", samples=[10, 20], index=-1).solutions().one().selected == 20
+    for index in (-3, 2):
+        invalid = inspect_model(Selection, "invalid", samples=[10, 20], index=index).solutions()
+        assert invalid.is_empty is True
+        assert invalid.values(invalid.symbols.selected) is S.EmptySet
+
+
+def test_family_sections_and_plot_windows_accept_vector_coordinates():
+    from examples.solution_views import ModelView
+
+    class Pair(Modello):
+        samples = Vector("x", size=2, real=True)
+        total = samples.sum()
+
+    problem = inspect_model(Pair, "section")
+    family = problem.solutions(problem.symbols.samples)
+    section = family.section(problem.symbols.samples[0], through=Pair("anchor", samples=[2, 3]))
+    assert section.expression(problem.symbols.samples) == Vector(problem.symbols.samples[0], 3)
+    assert section.expression(problem.symbols.total) == problem.symbols.samples[0] + 3
+    assert "Coordinates: samples[0]" in str(section)
+    view = ModelView(section.parameters, section)
+    assert view._windows(Pair("lower", samples=[0, 3]), Pair("upper", samples=[4, 3])) == (Interval(0, 4),)
+    reference = Pair("missing", samples=[2, 3])
+    reference.samples = Vector(2)
+    with pytest.raises(ModelInputError, match=r"samples\[1\]"):
+        family.section(through=reference)
+
+
+def test_family_queries_and_conditions_differentiate_model_formulas_before_observations():
+    class Sensitivity(Modello):
+        x = InstanceDummy("x", real=True)
+        square = x**2
+
+    problem = inspect_model(Sensitivity, "formula")
+    symbols = problem.symbols
+    family = problem.solutions()
+    gradient = Derivative(symbols.square, symbols.x)
+    assert family.expression(gradient) == 2 * symbols.x
+    assert family.where(Eq(gradient, 6)).one().x == 3
+    assert family.observe(x=3).expression(gradient) == 6
+    assert family.observe(x=3).values(gradient) == FiniteSet(6)
+    preferred = problem.solutions(symbols.square)
+    assert preferred.expression(symbols.square + gradient) == symbols.square + 2 * symbols.x
 
 
 def test_differentiation_expands_definitions_before_substituting_observations():
@@ -294,6 +402,21 @@ def test_calculus_through_a_cycle_reports_an_explicit_limitation():
         problem.solutions()
 
 
+def test_unresolved_derivatives_keep_diagnostic_observations_without_claiming_a_solution():
+    class Opaque(Modello):
+        x = InstanceDummy("x", real=True)
+        gradient = Derivative(Function("f")(x), x)
+
+    problem = inspect_model(Opaque, "opaque", x=3)
+    analysis = problem.analyse()
+    assert analysis.status == "unknown"
+    assert analysis.deductions.candidate.value(problem.field("x")) == 3
+    assert "Diagnostic check raised" not in analysis.reason
+    assert Opaque("point", x=3).gradient.has(Derivative)
+    with pytest.raises(ModelInputError, match="bound-variable"):
+        problem.solutions()
+
+
 def test_local_formula_variables_are_not_printed_as_external_inputs():
     t = Symbol("t", real=True)
 
@@ -330,7 +453,9 @@ def test_invalid_shapes_fail_at_declaration(size):
         Vector("x", size=size)
 
 
-@pytest.mark.parametrize("position", [True, Rational(1, 2), 1.5, object()])
+@pytest.mark.parametrize(
+    "position", [True, Rational(1, 2), 1.0, 1.5, S.NaN, S.Infinity, MatrixSymbol("A", 2, 2), object()]
+)
 def test_invalid_coordinate_indices_are_rejected(position):
     with pytest.raises(ModelInputError, match="index"):
         Vector(1, 2)[position]

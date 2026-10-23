@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import ast
+import json
 import math
 import re
+from collections.abc import Iterable, Mapping
 
 from sympy import E, Expr, I, Rational, pi, sqrt
 
 from modello.errors import ModelInputError
 
+_MAX_SCALAR_LENGTH = 160
+
 
 def parse_scalar(text: str) -> Expr:
     """Read a deliberately small arithmetic language, never eval/sympify text."""
-    if not text.strip() or len(text) > 160:
+    if not text.strip() or len(text) > _MAX_SCALAR_LENGTH:
         raise ModelInputError("Enter a number or a short exact arithmetic expression.")
     percent = text.rstrip().endswith("%")
     text = text.strip()[:-1].strip() if percent else text.strip()
@@ -77,20 +81,44 @@ def parse_scalar(text: str) -> Expr:
 
 def parse_vector(text: str, size: int) -> tuple[Expr | None, ...]:
     """Parse exact scalar entries; '?' explicitly leaves a coordinate unobserved."""
+    values: list[Expr | None] = []
+    for i, entry in enumerate(vector_entries(text, size)):
+        try:
+            values.append(None if entry is None else parse_scalar(entry))
+        except ModelInputError as error:
+            raise ModelInputError(f"Entry {i}: {error}") from error
+    return tuple(values)
+
+
+def vector_entries(text: str, size: int) -> tuple[str | None, ...]:
+    """Keep accepted arithmetic text when a whole-vector edit is flattened."""
     text = text.strip()
-    if not text.startswith("[") or not text.endswith("]") or len(text) > 16_000:
+    limit = max(16_000, size * (_MAX_SCALAR_LENGTH + 2) + 2)
+    if not text.startswith("[") or not text.endswith("]") or len(text) > limit:
         raise ModelInputError("Enter a vector such as [1, ?, 3/2]; ? leaves an entry unobserved.")
     body = text[1:-1].strip()
     entries = body.split(",") if body else []
     if len(entries) != size:
         raise ModelInputError(f"Enter exactly {size} vector entries; received {len(entries)}.")
-    values: list[Expr | None] = []
-    for i, entry in enumerate(entries):
-        if entry.strip() == "?":
-            values.append(None)
+    return tuple(None if entry.strip() == "?" else entry.strip() for entry in entries)
+
+
+def binding_texts(bindings: Mapping[str, str | None], sizes: Mapping[str, int]) -> dict[str, str | None]:
+    """Normalize paths while preserving the caller's bounded scalar syntax."""
+    result: dict[str, str | None] = {}
+    for path, text in bindings.items():
+        if path in sizes:
+            entries = (None,) * sizes[path] if text is None or not text.strip() else vector_entries(text, sizes[path])
+            result.update((f"{path}[{i}]", entry) for i, entry in enumerate(entries))
         else:
-            try:
-                values.append(parse_scalar(entry))
-            except ModelInputError as error:
-                raise ModelInputError(f"Entry {i}: {error}") from error
-    return tuple(values)
+            result[path] = None if text is None or not text.strip() else text.strip()
+    return result
+
+
+def request_limit(paths: Iterable[str]) -> int:
+    """Budget a bounded scalar per editable path, including JSON escaping.
+
+    A supplementary Unicode character can take twelve bytes as a JSON escape.
+    The minimum also leaves room for a small request's envelope and diagnostics.
+    """
+    return max(16_384, 64 + sum(len(json.dumps(path)) + 12 * _MAX_SCALAR_LENGTH + 16 for path in paths))

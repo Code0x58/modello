@@ -27,8 +27,13 @@ def _substitute(expression: Basic, values: Mapping[Symbol, Basic]) -> Basic:
     SymPy uses Subs for an unresolved derivative evaluated at a numeric point;
     xreplace alone would attempt to differentiate with respect to that number.
     """
-    if expression.has(Sum, Product, Integral, Derivative, Limit):
-        return expression.subs(values, simultaneous=True)
+    if expression.has(Sum, Product, Integral, Derivative, Limit, _VectorFormula):
+        for operator in expression.atoms(Sum, Product, Integral, Derivative, Limit, _VectorFormula):
+            variables = [operator.args[1]] if isinstance(operator, Limit) else getattr(operator, "variables", ())
+            if isinstance(operator, _VectorFormula):
+                variables = operator.bound_symbols
+            if any(variable in values and values[variable] != variable for variable in variables):
+                return expression.subs(values, simultaneous=True)
     return expression.xreplace(values)
 
 
@@ -50,6 +55,15 @@ class _DefinitionResolver:
         if key not in self._memo:
             self._memo[key] = self._resolve(expression, protected)
         return self._memo[key]
+
+    def operators(self, expression: Basic) -> Basic:
+        """Resolve operator bodies while retaining ordinary field references outside them."""
+        if not expression.has(*_OPERATORS):
+            return expression
+        if isinstance(expression, _OPERATORS):
+            return self(expression)
+        args = tuple(self.operators(arg) for arg in expression.args)
+        return expression.func(*args) if args != expression.args else expression
 
     def _resolve(self, expression: Basic, protected: frozenset[Symbol]) -> Basic:
         if isinstance(expression, Symbol):

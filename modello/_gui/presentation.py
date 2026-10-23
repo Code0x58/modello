@@ -144,6 +144,15 @@ class Layout:
         """Give each render its own printer context, including concurrent requests."""
         return EquationPrinter(self._labels, self._vector_labels, self._coordinate_labels)
 
+    def title(self, path: str) -> str:
+        """Give coordinates a useful default name even with explicit blank metadata."""
+        if self.metadata[path].title:
+            return self.metadata[path].title
+        field = self.fields.get(path)
+        if field is not None and field.path[-1].isdecimal():
+            return _path_label(field.path[-2:])
+        return path.rpartition(".")[2].replace("_", " ")
+
     def _validate_navigation(self) -> None:
         quantities = self.fields | self.vectors
         for path in self.model_info.highlights:

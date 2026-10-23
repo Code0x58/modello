@@ -384,7 +384,7 @@ class ProblemAnalysis:
             entries = []
             for result in self.solution_sets:
                 printer = self.problem._printer(result.values, scope=result.field.path[:-1])
-                path = ".".join(result.field.path[len(printer.scope) :])
+                path = _path_label(result.field.path[len(printer.scope) :])
                 entries.append(
                     (
                         result.field.path[:-1],
@@ -504,14 +504,13 @@ def _fixed_values(constraints: tuple[ModelConstraint, ...]) -> dict[Symbol, Expr
     fixed: dict[Symbol, Expr] = {}
     equations = _algebra(constraints).equations
     while True:
-        additions = {
-            left: _evaluate(right.xreplace(fixed))
-            for left, right in equations
-            if left not in fixed
-            and isinstance(right, Expr)
-            and not right.xreplace(fixed).free_symbols
-            and (isinstance(right, Float) or not right.xreplace(fixed).has(Float))
-        }
+        additions = {}
+        for left, right in equations:
+            if left in fixed or not isinstance(right, Expr):
+                continue
+            value = _substitute(right, fixed)
+            if not value.free_symbols and (isinstance(right, Float) or not value.has(Float)):
+                additions[left] = _evaluate(value)
         if not additions:
             return fixed
         fixed.update(additions)
@@ -600,7 +599,7 @@ def _solution_sets(
             or any(symbol.is_commutative is not True for symbol in c.symbols)
         ):
             continue
-        residual = _evaluate(left.xreplace(bindings) - right.xreplace(bindings))
+        residual = _evaluate(left.xreplace(bindings) - _substitute(right, bindings))
         symbols = residual.free_symbols
         if len(symbols) == 1:
             symbol = next(iter(symbols))
@@ -765,7 +764,7 @@ class _Analyser:
             choices = {field.symbol: _sample(field.symbol, sample) for field in _canonical_fields(self.problem)}
             choices.update({symbol: value for symbol, value in expressions.items() if not value.free_symbols})
             values = {
-                field.symbol: expressions.get(field.symbol, field.symbol).xreplace(choices)
+                field.symbol: _evaluate(_substitute(expressions.get(field.symbol, field.symbol), choices))
                 for field in self.problem.fields
             }
             check = _audit(self.problem, constraints, _candidate(self.problem, values))

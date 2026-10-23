@@ -188,7 +188,7 @@ Use SymPy `Product`, `Integral`, `Derivative`, and `Limit` directly; the explore
 keeps their mathematical notation and gives vector symbols an arrow. The
 [vector guide](docs/vectors.rst) explains indices and observations. The
 [finite-path examples](docs/examples/timeseries/index.rst) demonstrate inventory
-transitions, compounding, rolling windows, and integrated exposure.
+transitions, compounding, rolling windows, integrated exposure, and analytic calibration.
 
 ## Development
 
@@ -210,4 +210,4 @@ inputs, validation, and the prototype's scope. The base install remains SymPy on
 
 Run `python -m examples.gui_timeseries` and open <http://127.0.0.1:5059> for indexed
 paths, vector entry editing, and Σ/Π/∫ formulas. Select `--example returns`,
-`rolling`, or `exposure` to explore the other examples.
+`rolling`, `exposure`, or `trend` to explore the other examples.
