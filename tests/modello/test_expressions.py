@@ -3,7 +3,22 @@
 from types import new_class
 
 import pytest
-from sympy import Derivative, Eq, FiniteSet, Function, Integral, Product, Rational, S, Sum, Symbol, fibonacci
+from sympy import (
+    Add,
+    Derivative,
+    Eq,
+    FiniteSet,
+    Function,
+    Integral,
+    Limit,
+    Product,
+    Rational,
+    S,
+    Sum,
+    Symbol,
+    exp,
+    fibonacci,
+)
 
 from modello import Index, InstanceDummy, Modello, Vector, component, inspect_model
 from modello._expressions import _evaluate
@@ -159,6 +174,70 @@ def test_calculus_definitions_are_retained_and_solved_in_both_directions():
     assert Exposure("forward", rate=2, horizon=3).cumulative == 9
     assert Exposure("inverse", horizon=3, cumulative=9).rate == 2
     assert inspect_model(Exposure, "family", horizon=3, cumulative=9).solutions().one().rate == 2
+
+
+def test_limits_apply_observed_endpoints_before_evaluation():
+    x = Symbol("x", real=True)
+
+    class Response(Modello):
+        point = InstanceDummy("point", real=True)
+        scale = InstanceDummy("scale", real=True)
+        response = Limit(scale * (exp(x) - 1) / x, x, point)
+
+    problem = inspect_model(Response, "removable", point=0, scale=3)
+    assert isinstance(problem.constraints[0].right, Limit)
+    assert Response("point", point=0, scale=3).response == 3
+    assert problem.solutions().one().response == 3
+    assert problem.analyse().status == "consistent"
+    assert inspect_model(Response, "conflict", point=0, scale=3, response=4).analyse().status == "inconsistent"
+
+
+@pytest.mark.parametrize("coefficient,expected", [(0, S.One), (2, Rational(1, 2))])
+def test_parameterized_limits_retain_exceptional_coefficient_values(coefficient, expected):
+    x = Symbol("x", real=True)
+
+    class Response(Modello):
+        coefficient = InstanceDummy("coefficient", real=True)
+        shifted = coefficient + 1
+        response = Limit((x + shifted) / (x + 2 * shifted), x, 0)
+
+    observed = coefficient - 1
+    problem = inspect_model(Response, "exception", coefficient=observed)
+    assert Response("point", coefficient=observed).response == expected
+    assert problem.solutions().one().response == expected
+    assert problem.analyse().status == "consistent"
+    assert Response("open").response.has(Limit)
+    with pytest.raises(ModelInputError, match="bound-variable"):
+        inspect_model(Response, "unresolved").solutions()
+
+
+def test_limits_defer_enclosing_calculus_without_blocking_independent_siblings():
+    x, a = Symbol("x", real=True), Symbol("a", real=True)
+    deferred = Limit((x + a) / (x + 2 * a), x, 0)
+    derivative = Derivative(deferred, a)
+    assert _evaluate(derivative) == derivative
+    assert _evaluate(Add(deferred, Derivative(x**2, x))) == deferred + 2 * x
+    assert _evaluate(Sum(deferred, (x, 0, 1))) == Sum(deferred, (x, 0, 1))
+
+
+def test_family_limit_queries_and_conditions_resolve_observations():
+    x = Symbol("x", real=True)
+
+    class Point(Modello):
+        endpoint = InstanceDummy("endpoint", real=True)
+
+    family = inspect_model(Point, "point").solutions()
+    query = Limit((exp(x) - 1) / x, x, family.symbols.endpoint)
+    with pytest.raises(ModelInputError, match="bound-variable"):
+        family.expression(query)
+    assert family.observe(endpoint=0).expression(query) == 1
+    assert family.where(Eq(family.symbols.endpoint, 0), Eq(query, 1)).one().endpoint == 0
+    assert family.where(Eq(family.symbols.endpoint, 0), Eq(query, 2)).is_empty is True
+    t = Symbol("t", real=True)
+    nested = Limit(Limit(x + t, t, 0), x, family.symbols.endpoint)
+    assert family.observe(endpoint=0).expression(nested) == 0
+    with pytest.raises(ModelInputError, match="commutative scalar"):
+        family.expression(Limit(Symbol("operator", commutative=False) / x, x, 0))
 
 
 def test_shared_formula_dependencies_do_not_require_expanding_every_path():

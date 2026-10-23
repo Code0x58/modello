@@ -316,6 +316,25 @@ quantity without defining a unique function to differentiate. The ordinary
 joint solve still retains those equations. These are algebraic models, rather
 than a general differential-equation solver or automatic numerical quadrature.
 
+During model evaluation, limits wait until their free quantities are resolved
+by substitutions. Evaluating a generic parameterized limit first can discard exceptional parameter values.
+For example, a limit's observed endpoint may be a removable singularity:
+
+.. code-block:: pycon
+
+   >>> from sympy import Limit, exp
+   >>> class Response(Modello):
+   ...     endpoint = InstanceDummy("endpoint", real=True)
+   ...     response = Limit((exp(t) - 1) / t, t, endpoint)
+   >>> Response("origin", endpoint=0).response
+   1
+   >>> inspect_model(Response, "origin", endpoint=0).solutions().one().response
+   1
+
+Supply the necessary observations before requesting an exact family for a model
+with a parameterized limit. An unresolved limit remains available in symbolic
+construction and inspection, and is rejected explicitly by the exact-family API.
+
 The native operators follow the
 `SymPy concrete mathematics <https://docs.sympy.org/latest/modules/concrete.html>`_
 and `calculus <https://docs.sympy.org/latest/tutorials/intro-tutorial/calculus.html>`_

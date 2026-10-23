@@ -21,6 +21,22 @@ def _evaluate(expression: Basic) -> Basic:
     if not expression.has(*_OPERATORS):
         return expression
     expression = expression.replace(_finite_vector_reduction, _reduce_vector)
+    if expression.has(Limit):
+        # A generic parameterized limit can discard exceptional values, even
+        # when its endpoint is fixed: lim (x+a)/(x+2*a) is 1/2 for a != 0 but
+        # is 1 for a == 0. Keep it intact until substitutions close the limit.
+        # Evaluate siblings independently without differentiating or integrating
+        # through a deferred limit as if it were an independent placeholder.
+        args = tuple(_evaluate(arg) for arg in expression.args)
+        if args != expression.args:
+            expression = expression.func(*args)
+        if isinstance(expression, Limit):
+            if expression.free_symbols:
+                return expression
+            return expression.doit()
+        elif expression.has(Limit):
+            return expression
+        return expression.doit(deep=False)
     return expression.doit()
 
 

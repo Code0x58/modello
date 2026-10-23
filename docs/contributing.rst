@@ -26,7 +26,9 @@ Follow a model from its class body to its populated instances:
    evaluates SymPy operators, and leaves ordinary algebraic cycles for the joint
    solver. This view is shared by construction, audits, and solution families;
    the original snapshot remains unchanged. A per-problem memo prevents repeated
-   expansion of shared dependency graphs.
+   expansion of shared dependency graphs. Limits remain unevaluated until their
+   free quantities are substituted, preserving exceptional parameter values
+   that generic limit evaluation can discard.
 4. ``Modello.__init__()`` prepares the problem, generates joint candidates,
    selects one compatible with the declared assumptions, and calls ``_populate()``
    to materialize the complete component tree. Symbolic construction accepts

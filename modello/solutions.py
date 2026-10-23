@@ -25,6 +25,7 @@ from sympy import (
     ImageSet,
     Interval,
     Lambda,
+    Limit,
     Ne,
     Poly,
     ProductSet,
@@ -93,7 +94,7 @@ def _require_exact(*expressions: Basic, allow_operators: bool = False) -> None:
     if any(expression.has(Float) for expression in expressions):
         raise ModelInputError("Solution families require exact expressions; use Rational for decimal values")
     if not allow_operators and any(
-        isinstance(node, Derivative) or bool(getattr(node, "bound_symbols", ()))
+        isinstance(node, (Derivative, Limit)) or bool(getattr(node, "bound_symbols", ()))
         for expression in expressions
         for node in preorder_traversal(expression)
     ):
@@ -107,7 +108,14 @@ def _exact_scalar(value: object, *, allow_operators: bool = False) -> Expr:
         expression = sympify(value)
     except (TypeError, ValueError, AttributeError) as error:
         raise ModelInputError("Expected a commutative scalar expression") from error
-    if not isinstance(expression, Expr) or expression.is_commutative is not True:
+    commutativity_probe = expression
+    if allow_operators and isinstance(expression, Expr) and expression.has(Limit):
+        # Native Limit does not infer commutativity from its scalar body.
+        commutativity_probe = expression.replace(
+            lambda node: isinstance(node, Limit),
+            lambda node: Dummy(commutative=node.args[0].is_commutative is True),
+        )
+    if not isinstance(expression, Expr) or commutativity_probe.is_commutative is not True:
         raise ModelInputError("Expected a commutative scalar expression")
     if not allow_operators:
         expression = _evaluate(expression)
