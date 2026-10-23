@@ -764,18 +764,25 @@ function render() {
   renderInputs();
   renderHighlights();
   renderTree();
+  renderEquations();
+  setView();
+  choose(selected, false, false);
+}
+function renderEquations() {
   $("equation-list").replaceChildren();
   state.equations.forEach((equation) => {
     const block = node("section", "equation");
     block.dataset.equation = equation.path;
     const field = fieldsByPath.get(equation.path);
     const label = node(
-      "button",
+      field ? "button" : "span",
       "equation-label",
-      field?.title || equation.path,
+      field?.title || equation.title || equation.path,
     );
-    label.type = "button";
-    label.addEventListener("click", () => choose(equation.path));
+    if (field) {
+      label.type = "button";
+      label.addEventListener("click", () => choose(equation.path));
+    }
     block.append(label, math(equation.mathml));
     $("equation-list").append(block);
   });
@@ -787,8 +794,6 @@ function render() {
         "No defining equations yet. Set a free quantity in Explore.",
       ),
     );
-  setView();
-  choose(selected, false, false);
 }
 function hideTooltips() {
   document.querySelectorAll('[role="tooltip"]').forEach((tip) => {

@@ -187,6 +187,12 @@ inventory transitions. Use ``--example returns``, ``rolling``, ``exposure``, or
 See :doc:`vectors`
 and :doc:`examples/timeseries/index` for model definitions and their assumptions.
 
+Select ``--example relative`` for a relative recurrence with a missing innovation,
+``--example diffusion`` for Itô transformations and a geometric Brownian law, or
+``--example reversion`` for exact mean-reverting conditional moments. Their
+equations view retains the relative law or SDE and its boundary information.
+See :doc:`series` for the modelling API and the scope of the analytic solvers.
+
 Understanding the interface
 ---------------------------
 

@@ -7,6 +7,7 @@ from typing import Mapping
 
 from sympy import Rational
 
+from examples.relative_series import GeometricDiffusion, MeanReversion, autoregressive_path
 from examples.timeseries import LinearExposure, inventory_path, linear_trend, return_path, rolling_window
 from modello import Modello, ScalarValue, VectorValue
 from modello.gui import FieldInfo, ModelInfo, Scenario, create_app
@@ -238,6 +239,133 @@ class TrendLab(linear_trend(4)):  # type: ignore[misc]  # Runtime-selected finit
     pass
 
 
+@ModelInfo(
+    title="Relative state equations",
+    description="Follow Tₙ from Tₙ₋₁ and infer an earlier innovation from a later boundary.",
+    info=(
+        "The recurrence is written once in relative coordinates. The vectors supply a finite innovation window "
+        "and a view of the resulting state positions. Innovations here are supplied or unknown values; "
+        "no probability distribution is assigned to them."
+    ),
+    initial_field="closing",
+    highlights=("closing", "levels"),
+    fields={
+        "opening": FieldInfo(title="Opening state", symbol="a"),
+        "retention": FieldInfo(title="Retention coefficient", symbol="ρ"),
+        "innovations": FieldInfo(title="Innovations", symbol="ε"),
+        "levels": FieldInfo(title="State observations", symbol="v"),
+        "T": FieldInfo(symbol="T"),
+        "law": FieldInfo(title="Relative recurrence and boundary"),
+        "closing": FieldInfo(title="Closing state", symbol="c"),
+    },
+    scenarios=(
+        Scenario(
+            title="Inspect the relative law",
+            description="Keep the third innovation open and inspect its later effects.",
+            select="closing",
+        ),
+        Scenario(
+            title="Supply the innovation",
+            description="Supply an innovation of two at position two.",
+            bindings={"innovations[2]": 2},
+            select="levels",
+        ),
+        Scenario(
+            title="Infer from the later boundary",
+            description="Observe a closing state of five quarters and infer the missing innovation.",
+            bindings={"closing": Rational(5, 4)},
+            select="innovations[2]",
+        ),
+    ),
+)
+class RelativeLab(autoregressive_path(4)):  # type: ignore[misc]  # Runtime-selected observation window.
+    pass
+
+
+@ModelInfo(
+    title="An Itô diffusion",
+    description="Derive log-process coefficients and conditional moments from one geometric Brownian law.",
+    info=(
+        "The law uses one standard Wiener driver. Duration uses the model's chosen time unit; "
+        "the drift and diffusion coefficients use matching units. The supplied Wiener increment is a realization, "
+        "not an expectation. Zero increment gives a conditional path that differs from the conditional mean."
+    ),
+    initial_field="log_drift",
+    highlights=("growth", "volatility", "mean"),
+    fields={
+        "growth": FieldInfo(title="Level growth coefficient", symbol="μ"),
+        "volatility": FieldInfo(title="Diffusion coefficient", symbol="σ"),
+        "opening": FieldInfo(title="Opening level", symbol="S₀"),
+        "duration": FieldInfo(title="Elapsed time", symbol="τ"),
+        "wiener_increment": FieldInfo(title="Realized Wiener increment", symbol="ΔW"),
+        "log_drift": FieldInfo(title="Log-process drift", symbol="a"),
+        "log_diffusion": FieldInfo(title="Log-process diffusion", symbol="b"),
+        "closing": FieldInfo(title="Conditional closing level", symbol="S"),
+        "mean": FieldInfo(title="Conditional mean", symbol="m"),
+        "variance": FieldInfo(title="Conditional variance", symbol="v"),
+        "process": FieldInfo(title="Itô process equation"),
+    },
+    scenarios=(
+        Scenario(
+            title="Inspect the Itô correction",
+            description="The log drift includes minus one half of diffusion squared.",
+            select="log_drift",
+        ),
+        Scenario(
+            title="Infer from transformed coefficients",
+            description="Release both coefficients and infer them from log drift and diffusion.",
+            bindings={
+                "growth": None,
+                "volatility": None,
+                "log_drift": Rational(2, 25),
+                "log_diffusion": Rational(1, 5),
+            },
+            select="growth",
+        ),
+        Scenario(
+            title="An empty time interval",
+            description="Zero elapsed time and zero Wiener increment retain the opening state.",
+            bindings={"duration": 0, "wiener_increment": 0},
+            select="closing",
+        ),
+    ),
+)
+class DiffusionLab(GeometricDiffusion):
+    pass
+
+
+@ModelInfo(
+    title="Mean-reverting diffusion moments",
+    description="Explore exact conditional moments of an affine additive Itô process.",
+    initial_field="mean",
+    highlights=("mean", "variance"),
+    fields={
+        "rate": FieldInfo(title="Mean-reversion rate", symbol="κ"),
+        "equilibrium": FieldInfo(title="Equilibrium level", symbol="θ"),
+        "volatility": FieldInfo(title="Diffusion coefficient", symbol="σ"),
+        "opening": FieldInfo(title="Opening state", symbol="X₀"),
+        "duration": FieldInfo(title="Elapsed time", symbol="τ"),
+        "mean": FieldInfo(title="Conditional mean", symbol="m"),
+        "variance": FieldInfo(title="Conditional variance", symbol="v"),
+        "process": FieldInfo(title="Mean-reverting process equation"),
+    },
+    scenarios=(
+        Scenario(
+            title="Inspect the conditional moments",
+            description="The opening state approaches the equilibrium level in conditional expectation.",
+        ),
+        Scenario(
+            title="Release mean reversion",
+            description="Set the rate to zero and recover additive Brownian moments.",
+            bindings={"rate": 0},
+            select="variance",
+        ),
+    ),
+)
+class ReversionLab(MeanReversion):
+    pass
+
+
 DEMOS: Mapping[str, tuple[type[Modello], Mapping[str, ScalarValue | VectorValue]]] = {
     "inventory": (
         InventoryLab,
@@ -247,6 +375,12 @@ DEMOS: Mapping[str, tuple[type[Modello], Mapping[str, ScalarValue | VectorValue]
     "rolling": (WindowLab, {"samples": [1, 2, None, 4, 5]}),
     "exposure": (ExposureLab, {"opening": 2, "duration": 3}),
     "trend": (TrendLab, {"times": [0, 1, 2, 3], "observations": [1, 2, 2, 4]}),
+    "relative": (RelativeLab, {"opening": 2, "retention": Rational(1, 2), "innovations": [1, 0, None, 0]}),
+    "diffusion": (
+        DiffusionLab,
+        {"growth": Rational(1, 10), "volatility": Rational(1, 5), "opening": 100, "duration": 1, "wiener_increment": 0},
+    ),
+    "reversion": (ReversionLab, {"rate": 1, "equilibrium": 4, "volatility": 2, "opening": 1, "duration": 1}),
 }
 
 

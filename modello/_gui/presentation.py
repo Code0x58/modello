@@ -10,6 +10,7 @@ from sympy import Symbol
 
 from modello._gui.mathml import EquationPrinter
 from modello._paths import _path_label, _within_path
+from modello._symbols import _minimal_assumptions
 from modello.diagnostics import ConstraintKind, ModelField, ModelProblem
 from modello.errors import ModelInputError
 from modello.gui import FieldInfo, ModelInfo, Scenario
@@ -29,6 +30,7 @@ class Layout:
         self.components: list[str] = []
         self.vectors = {_path_label(path): vector for path, vector in problem.vectors.items()}
         self.vector_definitions = {_path_label(path): value for path, value in problem.vector_definitions.items()}
+        self.templates = {_path_label(path): value for path, value in problem.templates.items()}
         self._collect(problem.model)
         for path, info in overrides.items():
             self._set_info(path, info)
@@ -65,6 +67,9 @@ class Layout:
             for path, vector in reversed(sorted(self.vectors.items(), key=lambda item: item[0] in hidden))
         }
         self._coordinate_labels = {}
+        self._template_labels = {
+            template: (path, self.metadata[path].symbol or path) for path, template in self.templates.items()
+        }
         for path, vector in reversed(self.vectors.items()):
             for i, symbol in enumerate(vector):
                 coordinate = f"{path}[{i}]"
@@ -93,6 +98,17 @@ class Layout:
             if path in self.vector_definitions and path not in hidden
         }
         self.equations += tuple(self.vector_equations.values())
+        self.template_equations = {
+            path: {
+                "path": path,
+                "title": self.title(path),
+                "mathml": printer.expression(template, display=True),
+                "text": problem.format(template),
+            }
+            for path, template in self.templates.items()
+            if template.equations and path not in hidden
+        }
+        self.equations += tuple(self.template_equations.values())
 
     def _collect(self, model: type[Modello]) -> None:
         """Layer defaults, registry metadata, then overrides from children to parents."""
@@ -113,6 +129,8 @@ class Layout:
             for name in child._modello_namespace.vectors:
                 vector_path = _join(path, name)
                 self.metadata[vector_path] = FieldInfo()
+            for name in child._modello_namespace.templates:
+                self.metadata[_join(path, name)] = FieldInfo()
         self.model_info = declarations[""]
         for path, info in FieldInfo.for_model(model).items():
             self._set_info(path, info, context=f"gui({path!r})")
@@ -136,7 +154,16 @@ class Layout:
 
     def printer(self) -> EquationPrinter:
         """Give each render its own printer context, including concurrent requests."""
-        return EquationPrinter(self._labels, self._vector_labels, self._coordinate_labels)
+        return EquationPrinter(self._labels, self._vector_labels, self._coordinate_labels, self._template_labels)
+
+    def equation_path(self, path: tuple[str, ...], expression: object) -> str:
+        """Prefer a complete law for a direct scalar evaluation of that law."""
+        arguments = getattr(expression, "args", ())
+        if arguments:
+            for name, template in self.templates.items():
+                if name in self.template_equations and template == arguments[0]:
+                    return name
+        return _path_label(path[:-1] if _path_label(path[:-1]) in self.vectors else path)
 
     def title(self, path: str) -> str:
         """Give coordinates a useful default name even with explicit blank metadata."""
@@ -192,11 +219,7 @@ def _require_path(path: str, choices: Mapping[str, object], context: str) -> Non
 
 def _assumptions(symbol: Symbol) -> list[str]:
     """Omit predicates already implied by more informative requirements."""
-    requirements = {k: v for k, v in symbol.assumptions0.items() if k != "commutative"}
-    for key in sorted(requirements):
-        others = {k: v for k, v in requirements.items() if k != key}
-        if Symbol("requirements", **others).assumptions0.get(key) == requirements[key]:
-            del requirements[key]
+    requirements = _minimal_assumptions(symbol)
     return [key if expected else f"not {key}" for key, expected in sorted(requirements.items())]
 
 

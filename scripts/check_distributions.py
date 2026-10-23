@@ -102,6 +102,17 @@ assert r"\sum" in problem.latex(problem.constraints[0].right)
 family = problem.solutions().observe(total=6)
 assert family.values(family.symbols.samples) == FiniteSet(Tuple(1, 2, 3))
 assert family.latex(family.symbols.samples) == r"\vec{\mathrm{samples}}"
+class Relative(modello.Modello):
+    n = modello.Index("n", nonnegative=True)
+    T = modello.Series("T", n, real=True)
+    opening = modello.InstanceDummy("opening", real=True)
+    law = modello.Recurrence(T[n], 2*T[n-1], initial={0: opening})
+    closing = law.at(4)
+assert Relative("inverse", closing=16).opening == 1
+assert ("law",) in modello.inspect_model(Relative, "law").templates
+t = modello.Coordinate("t", real=True)
+x = modello.Coordinate("x", real=True)
+assert modello.ItoProcess(x,0,1,t).drift(x**2).doit() == 1
 vector_snapshot = Explorer(window).snapshot()
 assert vector_snapshot["vectors"][0]["shape"] == [3]
 assert "mover" in vector_snapshot["vectors"][0]["symbol_mathml"]
@@ -168,6 +179,7 @@ def check_wheel(
         "examples.applications",
         "examples.reconciliation",
         "examples.timeseries",
+        "examples.relative_series",
     ):
         arguments = [str(python), "-I", "-m", module]
         if module == "examples.portfolio":

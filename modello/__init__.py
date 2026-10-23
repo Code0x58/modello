@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import ClassVar, Mapping, TypeVar, cast
 
-from sympy import Eq, Expr, S, Symbol, solve
+from sympy import Basic, Eq, Expr, S, Symbol, solve
 
 from modello._expressions import _evaluate, _substitute
 from modello._model import (
@@ -21,6 +21,7 @@ from modello._model import (
     _ModelReference as _ModelReference,
     _populate,
 )
+from modello._operators import _definitely_undefined
 from modello._problem import (
     Candidate,
     ConstraintKind as ConstraintKind,
@@ -30,7 +31,7 @@ from modello._problem import (
     ModelField as ModelField,
     _algebra,
 )
-from modello._symbols import Index as Index
+from modello._symbols import Coordinate as Coordinate, Index as Index
 from modello.annotations import Annotation as Annotation, annotate as annotate, annotate_model as annotate_model
 from modello.diagnostics import ModelProblem, _prepare_problem
 from modello.errors import (
@@ -44,7 +45,9 @@ from modello.errors import (
     SolverBackendError,
     UnresolvedSolutionError as UnresolvedSolutionError,
 )
+from modello.series import Recurrence as Recurrence, Series as Series
 from modello.solutions import SolutionFamily as SolutionFamily, SolutionIssue as SolutionIssue
+from modello.stochastic import ItoProcess as ItoProcess
 from modello.vectors import Vector as Vector, vector as vector
 
 
@@ -54,6 +57,7 @@ class Modello(metaclass=ModelloMeta):
     _modello_namespace: ClassVar[ModelloMetaNamespace] = ModelloMetaNamespace("", ())
     _modello_definition: ClassVar[_ModelDefinition]
     _modello_bound_fields: dict[InstanceDummy, _BoundField]
+    _modello_bound_templates: dict[str, Basic]
     __modello_annotations__: ClassVar[Mapping[type[Annotation], Mapping[str, Annotation]]]
 
     def __init__(self, name: str, **value_map: ScalarValue | VectorValue | Modello) -> None:
@@ -123,7 +127,7 @@ def _select_candidate(problem: ModelProblem, reported: tuple[dict[Symbol, Expr],
     """
     candidates = []
     for resolved in reported:
-        if any(value.has(S.NaN, S.ComplexInfinity) for value in resolved.values()):
+        if any(_definitely_undefined(value) for value in resolved.values()):
             continue
         if all(
             getattr(value, f"is_{assumption}", None) in (None, expected)

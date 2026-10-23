@@ -48,6 +48,7 @@ class _FormulaLatexPrinter(LatexPrinter):
         super().__init__({"mul_symbol": "dot", "symbol_names": dict(symbol_names)})
         self.labels = {symbol: _label(label) for symbol, label in text.labels.items()}
         self.vector_labels = {vector: _label(label) for vector, label in vectors.items()}
+        self.template_labels = {template: _label(label) for template, label in text.template_labels.items()}
         coordinate_names: dict[Symbol, str] = {}
         for vector, name in vector_names.items():
             # A family's public and chart vectors share one display path.
@@ -84,6 +85,8 @@ class _FormulaLatexPrinter(LatexPrinter):
 
     def _print_Index(self, expression: Index) -> str:
         return str(super()._print_Symbol(expression))
+
+    _print_Coordinate = _print_Index
 
 
 def _latex(

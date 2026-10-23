@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, TypeVar, cast
 
-from sympy import Basic, Expr, S, Symbol, factor_terms
+from sympy import Basic, Expr, Symbol, factor_terms
 
 from modello import (
     Annotation,
@@ -26,6 +26,7 @@ from modello._gui.inputs import binding_texts, parse_scalar, parse_vector, reque
 from modello._gui.mathml import EquationPrinter
 from modello._gui.vectors import vector_input_text, vector_view
 from modello._inputs import _validate_vector_values
+from modello._operators import _definitely_undefined
 from modello._paths import _path_label, _path_value
 from modello._problem import _FieldPrinter
 from modello.diagnostics import Candidate, ConstraintKind, FieldValue, ModelConstraint, ModelField, ModelProblem
@@ -267,7 +268,7 @@ class Explorer:
                     for key, expected in field.symbol.assumptions0.items()
                     if getattr(value, f"is_{key}", None) not in (None, expected)
                 ]
-                if value.is_finite is False or value.has(S.NaN, S.ComplexInfinity) or bad:
+                if value.is_finite is False or _definitely_undefined(value) or bad:
                     requirements = self._layout.assumptions[field.symbol] or ["finite"]
                     requirement = " and ".join(requirements).replace("nonnegative", "zero or greater").replace("_", " ")
                     title = self._layout.metadata[path].title or path
@@ -346,7 +347,7 @@ class Explorer:
             entry = {
                 "kind": str(c.kind),
                 "path": _path_label(c.path),
-                "equation_path": _path_label(c.path[:-1] if c.path[:-1] in problem.vectors else c.path)
+                "equation_path": self._layout.equation_path(c.path, c.right)
                 if c.kind is ConstraintKind.DEFINITION
                 else "",
                 "text": f"{text.doprint(c.left)} = {text.doprint(c.right)}",

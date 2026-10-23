@@ -6,9 +6,10 @@ from typing import Mapping
 
 from sympy import Add, Basic, Derivative, Integer, Integral, Limit, Mul, Product, S, Sum, Symbol, simplify
 
+from modello._operators import _ScopedExpression, _ScopedOperator, _SymbolicTemplate
 from modello.vectors import _VectorElement, _VectorFormula
 
-_OPERATORS = (Sum, Product, Integral, Derivative, Limit, _VectorElement)
+_OPERATORS = (Sum, Product, Integral, Derivative, Limit, _VectorElement, _ScopedOperator)
 
 
 def _declaration(expression: Basic) -> Basic:
@@ -75,10 +76,12 @@ def _substitute(expression: Basic, values: Mapping[Symbol, Basic]) -> Basic:
     SymPy uses Subs for an unresolved derivative evaluated at a numeric point;
     xreplace alone would attempt to differentiate with respect to that number.
     """
-    if expression.has(Sum, Product, Integral, Derivative, Limit, _VectorFormula):
-        for operator in expression.atoms(Sum, Product, Integral, Derivative, Limit, _VectorFormula):
+    if expression.has(Sum, Product, Integral, Derivative, Limit, _VectorFormula, _SymbolicTemplate, _ScopedOperator):
+        for operator in expression.atoms(
+            Sum, Product, Integral, Derivative, Limit, _VectorFormula, _SymbolicTemplate, _ScopedOperator
+        ):
             variables = [operator.args[1]] if isinstance(operator, Limit) else getattr(operator, "variables", ())
-            if isinstance(operator, _VectorFormula):
+            if isinstance(operator, (_VectorFormula, _ScopedExpression)):
                 variables = operator.bound_symbols
             if any(variable in values and values[variable] != variable for variable in variables):
                 return expression.subs(values, simultaneous=True)
@@ -94,14 +97,19 @@ class _DefinitionResolver:
     """
 
     def __init__(
-        self, definitions: Mapping[Symbol, Basic], cyclic: frozenset[Symbol], ambiguous: frozenset[Symbol]
+        self,
+        definitions: Mapping[Symbol, Basic],
+        cyclic: frozenset[Symbol],
+        ambiguous: frozenset[Symbol],
+        observations: Mapping[Symbol, Basic],
     ) -> None:
         self.definitions = definitions
         self.cyclic = cyclic
         self.ambiguous = ambiguous
-        self._memo: dict[tuple[Basic, frozenset[Symbol]], Basic] = {}
+        self.observations = observations
+        self._memo: dict[tuple[Basic, frozenset[Basic]], Basic] = {}
 
-    def __call__(self, expression: Basic, protected: frozenset[Symbol] = frozenset()) -> Basic:
+    def __call__(self, expression: Basic, protected: frozenset[Basic] = frozenset()) -> Basic:
         key = (expression, protected)
         if key not in self._memo:
             self._memo[key] = self._resolve(expression, protected)
@@ -116,11 +124,26 @@ class _DefinitionResolver:
         args = tuple(self.operators(arg) for arg in expression.args)
         return expression.func(*args) if args != expression.args else expression
 
-    def _resolve(self, expression: Basic, protected: frozenset[Symbol]) -> Basic:
+    def _resolve(self, expression: Basic, protected: frozenset[Basic]) -> Basic:
+        if expression in protected:
+            return expression
         if isinstance(expression, Symbol):
             if expression in self.definitions and expression not in protected:
                 return self(self.definitions[expression], protected)
-            return expression
+            return self.observations.get(expression, expression)
+        if isinstance(expression, _ScopedExpression):
+            scoped = protected | frozenset(expression.bound_symbols)
+            if hasattr(expression, "calculus_expression"):
+                self._check_calculus(expression, expression.calculus_expression, scoped)
+            args = tuple(
+                self(arg, scoped if i in expression.scoped_arguments else protected)
+                for i, arg in enumerate(expression.args)
+            )
+            operator = expression.func(*args) if args != expression.args else expression
+            if not isinstance(operator, _ScopedOperator):
+                return operator
+            evaluated = _evaluate(operator)
+            return self(evaluated, protected) if evaluated != operator else operator
         if isinstance(expression, _VectorFormula):
             variable, first, last = expression.limits
             return _VectorFormula(self(expression.function, protected | {variable}), (variable, first, last))
@@ -149,8 +172,8 @@ class _DefinitionResolver:
         evaluated = _evaluate(operator)
         return self(evaluated, protected) if evaluated != operator else operator
 
-    def _check_calculus(self, operator: Basic, body: Basic, protected: frozenset[Symbol]) -> None:
-        if not isinstance(operator, (Derivative, Integral, Limit)):
+    def _check_calculus(self, operator: Basic, body: Basic, protected: frozenset[Basic]) -> None:
+        if not isinstance(operator, (Derivative, Integral, Limit)) and not hasattr(operator, "calculus_expression"):
             return
         pending = set(body.free_symbols - protected)
         visited = set()
@@ -168,6 +191,7 @@ class _DefinitionResolver:
 def _expand_definitions(
     definitions: Mapping[Symbol, Basic],
     ambiguous: frozenset[Symbol] = frozenset(),
+    observations: Mapping[Symbol, Basic] | None = None,
 ) -> tuple[dict[Symbol, Basic], tuple[Symbol, ...], _DefinitionResolver]:
     """Resolve the directed part; leave algebraic cycles for the joint solver."""
     pending = dict(definitions)
@@ -179,5 +203,5 @@ def _expand_definitions(
         for left, right in ready.items():
             ordered[left] = right
             del pending[left]
-    resolve = _DefinitionResolver(ordered, frozenset(pending), ambiguous)
+    resolve = _DefinitionResolver(ordered, frozenset(pending), ambiguous, observations or {})
     return {left: resolve(right) for left, right in ordered.items()}, tuple(pending), resolve

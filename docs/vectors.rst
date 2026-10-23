@@ -5,6 +5,8 @@ Declare a finite vector when a model quantity has an ordered collection of
 scalar entries. Its coordinates participate in the same joint solve as scalar
 fields and nested components. Keep sums, products, and calculus as SymPy
 operators to preserve their mathematical form in inspection and the explorer.
+See :doc:`series` for relative recurrences and continuous process laws that are
+independent of a chosen finite observation window.
 
 A window with a missing observation
 -----------------------------------
@@ -260,9 +262,10 @@ within an expression; an ``Index`` is specifically integer-valued.
    2
 
 Definitions retain operators for display. Algebra expands referenced model
-formulas within their binder scope, evaluates operators, and then applies
-observations. This ordering matters for a derivative of another declared
-formula:
+formulas within their binder scope. Known observations resolve operator
+parameters, while differentiation variables stay independent until their
+derivatives have been taken. This ordering matters for a derivative of another
+declared formula:
 
 .. code-block:: pycon
 

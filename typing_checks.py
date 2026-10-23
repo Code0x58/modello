@@ -12,12 +12,16 @@ from sympy import Symbol
 from modello import (
     Annotation,
     ConstraintKind,
+    Coordinate,
     Index,
     InstanceDummy,
+    ItoProcess,
     Modello,
     ModelProblem,
     ModelSolveError,
+    Recurrence,
     ScalarValue,
+    Series,
     SolutionCountError,
     SolutionFamily,
     SolverBackendError,
@@ -95,6 +99,25 @@ def check_vector_contracts() -> None:
     Window("scalar", total=coordinate)
     Vector([object()])  # type: ignore[list-item]
     Window("invalid", samples=[{}])  # type: ignore[list-item]
+
+
+def check_relative_law_contracts() -> None:
+    """Laws expose scalar queries and finite views through the public API."""
+    n = Index("n", nonnegative=True)
+    T = Series("T", n, real=True)
+    law: Recurrence = Recurrence(T[n], 2 * T[n - 1], initial={0: 1})
+    value: SymbolicScalar = law.at(4)
+    samples: Vector = law.window(0, 4)
+    initial: Mapping[int, SymbolicScalar] = law.initial
+    assert value and samples and initial
+    t = Coordinate("t", real=True)
+    x = Coordinate("x", real=True)
+    process: ItoProcess = ItoProcess(x, 0, 1, t)
+    drift: SymbolicScalar = process.drift(x**2)
+    mean: SymbolicScalar = process.mean(1, 2)
+    assert drift and mean
+    law.at(object())  # type: ignore[arg-type]
+    law.window("first", 4)  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True)

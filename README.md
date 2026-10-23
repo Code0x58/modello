@@ -190,6 +190,13 @@ keeps their mathematical notation and gives vector symbols an arrow. The
 [finite-path examples](docs/examples/timeseries/index.rst) demonstrate inventory
 transitions, compounding, rolling windows, integrated exposure, and analytic calibration.
 
+Declare horizon-independent relative laws with `Series` and `Recurrence`, such
+as `T[n] = a*T[n-1]`, then query a position or a finite observation window.
+`ItoProcess` adds one-state Itô transformations and supported exact diffusion
+values and conditional moments through the same flat model interface. The
+[series and process guide](docs/series.rst) includes discrete and continuous
+examples, boundary conditions, and solver scope.
+
 ## Development
 
 See [Contributing and releases](docs/contributing.rst) for environment setup,

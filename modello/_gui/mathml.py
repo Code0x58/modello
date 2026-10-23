@@ -12,6 +12,7 @@ from sympy import Basic, Eq, S, Symbol
 from sympy.printing.conventions import requires_partial
 from sympy.printing.mathml import MathMLPresentationPrinter
 
+from modello.series import Recurrence, Series, _SeriesTerm
 from modello.vectors import Vector, _VectorElement, _VectorFormula
 
 
@@ -23,6 +24,7 @@ class EquationPrinter(MathMLPresentationPrinter):
         labels: Mapping[Symbol, tuple[str, str]],
         vectors: Mapping[Vector, tuple[str, str]] | None = None,
         coordinates: Mapping[Symbol, tuple[str, str, int]] | None = None,
+        templates: Mapping[Basic, tuple[str, str]] | None = None,
     ) -> None:
         super().__init__({"mul_symbol": "dot"})
         # SymPy installs unescaped text nodes for its encoded operator glyphs.
@@ -32,6 +34,7 @@ class EquationPrinter(MathMLPresentationPrinter):
         self.labels = labels
         self.vectors = vectors or {}
         self.coordinates = coordinates or {}
+        self.templates = templates or {}
 
     def _node(self, tag: str, *children: Any, text: str | None = None) -> Any:
         node = self.dom.createElement(tag)
@@ -64,6 +67,104 @@ class EquationPrinter(MathMLPresentationPrinter):
     _print_InstanceDummy = _print_Symbol
     _print_BoundInstanceDummy = _print_Symbol
     _print_Index = _print_Symbol
+    _print_Coordinate = _print_Symbol
+
+    def _print_Series(self, expression: Series) -> Any:
+        _, label = self.templates.get(expression, ("", expression.symbol.name))
+        return self._node("mi", text=label)
+
+    def _print__SeriesTerm(self, expression: Any) -> Any:
+        return self._node("msub", self._print(expression.series), self._print(expression.index))
+
+    def _print__RecurrenceValue(self, expression: Any) -> Any:
+        return self._print(expression.args[0].target.series[expression.args[1]])
+
+    def _print_Recurrence(self, expression: Recurrence) -> Any:
+        rows = []
+        for index, equation in enumerate(expression.equations):
+            condition = (
+                self._node(
+                    "mrow",
+                    self._print(expression.target.index),
+                    self._node("mo", text="≥"),
+                    self._print(expression.start),
+                )
+                if index == 0
+                else self._node("mrow")
+            )
+            rows.append(self._node("mtr", self._node("mtd", self._print(equation)), self._node("mtd", condition)))
+        table = self._node("mtable", *rows)
+        table.setAttribute("columnalign", "left left")
+        brace = self._node("mo", text="{")
+        brace.setAttribute("stretchy", "true")
+        return self._node("mrow", brace, table)
+
+    def _print_ItoProcess(self, expression: Any) -> Any:
+        terms: list[Any] = []
+        for coefficient, variable in (
+            (expression.drift_expression, expression.time),
+            (expression.diffusion_expression, expression.driver[expression.time]),
+        ):
+            if coefficient == 0:
+                continue
+            negative = coefficient.could_extract_minus_sign()
+            if negative:
+                coefficient = -coefficient
+            if terms or negative:
+                terms.append(self._node("mo", text="−" if negative else "+"))
+            if coefficient != 1:
+                body = self._print(coefficient)
+                if coefficient.is_Add:
+                    body = self._node("mrow", self._node("mo", text="("), body, self._node("mo", text=")"))
+                space = self._node("mspace")
+                space.setAttribute("width", "0.2em")
+                terms.extend((body, space))
+            terms.append(self._differential(variable))
+        return self._node(
+            "mrow",
+            self._differential(expression.state),
+            self._node("mo", text="="),
+            self._node("mrow", *terms) if terms else self._print(S.Zero),
+        )
+
+    def _print__Differential(self, expression: Any) -> Any:
+        return self._differential(expression.args[0])
+
+    def _differential(self, variable: Basic) -> Any:
+        differential = self._node("mi", text="d")
+        differential.setAttribute("mathvariant", "normal")
+        return self._node("mrow", differential, self._print(variable))
+
+    def _print__ItoQuantity(self, expression: Any) -> Any:
+        _, body, operation = expression.args
+        name = ("drift", "diffusion", "L")[int(operation)]
+        operator = self._node("msub", self._node("mtext", text=name), self._node("mi", text="I"))
+        return self._node("mrow", operator, self._node("mo", text="["), self._print(body), self._node("mo", text="]"))
+
+    def _print__ItoSolution(self, expression: Any) -> Any:
+        law, initial, elapsed, increment, operation = expression.args
+        name = ("value", "E", "Var")[int(operation)]
+        base = law.state.series if isinstance(law.state, _SeriesTerm) else law.state
+        arguments = [
+            self._node("msub", self._print(base), self._print(law.time + elapsed)),
+            self._node("mo", text="|"),
+            self._node("msub", self._print(base), self._print(law.time)),
+            self._node("mo", text="="),
+            self._print(initial),
+        ]
+        if operation == 0:
+            arguments.extend(
+                (
+                    self._node("mo", text=","),
+                    self._node("mo", text="Δ"),
+                    self._print(law.driver),
+                    self._node("mo", text="="),
+                    self._print(increment),
+                )
+            )
+        return self._node(
+            "mrow", self._node("mtext", text=name), self._node("mo", text="["), *arguments, self._node("mo", text="]")
+        )
 
     def _print_Vector(self, expression: Vector) -> Any:
         if expression in self.vectors:

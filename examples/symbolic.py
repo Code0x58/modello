@@ -14,6 +14,7 @@ from sympy import Expr, Float, Symbol, lambdify, sympify
 from examples.data import NamedMap, Series, Time
 from modello import ConstraintKind, FieldPath, Modello, SymbolicScalar, Vector
 from modello._inputs import _validate_vector_values
+from modello._model import _populate_templates
 from modello._paths import _path_value
 
 
@@ -152,6 +153,15 @@ def _copy_model(model: Model, values: dict[FieldPath, Expr], inputs: tuple[Expr,
             setattr(result, name, values[prefix + (name,)])
         for name, vector in namespace.vectors.items():
             setattr(result, name, Vector(*(values[prefix + (name, str(i))] for i in range(len(vector)))))
+        _populate_templates(
+            result,
+            source._modello_bound_templates,
+            {
+                binding.symbol: values[prefix + path]
+                for path, dummy in type(source)._modello_definition.fields.items()
+                for binding in (source._modello_bound_fields[dummy],)
+            },
+        )
         for name in namespace.nested_models:
             setattr(result, name, populate(getattr(source, name), (*prefix, name)))
         return result

@@ -38,6 +38,7 @@ from sympy.solvers.solveset import NonlinearError
 from modello._expressions import _evaluate, _substitute
 from modello._inputs import _InputCapture
 from modello._model import ModelloMeta, _ModelReference
+from modello._operators import _definitely_undefined, _SymbolicTemplate
 from modello._paths import _path_label
 from modello._problem import (
     AssumptionCheck,
@@ -160,6 +161,25 @@ class ModelProblem(Generic[ModelT]):
     fields: tuple[ModelField, ...]
     constraints: tuple[ModelConstraint, ...]
     candidates: tuple[Candidate, ...] = ()
+    _template_bindings: tuple[tuple[Basic, Basic], ...] = ()
+
+    @cached_property
+    def _declaration_bindings(self) -> dict[Basic, Basic]:
+        fields = {field.path: field.symbol for field in self.fields}
+        return {
+            **{dummy: fields[path] for path, dummy in self.model._modello_definition.fields.items()},
+            **dict(self._template_bindings),
+        }
+
+    @cached_property
+    def templates(self) -> Mapping[FieldPath, _SymbolicTemplate]:
+        """Read-only series and laws in this problem's scalar and function scope."""
+        return MappingProxyType(
+            {
+                path: value.xreplace(self._declaration_bindings)
+                for path, value in self.model._modello_definition.templates.items()
+            }
+        )
 
     def _capture_inputs(self, **value_map: ScalarValue | VectorValue | Modello) -> ModelProblem[ModelT]:
         """Append constructor inputs without rebinding this snapshot."""
@@ -180,7 +200,12 @@ class ModelProblem(Generic[ModelT]):
         scalar symbols and nested components, rather than solved model methods.
         Derived fields also have their own symbols, so they can be observed.
         """
-        return cast(ModelT, _ModelReference(self.model, {field.path: field.symbol for field in self.fields}))
+        return cast(
+            ModelT,
+            _ModelReference(
+                self.model, {field.path: field.symbol for field in self.fields}, self._declaration_bindings
+            ),
+        )
 
     @cached_property
     def vectors(self) -> Mapping[FieldPath, Vector]:
@@ -234,7 +259,7 @@ class ModelProblem(Generic[ModelT]):
         # Bound variables in a ConditionSet need the same labels as free symbols.
         referenced: frozenset[Symbol] = frozenset().union(*(expression.atoms(Symbol) for expression in expressions))
         symbols = frozenset().union(*(c.symbols for c in self.constraints), referenced)
-        return _FieldPrinter(self.fields, symbols, scope, referenced, self.vectors.items())
+        return _FieldPrinter(self.fields, symbols, scope, referenced, self.vectors.items(), self.templates.items())
 
     def __str__(self) -> str:
         return "\n".join([f"{self.model.__name__}({self.name!r})", *self._constraint_lines(self.constraints)])
@@ -359,6 +384,8 @@ def _prepare_problem(
         raise ModelInputError("inspect_model requires a Modello class and constructor inputs")
     definition = model._modello_definition
     bindings = {d: d.bound(name) for d in dict.fromkeys(definition.fields.values())}
+    template_bindings = {symbol: symbol.bound(name) for symbol in definition.template_symbols}
+    bindings.update(template_bindings)
     fields = tuple(ModelField(path, bindings[d]) for path, d in definition.fields.items())
     constraints = [
         ModelConstraint(
@@ -370,7 +397,7 @@ def _prepare_problem(
         )
         for i, constraint in enumerate(definition.constraints)
     ]
-    problem = ModelProblem(model, name, fields, tuple(constraints))
+    problem = ModelProblem(model, name, fields, tuple(constraints), _template_bindings=tuple(template_bindings.items()))
     return problem._capture_inputs(**value_map)
 
 
@@ -460,7 +487,7 @@ def _audit(problem: ModelProblem, constraints: tuple[ModelConstraint, ...], cand
         verdict: Verdict
         if not isinstance(left, Expr) or not isinstance(right, Expr):
             residual, verdict = right, "unknown"
-        elif left.has(S.NaN, S.ComplexInfinity) or right.has(S.NaN, S.ComplexInfinity):
+        elif _definitely_undefined(left) or _definitely_undefined(right):
             residual, verdict = S.NaN, "violated"
         else:
             residual = simplify(_evaluate(left - right))
@@ -486,7 +513,7 @@ def _audit(problem: ModelProblem, constraints: tuple[ModelConstraint, ...], cand
             "defined",
             True,
             False
-            if item.value.has(S.NaN, S.ComplexInfinity)
+            if _definitely_undefined(item.value)
             else True
             if item.value.is_number is True and item.value.is_finite is True
             else None,

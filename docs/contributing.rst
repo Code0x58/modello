@@ -66,6 +66,16 @@ The GUI separates layout and permissions, MathML printing, bounded input parsing
 and vector summaries under ``_gui/``. Finance and time-series examples stay above
 these layers.
 
+``series.py`` and ``stochastic.py`` declare relative recurrences and Itô laws.
+``_operators.py`` supplies their common scoped-expression protocol: operators
+identify local coordinates and the arguments in which those coordinates are
+protected while model definitions expand. They produce scalar expressions for
+the existing algebra boundary. Series and laws are template declarations in
+the compiled model, with fresh function identities in each component and problem.
+``ModelProblem.templates`` exposes those scoped originals to printing and GUI
+equations. Population and numerical views retain the originals and bind their
+scalar parameters together, so a copied law cannot keep obsolete coefficients.
+
 Validation
 ----------
 

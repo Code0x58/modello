@@ -34,9 +34,16 @@ def test_frontend_vector_proposal_state(tmp_path: Path, pytestconfig: pytest.Con
     restored = propose({"total": "6"})
     rejected = client.post("/api/explore", json={"bindings": {"total": "6", "samples[1]": "4"}})
     assert rejected.status_code == 422
+    from examples.gui_timeseries import DEMOS
+
+    model, inputs = DEMOS["relative"]
+    laws = create_app(model, inputs=inputs).test_client().post("/api/explore", json={"bindings": {}})
+    assert laws.status_code == 200
     fixtures = tmp_path / "state.json"
     fixtures.write_text(
-        json.dumps(dict(initial=initial, bulk=bulk, edited=edited, restored=restored, rejected=rejected.json))
+        json.dumps(
+            dict(initial=initial, bulk=bulk, edited=edited, restored=restored, rejected=rejected.json, laws=laws.json)
+        )
     )
     result = subprocess.run(
         [

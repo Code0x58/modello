@@ -41,7 +41,7 @@ const context = vm.createContext({
     querySelectorAll(selector) {
       return selector.includes("textarea") ? [textarea] : [];
     },
-    createElement() { return new Element(); },
+    createElement(tag) { return Object.assign(new Element(), { tagName: tag }); },
     importNode(element) { return element; },
     querySelector(selector) { queries.push(selector); return new Element(); },
     addEventListener() {},
@@ -105,5 +105,14 @@ const queue = (data, ok = true) => responses.push({ data, ok });
   assert.equal(queries.at(-1), '[data-equation="doubled"]');
   assert.ok(fixtures.restored.equations.some(equation => equation.path === "doubled"));
   assert.ok(scrolled.length, "Equation navigation must scroll to the complete vector definition");
+  context.lawFixture = fixtures.laws;
+  await evaluate("state = lawFixture; render(); renderEquations(); choose('closing', false, false);");
+  const lawLabel = created.filter(element => element.className === "equation-label" && element.textContent === "Relative recurrence and boundary").at(-1);
+  assert.ok(lawLabel, "A relative law must have a readable equation heading");
+  assert.equal(lawLabel.tagName, "span");
+  assert.equal(lawLabel.listeners.has("click"), false, "A law heading must not select a nonexistent scalar field");
+  const showLaw = created.filter(element => element.className === "equation-expand").at(-1);
+  showLaw.listeners.get("click")();
+  assert.equal(queries.at(-1), '[data-equation="law"]');
   console.log("Vector edits, normalization, restore, and rejection passed");
 })().catch(error => { console.error(error); process.exitCode = 1; });

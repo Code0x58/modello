@@ -49,6 +49,7 @@ from sympy.solvers.solveset import NonlinearError
 
 from modello._expressions import _evaluate, _substitute
 from modello._model import InstanceDummy, _populate
+from modello._operators import _ScopedOperator
 from modello._paths import _path_label, _path_value
 from modello._problem import (
     Candidate,
@@ -65,6 +66,7 @@ from modello._problem import (
     _FieldPrinter,
 )
 from modello.errors import ModelInputError, ModelValidationError, SolutionSelectionError, UnresolvedSolutionError
+from modello.series import _project_series
 from modello.vectors import Vector, _VectorElement
 
 if TYPE_CHECKING:
@@ -101,6 +103,8 @@ def _require_exact(*expressions: Basic, allow_operators: bool = False) -> None:
         raise ModelInputError("Evaluate bound-variable expressions, such as integrals and derivatives, first")
     if not allow_operators and any(expression.has(_VectorElement) for expression in expressions):
         raise ModelInputError("Resolve vector indices to integers before exploring a solution family")
+    if not allow_operators and any(expression.has(_ScopedOperator) for expression in expressions):
+        raise ModelInputError("Resolve indexed series and process operators before exploring a solution family")
 
 
 def _exact_scalar(value: object, *, allow_operators: bool = False) -> Expr:
@@ -332,7 +336,10 @@ class SolutionFamily(Generic[ModelT]):
             raise ModelInputError("Solution families currently require commutative scalar fields")
         try:
             algebra = _algebra(problem.constraints)
-            resolved_conditions = tuple(algebra.resolve.operators(condition) for condition in conditions)
+            resolved_conditions = tuple(
+                algebra.resolve.operators(_project_series(condition, problem.templates.values()))
+                for condition in conditions
+            )
         except NotImplementedError as error:
             raise ModelInputError(str(error)) from error
         for constraint, (_, right) in zip(problem.constraints, algebra.equations, strict=True):
@@ -424,7 +431,7 @@ class SolutionFamily(Generic[ModelT]):
             for path, value in self.problem.vectors.items()
             for vector in (value, value.xreplace(bindings))
         )
-        return _FieldPrinter(fields, symbols, scope, referenced, vectors)
+        return _FieldPrinter(fields, symbols, scope, referenced, vectors, self.problem.templates.items())
 
     def format(self, expression: Basic) -> str:
         """Format chart symbols as the model's named paths without substitution."""
@@ -499,7 +506,9 @@ class SolutionFamily(Generic[ModelT]):
         for value in expressions:
             expression = self._scalar(value, allow_operators=True)
             try:
-                expression = self._formulae.resolve.operators(expression)
+                expression = self._formulae.resolve.operators(
+                    _project_series(expression, self.problem.templates.values())
+                )
             except NotImplementedError as error:
                 raise ModelInputError(str(error)) from error
             expression = _evaluate(_substitute(expression, bindings))

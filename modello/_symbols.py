@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sympy import Dummy
+from sympy import Dummy, Symbol
 
 from modello.errors import ModelInputError
 
@@ -21,7 +21,16 @@ class BoundInstanceDummy(InstanceDummy):
     """A symbol belonging to a particular model instance."""
 
 
-class Index(Dummy):
+class Coordinate(Dummy):
+    """A local coordinate, excluded from observable model quantities.
+
+    Use ``Coordinate('t', real=True)`` for continuous time and ``Index`` for
+    discrete positions. Coordinates retain independent identities and may be
+    used as differentiation variables or locally bound formula variables.
+    """
+
+
+class Index(Coordinate):
     """A local integer index, rather than an observable model quantity.
 
     Declare ``i = Index('i')`` inside a model and use it in SymPy limits such
@@ -34,3 +43,13 @@ class Index(Dummy):
             raise ModelInputError("An Index must be an integer")
         assumptions["integer"] = True
         return super().__new__(cls, name, dummy_index=dummy_index, **assumptions)
+
+
+def _minimal_assumptions(symbol: Symbol) -> dict[str, bool]:
+    """Discard requirements implied by the remaining declared assumptions."""
+    requirements = {key: value for key, value in symbol.assumptions0.items() if key != "commutative"}
+    for key in sorted(requirements):
+        others = {name: value for name, value in requirements.items() if name != key}
+        if Symbol("requirements", **others).assumptions0.get(key) == requirements[key]:
+            del requirements[key]
+    return requirements

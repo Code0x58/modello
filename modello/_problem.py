@@ -91,13 +91,21 @@ class _Algebra:
 def _algebra(constraints: tuple[ModelConstraint, ...]) -> _Algebra:
     definitions: dict[Symbol, Basic] = {}
     ambiguous: set[Symbol] = set()
+    observations: dict[Symbol, Basic] = {}
+    conflicting: set[Symbol] = set()
     for constraint in constraints:
         if constraint.kind is ConstraintKind.DEFINITION:
             previous = definitions.get(constraint.left)
             if previous is not None and previous != constraint.right:
                 ambiguous.add(constraint.left)
             definitions[constraint.left] = constraint.right
-    expanded, cyclic, resolve = _expand_definitions(definitions, frozenset(ambiguous))
+        elif constraint.right.is_number is True and constraint.right.is_finite is True:
+            previous = observations.setdefault(constraint.left, constraint.right)
+            if previous != constraint.right:
+                conflicting.add(constraint.left)
+    for symbol in conflicting:
+        del observations[symbol]
+    expanded, cyclic, resolve = _expand_definitions(definitions, frozenset(ambiguous), observations)
     return _Algebra(expanded, cyclic, tuple((c.left, resolve(c.right)) for c in constraints), resolve)
 
 
@@ -181,6 +189,7 @@ class _FieldPrinter(StrPrinter):
         scope: FieldPath,
         referenced: frozenset[Symbol],
         vectors: Iterable[tuple[FieldPath, Vector]] = (),
+        templates: Iterable[tuple[FieldPath, Basic]] = (),
     ) -> None:
         super().__init__()
         paths: dict[Symbol, FieldPath] = {}
@@ -196,6 +205,11 @@ class _FieldPrinter(StrPrinter):
             previous = vector_paths.get(vector)
             if previous is None or len(_common_prefix(scope, path)) > len(_common_prefix(scope, previous)):
                 vector_paths[vector] = path
+        template_paths: dict[Basic, FieldPath] = {}
+        for path, template in templates:
+            previous = template_paths.get(template)
+            if previous is None or len(_common_prefix(scope, path)) > len(_common_prefix(scope, previous)):
+                template_paths[template] = path
         self.scope = scope
         self._bound_symbols: frozenset[Symbol] = frozenset()
         self._field_symbols = frozenset(paths)
@@ -205,6 +219,9 @@ class _FieldPrinter(StrPrinter):
         self.labels = {symbol: _path_label(path[len(self.scope) :]) for symbol, path in paths.items()}
         self.vector_labels = {
             vector: _path_label(path[len(self.scope) :]) or path[-1] for vector, path in vector_paths.items()
+        }
+        self.template_labels = {
+            template: _path_label(path[len(self.scope) :]) or path[-1] for template, path in template_paths.items()
         }
         external: dict[str, list[Symbol]] = {}
         for symbol in sorted(
@@ -229,6 +246,8 @@ class _FieldPrinter(StrPrinter):
 
     def _print_Index(self, expression: Index) -> str:
         return expression.name
+
+    _print_Coordinate = _print_Index
 
     def _with_bound(self, expression: Basic, render: Callable[[Basic], str]) -> str:
         previous = self._bound_symbols

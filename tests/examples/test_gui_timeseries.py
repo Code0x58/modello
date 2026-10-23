@@ -8,7 +8,9 @@ from modello.gui import Explorer
 from tests.modello._gui_models import mathml_text, rows
 
 
-@pytest.mark.parametrize("demo", ["inventory", "returns", "rolling", "exposure", "trend"])
+@pytest.mark.parametrize(
+    "demo", ["inventory", "returns", "rolling", "exposure", "trend", "relative", "diffusion", "reversion"]
+)
 def test_timeseries_guided_scenarios_solve_and_retain_valid_formula_markup(demo):
     from examples.gui_timeseries import DEMOS
 
