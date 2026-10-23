@@ -236,6 +236,8 @@ def test_comprehension_retains_a_finite_domain_and_zero_based_result():
     assert result == result.func(*result.args)
     assert result[0] == 4
     assert result[-1] == 16
+    with pytest.raises(AttributeError):
+        setattr(result, "elements", ())
     assert tuple(result) == (4, 9, 16)
     assert result.free_symbols == set()
     assert result.sum().doit() == 29

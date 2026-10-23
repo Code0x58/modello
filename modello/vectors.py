@@ -259,8 +259,12 @@ class _VectorFormula(Vector):
     def free_symbols(self) -> set[Symbol]:
         return self.function.free_symbols - {self.limits[0]}
 
-    @cached_property
+    @property
     def elements(self) -> tuple[Expr, ...]:
+        return self._elements
+
+    @cached_property
+    def _elements(self) -> tuple[Expr, ...]:
         i, first, last = self.limits
         return tuple(self.function.subs(i, value) for value in range(int(first), int(last) + 1))
 

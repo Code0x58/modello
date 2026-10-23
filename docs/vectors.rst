@@ -60,6 +60,9 @@ Indexing and slicing use Python's zero-based order, including negative integer
 indices. Symbolic indexing creates a scalar expression; substituting an integer
 selects that coordinate. ``len(v)`` and iteration describe its finite shape.
 ``v.shape`` returns its single axis as a tuple, such as ``(3,)`` or ``(0,)``.
+``v.elements`` is a read-only tuple of scalar expressions; a comprehension
+materializes that tuple when requested. Selecting an individual entry or slice
+does not require materializing all its entries.
 
 .. code-block:: pycon
 
@@ -325,7 +328,8 @@ joint solve still retains those equations. These are algebraic models, rather
 than a general differential-equation solver or automatic numerical quadrature.
 
 During model evaluation, limits wait until their free quantities are resolved
-by substitutions. Evaluating a generic parameterized limit first can discard exceptional parameter values.
+by substitutions. Evaluating a generic parameterized limit first can discard
+exceptional parameter values.
 For example, a limit's observed endpoint may be a removable singularity:
 
 .. code-block:: pycon
