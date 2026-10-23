@@ -99,7 +99,7 @@ def test_derivative_powers_belong_on_the_variables_in_the_denominator():
 def test_one_sided_limit_renders_its_direction():
     x = Symbol("x")
     markup = EquationPrinter({}).expression(Limit(1 / x, x, 0, dir="-"))
-    assert "limx→0-" in mathml_text(markup)
+    assert "limx→0−" in mathml_text(markup)
 
 
 def test_piecewise_uses_cases_with_navigable_conditions_and_an_explicit_default():

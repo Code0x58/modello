@@ -213,6 +213,19 @@ function withoutAliases(base, field) {
   return next;
 }
 function vectorEntryProposal(field, text) {
+  const collection = state.components.find(item => item.collection && item.resizable && typeof bindings[item.path] === "string"
+    && field.aliases.some(alias => alias.startsWith(item.path + "[")));
+  if (collection) {
+    const path = field.aliases.find(alias => alias.startsWith(collection.path + "["));
+    const rest = path.slice(collection.path.length + 1);
+    const position = Number(rest.slice(0, rest.indexOf("]")));
+    const name = rest.slice(rest.indexOf("]") + 2);
+    const records = collection.observations.map(record => ({...record}));
+    records[position][name] = text?.trim() || null;
+    const next = withoutAliases(bindings, field);
+    next[collection.path] = JSON.stringify(records);
+    return next;
+  }
   const vector = (state.vectors || []).find(
     item => item.resizable && item.entries.includes(field.path) && typeof bindings[item.path] === "string",
   );
@@ -248,7 +261,11 @@ function fieldLink(path, title) {
 }
 function details() {
   const field = fieldsByPath.get(selected);
-  if (!field) return;
+  if (!field) {
+    const component = state.components.find(item => item.path === selected);
+    if (component) componentDetails(component);
+    return;
+  }
   $("field-title").textContent = field.title;
   $("field-symbol").replaceChildren(math(field.symbol_mathml, true));
   $("field-path").textContent = field.path.split(".").join("  /  ");
@@ -442,6 +459,36 @@ function details() {
     detail.append(exact);
   }
 }
+function componentDetails(component) {
+  $("field-title").textContent = component.title;
+  $("field-symbol").replaceChildren(...(component.symbol_mathml ? [math(component.symbol_mathml, true)] : []));
+  $("field-path").textContent = component.path;
+  $("field-description").textContent = component.description || (component.collection ? "An ordered vector of model elements." : "A model with related quantities.");
+  const detail = $("field-detail");
+  detail.replaceChildren();
+  const members = component.collection ? state.components.filter(item => item.parent === component.path) : [component];
+  members.forEach(member => {
+    const entry = section(member.title);
+    state.fields.filter(field => field.parent === member.path).forEach(field => {
+      const row = node("div", "model-member-value");
+      row.append(fieldLink(field.path, field.title), math(field.symbol_mathml, true), value(field));
+      entry.append(row);
+    });
+    detail.append(entry);
+  });
+}
+function resizeCollection(collection, removeIndex = null) {
+  const records = collection.observations.map(record => ({...record}));
+  if (removeIndex === null) records.push({});
+  else records.splice(removeIndex, 1);
+  const next = {...bindings};
+  Object.keys(next).forEach(path => {
+    if (path === collection.path || path.startsWith(collection.path + "[") || path.startsWith(collection.path + ".")) delete next[path];
+  });
+  collection.dimensions.forEach(path => { next[path] = null; });
+  next[collection.path] = JSON.stringify(records);
+  return refresh(next, {edit: true});
+}
 function quantity(field) {
   const row = node(
     "div",
@@ -497,7 +544,7 @@ function renderTree() {
       group.dataset.field = path;
     }
     header.append(node("span", "chevron", "⌄"));
-    if (info?.shape) header.append(math(info.symbol_mathml, true));
+    if (info?.symbol_mathml) header.append(math(info.symbol_mathml, true));
     header.append(node("span", "", info?.title || path.split(".").at(-1)));
     const count = state.fields.filter((field) =>
       field.parent === path || field.path.startsWith(path + "."),
@@ -515,13 +562,28 @@ function renderTree() {
       header.setAttribute("aria-expanded", String(!collapsed.has(path)));
     });
     const body = node("div", "component-body");
-    if (info?.shape && !info.collection) {
+    if (info?.shape) {
       const heading = node("div", "vector-heading");
-      const inspect = node("button", "vector-inspect", "Inspect vector");
+      const inspect = node("button", "vector-inspect", info.collection ? "Inspect models" : "Inspect vector");
       inspect.type = "button";
       inspect.setAttribute("aria-label", `Inspect vector ${path}`);
       inspect.addEventListener("click", () => choose(path));
       heading.append(header, inspect);
+      if (info.collection && info.resizable) {
+        const add = node("button", "collection-add", `+ Add ${info.member_title.toLowerCase()}`);
+        add.type = "button";
+        add.setAttribute("aria-label", `Add a model to ${path}`);
+        add.addEventListener("click", () => resizeCollection(info));
+        heading.append(add);
+      }
+      group.append(heading, body);
+    } else if (info?.index !== undefined && components.get(info.parent)?.resizable) {
+      const heading = node("div", "vector-heading");
+      const remove = node("button", "collection-remove", "Remove");
+      remove.type = "button";
+      remove.setAttribute("aria-label", `Remove ${path}`);
+      remove.addEventListener("click", () => resizeCollection(components.get(info.parent), info.index));
+      heading.append(header, remove);
       group.append(heading, body);
     } else group.append(header, body);
     ensure(info?.parent ?? path.split(".").slice(0, -1).join(".")).append(group);
@@ -755,7 +817,7 @@ function render() {
   fieldsByPath = new Map(
     [...state.fields, ...state.symbols, ...(state.vectors || [])].map((field) => [field.path, field]),
   );
-  if (!fieldsByPath.has(selected))
+  if (!fieldsByPath.has(selected) && !state.components.some(component => component.path === selected))
     selected = state.initial_field || state.fields[0]?.path;
   $("title").textContent = state.title;
   document.title = `${state.title} · modello`;

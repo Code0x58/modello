@@ -413,13 +413,19 @@ API
 Typed model vectors
 -------------------
 
-The :doc:`account sequence demo <model-vectors>` reuses the portfolio's
-``FillPosting`` transition across a variable number of typed executions.
+The :doc:`account sequence demo <model-vectors>` relates vectors of execution
+and account models through relative field equations.
 Run ``python -m examples.gui_timeseries --example sequence --port 5071``.
-Each model vector has an arrow accent and bracketed member paths. Its scalar
-projections retain bulk editors, while each typed member remains inspectable.
-The equations view includes a relative transition rule and opening boundary;
-expanded transition details initially appear folded in the model tree.
+Each vector nests its model members with indexed symbols. Add or remove
+executions in the vector header and inspect or edit their individual fields.
+The first account member holds the initial observations. The equations view
+shows the original relative law once, with individual fields linking back to
+it. ``ModelInfo.fields`` patterns such as ``fills[]`` and ``fills[].price``
+provide common member labels and symbols; ``p`` becomes ``p_i``.
+
+The Python explorer accepts ``ModelVectorInput`` records, such as
+``{"fills": [{"quantity": 2, "price": 100, "fee": 1}]}``, alongside its
+usual scalar observations. Model-vector length determines the finite window.
 
 Run the diffusion separately with ``--example diffusion --port 5070``. Ports
 5060 and 5061 are restricted by common browsers; use the demo's default port
@@ -436,3 +442,10 @@ served locally under ``/assets/fonts/``. Source and attribution are recorded in
 ``modello/_gui/static/fonts/README.txt``; see the
 `STIX project <https://github.com/stipub/stixfonts/tree/v2.13b171>`_ and
 `MathML Core operator rules <https://www.w3.org/TR/mathml-core/#operator-fence-separator-or-accent-mo>`_.
+
+Expectation and variance use the mathematical Unicode symbols 𝔼 and 𝕍;
+the generator uses ℒ. Their LaTeX forms are ``\mathbb{E}``, ``\mathbb{V}``,
+and ``\mathcal{L}``. MathML uses Unicode mathematical characters rather than
+legacy ``mathvariant`` styles, following
+`MathML Core <https://www.w3.org/TR/mathml-core/>`_. Conditional brackets
+stretch around their contents, and subtraction uses the mathematical minus.

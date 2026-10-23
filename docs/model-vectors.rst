@@ -1,190 +1,192 @@
-Vectors of models and account sequences
-=======================================
+Vectors of models and relative equations
+========================================
 
-Use ``model_vector(Model, size=N)`` when each position contains a typed component
-with several related quantities. A vector of executions holds quantity, price,
-fees, and calculated notional together. ``model_recurrence`` connects components
-through a reusable transition model, using the usual flat solver for forward
-calculations and inverse problems.
+Use ``model_vector(Model, size=N)`` when each position contains a typed model
+with related quantities. An execution holds its quantity, price, fee, and
+calculated trade value together. Account states hold inventory and cash.
+``model_recurrence(states[n], ...)`` relates those members at relative indices.
+Their equations use the ordinary joint solver for forward and inverse problems.
 
-A sequence of account states
+An account across executions
 ----------------------------
 
-The portfolio example defines ``HoldingState``, ``Execution``, and ``FillPosting``.
-One posting connects ``before`` and ``after`` account states through a ``fill``.
-Reuse that transition without writing a new solver:
+The example declares two model vectors and their field equations:
 
-.. code-block:: pycon
+.. literalinclude:: ../examples/model_sequences.py
+   :start-at: class AccountSequence
+   :end-before: def main
+   :language: python
 
-   >>> from examples.portfolio.models import Execution, FillPosting, HoldingState
-   >>> from modello import InstanceDummy, Modello, component, model_recurrence, model_vector
-   >>> class AccountPath(Modello):
-   ...     N = InstanceDummy("N", integer=True, nonnegative=True)
-   ...     opening = component(HoldingState)
-   ...     fills = model_vector(Execution, size=N)
-   ...     states = model_recurrence(FillPosting, initial=opening, fill=fills)
-   ...     terminal = states[-1]
-   ...     prices = fills.project(lambda fill: fill.price)
-   ...     quantities = states.project(lambda account: account.quantity)
-   ...     balances = states.project(lambda account: account.cash)
-   >>> opening = HoldingState("opening", quantity=3, cash=1000)
-   >>> fills = [Execution("buy", quantity=2, price=100, fee=1),
-   ...          Execution("sell", quantity=-1, price=110, fee=1)]
-   >>> case = AccountPath("settlement", opening=opening, fills=fills)
-   >>> case.N, case.quantities, case.balances
-   (2, [3, 5, 4], [1000, 799, 908])
-   >>> case.terminal.quantity, case.terminal.cash
-   (4, 908)
-
-The execution vector's length determines ``N``. There are ``N`` transitions and
-``N + 1`` state boundaries:
+Its mathematical statement is:
 
 .. math::
 
-   A_0=A_{\mathrm{opening}},\qquad
-   A_n=\operatorname{FillPosting.after}(A_{n-1},F_{n-1}),
-   \quad n\in\{1,\ldots,N\}.
+   Q_n=Q_{n-1}+u_{n-1},\qquad
+   C_n=C_{n-1}-v_{n-1}-c_{n-1},\qquad n\in\{1,\ldots,N\},
 
-This notation summarizes the wiring. Every scalar equation and domain declared
-by ``FillPosting`` still participates in the combined problem. The transition
-vector lives at ``states.steps``. Its first ``before`` is the opening account;
-each later ``before`` is the preceding transition's ``after``. State positions
-are views of those same components:
+where execution ``i`` has signed quantity ``u_i``, price ``p_i``, trade value
+``v_i = u_i p_i``, and fee ``c_i``. Each ``states[n]`` is a ``HoldingState``
+model; each ``fills[i]`` is an ``Execution`` model. The member schemas retain
+all their equations and domains.
 
 .. code-block:: pycon
 
-   >>> case.states[0] is case.opening
-   True
-   >>> case.states.steps[1].before is case.states[1]
-   True
-   >>> case.states.steps[0].fill is case.fills[0]
+   >>> from examples.model_sequences import AccountSequence
+   >>> from examples.portfolio.models import Execution, HoldingState
+   >>> from modello import ModelObservations
+   >>> opening = HoldingState("opening", quantity=3, cash=1000)
+   >>> fills = [Execution("buy", quantity=2, price=100, fee=1),
+   ...          Execution("sell", quantity=-1, price=110, fee=1)]
+   >>> case = AccountSequence("settlement", fills=fills,
+   ...                        states=ModelObservations({0: opening}))
+   >>> case.N
+   2
+   >>> tuple((state.quantity, state.cash) for state in case.states)
+   ((3, 1000), (5, 799), (4, 908))
+   >>> isinstance(case.states[1], HoldingState)
    True
    >>> case.terminal is case.states[-1]
    True
-   >>> empty = AccountPath("empty", opening=opening, fills=[])
+
+The execution vector's length determines ``N``. The account vector contains
+``N + 1`` boundaries, including the initial state. A terminal component is a
+view of the final member, sharing its object and symbolic field identities.
+
+``ModelObservations`` supplies sparse typed observations within that window.
+Its keys are finite vector positions; negative keys use ordinary Python
+indexing. The number of observed positions does not determine the window
+length. Supply an input vector, a complete state sequence, or an explicit size
+field to determine that length.
+
+.. code-block:: pycon
+
+   >>> empty = AccountSequence("empty", fills=[],
+   ...                         states=ModelObservations({0: opening}))
    >>> empty.N, len(empty.states), empty.terminal.cash
    (0, 1, 1000)
-   >>> empty.terminal is empty.opening
+   >>> empty.terminal is empty.states[0]
    True
 
-Views share populated objects and symbolic field identities. They introduce no
-duplicate state variables or repeated component equations. Changing an attribute
-after construction does not recompute a path; construct a new case or propose
-observations through a solution family.
+Initial history and inverse solving
+-----------------------------------
 
-Inverse problems and partial observations
------------------------------------------
+``start=1`` is the default: member zero supplies the first-order history.
+For a second-order rule, set ``start=2`` and reference ``states[n-1]`` and
+``states[n-2]``. Members zero and one are ordinary unknown models whose
+quantities can be observed or inferred. The vector must contain that history;
+the recurrence uses fixed positive self-lags covered by it. Reusing an input
+index outside its vector window raises an error instead of wrapping around.
 
-A terminal observation constrains the same system as its executions. Leave the
+A terminal observation constrains the same system as the executions. Leave the
 sale price unknown and infer it from terminal cash:
 
 .. code-block:: pycon
 
    >>> partial = [fills[0], Execution("sale", quantity=-1, fee=1)]
-   >>> inverse = AccountPath("inverse", opening=opening, fills=partial,
-   ...                       terminal=HoldingState("target", cash=908))
+   >>> inverse = AccountSequence("inverse", fills=partial,
+   ...     states=ModelObservations({0: opening}),
+   ...     terminal=HoldingState("target", cash=908))
    >>> inverse.fills[1].price
    110
    >>> from modello import inspect_model
-   >>> problem = inspect_model(AccountPath, "research", opening=opening, fills=partial)
+   >>> problem = inspect_model(AccountSequence, "research", fills=partial,
+   ...                         states=ModelObservations({0: opening}))
    >>> family = problem.solutions().observe(terminal=HoldingState("target", cash=908))
    >>> family.one().fills[1].price
    110
 
-Observations are sequences of compatible model instances. A ``None`` entry
-leaves that entire member unknown; a partially constructed model leaves its
-unspecified fields open. Supplied and previously inferred fields retain their
-provenance when copied. Member observations supplied through ``fills=...``
-belong to that argument's observation group: ``problem.without("fills")``
-releases them together.
+A full sequence may contain ``None`` members. A partially constructed model
+leaves its unspecified quantities open. Copied observations retain their supplied
+or inferred provenance. Observations supplied through one argument belong to
+that argument's group: ``problem.without("states")`` releases its copied state
+observations while retaining the model equations.
 
-Supplying ``N`` explicitly also allocates an unknown collection. Conflicting
-lengths or size observations raise ``ModelInputError`` before solving. An empty
-execution collection is valid. A state collection includes its opening boundary;
-its observed length determines ``N + 1``.
+Using scalar formulas
+---------------------
 
-Scalar formulas and selection
------------------------------
-
-``project`` takes a typed callback and returns an ordinary scalar ``Vector``.
-The callback can access nested scalar fields, fixed scalar vectors, and
-arithmetic expressions. Direct field projections alias existing coordinates;
-computed projections retain their formula. Use ``sum``, ``product``, ``dot``,
-or native SymPy operators:
+``project`` provides an ordinary scalar vector when a calculation needs one.
+It accepts a typed callback with nested fields, fixed scalar vectors, and
+arithmetic. A projection can be used inside an aggregate without adding another
+field to the model. The example's ``total_fees`` uses that approach.
 
 .. code-block:: pycon
 
-   >>> from modello import Index
-   >>> from sympy import Sum
-   >>> class TotalTradeValue(AccountPath):
-   ...     n = Index("n")
-   ...     traded = Sum(AccountPath.fills[n].notional, (n, 0, AccountPath.N - 1))
-   ...     closing_cash = AccountPath.states[-1].cash
-   >>> result = TotalTradeValue("totals", opening=opening, fills=fills)
-   >>> result.traded, result.closing_cash
-   (90, 908)
+   >>> case.fills.project(lambda fill: fill.notional).sum().doit()
+   90
+   >>> case.states.project(lambda state: state.cash)
+   [1000, 799, 908]
+
+Local ``Index`` objects support native SymPy sums and products over member
+fields. Use distinct local indices inside nested sums or integrals. Named
+updates can also address nested fields with their canonical paths, such as
+``**{"holding.quantity": expression}`` or ``**{"samples[0]": expression}``.
+
+The ``ModelRecurrence`` returned by the indexed declaration is an immutable
+inspection template. Its original equations and iteration domain remain
+available through ``problem.templates`` and the GUI. Active declarations must
+come from ``model_recurrence(states[n], ...)``; redeclare a law through that
+helper when changing its equations. Assigning a transformed inspection template
+to a model class is rejected, keeping displayed and compiled equations aligned.
 
 Finite collections support iteration, slices, and Python negative indices.
-``states[-1]`` means the terminal member of that finite window; the scalar
-:doc:`Series <series>` expression ``T[-1]`` means mathematical position minus
-one. A whole-model selection such as ``chosen = fills[index]`` requires a
-concrete integer from supplied fields or their declared expressions before
-solving the remaining scalar problem. Scalar indexed formulas can retain a
-local ``Index`` under a sum or comprehension.
+``states[-1]`` selects the terminal member of the finite window. The scalar
+:doc:`Series <series>` expression ``T[-1]`` instead denotes mathematical position
+minus one. Whole-model selections using an integer model field resolve during
+structural preparation. Prepare the original model class again to select a
+different index or horizon.
 
-The prepared model records that structural selection, just as it records a
-resolved vector shape. Releasing an observation does not retarget its component
-views. Prepare the original model class again to choose another index or horizon.
+Schemas and compatibility
+-------------------------
 
-Transition ports and scope
---------------------------
+Members may contain nested components, fixed vectors, series, and process
+templates. Their schema must be concrete before building the outer collection.
+Projections can select a fixed member of a nested collection, for example
+``rows.project(lambda row: row.holdings[0].quantity)``. Unresolved values copied
+from a subtype that replaces symbolic templates require that concrete subtype's
+declared schema.
 
-``model_recurrence`` uses ``before`` and ``after`` by default. Set
-``previous="..."`` and ``result="..."`` for another schema. Both ports and the
-opening component must declare the same model class. Additional keyword
-arguments bind component inputs: a model vector supplies one per transition;
-an ordinary component is shared by every transition. Supply ``size=...`` when
-no vector input determines the number of steps. Multiple input vectors
-contribute simultaneous shape equations and must have compatible lengths.
+The transition-model overload of ``model_recurrence`` remains available for
+existing component-based models. It returns a ``ModelSequence`` and preserves
+shared transition ports. Direct indexed field equations provide the simpler
+account-sequence declaration shown above and target a declared ``model_vector``.
+An inherited collection keeps its declared shape expression; refine the domain
+of its size parameter or provide a different observation window when preparing
+the model. Declare a new model shape to change that expression.
 
-Wiring preserves field assumptions and symbolic function identities.
-Incompatible schemas or assumptions raise declaration errors. Members may
-contain nested components, fixed scalar vectors, series, and process templates.
-Projections can also select a fixed member of a nested model vector, such as
-``rows.project(lambda row: row.holdings[0].quantity)``; that inner index must be
-a concrete integer.
-Their component schema must already be concrete; independently sized or
-structurally selected components inside members require specialization first.
-Field-kind changes between quantities, collections, and component views are
-rejected during inheritance.
+A model-valued recurrence materializes a finite window. Nonlinear equations work
+to the extent supported by the ordinary solver. See :doc:`series` for
+horizon-independent scalar laws, continuous Itô coefficients, and supported
+exact process queries.
 
-Recurrences can chain from a preceding sequence's ``terminal`` or ``[-1]``
-boundary. Source selections using supplied integer indices resolve during the
-same structural preparation as collection lengths. Unresolved function-valued
-observations retain their declared template identities when copied. A subtype
-that replaces those templates must be declared as that concrete subtype when
-its unresolved values are supplied to a component or collection.
+Exploring model members
+-----------------------
 
-This API materializes a finite window of a model-valued recurrence. Nonlinear
-transition equations work to the extent supported by the ordinary solver. Use
-:doc:`series` for horizon-independent scalar recurrence laws, continuous Itô
-coefficients, and supported exact process queries.
-
-Exploring the sequence
-----------------------
-
-Run ``python -m examples.model_sequences`` for the console walkthrough. Start
-the sequence and diffusion demos on browser-compatible loopback ports:
+Run ``python -m examples.model_sequences`` for the console walkthrough:
 
 .. code-block:: console
 
    $ uv run --extra gui python -m examples.gui_timeseries --example sequence --port 5071
    $ uv run --extra gui python -m examples.gui_timeseries --example diffusion --port 5070
 
-The sequence explorer shows model vectors with arrow accents, bracketed member
-paths, editable scalar projections, and the relative transition rule in MathML.
-Transition details are initially folded. State boundaries remain separately
-inspectable, with the usual editing, domain validation, and observation history.
+The account explorer nests each execution and state under its vector. Add or
+remove executions in the vector header, inspect a model, and edit its scalar
+quantities. Empty cells remain unknown. The original relative law is shown
+once in the equations view; individual calculated fields link back to it.
+Mathematical symbols retain the complete API paths for navigation and editing.
+
+``ModelInfo.fields`` can label every member with patterns such as ``fills[]``
+and ``fills[].price``. A field symbol ``p`` becomes the indexed symbol ``p_i``;
+a member symbol ``F`` becomes ``F_i``. Scalar projections appear when explicitly
+declared for another purpose. Fields inside nested collections keep qualified
+public paths by default, so fixed inner positions remain distinct. Assign
+separate symbols with patterns such as ``rows[].holdings[0].quantity`` when
+presenting those fields in an outer recurrence.
+
+For the Python GUI API, ``ModelVectorInput`` describes an ordered sequence of
+field-observation records. For example, ``inputs={"fills": [{"quantity": 2,
+"price": 100, "fee": 1}], "states[0].quantity": 3, "states[0].cash": 1000}``
+sets up the one-execution case. Browser cells use the bounded scalar arithmetic
+language, with the existing observation history and validation behavior.
 
 API
 ---
@@ -198,7 +200,12 @@ API
 
 .. autofunction:: model_recurrence
 
+.. autoclass:: ModelRecurrence
+   :members: equations, index, start, stop
+
+.. autoclass:: ModelObservations
+
 .. autoclass:: ModelSequence
 
-``ModelVectorValue[Model]`` describes observations as a typed model vector or
-a sequence of compatible model instances and ``None``.
+``ModelVectorValue[Model]`` describes a typed model vector, a sequence of
+compatible model instances and ``None``, or sparse ``ModelObservations``.

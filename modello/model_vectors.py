@@ -3,16 +3,25 @@
 from __future__ import annotations
 
 from abc import ABCMeta
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from functools import lru_cache, partial
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast, overload
 
-from sympy import Eq, Expr, Integer, Piecewise, S, SympifyError, sympify
+from sympy import Basic, Dummy, Eq, Expr, Integer, Piecewise, S, Symbol, SympifyError, Tuple, simplify, sympify
 
-from modello._collections import _CollectionSpec, _Location, _location, _Selection
+from modello._collections import (
+    ModelObservations,
+    _CollectionSpec,
+    _Location,
+    _location,
+    _Selection,
+    _UnresolvedSelection,
+)
+from modello._expressions import _substitute
 from modello._model import ModelloMeta, ModelloMetaNamespace, _has_symbolic_shape, _known_integers, _ModelReference
-from modello._paths import _path_value
+from modello._model_laws import ModelRecurrence, _ModelLawSpec
+from modello._paths import _path_label, _path_value
 from modello._symbols import Index
 from modello._values import ScalarValue, SymbolicScalar
 from modello.errors import ModelDefinitionError, ModelInputError
@@ -21,7 +30,7 @@ from modello.vectors import Vector, _invalid_index, _VectorElement, vector
 if TYPE_CHECKING:
     from modello import Modello
 
-__all__ = ["ModelVector", "ModelVectorValue", "ModelSequence", "model_vector", "model_recurrence"]
+__all__ = ["ModelVector", "ModelVectorValue", "ModelSequence", "ModelRecurrence", "model_vector", "model_recurrence"]
 
 _Model = TypeVar("_Model", bound="Modello")
 _Step = TypeVar("_Step", bound="Modello")
@@ -69,7 +78,7 @@ class ModelSequence(ModelVector[_Model], Generic[_Model, _Step]):
     steps: ModelVector[_Step]
 
 
-ModelVectorValue: TypeAlias = ModelVector[_Model] | Sequence[_Model | None]
+ModelVectorValue: TypeAlias = ModelVector[_Model] | Sequence[_Model | None] | ModelObservations[_Model]
 
 
 class _CollectionMeta(ModelloMeta, ABCMeta):
@@ -242,7 +251,7 @@ def _sequence_model(
     return _CollectionMeta(f"{transition.__name__}Sequence", bases, namespace)
 
 
-def model_recurrence(
+def _transition_recurrence(
     transition: type[_Step],
     *,
     initial: _Model,
@@ -302,6 +311,135 @@ def model_recurrence(
         _wire_collection,
     )
     return cast(ModelSequence[_Model, _Step], spec)
+
+
+@overload
+def model_recurrence(
+    transition: type[_Step],
+    *,
+    initial: _Model,
+    size: int | SymbolicScalar | None = None,
+    previous: str = "before",
+    result: str = "after",
+    **inputs: ModelVector[Any] | Modello,
+) -> ModelSequence[_Model, _Step]: ...
+
+
+@overload
+def model_recurrence(transition: _Model, *, start: int = 1, **updates: ScalarValue) -> ModelRecurrence: ...
+
+
+def model_recurrence(transition: Any, **arguments: Any) -> Any:
+    """Declare relative field equations over indexed models, or repeat a transition.
+
+    ``model_recurrence(states[n], cash=states[n-1].cash - fills[n-1].amount)``
+    constrains the existing typed members. Members before ``start`` supply the
+    history and may be observed or inferred through the same joint equations.
+    """
+    if isinstance(transition, _Selection):
+        return _indexed_recurrence(transition, arguments.pop("start", 1), arguments)
+    if "initial" not in arguments:
+        raise ModelInputError("Select states[n] for field equations, or supply a transition's initial component")
+    return _transition_recurrence(transition, **arguments)
+
+
+def _indexed_recurrence(target: _Selection, start: int, updates: Mapping[str, ScalarValue]) -> ModelRecurrence:
+    index = target.location.index
+    if not isinstance(index, Index) or not target.location.path:
+        raise ModelInputError("An indexed model recurrence targets a declared model vector at a local Index")
+    if isinstance(start, bool) or not isinstance(start, int) or start < 0:
+        raise ModelInputError("Recurrence history length must be a nonnegative integer")
+    if not updates:
+        raise ModelInputError("Declare at least one recurrent model field")
+    equations = []
+    paths = []
+    for name, value in updates.items():
+        path = next((path for path in target.columns if _path_label(path) == name), None)
+        if path is None:
+            raise ModelInputError(f"{target.model.__name__} has no scalar field {name!r}")
+        try:
+            expression = sympify(value)
+        except (TypeError, ValueError, SympifyError) as error:
+            raise ModelInputError("Recurrent field definitions must be scalar expressions") from error
+        if not isinstance(expression, Expr) or expression.is_Matrix:
+            raise ModelInputError("Recurrent field definitions must be scalar expressions")
+        _validate_model_rule(expression, index, start, set(target.columns.values()))
+        equations.append(Eq(target.columns[path][index], expression, evaluate=False))
+        paths.append(path)
+    size = next(iter(target.columns.values())).shape[0]
+    template = ModelRecurrence(Tuple(*equations), Tuple(index, Integer(start), sympify(size) - 1))
+    spec = _ModelLawSpec(target.location, target.columns, tuple(paths), template, tuple(equations), _compile_model_law)
+    return cast(ModelRecurrence, spec)
+
+
+def _compile_model_law(
+    namespace: ModelloMetaNamespace,
+    name: str,
+    spec: _ModelLawSpec,
+) -> tuple[tuple[tuple[str, ...], Symbol, Basic], ...]:
+    try:
+        collection = namespace.reference_at(spec.target.path)
+        size = _collection_size(collection)
+    except (KeyError, AttributeError) as error:
+        raise ModelDefinitionError("A model recurrence must target its own declared model vector") from error
+    if getattr(collection._modello_model, "_modello_collection_kind", None) != "vector":
+        raise ModelDefinitionError("Declare the indexed recurrence's state window with model_vector")
+    if not isinstance(size, Integer):
+        raise _UnresolvedSelection
+    columns = _collection_columns(collection)
+    if spec.target.suffix:
+        columns = {
+            path[len(spec.target.suffix) :]: value
+            for path, value in columns.items()
+            if path[: len(spec.target.suffix)] == spec.target.suffix
+        }
+    if columns != spec.columns:
+        raise ModelDefinitionError("A model recurrence must target its own declared model vector")
+    law = spec.template
+    start = int(law.start)
+    if size < start:
+        raise ModelInputError("The model vector must contain the recurrence's initial history")
+    targets = set(columns.values())
+    known = _known_integers(namespace)
+    stop = law.stop.xreplace(known)
+    if isinstance(stop, Integer) and stop != size - 1:
+        raise ModelDefinitionError("The recurrence's domain must match its declared model-vector window")
+    definitions = []
+    for path, equation in zip(spec.paths, spec.equations):
+        expression = equation.rhs
+        terms = _validate_model_rule(expression, law.index, start, targets)
+        for point in range(start, int(size)):
+            bindings = {**known, law.index: Integer(point)}
+            for term in terms:
+                if law.index in term.index.free_symbols:
+                    position = term.index.xreplace(bindings)
+                    count = sympify(term.vector.shape[0]).xreplace(known)
+                    if not isinstance(count, Integer):
+                        raise ModelDefinitionError("Recurrent inputs must use a finite declared vector window")
+                    if not isinstance(position, Integer) or not 0 <= position < count:
+                        raise ModelInputError("A recurrent input index falls outside its observed vector window")
+            member = collection[point]
+            target = _path_value(member, (*spec.target.suffix, *path))
+            definitions.append(
+                ((*spec.target.path, str(point), *spec.target.suffix, *path), target, _substitute(expression, bindings))
+            )
+    return tuple(definitions)
+
+
+def _validate_model_rule(expression: Expr, index: Symbol, start: int, targets: set[Vector]) -> set[_VectorElement]:
+    if any(index in getattr(part, "bound_symbols", ()) for part in expression.atoms(Basic)):
+        raise ModelDefinitionError("Use a distinct local index inside a recurrence's nested operators")
+    terms = expression.atoms(_VectorElement)
+    for term in terms:
+        if term.vector in targets:
+            lag = simplify(index - term.index)
+            history = isinstance(term.index, Integer) and 0 <= term.index < start
+            if not history and (not isinstance(lag, Integer) or not 1 <= lag <= start):
+                raise ModelDefinitionError("A causal model recurrence uses fixed positive lags covered by its history")
+    unindexed = expression.xreplace({term: Dummy() for term in terms}).free_symbols
+    if any(symbol in unindexed for column in targets if column._finite for symbol in column[start:]):
+        raise ModelDefinitionError("Reference evolving states with a relative recurrence index")
+    return terms
 
 
 def _wire_collection(namespace: ModelloMetaNamespace, name: str, spec: _CollectionSpec) -> None:

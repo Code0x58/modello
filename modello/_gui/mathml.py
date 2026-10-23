@@ -12,6 +12,7 @@ from sympy import Basic, Eq, S, Symbol
 from sympy.printing.conventions import requires_partial
 from sympy.printing.mathml import MathMLPresentationPrinter
 
+from modello._model_laws import ModelRecurrence
 from modello.series import Recurrence, Series, _SeriesTerm
 from modello.vectors import Vector, _VectorElement, _VectorFormula
 
@@ -112,6 +113,26 @@ class EquationPrinter(MathMLPresentationPrinter):
         table.setAttribute("rowspacing", "0.4em")
         return self._node("mrow", self._fence("{", opening=True), table)
 
+    def _print_ModelRecurrence(self, expression: ModelRecurrence) -> Any:
+        rows = [
+            self._node(
+                "mtr",
+                self._node("mtd", self._print(equation)),
+                self._node(
+                    "mtd",
+                    self._iteration(expression.index, expression.start, expression.stop)
+                    if i == 0
+                    else self._node("mrow"),
+                ),
+            )
+            for i, equation in enumerate(expression.equations)
+        ]
+        table = self._node("mtable", *rows)
+        table.setAttribute("columnalign", "left left")
+        table.setAttribute("columnspacing", "1em")
+        table.setAttribute("rowspacing", "0.4em")
+        return self._node("mrow", self._fence("{", opening=True), table)
+
     def _print_ItoProcess(self, expression: Any) -> Any:
         terms: list[Any] = []
         for coefficient, variable in (
@@ -152,11 +173,16 @@ class EquationPrinter(MathMLPresentationPrinter):
         _, body, operation = expression.args
         name = ("drift", "diffusion", "L")[int(operation)]
         operator = self._node("msub", self._node("mtext", text=name), self._node("mi", text="I"))
-        return self._node("mrow", operator, self._node("mo", text="["), self._print(body), self._node("mo", text="]"))
+        if int(operation) == 2:
+            operator = self._node("mi", text="ℒ")
+        return self._node(
+            "mrow", operator, self._fence("[", opening=True), self._print(body), self._fence("]", opening=False)
+        )
 
     def _print__ItoSolution(self, expression: Any) -> Any:
         law, initial, elapsed, increment, operation = expression.args
-        name = ("value", "E", "Var")[int(operation)]
+        name = ("value", "𝔼", "𝕍")[int(operation)]
+        operator = self._node("mtext" if operation == 0 else "mi", text=name)
         base = law.state.series if isinstance(law.state, _SeriesTerm) else law.state
         arguments = [
             self._node("msub", self._print(base), self._print(law.time + elapsed)),
@@ -175,9 +201,7 @@ class EquationPrinter(MathMLPresentationPrinter):
                     self._print(increment),
                 )
             )
-        return self._node(
-            "mrow", self._node("mtext", text=name), self._node("mo", text="["), *arguments, self._node("mo", text="]")
-        )
+        return self._node("mrow", operator, self._fence("[", opening=True), *arguments, self._fence("]", opening=False))
 
     def _print_Vector(self, expression: Vector) -> Any:
         if expression in self.vectors:
@@ -194,6 +218,13 @@ class EquationPrinter(MathMLPresentationPrinter):
 
     def vector_symbol(self, path: str, label: str) -> str:
         return self._markup(self._vector_symbol(path, label).toxml())
+
+    def indexed_symbol(self, path: str, label: str, index: int) -> str:
+        return self._markup(
+            self._link(
+                self._node("msub", self._node("mi", text=label), self._node("mn", text=str(index))), path
+            ).toxml()
+        )
 
     def model_recurrence(
         self, label: str, initial: str, transition: str, inputs: tuple[tuple[str, bool], ...], count: int
@@ -293,9 +324,10 @@ class EquationPrinter(MathMLPresentationPrinter):
         )
 
     def _range(self, first: Basic, last: Basic) -> Any:
-        if last < first:
+        difference = last - first
+        if difference.is_negative is True:
             return self._node("mo", text="∅")
-        if last - first <= 2:
+        if difference.is_Integer and difference <= 2:
             entries: list[Any] = []
             for offset in range(int(last - first + 1)):
                 if entries:
@@ -442,6 +474,7 @@ class EquationPrinter(MathMLPresentationPrinter):
 
     def _markup(self, markup: str, *, display: bool = False) -> str:
         markup = re.sub(r"&([A-Za-z][A-Za-z0-9]+);", _xml_entity, markup)
+        markup = markup.replace("<mo>-</mo>", "<mo>−</mo>")
         mode = "block" if display else "inline"
         return f'<math xmlns="http://www.w3.org/1998/Math/MathML" display="{mode}">{markup}</math>'
 

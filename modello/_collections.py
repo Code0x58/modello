@@ -2,13 +2,41 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Mapping
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Callable, Generic, Mapping, TypeVar
 
 from sympy import Basic, Expr, Integer
 
 from modello.errors import ModelInputError
 from modello.vectors import Vector
+
+if TYPE_CHECKING:
+    from modello import Modello
+
+_Model = TypeVar("_Model", bound="Modello", covariant=True)
+
+
+@dataclass(frozen=True)
+class ModelObservations(Mapping[int, _Model], Generic[_Model]):
+    """Sparse typed observations within a separately determined finite window."""
+
+    records: Mapping[int, _Model]
+
+    def __post_init__(self) -> None:
+        if any(isinstance(index, bool) or not isinstance(index, int) for index in self.records):
+            raise ModelInputError("Model observation indices must be integers")
+        object.__setattr__(self, "records", MappingProxyType(dict(self.records)))
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(self.records)
+
+    def __getitem__(self, index: int) -> _Model:
+        return self.records[index]
 
 
 class _UnresolvedSelection(Exception):

@@ -3,6 +3,7 @@
 from examples.model_sequences import AccountSequence, main
 from examples.portfolio.models import Execution, HoldingState
 from examples.symbolic import Known, SymbolicModel
+from modello import ModelObservations
 
 
 def test_model_sequence_console_walkthrough(capsys):
@@ -16,7 +17,7 @@ def test_numerical_views_preserve_model_types_and_shared_state_objects():
 
     source = NumericalSequence(
         "source",
-        opening=HoldingState("opening", quantity=3, cash=1000),
+        states=ModelObservations({0: HoldingState("opening", quantity=3, cash=1000)}),
         fills=[Execution("buy", quantity=2, price=100, fee=1), Execution("sell", quantity=-1, fee=1)],
     )
     view = source.compile()
@@ -24,8 +25,7 @@ def test_numerical_views_preserve_model_types_and_shared_state_objects():
     assert isinstance(result, NumericalSequence)
     assert float(result.terminal.cash) == 908
     assert result.states[-1] is result.terminal
-    assert result.states[0] is result.opening
-    assert result.states.steps[1].before is result.states[1]
-    assert result.states.steps[0].fill is result.fills[0]
+    assert float(result.states[0].cash) == 1000
+    assert not hasattr(result.states, "steps")
     assert result.terminal is not source.terminal
     assert source.fills[1].price.free_symbols

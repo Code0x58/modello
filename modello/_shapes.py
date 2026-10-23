@@ -28,6 +28,8 @@ def _dimensions(
     equations = list(relations)
     for name, axis in axes.items():
         if name in values and values[name] is not None:
+            if isinstance(vectors[name], _CollectionSpec) and isinstance(values[name], Mapping):
+                continue
             equations.append(Eq(axis, len(_vector_input(values[name], None, name))))
     for name, symbol in fields.items():
         if symbol in symbols:

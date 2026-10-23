@@ -151,6 +151,45 @@ main {
   padding: 10px;
   flex-shrink: 0;
 }
+.collection-add,
+.collection-remove {
+  flex-shrink: 0;
+  padding: 7px 10px;
+  margin-right: 8px;
+  border: 1px solid #d9e2ee;
+  border-radius: 6px;
+  background: #fff;
+  color: #4c6eaa;
+  font-size: 11px;
+}
+.collection-remove {
+  border-color: transparent;
+  color: #7c8797;
+}
+.model-member-value {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(60px, auto);
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #eef1f5;
+}
+.model-member-value .quantity-value {
+  text-align: right;
+}
+@media (max-width: 700px) {
+  .component.vector > .vector-heading {
+    flex-wrap: wrap;
+    gap: 0;
+  }
+  .component.vector > .vector-heading > .component-head {
+    flex-basis: 100%;
+  }
+  .component.vector > .vector-heading > .vector-inspect,
+  .component.vector > .vector-heading > .collection-add {
+    margin: 0 0 10px 12px;
+  }
+}
 .vector-entry {
   display: flex;
   align-items: center;

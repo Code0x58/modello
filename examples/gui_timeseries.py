@@ -11,7 +11,7 @@ from examples.model_sequences import AccountSequence
 from examples.relative_series import GeometricDiffusion, MeanReversion, ObservedAutoregression
 from examples.timeseries import LinearExposure, inventory_path, linear_trend, return_path, rolling_window
 from modello import Modello, ScalarValue, VectorValue
-from modello.gui import FieldInfo, ModelInfo, Scenario, create_app
+from modello.gui import FieldInfo, ModelInfo, ModelVectorInput, Scenario, create_app
 
 
 @ModelInfo(
@@ -301,60 +301,60 @@ class RelativeLab(ObservedAutoregression):
 
 @ModelInfo(
     title="An account across executions",
-    description="A vector of typed executions connects opening, intermediate, and terminal account states.",
+    description="Each execution updates the next account state through one relative recurrence.",
     info=(
-        "Each step reuses the portfolio example's FillPosting model, including signed quantities, "
-        "execution prices and fees. State n follows state n − 1 using execution n − 1. "
-        "The execution vectors determine N; the state vectors have N + 1 boundaries. "
-        "Observe terminal cash to infer a missing execution price. Transition details expose the "
-        "same account and execution quantities under their step-local names."
+        "Executions and account states are vectors of models. Each execution has a signed quantity, "
+        "price and fee; each account state has inventory and cash. The first state is the opening "
+        "observation. Add or remove executions to change N, or observe terminal cash to infer a missing price."
     ),
-    initial_field="balances",
+    initial_field="terminal.cash",
     highlights=("terminal.quantity", "terminal.cash", "total_fees"),
     fields={
-        "N": FieldInfo(title="Number of executions", symbol="N"),
-        "opening": FieldInfo(title="Opening account"),
-        "opening.quantity": FieldInfo(title="Opening inventory", symbol="q₀", unit="shares"),
-        "opening.cash": FieldInfo(title="Opening cash", symbol="C₀", unit="USD"),
-        "fills": FieldInfo(title="Execution models", symbol="F"),
+        "N": FieldInfo(title="Executions", symbol="N"),
+        "fills": FieldInfo(title="Executions", symbol="F"),
+        "fills[]": FieldInfo(title="Execution", symbol="F"),
+        "fills[].quantity": FieldInfo(title="Signed quantity", symbol="u", unit="shares"),
+        "fills[].price": FieldInfo(title="Price", symbol="p", unit="USD/share"),
+        "fills[].fee": FieldInfo(title="Fee", symbol="c", unit="USD"),
+        "fills[].notional": FieldInfo(title="Trade value", symbol="v", unit="USD"),
         "states": FieldInfo(title="Account states", symbol="A"),
-        "states.steps": FieldInfo(title="Transition details"),
+        "states[]": FieldInfo(title="Account state", symbol="A"),
+        "states[].quantity": FieldInfo(title="Inventory", symbol="Q", unit="shares"),
+        "states[].cash": FieldInfo(title="Cash", symbol="C", unit="USD"),
         "terminal": FieldInfo(title="Terminal account"),
-        "terminal.quantity": FieldInfo(title="Terminal inventory", symbol="qₙ", unit="shares"),
-        "terminal.cash": FieldInfo(title="Terminal cash", symbol="Cₙ", unit="USD"),
-        "fill_quantities": FieldInfo(title="Signed execution quantities", symbol="f", unit="shares"),
-        "prices": FieldInfo(title="Execution prices", symbol="p", unit="USD/share"),
-        "fees": FieldInfo(title="Execution fees", symbol="c", unit="USD"),
-        "quantities": FieldInfo(title="Inventory at each boundary", symbol="q", unit="shares"),
-        "balances": FieldInfo(title="Cash at each boundary", symbol="C", unit="USD"),
+        "terminal.quantity": FieldInfo(title="Terminal inventory", unit="shares"),
+        "terminal.cash": FieldInfo(title="Terminal cash", unit="USD"),
         "total_fees": FieldInfo(title="Total execution fees", symbol="K", unit="USD"),
+        "law": FieldInfo(title="Account recurrence"),
     },
     scenarios=(
         Scenario(
-            title="An open execution price", description="The second execution price is unknown.", select="prices[1]"
+            title="An open execution price",
+            description="The second execution price is unknown.",
+            select="fills[1].price",
         ),
         Scenario(
             title="Supply the execution price",
             description="Sell one share at USD 110; terminal cash is USD 908.",
-            bindings={"prices[1]": 110},
+            bindings={"fills[1].price": 110},
             select="terminal.cash",
         ),
         Scenario(
             title="Infer from terminal cash",
             description="Observe USD 908 terminal cash and infer the sale price.",
             bindings={"terminal.cash": 908},
-            select="prices[1]",
+            select="fills[1].price",
         ),
         Scenario(
             title="One execution",
-            description="Shorten all execution observations; N becomes one.",
-            bindings={"fill_quantities": [2], "prices": [100], "fees": [1]},
+            description="Keep the first execution; N becomes one.",
+            bindings={"fills": [{"quantity": 2, "price": 100, "fee": 1}]},
             select="terminal.cash",
         ),
         Scenario(
             title="No executions",
-            description="An empty execution vector leaves the terminal account at its opening state.",
-            bindings={"fill_quantities": [], "prices": [], "fees": []},
+            description="With no executions, the terminal account is the initial state.",
+            bindings={"fills": []},
             select="terminal.cash",
         ),
     ),
@@ -447,7 +447,7 @@ class ReversionLab(MeanReversion):
     pass
 
 
-DEMOS: Mapping[str, tuple[type[Modello], Mapping[str, ScalarValue | VectorValue]]] = {
+DEMOS: Mapping[str, tuple[type[Modello], Mapping[str, ScalarValue | VectorValue | ModelVectorInput]]] = {
     "inventory": (
         InventoryLab,
         {"before.quantity": 5, "before.cash": 1000, "fills": [2, -1, None, -2], "prices": [100, 110, 105, 120]},
@@ -460,11 +460,9 @@ DEMOS: Mapping[str, tuple[type[Modello], Mapping[str, ScalarValue | VectorValue]
     "sequence": (
         SequenceLab,
         {
-            "opening.quantity": 3,
-            "opening.cash": 1000,
-            "fill_quantities": [2, -1],
-            "prices": [100, None],
-            "fees": [1, 1],
+            "states[0].quantity": 3,
+            "states[0].cash": 1000,
+            "fills": [{"quantity": 2, "price": 100, "fee": 1}, {"quantity": -1, "fee": 1}],
         },
     ),
     "diffusion": (

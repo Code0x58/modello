@@ -10,6 +10,7 @@ from sympy import Basic, Expr, Integer, Symbol, sympify
 
 from modello._collections import _CollectionSpec, _Location, _Selection, _UnresolvedSelection
 from modello._expressions import _declaration, _substitute
+from modello._model_laws import ModelRecurrence, _ModelLawSpec
 from modello._operators import _FunctionSymbol, _SymbolicTemplate
 from modello._paths import _path_label, _path_value
 from modello._problem import ConstraintKind, FieldPath
@@ -202,6 +203,7 @@ class ModelloMetaNamespace(dict):
         self.aliases: dict[FieldPath, FieldPath] = {}
         self.structural_indices: dict[Symbol, Basic] = {}
         self.pending_wiring: set[str] = set()
+        self.model_laws: dict[str, _ModelLawSpec] = {}
         self.annotations: dict[type[Annotation], dict[str, Annotation]] = {}
         self._declared_annotations: set[tuple[type[Annotation], str]] = set()
         self._replacements: dict[Basic, Basic] = {}
@@ -271,6 +273,7 @@ class ModelloMetaNamespace(dict):
             self.views.update(parent.views)
             self.aliases.update(parent.aliases)
             self.structural_indices.update(parent.structural_indices)
+            self.model_laws.update(parent.model_laws)
             self._replacements.update(parent._replacements)
             self._missing.update(parent._missing)
             self._replace(replacements)
@@ -331,6 +334,9 @@ class ModelloMetaNamespace(dict):
         self.templates = {key: value.xreplace(replacements) for key, value in self.templates.items()}
         self.collections = {key: value.substitute(replacements) for key, value in self.collections.items()}
         self.views = {key: value.substitute(replacements) for key, value in self.views.items()}
+        self.model_laws = {key: value.substitute(replacements) for key, value in self.model_laws.items()}
+        for key, law in self.model_laws.items():
+            self.templates[key] = law.template
         self.structural_indices = {
             replacements.get(symbol, symbol): value.xreplace(replacements)
             for symbol, value in self.structural_indices.items()
@@ -363,6 +369,12 @@ class ModelloMetaNamespace(dict):
             annotations = value.annotations
             value = value.value
         self.add_annotations(key, annotations)
+        if isinstance(value, _ModelLawSpec):
+            value = value.substitute(self._replacements)
+            self.model_laws[key] = value
+            value = value.template
+        elif isinstance(value, ModelRecurrence) or key in self.model_laws:
+            raise ModelDefinitionError("Declare indexed model equations with model_recurrence(states[n], ...)")
         if key in self.collections and not isinstance(value, _CollectionSpec):
             raise ModelDefinitionError(f"Cannot replace model collection {self.name}.{key} with another field kind")
         is_view = isinstance(value, _Selection) or isinstance(value, _ModelReference) and value._modello_view
@@ -374,6 +386,7 @@ class ModelloMetaNamespace(dict):
         ):
             raise ModelDefinitionError("The _modello_ prefix is reserved for model metadata")
         if isinstance(value, _CollectionSpec):
+            value = value.substitute(self._replacements)
             if (
                 key in self.dummies
                 or key in self.vectors
@@ -385,7 +398,7 @@ class ModelloMetaNamespace(dict):
             previous = self.collections.get(key)
             if previous is not None and (previous.model is not value.model or bool(previous.wire) != bool(value.wire)):
                 raise ModelDefinitionError(f"Cannot change the component schema of {self.name}.{key}")
-            if previous is not None and previous._finite and value._finite and previous.size != value.size:
+            if previous is not None and previous.size != value.size:
                 raise ModelDefinitionError(f"Cannot change the size of {self.name}.{key}; declare a new model shape")
             self.collections[key] = value
             value = self._declare_component(key, value.factory(value.size))
@@ -578,6 +591,11 @@ class ModelloMetaNamespace(dict):
             for i, expression in enumerate(value)
             if expression != self.vectors[attr][i]
         )
+        for name, law in self.model_laws.items():
+            try:
+                constraints.extend(_Definition(*definition) for definition in law.compile(self, name, law))
+            except _UnresolvedSelection:
+                self.pending_wiring.add(name)
         for attr, child in self.nested_models.items():
             if attr in self.views:
                 continue
@@ -747,6 +765,8 @@ def _specialize_model(model: type[ShapeModel], values: Mapping[str, object]) -> 
     selected = {}
     locations = [namespace.views[name].location for name in pending]
     for name in namespace.pending_wiring:
+        if name in namespace.model_laws:
+            continue
         spec = namespace.collections[name]
         locations.extend(spec.inputs.values())
         if spec.initial is not None:

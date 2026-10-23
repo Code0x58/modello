@@ -118,6 +118,10 @@ Vectors and indices
 See :doc:`model-vectors` for typed ordered components, ``model_vector``, and
 ``model_recurrence``. ``ModelVectorValue[Model]`` describes observations as a
 typed model vector or a sequence of compatible model instances and ``None``.
+It also accepts ``ModelObservations[Model]`` for sparse typed observations of
+positions within an independently determined window. Indexed field laws use
+``model_recurrence(states[n], ...)`` and expose their source ``ModelRecurrence``
+template alongside the finite model equations.
 
 .. _extension-annotations:
 

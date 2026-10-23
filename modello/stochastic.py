@@ -299,7 +299,7 @@ class _ItoSolution(_ScopedOperator):
 
     def _latex(self, printer: Any) -> str:
         law, initial, elapsed, increment, operation = self.args
-        name = (r"\operatorname{value}_{\mathrm{I}}", r"\operatorname{E}", r"\operatorname{Var}")[int(self.args[4])]
+        name = (r"\operatorname{value}_{\mathrm{I}}", r"\mathbb{E}", r"\mathbb{V}")[int(self.args[4])]
         base = printer._print(law.state.series if isinstance(law.state, _SeriesTerm) else law.state)
         condition = rf"{base}_{{{printer._print(law.time)}}}={printer._print(initial)}"
         if operation == 0:

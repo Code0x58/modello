@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from collections import Counter
 from dataclasses import replace
 from difflib import get_close_matches
 from typing import TYPE_CHECKING, Any, Iterator, Mapping
@@ -15,6 +17,7 @@ from modello._symbols import _minimal_assumptions
 from modello.diagnostics import ConstraintKind, ModelField, ModelProblem
 from modello.errors import ModelInputError
 from modello.gui import FieldInfo, ModelInfo, Scenario
+from modello.model_vectors import _collection_columns
 from modello.vectors import _vector_input
 
 if TYPE_CHECKING:
@@ -38,10 +41,13 @@ class Layout:
         }
         self.metadata = dict.fromkeys(self.fields, FieldInfo())
         self._explicit_metadata: set[str] = set()
+        self._member_styles: dict[tuple[str, str], FieldInfo] = {}
+        self.references = dict(_reference_tree(problem.symbols))
         self.components: list[str] = []
         self.parents: dict[str, str] = {}
         self.collections: dict[str, Any] = {}
         self.recurrences: dict[str, tuple[str, Any, Any]] = {}
+        self.law_fields: dict[str, str] = {}
         self.folded: set[str] = set()
         self.vectors = {
             _path_label(path): vector for path, vector in problem.vectors.items() if _path_label(path) not in internal
@@ -49,6 +55,8 @@ class Layout:
         self.vector_definitions = {_path_label(path): value for path, value in problem.vector_definitions.items()}
         self.templates = {_path_label(path): value for path, value in problem.templates.items()}
         self._collect(problem.model)
+        definitions = Counter(_path_label(c.path) for c in problem.constraints if c.kind is ConstraintKind.DEFINITION)
+        self.law_fields = {path: source for path, source in self.law_fields.items() if definitions[path] == 1}
         for path, info in overrides.items():
             self._set_info(path, info)
         for path, vector in self.vectors.items():
@@ -93,16 +101,59 @@ class Layout:
                 coordinate = f"{path}[{i}]"
                 if not self.metadata[coordinate].symbol and self.aliases[symbol][0] == coordinate:
                     self._coordinate_labels[symbol] = (coordinate, self.metadata[path].symbol or path, i)
+        for path, collection in self.collections.items():
+            if collection._modello_collection_kind != "vector":
+                continue
+            reference = self.references[path]
+            parent = self.references[self.parents[path]]
+            source = getattr(parent._modello_model, "_modello_shape_source", parent._modello_model)
+            name = reference._modello_path[-1]
+            original = source._modello_namespace.nested_models.get(name)
+            columns = _collection_columns(reference)
+            originals = _collection_columns(original) if original is not None else {}
+            element = collection._modello_collection_element
+            schema = FieldInfo.for_model(element)
+            member_internal = {
+                _join(relative, name)
+                for relative, child in _model_tree(element)
+                for name in getattr(child, "_modello_internal_vectors", ())
+            }
+            for field_path, column in columns.items():
+                if _path_label(field_path[:-1]) in member_internal:
+                    continue
+                member_name = _path_label(field_path)
+                style = self._member_styles.get((path, member_name), schema.get(member_name, FieldInfo()))
+                label = style.symbol or member_name
+                self._vector_labels.setdefault(column, (path, label))
+                if field_path in originals:
+                    original_column = originals[field_path].xreplace(parent._modello_bindings)
+                    self._vector_labels[original_column] = (path, label)
+                for i, symbol in enumerate(column):
+                    coordinate = f"{path}[{i}].{member_name}"
+                    if coordinate in self.fields and (
+                        not self.metadata[coordinate].symbol or self.metadata[coordinate].symbol == label
+                    ):
+                        self._coordinate_labels[symbol] = (coordinate, label, i)
+        self.editable_collections = frozenset(
+            path
+            for path in self.collections
+            if path in self.resizable
+            and path not in hidden
+            and all(name in self.editable for name in self.fields if name.startswith(path + "["))
+        )
         self._validate_navigation()
         printer = self.printer()
         self.equations = tuple(
             {
                 "path": _path_label(c.path),
                 "mathml": printer.equation(c.left, c.right),
-                "text": f"{problem.format(c.left)} = {problem.format(c.right)}",
+                "text": f"{self.format(problem, c.left)} = {self.format(problem, c.right)}",
             }
             for c in problem.constraints
-            if c.kind is ConstraintKind.DEFINITION and _path_label(c.path) not in hidden and not c.path[-1].isdecimal()
+            if c.kind is ConstraintKind.DEFINITION
+            and _path_label(c.path) not in hidden
+            and not c.path[-1].isdecimal()
+            and _path_label(c.path) not in self.law_fields
         )
         self.vector_equations = {
             path: {
@@ -121,7 +172,7 @@ class Layout:
                 "path": path,
                 "title": self.title(path),
                 "mathml": printer.expression(template, display=True),
-                "text": problem.format(template),
+                "text": self.format(problem, template),
             }
             for path, template in self.templates.items()
             if template.equations and path not in hidden
@@ -169,6 +220,18 @@ class Layout:
         annotated_models = ModelInfo.for_model(model)
         declarations: dict[str, ModelInfo] = {}
         for path, child in _model_tree(model):
+            for name, law in child._modello_namespace.model_laws.items():
+                size = int(
+                    getattr(
+                        child._modello_namespace.reference_at(law.target.path)._modello_model,
+                        "_modello_collection_size",
+                    )
+                )
+                for point in range(int(law.template.start), size):
+                    for field in law.paths:
+                        self.law_fields[
+                            _join(path, _path_label((*law.target.path, str(point), *law.target.suffix, *field)))
+                        ] = _join(path, name)
             for name, spec in child._modello_namespace.collections.items():
                 if spec.wire is not None:
                     self.recurrences[_join(path, name)] = (path, child._modello_namespace, spec)
@@ -207,11 +270,34 @@ class Layout:
                 self._set_info(_join(component_path, relative_path), info, context=context)
 
     def _set_info(self, path: str, info: FieldInfo, *, context: str = "metadata") -> None:
-        _require_path(path, self.metadata, context)
         if not isinstance(info, FieldInfo):
             raise ModelInputError(f"{context}: expected FieldInfo at {path!r}")
         if info.number_format not in {"number", "percent"}:
             raise ModelInputError(f"{context}: invalid number_format at {path!r}; choose 'number' or 'percent'")
+        if "[]" in path:
+            if path.endswith("[]"):
+                root = path[:-2]
+                if root not in self.collections:
+                    raise ModelInputError(f"{context}: Unknown model-vector pattern {path!r}")
+                self._member_styles[root, ""] = info
+                for i in range(int(self.collections[root]._modello_collection_size)):
+                    self._set_info(
+                        f"{root}[{i}]", replace(info, title=f"{info.title} {i}" if info.title else ""), context=context
+                    )
+                return
+            root, relative = path.split("[].", 1) if "[]." in path else (path, "")
+            collection = self.collections.get(root)
+            if collection is None or relative not in {
+                _path_label(key) for key in collection._modello_collection_element._modello_definition.fields
+            }:
+                raise ModelInputError(f"{context}: Unknown model-vector field pattern {path!r}")
+            self._member_styles[root, relative] = info
+            pattern = re.compile(re.escape(root) + r"\[[0-9]+\]\." + re.escape(relative))
+            for field in self.fields:
+                if pattern.fullmatch(field):
+                    self._set_info(field, info, context=context)
+            return
+        _require_path(path, self.metadata, context)
         self.metadata[path] = info
         self._explicit_metadata.add(path)
 
@@ -219,8 +305,19 @@ class Layout:
         """Give each render its own printer context, including concurrent requests."""
         return EquationPrinter(self._labels, self._vector_labels, self._coordinate_labels, self._template_labels)
 
+    def format(self, problem: ModelProblem, expression: Any) -> str:
+        printer = problem._printer(expression)
+        printer.labels.update({symbol: label for symbol, (_, label) in self._labels.items()})
+        printer.labels.update(
+            {symbol: f"{label}[{index}]" for symbol, (_, label, index) in self._coordinate_labels.items()}
+        )
+        printer.vector_labels.update({vector: label for vector, (_, label) in self._vector_labels.items()})
+        return str(printer.doprint(expression))
+
     def equation_path(self, path: tuple[str, ...], expression: object) -> str:
         """Prefer a complete law for a direct scalar evaluation of that law."""
+        if _path_label(path) in self.law_fields:
+            return self.law_fields[_path_label(path)]
         arguments = getattr(expression, "args", ())
         if arguments:
             for name, template in self.templates.items():
@@ -251,6 +348,11 @@ class Layout:
             context = f"Scenario {scenario.title!r}"
 
             def variable_coordinate(name: str) -> bool:
+                for root in self.resizable & self.collections.keys():
+                    match = re.fullmatch(re.escape(root) + r"\[[0-9]+\]\.(.+)", name)
+                    schema = self.collections[root]._modello_collection_element._modello_definition.fields
+                    if match and tuple(match[1].split(".")) in schema:
+                        return True
                 return any(
                     name.startswith(path + "[") and name.endswith("]") and name[len(path) + 1 : -1].isdigit()
                     for path in self.resizable
@@ -262,7 +364,7 @@ class Layout:
             fixed_bindings = {}
             for path, raw in scenario.bindings.items():
                 if path in self.resizable:
-                    if path not in self.editable_vectors:
+                    if path not in self.editable_vectors and path not in self.editable_collections:
                         raise ModelInputError(f"{context}.bindings: cannot edit vector {path!r}")
                 elif path not in self.fields and variable_coordinate(path):
                     # A scenario restores its original observation window before
@@ -279,7 +381,19 @@ class Layout:
     def expand_bindings(self, bindings: Mapping[str, object]) -> Iterator[tuple[str, object]]:
         """Expand whole-vector observations at the same boundary as scalar paths."""
         for path, raw in bindings.items():
-            if path in self.vectors:
+            if path in self.collections:
+                size = int(self.collections[path]._modello_collection_size)
+                entries = (None,) * size if raw is None else _vector_input(raw, size, path)
+                for i, entry in enumerate(entries):
+                    prefix = f"{path}[{i}]."
+                    fields = {name[len(prefix) :]: name for name in self.fields if name.startswith(prefix)}
+                    if entry is not None and not isinstance(entry, Mapping):
+                        raise ModelInputError(f"{path}[{i}] needs named model field observations")
+                    record = entry or {}
+                    for key in record:
+                        _require_path(key, fields, f"{path}[{i}]")
+                    yield from ((field, record.get(key)) for key, field in fields.items())
+            elif path in self.vectors:
                 size = len(self.vectors[path])
                 entries = (None,) * size if raw is None else _vector_input(raw, size, path)
                 yield from ((f"{path}[{i}]", entry) for i, entry in enumerate(entries))
@@ -320,3 +434,9 @@ def _model_tree(model: type[Modello], prefix: str = "") -> Iterator[tuple[str, t
     yield prefix, model
     for name, child in model._modello_namespace.nested_models.items():
         yield from _model_tree(child._modello_model, _join(prefix, name))
+
+
+def _reference_tree(reference: Any, prefix: str = "") -> Iterator[tuple[str, Any]]:
+    yield prefix, reference
+    for name in reference._modello_model._modello_namespace.nested_models:
+        yield from _reference_tree(getattr(reference, name), _join(prefix, name))

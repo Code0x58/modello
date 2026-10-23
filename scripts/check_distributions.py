@@ -162,6 +162,7 @@ from examples.data import NamedMap
 from examples.gui_quickstart import ReturnModel
 from examples.timeseries import rolling_window
 from examples.model_sequences import AccountSequence
+import modello
 from examples.portfolio.models import Execution, HoldingState
 from modello.gui import Explorer
 
@@ -171,8 +172,9 @@ assert RightAngleTriangle("T", a=3, b=4).c == 5
 assert NamedMap({"a": 2}).map(lambda value: value * 3) == {"a": 6}
 assert ReturnModel("example", capital=100_000, expected_return="2/25").gain == 8_000
 assert tuple(rolling_window(4, 2)("window", samples=[1, 3, 5, 7]).means) == (2, 4, 6)
-sequence = AccountSequence("installed", opening=HoldingState("opening", quantity=3, cash=1000),
-                           fills=[Execution("fill", quantity=2, price=100, fee=1)])
+sequence = AccountSequence("installed",
+    states=modello.ModelObservations({0: HoldingState("opening", quantity=3, cash=1000)}),
+    fills=[Execution("fill", quantity=2, price=100, fee=1)])
 assert sequence.terminal.cash == 799
 assert sequence.terminal is sequence.states[-1]
 assert Explorer(ReturnModel, inputs={"capital": 100_000}).snapshot(raw=True)["raw"]

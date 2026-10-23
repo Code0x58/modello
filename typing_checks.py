@@ -17,7 +17,9 @@ from modello import (
     InstanceDummy,
     ItoProcess,
     Modello,
+    ModelObservations,
     ModelProblem,
+    ModelRecurrence,
     ModelSequence,
     ModelSolveError,
     ModelVector,
@@ -281,3 +283,15 @@ def check_model_vector_contracts() -> None:
     _wrong: HoldingState = case.fills[0]  # type: ignore[assignment]
     _wrong_step: Execution = case.states.steps[0]  # type: ignore[assignment]
     vector.project(lambda fill: fill)  # type: ignore[arg-type, return-value]
+
+
+def check_indexed_model_equations() -> None:
+    from examples.model_sequences import AccountSequence
+    from examples.portfolio.models import HoldingState
+
+    initial: ModelObservations[HoldingState] = ModelObservations({0: HoldingState("initial", cash=1000)})
+    case = AccountSequence("typed", N=2, states=initial)
+    law: ModelRecurrence = case.law
+    state: HoldingState = case.states[-1]
+    assert law.equations and state
+    model_recurrence(AccountSequence.states[AccountSequence.n], cash={})  # type: ignore[call-overload]

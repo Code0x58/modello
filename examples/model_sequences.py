@@ -1,26 +1,25 @@
-"""Typed account paths using the same FillPosting as a single execution."""
+"""Account and execution models related directly at successive indices."""
 
 from __future__ import annotations
 
-from examples.portfolio.models import Execution, FillPosting, HoldingState
-from modello import InstanceDummy, Modello, component, model_recurrence, model_vector
+from examples.portfolio.models import Execution, HoldingState
+from modello import Index, InstanceDummy, Modello, ModelObservations, model_recurrence, model_vector
 
 
 class AccountSequence(Modello):
     """N executions connect N + 1 account boundaries in one system of equations."""
 
     N = InstanceDummy("N", integer=True, nonnegative=True)
-    opening = component(HoldingState)
     fills = model_vector(Execution, size=N)
-    states = model_recurrence(FillPosting, initial=opening, fill=fills)
+    states = model_vector(HoldingState, size=N + 1)
+    n = Index("n")
+    law = model_recurrence(
+        states[n],
+        quantity=states[n - 1].quantity + fills[n - 1].quantity,
+        cash=states[n - 1].cash - fills[n - 1].notional - fills[n - 1].fee,
+    )
     terminal = states[-1]
-
-    fill_quantities = fills.project(lambda fill: fill.quantity)
-    prices = fills.project(lambda fill: fill.price)
-    fees = fills.project(lambda fill: fill.fee)
-    quantities = states.project(lambda account: account.quantity)
-    balances = states.project(lambda account: account.cash)
-    total_fees = fees.sum()
+    total_fees = fills.project(lambda fill: fill.fee).sum()
 
 
 def main() -> None:
@@ -30,12 +29,13 @@ def main() -> None:
         Execution("sell", quantity=-1, fee=1),
     ]
     target = HoldingState("target", cash=908)
-    case = AccountSequence("settlement", opening=opening, fills=fills, terminal=target)
-    print(f"{case.N} fills; quantities {case.quantities}; cash {case.balances}")
+    case = AccountSequence("settlement", states=ModelObservations({0: opening}), fills=fills, terminal=target)
+    quantities = case.states.project(lambda state: state.quantity)
+    balances = case.states.project(lambda state: state.cash)
+    print(f"{case.N} fills; quantities {quantities}; cash {balances}")
     print(f"Inferred sale price: {case.fills[1].price}")
     assert case.terminal is case.states[-1]
-    assert case.states.steps[1].before is case.states[1]
-    assert AccountSequence("empty", opening=opening, fills=[]).terminal.cash == 1000
+    assert AccountSequence("empty", states=ModelObservations({0: opening}), fills=[]).terminal.cash == 1000
 
 
 if __name__ == "__main__":

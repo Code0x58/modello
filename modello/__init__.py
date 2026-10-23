@@ -6,6 +6,7 @@ from typing import ClassVar, Mapping, TypeVar, cast
 
 from sympy import Basic, Eq, Expr, S, Symbol, check_assumptions, solve
 
+from modello._collections import ModelObservations as ModelObservations
 from modello._expressions import _evaluate, _substitute
 from modello._model import (
     BoundInstanceDummy as BoundInstanceDummy,
@@ -46,6 +47,7 @@ from modello.errors import (
     UnresolvedSolutionError as UnresolvedSolutionError,
 )
 from modello.model_vectors import (
+    ModelRecurrence as ModelRecurrence,
     ModelSequence as ModelSequence,
     ModelVector as ModelVector,
     ModelVectorValue as ModelVectorValue,

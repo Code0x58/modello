@@ -96,14 +96,20 @@ cyclic definitions. Unknown assumptions remain distinct from disproven ones.
 Finite data reductions and explicit zero-rate kernels avoid slower generic
 symbolic work while retaining exceptional parameter cases.
 
-``model_vectors.py`` builds typed component collections from ordinary model
-declarations. Scalar projections use existing ``Vector`` identities. A model
-recurrence owns one transition vector; boundary and terminal components are
-views of its opening/result ports. ``_collections.py`` holds deferred declaration
-records without importing model construction. The compiler retains component
-alias paths and excludes repeated definitions. Population allocates canonical
-components once, then connects their views. Structural shape/index binding
-precedes scalar solving; it preserves scalar equations and input provenance.
+``model_vectors.py`` builds typed collections and compiles relative field laws
+into ordinary scalar definitions. ``_model_laws.py`` separates structural
+declaration records from immutable source templates: normalize the entire
+record on inheritance and keep source formulas distinct from finite expansion.
+Validate positive self-lags and input bounds before Python indexing can wrap.
+Use the existing binder-aware substitution for lowering; preserve equations
+already declared by member schemas. The transition-model overload remains
+compatible with existing component models.
+
+``_collections.py`` holds deferred locations and typed sparse observations
+without importing model construction. Population allocates canonical components
+once and connects their views. Structural shape/index binding precedes scalar
+solving. The GUI's ``_gui/collections.py`` summarizes nested model members and
+observation origins; its labels preserve canonical API paths for navigation.
 
 Validation
 ----------

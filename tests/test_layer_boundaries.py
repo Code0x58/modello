@@ -19,6 +19,7 @@ def test_core_imports_follow_the_dependency_layers(pytestconfig: pytest.Config) 
                 "modello._operators",
                 "modello.vectors",
                 "modello._collections",
+                "modello._model_laws",
                 "modello._shapes",
                 "modello.series",
                 "modello.stochastic",

@@ -51,8 +51,21 @@ def test_frontend_vector_proposal_state(tmp_path: Path, pytestconfig: pytest.Con
         law_edits[name] = response.json
     fixtures = tmp_path / "state.json"
     model, inputs = DEMOS["sequence"]
-    sequence = create_app(model, inputs=inputs).test_client().post("/api/explore", json={"bindings": {}})
+    sequence_client = create_app(model, inputs=inputs).test_client()
+    sequence = sequence_client.post("/api/explore", json={"bindings": {}})
     assert sequence.status_code == 200
+    data = sequence.get_json()
+    assert data is not None
+    records = next(component["observations"] for component in data["components"] if component["path"] == "fills")
+    added = [*records, {}]
+    cell = [*records, {"price": "110"}]
+    sequence_edits = {}
+    for name, observations in {"added": added, "cell": cell, "removed": records[:1], "empty": []}.items():
+        response = sequence_client.post(
+            "/api/explore", json={"bindings": {"N": None, "fills": json.dumps(observations)}}
+        )
+        assert response.status_code == 200, response.json
+        sequence_edits["sequence_" + name] = response.json
     fixtures.write_text(
         json.dumps(
             dict(
@@ -63,6 +76,7 @@ def test_frontend_vector_proposal_state(tmp_path: Path, pytestconfig: pytest.Con
                 rejected=rejected.json,
                 laws=laws.json,
                 sequence=sequence.json,
+                **sequence_edits,
                 **law_edits,
             )
         )

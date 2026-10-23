@@ -6,6 +6,7 @@ browser edits are exact scalars parsed without evaluating expression strings.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field as dataclass_field, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, TypeVar, cast
 
@@ -15,14 +16,22 @@ from modello import (
     Annotation,
     Modello,
     ScalarValue,
-    VectorValue,
     _solve_problem,
     annotate,
     annotate_model,
     inspect_model,
 )
+from modello._gui.collections import component_views, update_collection_observations
 from modello._gui.formatting import display_number
-from modello._gui.inputs import binding_texts, parse_scalar, parse_vector, request_limit
+from modello._gui.inputs import (
+    ExplorerValue,
+    ModelVectorInput as ModelVectorInput,
+    binding_texts,
+    parse_model_vector,
+    parse_scalar,
+    parse_vector,
+    request_limit,
+)
 from modello._gui.mathml import EquationPrinter
 from modello._gui.shapes import ShapePlan, _entries
 from modello._gui.vectors import vector_input_text, vector_view
@@ -37,7 +46,7 @@ from modello.errors import ModelInputError, ModelValidationError, SolverBackendE
 if TYPE_CHECKING:
     from flask import Flask
 
-__all__ = ["BindingError", "Explorer", "FieldInfo", "ModelInfo", "Scenario", "create_app", "gui"]
+__all__ = ["BindingError", "Explorer", "FieldInfo", "ModelInfo", "ModelVectorInput", "Scenario", "create_app", "gui"]
 
 _ValueT = TypeVar("_ValueT")
 _ModelT = TypeVar("_ModelT", bound=Modello)
@@ -107,7 +116,7 @@ class Scenario:
 
     title: str
     description: str
-    bindings: Mapping[str, ScalarValue | VectorValue | None] = dataclass_field(default_factory=dict)
+    bindings: Mapping[str, ExplorerValue | None] = dataclass_field(default_factory=dict)
     select: str = ""
 
 
@@ -233,7 +242,7 @@ class Explorer:
         model: type[Modello] | Modello | ModelProblem,
         name: str = "exploration",
         *,
-        inputs: Mapping[str, ScalarValue | VectorValue] | None = None,
+        inputs: Mapping[str, ExplorerValue] | None = None,
         metadata: Mapping[str, FieldInfo] | None = None,
     ) -> None:
         self._shape_plan: ShapePlan | None = None
@@ -242,14 +251,15 @@ class Explorer:
             if _has_symbolic_shape(source):
                 self._shape_plan = ShapePlan(model, inputs or {})
                 model = self._shape_plan.initial_model
-        resizable = self._shape_plan.vectors if self._shape_plan is not None else frozenset()
+        resizable = self._shape_plan.axes if self._shape_plan is not None else frozenset()
+        self._shape_dimensions = frozenset(self._shape_plan.dimensions) if self._shape_plan is not None else frozenset()
         self._initialize(model, name, inputs or {}, metadata or {}, resizable)
 
     def _initialize(
         self,
         model: type[Modello] | Modello | ModelProblem,
         name: str,
-        inputs: Mapping[str, ScalarValue | VectorValue],
+        inputs: Mapping[str, ExplorerValue],
         metadata: Mapping[str, FieldInfo],
         resizable: frozenset[str],
     ) -> None:
@@ -263,6 +273,7 @@ class Explorer:
             self.problem = inspect_model(model, name)
         self._metadata = metadata
         self._layout = Layout(self.problem, metadata, resizable=resizable)
+        self._input_axes = frozenset(path for path in inputs if path in self._layout.collections)
         self._initial = self._bind(self.problem, inputs, context="inputs")
         self._initial_inputs = {c.left: c.right for c in self._initial.constraints if c.kind is ConstraintKind.INPUT}
 
@@ -272,7 +283,8 @@ class Explorer:
         model, baseline = self._shape_plan.select(bindings)
         target = object.__new__(Explorer)
         target._shape_plan = None
-        target._initialize(model, self.problem.name, baseline, self._metadata, self._shape_plan.vectors)
+        target._shape_dimensions = frozenset(self._shape_plan.dimensions)
+        target._initialize(model, self.problem.name, baseline, self._metadata, self._shape_plan.axes)
         return target
 
     def _window_history(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -299,7 +311,7 @@ class Explorer:
     def _bind(
         self,
         initial: ModelProblem,
-        bindings: Mapping[str, ScalarValue | VectorValue | None],
+        bindings: Mapping[str, ExplorerValue | None],
         *,
         context: str = "bindings",
     ) -> ModelProblem:
@@ -333,11 +345,15 @@ class Explorer:
             initial, constraints=tuple(replace(c, index=i) for i, c in enumerate(constraints)), candidates=()
         )
 
-    def _browser_bindings(self, bindings: Mapping[str, str | None]) -> dict[str, ScalarValue | VectorValue | None]:
+    def _browser_bindings(self, bindings: Mapping[str, str | None]) -> dict[str, ExplorerValue | None]:
         """Apply the same edit policy used to decide which fields have editors."""
-        parsed: dict[str, ScalarValue | VectorValue | None] = {}
+        parsed: dict[str, ExplorerValue | None] = {}
         for path, text in bindings.items():
-            if path not in self._layout.editable and path not in self._layout.editable_vectors:
+            if (
+                path not in self._layout.editable
+                and path not in self._layout.editable_vectors
+                and path not in self._layout.editable_collections
+            ):
                 raise BindingError("This field cannot be edited.", (path,))
             if text is not None and not isinstance(text, str):
                 raise BindingError("Enter input values as text.", (path,))
@@ -345,6 +361,8 @@ class Explorer:
                 parsed[path] = (
                     None
                     if text is None or not text.strip()
+                    else parse_model_vector(text, int(self._layout.collections[path]._modello_collection_size))
+                    if path in self._layout.collections
                     else parse_vector(text, len(self._layout.vectors[path]))
                     if path in self._layout.vectors
                     else parse_scalar(text)
@@ -356,11 +374,13 @@ class Explorer:
     def _browser_snapshot(self, bindings: Mapping[str, str | None], *, raw: bool) -> dict[str, Any]:
         """Retain accepted arithmetic instead of seeding an unparseable large literal."""
         if self._shape_plan is not None:
-            shape_bindings = {}
+            shape_bindings: dict[str, object] = {}
             for path, text in bindings.items():
                 if text is not None and not isinstance(text, str):
                     raise BindingError("Enter input values as text.", (path,))
-                if path in self._shape_plan.vectors:
+                if path in self._shape_plan.collections:
+                    shape_bindings[path] = None if text is None or not text.strip() else parse_model_vector(text, None)
+                elif path in self._shape_plan.vectors:
                     shape_bindings[path] = None if text is None or not text.strip() else parse_vector(text, None)
                 elif path in self._shape_plan.dimensions:
                     shape_bindings[path] = None if text is None or not text.strip() else parse_scalar(text)
@@ -368,6 +388,11 @@ class Explorer:
         parsed = self._browser_bindings(bindings)
         sizes = {path: len(value) for path, value in self._layout.vectors.items()}
         texts = binding_texts(bindings, sizes)
+        for path, text in bindings.items():
+            if path in self._layout.collections and text:
+                for i, record in enumerate(json.loads(text)):
+                    for name, value in (record or {}).items():
+                        texts[f"{path}[{i}].{name}"] = value
         data = self.snapshot(parsed, raw=raw)
         data["bindings"] = binding_texts(bindings, sizes, preserve=self._layout.resizable)
         rows = {row["path"]: row for row in data["fields"]}
@@ -381,10 +406,11 @@ class Explorer:
                 row["input"] = vector_input_text(row["entries"], rows, "input")
             if row["path"] in self._layout.resizable and bindings.get(row["path"]):
                 row["input"] = bindings[row["path"]]
+        update_collection_observations(data["components"], rows, self._bind(self._initial, parsed), self._layout.hidden)
         return data
 
     def snapshot(
-        self, bindings: Mapping[str, ScalarValue | VectorValue | None] | None = None, *, raw: bool = False
+        self, bindings: Mapping[str, ExplorerValue | None] | None = None, *, raw: bool = False
     ) -> dict[str, Any]:
         """Return a JSON-ready view; invalid edits raise without changing state.
 
@@ -446,26 +472,9 @@ class Explorer:
             "fields": rows,
             "symbols": symbols,
             "vectors": [row for row in vector_rows if row["path"] not in self._layout.hidden],
-            "components": [
-                {
-                    "path": path,
-                    "parent": self._layout.parents[path],
-                    "title": self._layout.metadata[path].title or path.split(".")[-1],
-                    "description": self._layout.metadata[path].description,
-                    "collapsed": path in self._layout.folded,
-                    **(
-                        {
-                            "collection": True,
-                            "shape": [int(self._layout.collections[path]._modello_collection_size)],
-                            "symbol_mathml": printer.vector_symbol("", self._layout.metadata[path].symbol or path),
-                        }
-                        if path in self._layout.collections
-                        else {}
-                    ),
-                }
-                for path in self._layout.components
-                if path not in self._layout.hidden
-            ],
+            "components": component_views(
+                self._layout, context, indexed_rows, input_axes=self._input_axes, dimensions=self._shape_dimensions
+            ),
             "equations": [dict(equation) for equation in self._layout.equations],
             "status": status,
             "condition": message,
@@ -489,7 +498,21 @@ class Explorer:
     def _scenario_bindings(self, scenario: Scenario, context: _Snapshot) -> dict[str, str | None]:
         result: dict[str, str | None] = {}
         for path, value in scenario.bindings.items():
-            if path in self._layout.resizable:
+            if path in self._layout.collections:
+                result[path] = (
+                    None
+                    if value is None
+                    else json.dumps(
+                        [
+                            {
+                                name: None if scalar is None else context.format(sympify(scalar))
+                                for name, scalar in (record or {}).items()
+                            }
+                            for record in cast(ModelVectorInput, value)
+                        ]
+                    )
+                )
+            elif path in self._layout.resizable:
                 result[path] = (
                     None
                     if value is None
@@ -621,7 +644,7 @@ def create_app(
     model: type[Modello] | Modello | ModelProblem,
     name: str = "exploration",
     *,
-    inputs: Mapping[str, ScalarValue | VectorValue] | None = None,
+    inputs: Mapping[str, ExplorerValue] | None = None,
     metadata: Mapping[str, FieldInfo] | None = None,
 ) -> Flask:
     """Create a local Flask app; each browser holds its own trial bindings.

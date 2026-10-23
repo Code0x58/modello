@@ -6,13 +6,46 @@ import ast
 import json
 import math
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
+from typing import TypeAlias
 
 from sympy import E, Expr, I, Rational, pi, sqrt
 
+from modello._values import ScalarValue
 from modello.errors import ModelInputError
+from modello.vectors import VectorValue
+
+ModelVectorInput: TypeAlias = Sequence[Mapping[str, ScalarValue | None] | None]
+ExplorerValue: TypeAlias = ScalarValue | VectorValue | ModelVectorInput
 
 _MAX_SCALAR_LENGTH = 160
+
+
+def parse_model_vector(text: str, size: int | None) -> tuple[dict[str, Expr | None], ...]:
+    """Read model records using the existing bounded scalar language per cell."""
+    if len(text) > max(16_000, (size or 0) * 2048):
+        raise ModelInputError("The model vector observation is too large")
+    try:
+        records = json.loads(text)
+    except (ValueError, TypeError) as error:
+        raise ModelInputError("Supply an ordered list of model observations") from error
+    if not isinstance(records, list) or (size is not None and len(records) != size):
+        raise ModelInputError("Model observations must agree with the vector length")
+    result = []
+    for record in records:
+        if record is None:
+            record = {}
+        if not isinstance(record, dict) or len(record) > 256:
+            raise ModelInputError("Each model observation must contain named scalar fields")
+        values = {}
+        for name, value in record.items():
+            if not isinstance(name, str) or len(name) > 256:
+                raise ModelInputError("Model observations need valid field names")
+            if value is not None and not isinstance(value, str):
+                raise ModelInputError("Enter model field values as text")
+            values[name] = None if value is None or not value.strip() else parse_scalar(value)
+        result.append(values)
+    return tuple(result)
 
 
 def parse_scalar(text: str) -> Expr:

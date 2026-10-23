@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Mapping
 
 from sympy import Expr, Symbol, SympifyError, simplify
 
+from modello._collections import ModelObservations
 from modello._model import _BoundField
 from modello._operators import _FunctionSymbol
 from modello._paths import _path_label, _path_value
@@ -45,10 +46,19 @@ class _InputCapture:
                         self._add_scalar((attr, str(i)), entry, self.bindings, attr)
             elif attr in self.model._modello_namespace.collections:
                 collection = self.model._modello_namespace.nested_models[attr]
-                entries = _vector_input(value, len(collection), attr)
-                for i, entry in enumerate(entries):
+                members = (
+                    value.items()
+                    if isinstance(value, ModelObservations)
+                    else enumerate(_vector_input(value, len(collection), attr))
+                )
+                for i, entry in members:
+                    if isinstance(i, bool) or not isinstance(i, int):
+                        raise ModelInputError(f"{attr} observation indices must be integers")
                     if entry is not None:
-                        member = collection[i]
+                        try:
+                            member = collection[i]
+                        except IndexError as error:
+                            raise ModelInputError(f"{attr}[{i}] falls outside the model-vector window") from error
                         self._add_component_at(member._modello_path, member._modello_model, entry, attr)
             else:
                 self._add_component(attr, value)
