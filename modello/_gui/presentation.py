@@ -13,7 +13,7 @@ from modello._paths import _path_label, _within_path
 from modello.diagnostics import ConstraintKind, ModelField, ModelProblem
 from modello.errors import ModelInputError
 from modello.gui import FieldInfo, ModelInfo, Scenario
-from modello.vectors import Vector, _vector_input
+from modello.vectors import _vector_input
 
 if TYPE_CHECKING:
     from modello import Modello
@@ -28,7 +28,7 @@ class Layout:
         self._explicit_metadata: set[str] = set()
         self.components: list[str] = []
         self.vectors = {_path_label(path): vector for path, vector in problem.vectors.items()}
-        self.vector_definitions: dict[str, Vector] = {}
+        self.vector_definitions = {_path_label(path): value for path, value in problem.vector_definitions.items()}
         self._collect(problem.model)
         for path, info in overrides.items():
             self._set_info(path, info)
@@ -90,7 +90,7 @@ class Layout:
                 "text": f"{path} = {self.vector_definitions[path]}",
             }
             for path, vector in self.vectors.items()
-            if self.vector_definitions[path] != vector and path not in hidden
+            if path in self.vector_definitions and path not in hidden
         }
         self.equations += tuple(self.vector_equations.values())
 
@@ -110,14 +110,8 @@ class Layout:
             )
             if path:
                 self.components.append(path)
-            prefix = tuple(path.split(".")) if path else ()
-            bindings = {
-                dummy: self.fields[_path_label((*prefix, *relative))].symbol
-                for relative, dummy in child._modello_definition.fields.items()
-            }
             for name in child._modello_namespace.vectors:
                 vector_path = _join(path, name)
-                self.vector_definitions[vector_path] = child._modello_namespace.vector_attrs[name].xreplace(bindings)
                 self.metadata[vector_path] = FieldInfo()
         self.model_info = declarations[""]
         for path, info in FieldInfo.for_model(model).items():

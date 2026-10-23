@@ -216,6 +216,8 @@ Reference
 
 .. automethod:: SolutionFamily.format
 
+.. automethod:: SolutionFamily.latex
+
 .. automethod:: SolutionFamily.expression
 
 .. automethod:: SolutionFamily.values

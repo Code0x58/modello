@@ -333,6 +333,12 @@ def test_derived_vector_dependencies_link_to_free_inputs_in_other_vectors():
     assert [item["path"] for item in dependencies] == ["fills[2]"]
 
 
+def test_multiplication_uses_a_visible_dot_between_literal_quantity_names():
+    a, b = Symbol("opening"), Symbol("growth")
+    rendered = EquationPrinter({}).expression(a * b)
+    assert "·" in text(rendered)
+
+
 @pytest.mark.parametrize("demo", ["inventory", "returns", "rolling", "exposure", "trend"])
 def test_timeseries_guided_scenarios_solve_and_retain_valid_formula_markup(demo):
     from examples.gui_timeseries import DEMOS

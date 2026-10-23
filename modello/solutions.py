@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Generic, cast, overload
+from typing import TYPE_CHECKING, Generic, Mapping, cast, overload
 
 from sympy import (
     And,
@@ -412,6 +412,22 @@ class SolutionFamily(Generic[ModelT]):
     def format(self, expression: Basic) -> str:
         """Format chart symbols as the model's named paths without substitution."""
         return str(self._printer(expression).doprint(expression))
+
+    def latex(
+        self,
+        expression: Basic,
+        *,
+        symbol_names: Mapping[Symbol, str] | None = None,
+        vector_names: Mapping[Vector, str] | None = None,
+    ) -> str:
+        """Export model or chart coordinates, with optional LaTeX name overrides."""
+        from modello._printing import _latex
+
+        bindings = {binding.field.symbol: binding.symbol for binding in self._bindings}
+        vectors = {}
+        for path, value in reversed(tuple(self.problem.vectors.items())):
+            vectors[value] = vectors[value.xreplace(bindings)] = _path_label(path)
+        return _latex(expression, self._printer(expression), vectors, symbol_names, vector_names)
 
     def __str__(self) -> str:
         lines = [f"{self.problem.model.__name__}({self.problem.name!r}): solution family"]

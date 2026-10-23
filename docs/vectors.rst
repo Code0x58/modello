@@ -143,6 +143,47 @@ including nested and empty fields. ``problem.vector("window", "samples")``
 selects a complete vector by component path without depending on private model
 metadata.
 
+``problem.vector_definitions`` is a read-only mapping of complete vector formulas,
+with their original function, local index, and bounds retained. Its keys are
+paths such as ``("changes",)`` or ``("window", "changes")``. Only defined vectors
+appear there; independent vectors and direct aliases remain in ``problem.vectors``.
+The formulas use this problem's symbols and remain unchanged by observations.
+
+Export formulas for notebooks and reports with ``problem.latex(expression)``
+or ``family.latex(expression)``. These preserve model paths and scalar indices,
+show vector symbols with arrows, and retain native sum and calculus notation:
+
+.. code-block:: pycon
+
+   >>> problem.latex(problem.symbols.samples) == r"\vec{\mathrm{samples}}"
+   True
+   >>> problem.latex(problem.constraints[0].right) == r"\sum_{i=0}^{2} \mathrm{samples}_{i}"
+   True
+   >>> definition = problem.vector_definitions[("changes",)]
+   >>> "\\middle|" in problem.latex(definition)
+   True
+
+Exporting a family does not substitute values automatically; pass
+``family.expression(...)`` when you want its reduced formula. Native
+``sympy.latex`` also prints explicit vectors as columns and comprehensions
+with their iteration domains. The model-aware methods supply the field and
+vector names without changing the expressions. They require no GUI dependency.
+
+Use ``symbol_names`` and ``vector_names`` for report notation. Their keys are
+actual symbols or vectors; their values are LaTeX fragments. A vector name also
+labels its scalar coordinates, with an explicit scalar override taking priority:
+
+.. code-block:: pycon
+
+   >>> names = {problem.symbols.samples: "x"}
+   >>> problem.latex(problem.symbols.samples[1], vector_names=names)
+   'x_{1}'
+   >>> problem.latex(
+   ...     problem.symbols.samples[1], vector_names=names,
+   ...     symbol_names={problem.symbols.samples[1]: r"\xi"},
+   ... )
+   '\\xi'
+
 Solution families accept vector observations and queries. Querying a vector
 returns coupled tuples, preserving order and relationships between coordinates:
 

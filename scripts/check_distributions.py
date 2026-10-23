@@ -95,8 +95,13 @@ class Window(modello.Modello):
 window = Window("observed", samples=[1, None, 3], total=6)
 assert window.samples == modello.Vector(1, 2, 3)
 assert window.changes == modello.Vector(1, 1)
-family = modello.inspect_model(Window, "family", samples=[1, None, 3]).solutions().observe(total=6)
+problem = modello.inspect_model(Window, "family", samples=[1, None, 3])
+assert ("changes",) in problem.vector_definitions
+assert problem.latex(problem.symbols.samples) == r"\vec{\mathrm{samples}}"
+assert r"\sum" in problem.latex(problem.constraints[0].right)
+family = problem.solutions().observe(total=6)
 assert family.values(family.symbols.samples) == FiniteSet(Tuple(1, 2, 3))
+assert family.latex(family.symbols.samples) == r"\vec{\mathrm{samples}}"
 vector_snapshot = Explorer(window).snapshot()
 assert vector_snapshot["vectors"][0]["shape"] == [3]
 assert "mover" in vector_snapshot["vectors"][0]["symbol_mathml"]

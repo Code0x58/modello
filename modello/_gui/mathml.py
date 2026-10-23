@@ -23,7 +23,7 @@ class EquationPrinter(MathMLPresentationPrinter):
         vectors: Mapping[Vector, tuple[str, str]] | None = None,
         coordinates: Mapping[Symbol, tuple[str, str, int]] | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__({"mul_symbol": "dot"})
         self.labels = labels
         self.vectors = vectors or {}
         self.coordinates = coordinates or {}

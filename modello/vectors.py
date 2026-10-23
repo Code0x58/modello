@@ -159,6 +159,14 @@ class Vector(Basic):
             return label
         return "[" + ", ".join(printer.doprint(value) for value in self) + "]"
 
+    def _latex(self, printer: Any) -> str:
+        label = getattr(printer, "vector_labels", {}).get(self)
+        if label is not None:
+            return rf"\vec{{{label}}}"
+        if not len(self):
+            return r"\left[\right]"
+        return r"\begin{bmatrix}" + r"\\ ".join(printer._print(value) for value in self) + r"\end{bmatrix}"
+
 
 class _VectorElement(Expr):
     """A scalar selection whose symbols are its coordinates and its index."""
@@ -202,6 +210,17 @@ class _VectorElement(Expr):
 
     def _sympystr(self, printer: Any) -> str:
         return f"{printer.doprint(self.vector)}[{printer.doprint(self.index)}]"
+
+    def _latex(self, printer: Any) -> str:
+        label = getattr(printer, "vector_labels", {}).get(self.vector)
+        if label is not None:
+            return rf"{label}_{{{printer._print(self.index)}}}"
+        if isinstance(self.vector, _VectorFormula):
+            variable, first, _ = self.vector.limits
+            selected = self.vector.function.subs(variable, first + self.index)
+            body = printer._print(selected)
+            return rf"\left({body}\right)" if selected.is_Add else str(body)
+        return rf"{{{printer._print(self.vector)}}}_{{{printer._print(self.index)}}}"
 
 
 class _VectorFormula(Vector):
@@ -270,6 +289,22 @@ class _VectorFormula(Vector):
         if hasattr(printer, "_print_VectorFormula"):
             return printer._print_VectorFormula(self)
         return f"vector({printer.doprint(self.function)}, {printer.doprint(self.limits)})"
+
+    def _latex(self, printer: Any) -> str:
+        if self in getattr(printer, "vector_labels", {}):
+            return super()._latex(printer)
+        variable, first, last = self.limits
+        domain = (
+            r"\varnothing"
+            if not len(self)
+            else r"\{" + ", ".join(str(value) for value in range(int(first), int(last) + 1)) + r"\}"
+            if len(self) <= 3
+            else rf"\{{{printer._print(first)}, \ldots, {printer._print(last)}\}}"
+        )
+        return (
+            rf"\left[{printer._print(self.function)}\;\middle|\;"
+            rf"{printer._print(variable)}\in {domain}\right]"
+        )
 
 
 def vector(expression: ScalarValue, limits: tuple[Symbol, int, int]) -> Vector:

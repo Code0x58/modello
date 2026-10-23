@@ -54,6 +54,7 @@ class _ModelDefinition:
     fields: Mapping[FieldPath, InstanceDummy]
     constraints: tuple[_Definition, ...]
     vectors: Mapping[FieldPath, Vector]
+    vector_definitions: Mapping[FieldPath, Vector]
 
 
 @dataclass(frozen=True)
@@ -319,11 +320,18 @@ class ModelloMetaNamespace(dict):
                 f"{self.name} references removed or ambiguous child field {self._missing[dummy]}"
             )
         vectors: dict[FieldPath, Vector] = {(name,): vector for name, vector in self.vectors.items()}
+        vector_definitions: dict[FieldPath, Vector] = {
+            (name,): expression for name, expression in self.vector_attrs.items() if expression != self.vectors[name]
+        }
         for name, child in self.nested_models.items():
             definition = child._modello_model._modello_definition
             replacements = {d: child._modello_fields[path] for path, d in definition.fields.items()}
             vectors.update(((name, *path), value.xreplace(replacements)) for path, value in definition.vectors.items())
-        return _ModelDefinition(self.fields(), tuple(constraints), vectors)
+            vector_definitions.update(
+                ((name, *path), value.xreplace(replacements).xreplace(self._replacements))
+                for path, value in definition.vector_definitions.items()
+            )
+        return _ModelDefinition(self.fields(), tuple(constraints), vectors, vector_definitions)
 
     def compiled_annotations(self) -> Mapping[type[Annotation], Mapping[str, Annotation]]:
         """Scope child annotations before applying this class's refinements."""

@@ -47,6 +47,10 @@ Shared problem records live in ``_problem.py``. Runtime imports point downwards
 through records, declarations, input capture, solution families, diagnosis, and
 the public namespace; reverse type references use ``TYPE_CHECKING``. The GUI and
 numerical example adapters consume the compiled declaration's fields.
+``ModelProblem.vector_definitions`` retains complete vector formulas in the same
+scope. Both GUI equations and LaTeX exports consume this public view instead of
+reconstructing formulas from scalar constraints. ``_printing.py`` adds scoped
+LaTeX labels; native vector printing remains in ``vectors.py``.
 
 ``_values.py`` holds structural input types; ``_symbols.py`` owns independent
 quantity identities and local indices. ``vectors.py`` implements immutable

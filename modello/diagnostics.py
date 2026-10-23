@@ -195,6 +195,18 @@ class ModelProblem(Generic[ModelT]):
         """Look up a whole vector by its component path, without printed-name matching."""
         return self.vectors[path]
 
+    @cached_property
+    def vector_definitions(self) -> Mapping[FieldPath, Vector]:
+        """Read-only, unevaluated whole-vector formulas, before scalar expansion."""
+        fields = {field.path: field.symbol for field in self.fields}
+        bindings = {dummy: fields[path] for path, dummy in self.model._modello_definition.fields.items()}
+        return MappingProxyType(
+            {
+                path: value.xreplace(bindings)
+                for path, value in self.model._modello_definition.vector_definitions.items()
+            }
+        )
+
     def __repr__(self) -> str:
         return (
             f"ModelProblem({self.model.__name__}, {self.name!r}, "
@@ -204,6 +216,19 @@ class ModelProblem(Generic[ModelT]):
     def format(self, expression: Basic) -> str:
         """Render paths from the model root without changing the expression."""
         return str(self._printer(expression).doprint(expression))
+
+    def latex(
+        self,
+        expression: Basic,
+        *,
+        symbol_names: Mapping[Symbol, str] | None = None,
+        vector_names: Mapping[Vector, str] | None = None,
+    ) -> str:
+        """Export scoped paths and vector notation, with optional LaTeX name overrides."""
+        from modello._printing import _latex
+
+        vectors = {value: _path_label(path) for path, value in reversed(tuple(self.vectors.items()))}
+        return _latex(expression, self._printer(expression), vectors, symbol_names, vector_names)
 
     def _printer(self, *expressions: Basic, scope: FieldPath = ()) -> _FieldPrinter:
         # Bound variables in a ConditionSet need the same labels as free symbols.

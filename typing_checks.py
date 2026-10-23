@@ -2,6 +2,7 @@
 """Public typing checks, including errors that mypy must continue to reject."""
 
 from collections import UserDict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from fractions import Fraction
@@ -81,8 +82,15 @@ def check_vector_contracts() -> None:
     family: SolutionFamily[Window] = problem.solutions(problem.symbols.samples)
     selected: Vector = problem.vector("samples")
     assert selected == problem.vectors[("samples",)]
+    definitions: Mapping[tuple[str, ...], Vector] = problem.vector_definitions
+    formula_tex: str = problem.latex(definitions[("changes",)])
+    problem.latex(selected, vector_names={selected: "x"})
+    assert formula_tex
     resolved: Vector = family.expression(family.symbols.samples)
+    values_tex: str = family.latex(resolved)
+    assert values_tex
     family.values(family.symbols.samples, family.symbols.total)
+    problem.latex(selected, vector_names={3: "x"})  # type: ignore[dict-item]
     assert len(resolved) == len(sliced) + 1
     Window("scalar", total=coordinate)
     Vector([object()])  # type: ignore[list-item]
