@@ -35,9 +35,9 @@ Follow a model from its class body to its populated instances:
 5. ``SolutionFamily._prepare()`` in ``solutions.py`` gives the same snapshot an
    explicit coordinate domain. ``_FamilyReduction`` owns the evolving coordinate
    expressions: first substitute isolated quantities, then eliminate rational
-   affine joins. Independent observations are substituted in batches; dependent
-   substitutions retain a coordinate for algebraic cycles. Remaining operators
-   are checked after observations and conditions have resolved their bounds.
+   affine joins. Independent observations and outputs are substituted in batches;
+   cyclic joins retain a chart coordinate. Remaining operators are checked after
+   observations and conditions have resolved their bounds.
    The family retains all original equations and every field's
    domain as predicates, including conditions on eliminated quantities. Backend
    failures retain the conditions and record a ``SolutionIssue``. ``cases()``

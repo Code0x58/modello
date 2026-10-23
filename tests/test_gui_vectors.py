@@ -38,7 +38,7 @@ def test_raw_vector_formulas_and_symbols_are_valid_navigable_mathml():
     assert set(equations) == {"total", "growth", "changes"}
     assert "∑" in text(equations["total"]["mathml"])
     assert "∏" in text(equations["growth"]["mathml"])
-    assert " for i∈{1,2}" in text(equations["changes"]["mathml"])
+    assert "fori∈{1,2}" in text(equations["changes"]["mathml"])
     assert ET.fromstring(vectors["samples"]["symbol_mathml"]).find("m:mover", NS) is not None
     assert vectors["samples"]["shape"] == [3]
     assert vectors["samples"]["entries"] == ["samples[0]", "samples[1]", "samples[2]"]
@@ -337,6 +337,31 @@ def test_multiplication_uses_a_visible_dot_between_literal_quantity_names():
     a, b = Symbol("opening"), Symbol("growth")
     rendered = EquationPrinter({}).expression(a * b)
     assert "·" in text(rendered)
+
+
+def test_iteration_notation_has_explicit_spacing_in_mathml():
+    data = Explorer(Window).snapshot(raw=True)
+    equation = by_path(data, "vectors")["changes"]["constraints"][0]["mathml"]
+    root = ET.fromstring(equation)
+    spaces = root.findall(".//m:mspace", NS)
+    assert len(spaces) >= 2
+    assert all(float(space.get("width").removesuffix("em")) > 0 for space in spaces)
+    assert root.find(".//m:mtext", NS).text == "for"
+
+
+def test_a_large_out_of_range_prefix_is_rejected_without_losing_the_initial_case():
+    class Prefix(Modello):
+        samples = Vector("x", size=3, real=True)
+        count = InstanceDummy("count", integer=True, nonnegative=True)
+        i = Index("i")
+        total = Sum(samples[i], (i, 0, count - 1))
+
+    client = create_app(Prefix, inputs={"samples": [1, 2, 3], "count": 3}).test_client()
+    rejected = client.post("/api/explore", json={"bindings": {"count": "1e100"}})
+    assert rejected.status_code == 422
+    restored = client.post("/api/explore", json={"bindings": {}})
+    assert restored.status_code == 200
+    assert by_path(restored.json)["total"]["value"] == "6"
 
 
 @pytest.mark.parametrize("demo", ["inventory", "returns", "rolling", "exposure", "trend"])

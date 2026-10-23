@@ -84,6 +84,12 @@ Use their ``.doit()`` method for immediate symbolic evaluation outside a model.
 Empty vectors have sum zero and product one. Dot products of two empty vectors
 are zero.
 
+During model evaluation, reductions over finite vector entries iterate over the
+stated bounds directly. Ordinary symbolic sums and products retain SymPy's
+closed-form algorithms. This avoids searching for a closed form for an
+arbitrary observation sequence while preserving the original formula for display.
+Native empty, negative, and reversed-bound conventions remain in effect.
+
 ``vector(expression, (index, first, last))`` describes a finite comprehension.
 Its endpoints are **inclusive**, like SymPy's sum and product limits, rather
 than Python's ``range`` stop. The resulting vector itself is always zero-based:
@@ -274,7 +280,10 @@ Queries and conditions use the same formula expansion:
 The derivative is taken before substituting the observed point. Unresolved
 operators remain symbolic when the constructor's backend can retain them;
 the exact solution-family API requires them to evaluate. Calculus through
-cyclic model definitions is unsupported. These are algebraic models, rather
+cyclic or multiply defined model quantities is unsupported, including through
+intermediate formulas. Several defining equations can jointly constrain one
+quantity without defining a unique function to differentiate. The ordinary
+joint solve still retains those equations. These are algebraic models, rather
 than a general differential-equation solver or automatic numerical quadrature.
 
 The native operators follow the

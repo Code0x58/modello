@@ -48,6 +48,7 @@ class _FormulaLatexPrinter(LatexPrinter):
         super().__init__({"mul_symbol": "dot", "symbol_names": dict(symbol_names)})
         self.labels = {symbol: _label(label) for symbol, label in text.labels.items()}
         self.vector_labels = {vector: _label(label) for vector, label in vectors.items()}
+        coordinate_names: dict[Symbol, str] = {}
         for vector, name in vector_names.items():
             # A family's public and chart vectors share one display path.
             path = vectors.get(vector)
@@ -56,7 +57,8 @@ class _FormulaLatexPrinter(LatexPrinter):
                 self.vector_labels[values] = name
                 for index, symbol in enumerate(values):
                     if isinstance(symbol, Symbol):
-                        self.labels[symbol] = rf"{name}_{{{index}}}"
+                        coordinate_names.setdefault(symbol, rf"{name}_{{{index}}}")
+        self.labels.update(coordinate_names)
         self.labels.update(symbol_names)
         self._field_symbols = text._field_symbols
         self._bound_symbols: frozenset[Symbol] = frozenset()

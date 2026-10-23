@@ -231,8 +231,8 @@ class _FamilyReduction:
         """Eliminate explicit quantities while retaining preferred coordinates."""
         while True:
             remaining = frozenset(self.remaining)
-            independent: dict[Symbol, Expr] = {}
-            fallback = None
+            candidates: dict[Symbol, Expr] = {}
+            constants: dict[Symbol, Expr] = {}
             for left, right in self.equations:
                 a = _evaluate(_substitute(left, self.expressions))
                 b = _evaluate(_substitute(right, self.expressions))
@@ -242,13 +242,17 @@ class _FamilyReduction:
                     symbol, value = b, a
                 else:
                     continue
-                if fallback is None and symbol not in self.protected:
-                    fallback = (symbol, value)
+                candidates.setdefault(symbol, value)
                 if not value.free_symbols & remaining:
-                    independent.setdefault(symbol, value)
-            # Observe a whole vector in one pass. Dependent substitutions are
-            # applied singly so a cycle cannot erase all of its coordinates.
+                    constants.setdefault(symbol, value)
+            candidates.update(constants)
+            independent = {
+                symbol: value for symbol, value in candidates.items() if not value.free_symbols & candidates.keys()
+            }
+            # Independent observations and outputs can be eliminated together.
+            # Break cyclic joins singly so they retain a chart coordinate.
             if not independent:
+                fallback = next(((s, v) for s, v in candidates.items() if s not in self.protected), None)
                 if fallback is None:
                     return
                 independent[fallback[0]] = fallback[1]

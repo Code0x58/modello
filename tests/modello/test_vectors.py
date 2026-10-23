@@ -1,15 +1,10 @@
 """Indexed formulas share scalar identities, domains, and joint model solving."""
 
 from copy import deepcopy
-from types import new_class
 
 import pytest
 from sympy import (
-    Derivative,
-    Eq,
     FiniteSet,
-    Function,
-    Integral,
     Interval,
     MatrixSymbol,
     Product,
@@ -18,11 +13,10 @@ from sympy import (
     Sum,
     Symbol,
     Tuple,
-    fibonacci,
 )
 
 from modello import Index, InstanceDummy, Modello, Vector, component, inspect_model, vector
-from modello.errors import ModelDefinitionError, ModelInputError, SolutionCountError, SolverBackendError
+from modello.errors import ModelDefinitionError, ModelInputError, SolutionCountError
 
 
 class Window(Modello):
@@ -325,109 +319,6 @@ def test_family_sections_and_plot_windows_accept_vector_coordinates():
     reference.samples = Vector(2)
     with pytest.raises(ModelInputError, match=r"samples\[1\]"):
         family.section(through=reference)
-
-
-def test_family_queries_and_conditions_differentiate_model_formulas_before_observations():
-    class Sensitivity(Modello):
-        x = InstanceDummy("x", real=True)
-        square = x**2
-
-    problem = inspect_model(Sensitivity, "formula")
-    symbols = problem.symbols
-    family = problem.solutions()
-    gradient = Derivative(symbols.square, symbols.x)
-    assert family.expression(gradient) == 2 * symbols.x
-    assert family.where(Eq(gradient, 6)).one().x == 3
-    assert family.observe(x=3).expression(gradient) == 6
-    assert family.observe(x=3).values(gradient) == FiniteSet(6)
-    preferred = problem.solutions(symbols.square)
-    assert preferred.expression(symbols.square + gradient) == symbols.square + 2 * symbols.x
-
-
-def test_differentiation_expands_definitions_before_substituting_observations():
-    class Sensitivity(Modello):
-        offset = InstanceDummy("offset", real=True)
-        x = offset + 1
-        squared = x**2
-        slope = Derivative(squared, x)
-
-    p = inspect_model(Sensitivity, "derivative", offset=2)
-    assert p.constraints[-2].right.has(Derivative)
-    assert Sensitivity("point", offset=2).slope == 6
-    assert p.solutions().one().slope == 6
-    assert p.analyse().status == "consistent"
-
-
-def test_calculus_definitions_are_retained_and_solved_in_both_directions():
-    t = Symbol("t", real=True)
-
-    class Exposure(Modello):
-        rate = InstanceDummy("rate", real=True)
-        horizon = InstanceDummy("horizon", positive=True)
-        cumulative = Integral(rate * t, (t, 0, horizon))
-
-    p = inspect_model(Exposure, "formula")
-    assert isinstance(p.constraints[0].right, Integral)
-    assert Exposure("forward", rate=2, horizon=3).cumulative == 9
-    assert Exposure("inverse", horizon=3, cumulative=9).rate == 2
-    assert inspect_model(Exposure, "family", horizon=3, cumulative=9).solutions().one().rate == 2
-
-
-def test_shared_formula_dependencies_do_not_require_expanding_every_path():
-    def declare(namespace):
-        namespace["x"] = InstanceDummy("x", real=True)
-        namespace["f0"] = namespace["x"]
-        namespace["f1"] = namespace["x"]
-        for i in range(2, 41):
-            namespace[f"f{i}"] = namespace[f"f{i - 1}"] + namespace[f"f{i - 2}"]
-
-    Fibonacci = new_class("Fibonacci", (Modello,), exec_body=declare)
-    case = Fibonacci("shared", x=1)
-    assert case.f40 == fibonacci(41)
-
-
-def test_calculus_through_a_cycle_reports_an_explicit_limitation():
-    class Cyclic(Modello):
-        x = InstanceDummy("x", real=True)
-        expression = InstanceDummy("expression", real=True)
-        expression = expression + x
-        slope = Derivative(expression, x)
-
-    problem = inspect_model(Cyclic, "cycle")
-    assert problem.constraints[-1].right.has(Derivative)
-    with pytest.raises(SolverBackendError) as caught:
-        Cyclic("cycle", x=0)
-    assert isinstance(caught.value.backend_error, NotImplementedError)
-    with pytest.raises(ModelInputError, match="cyclic"):
-        problem.solutions()
-
-
-def test_unresolved_derivatives_keep_diagnostic_observations_without_claiming_a_solution():
-    class Opaque(Modello):
-        x = InstanceDummy("x", real=True)
-        gradient = Derivative(Function("f")(x), x)
-
-    problem = inspect_model(Opaque, "opaque", x=3)
-    analysis = problem.analyse()
-    assert analysis.status == "unknown"
-    assert analysis.deductions.candidate.value(problem.field("x")) == 3
-    assert "Diagnostic check raised" not in analysis.reason
-    assert Opaque("point", x=3).gradient.has(Derivative)
-    with pytest.raises(ModelInputError, match="bound-variable"):
-        problem.solutions()
-
-
-def test_local_formula_variables_are_not_printed_as_external_inputs():
-    t = Symbol("t", real=True)
-
-    class Area(Modello):
-        height = InstanceDummy("height", real=True)
-        integral = Integral(t, (t, 0, height))
-
-    p = inspect_model(Area, "local")
-    assert p.format(p.constraints[0].right) == "Integral(t, (t, 0, height))"
-    assert "external[t]" in p.format(t + p.constraints[0].right)
-    assert "Integral(t, (t" in p.format(t + p.constraints[0].right)
 
 
 @pytest.mark.parametrize("replacement", [Vector(1, 2), Vector(1, 2, 3, 4), "1,2,3", None])

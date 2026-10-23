@@ -103,6 +103,25 @@ def test_repeated_calibration_times_preserve_an_underdetermined_family():
     assert family.values(family.symbols.fitted).contains(Tuple(2, 2, 2)) is S.true
 
 
+def test_a_longer_calibration_retains_all_vector_outputs_and_exact_gradients():
+    size = 128
+    problem = inspect_model(
+        linear_trend(size),
+        "longer",
+        times=list(range(size)),
+        observations=[2 * i + 1 for i in range(size)],
+        slope_gradient=0,
+        intercept_gradient=0,
+    )
+    family = problem.solutions()
+    assert family.parameters == ()
+    assert family.expression(family.symbols.slope) == 2
+    assert family.expression(family.symbols.intercept) == 1
+    assert family.expression(family.symbols.squared_error) == 0
+    assert family.expression(family.symbols.residuals) == Vector([0] * size)
+    assert family.expression(family.symbols.fitted) == Vector([2 * i + 1 for i in range(size)])
+
+
 @pytest.mark.parametrize("periods", [0, -1, True, 1.5])
 def test_path_factories_require_positive_finite_shapes(periods):
     for factory in (inventory_path, return_path, linear_trend):

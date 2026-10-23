@@ -101,11 +101,23 @@ class EquationPrinter(MathMLPresentationPrinter):
             "mrow",
             self._node("mo", text="["),
             self._print(expression.function),
-            self._node("mtext", text=" for "),
-            self._print(i),
+            self._iteration(i, first, last),
+            self._node("mo", text="]"),
+        )
+
+    def _iteration(self, variable: Basic, first: Basic, last: Basic) -> Any:
+        # Whitespace at mtext edges is normalized by some MathML renderers.
+        before, after = self._node("mspace"), self._node("mspace")
+        before.setAttribute("width", "0.8em")
+        after.setAttribute("width", "0.3em")
+        return self._node(
+            "mrow",
+            before,
+            self._node("mtext", text="for"),
+            after,
+            self._print(variable),
             self._node("mo", text="∈"),
             self._range(first, last),
-            self._node("mo", text="]"),
         )
 
     def _range(self, first: Basic, last: Basic) -> Any:
@@ -224,10 +236,7 @@ class EquationPrinter(MathMLPresentationPrinter):
                 lhs,
                 self._node("mo", text="="),
                 self._print(right.function),
-                self._node("mtext", text=" for "),
-                self._print(variable),
-                self._node("mo", text="∈"),
-                self._range(first, last),
+                self._iteration(variable, first, last),
             )
             return self._markup(row.toxml(), display=True)
         lhs = self._vector_symbol(path, label) if path else self._print(left)

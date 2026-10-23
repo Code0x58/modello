@@ -146,3 +146,14 @@ def test_latex_names_customize_vector_coordinates_with_explicit_scalar_precedenc
     family = problem.solutions()
     chart = Vector(*(binding.expression for binding in family._bindings if binding.field.path[0] == "samples"))
     assert family.latex(chart, vector_names=names) == r"\vec{x}"
+
+
+def test_a_repeated_vector_coordinate_retains_one_canonical_export_name():
+    class Repeated(Modello):
+        x = InstanceDummy("x", real=True)
+        repeated = Vector(x, x)
+
+    problem = inspect_model(Repeated, "alias")
+    values = problem.symbols.repeated
+    assert problem.latex(values[0], vector_names={values: "v"}) == "v_{0}"
+    assert problem.latex(values[1], vector_names={values: "v"}) == "v_{0}"

@@ -89,8 +89,15 @@ class _Algebra:
 
 
 def _algebra(constraints: tuple[ModelConstraint, ...]) -> _Algebra:
-    definitions = {c.left: c.right for c in constraints if c.kind is ConstraintKind.DEFINITION}
-    expanded, cyclic, resolve = _expand_definitions(definitions)
+    definitions: dict[Symbol, Basic] = {}
+    ambiguous: set[Symbol] = set()
+    for constraint in constraints:
+        if constraint.kind is ConstraintKind.DEFINITION:
+            previous = definitions.get(constraint.left)
+            if previous is not None and previous != constraint.right:
+                ambiguous.add(constraint.left)
+            definitions[constraint.left] = constraint.right
+    expanded, cyclic, resolve = _expand_definitions(definitions, frozenset(ambiguous))
     return _Algebra(expanded, cyclic, tuple((c.left, resolve(c.right)) for c in constraints), resolve)
 
 

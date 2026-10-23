@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from sympy import Basic, Derivative, Integral, Limit, Product, Sum, Symbol, simplify
+from sympy import Add, Basic, Derivative, Integer, Integral, Limit, Mul, Product, S, Sum, Symbol, simplify
 
 from modello.vectors import _VectorElement, _VectorFormula
 
@@ -17,8 +17,40 @@ def _declaration(expression: Basic) -> Basic:
 
 
 def _evaluate(expression: Basic) -> Basic:
-    """Use SymPy's own evaluation for sums, products, calculus, and selections."""
-    return expression.doit() if expression.has(*_OPERATORS) else expression
+    """Evaluate native operators, directly reducing explicitly finite vector data."""
+    if not expression.has(*_OPERATORS):
+        return expression
+    expression = expression.replace(_finite_vector_reduction, _reduce_vector)
+    return expression.doit()
+
+
+def _finite_vector_reduction(expression: Basic) -> bool:
+    """Indexed data have explicit entries, rather than a closed-form summand."""
+    return (
+        isinstance(expression, (Sum, Product))
+        and len(expression.limits[-1]) == 3
+        and all(isinstance(bound, Integer) for bound in expression.limits[-1][1:])
+        and expression.function.has(_VectorElement)
+    )
+
+
+def _reduce_vector(operator: Sum | Product) -> Basic:
+    variable, first, last = operator.limits[-1]
+    first, last = int(first), int(last)
+    reversed_limits = last < first
+    if reversed_limits:
+        first, last = last + 1, first - 1
+    body = operator.func(operator.function, *operator.limits[:-1]) if len(operator.limits) > 1 else operator.function
+    terms = []
+    for index in range(first, last + 1):
+        term = _evaluate(_substitute(body, {variable: Integer(index)}))
+        if term is S.NaN:
+            return S.NaN
+        terms.append(term)
+    result = Add(*terms) if isinstance(operator, Sum) else Mul(*terms)
+    if reversed_limits:
+        return -result if isinstance(operator, Sum) else 1 / result
+    return result
 
 
 def _substitute(expression: Basic, values: Mapping[Symbol, Basic]) -> Basic:
@@ -45,9 +77,12 @@ class _DefinitionResolver:
     dependency graph must not be re-expanded exponentially for each output.
     """
 
-    def __init__(self, definitions: Mapping[Symbol, Basic], cyclic: frozenset[Symbol]) -> None:
+    def __init__(
+        self, definitions: Mapping[Symbol, Basic], cyclic: frozenset[Symbol], ambiguous: frozenset[Symbol]
+    ) -> None:
         self.definitions = definitions
         self.cyclic = cyclic
+        self.ambiguous = ambiguous
         self._memo: dict[tuple[Basic, frozenset[Symbol]], Basic] = {}
 
     def __call__(self, expression: Basic, protected: frozenset[Symbol] = frozenset()) -> Basic:
@@ -75,7 +110,7 @@ class _DefinitionResolver:
             return _VectorFormula(self(expression.function, protected | {variable}), (variable, first, last))
         if isinstance(expression, (Sum, Product, Integral)):
             variables = frozenset(expression.variables)
-            self._check_cycles(expression, expression.function, protected | variables)
+            self._check_calculus(expression, expression.function, protected | variables)
             body = self(expression.function, protected | variables)
             limits = []
             for i, limit in enumerate(expression.limits):
@@ -85,26 +120,38 @@ class _DefinitionResolver:
             operator = expression.func(body, *limits)
         elif isinstance(expression, Derivative):
             variables = frozenset(expression.variables)
-            self._check_cycles(expression, expression.expr, protected | variables)
+            self._check_calculus(expression, expression.expr, protected | variables)
             body = self(expression.expr, protected | variables)
             operator = Derivative(body, *expression.variable_count, evaluate=False)
         elif isinstance(expression, Limit):
             body, variable, point, direction = expression.args
-            self._check_cycles(expression, body, protected | {variable})
+            self._check_calculus(expression, body, protected | {variable})
             operator = Limit(self(body, protected | {variable}), variable, self(point, protected), dir=str(direction))
         else:
             args = tuple(self(arg, protected) for arg in expression.args)
             return expression.func(*args) if args != expression.args else expression
-        evaluated = operator.doit()
+        evaluated = _evaluate(operator)
         return self(evaluated, protected) if evaluated != operator else operator
 
-    def _check_cycles(self, operator: Basic, body: Basic, protected: frozenset[Symbol]) -> None:
-        if isinstance(operator, (Derivative, Integral, Limit)) and (body.free_symbols - protected) & self.cyclic:
-            raise NotImplementedError("Calculus through cyclic model definitions is not supported")
+    def _check_calculus(self, operator: Basic, body: Basic, protected: frozenset[Symbol]) -> None:
+        if not isinstance(operator, (Derivative, Integral, Limit)):
+            return
+        pending = set(body.free_symbols - protected)
+        visited = set()
+        while pending:
+            symbol = pending.pop()
+            if symbol in self.cyclic:
+                raise NotImplementedError("Calculus through cyclic model definitions is not supported")
+            if symbol in self.ambiguous:
+                raise NotImplementedError("Calculus through multiply defined model quantities is not supported")
+            visited.add(symbol)
+            if symbol in self.definitions:
+                pending.update(self.definitions[symbol].free_symbols - protected - visited)
 
 
 def _expand_definitions(
     definitions: Mapping[Symbol, Basic],
+    ambiguous: frozenset[Symbol] = frozenset(),
 ) -> tuple[dict[Symbol, Basic], tuple[Symbol, ...], _DefinitionResolver]:
     """Resolve the directed part; leave algebraic cycles for the joint solver."""
     pending = dict(definitions)
@@ -116,5 +163,5 @@ def _expand_definitions(
         for left, right in ready.items():
             ordered[left] = right
             del pending[left]
-    resolve = _DefinitionResolver(ordered, frozenset(pending))
+    resolve = _DefinitionResolver(ordered, frozenset(pending), ambiguous)
     return {left: resolve(right) for left, right in ordered.items()}, tuple(pending), resolve
