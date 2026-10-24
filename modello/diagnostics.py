@@ -487,7 +487,7 @@ def _audit(problem: ModelProblem, constraints: tuple[ModelConstraint, ...], cand
             raise ModelValidationError("Candidate contains conflicting values for aliases")
         bindings[item.field.symbol] = item.value
     residuals = []
-    for c, (lhs, rhs) in zip(constraints, _algebra(constraints).equations, strict=True):
+    for c, (lhs, rhs) in zip(constraints, _algebra(constraints, problem.templates.values()).equations, strict=True):
         left, right = lhs.xreplace(bindings), _substitute(rhs, bindings)
         verdict: Verdict
         if not isinstance(left, Expr) or not isinstance(right, Expr):
@@ -557,9 +557,9 @@ def _violation(problem: ModelProblem, check: CandidateCheck) -> str:
     return "No closed witness or exact contradiction was established."
 
 
-def _fixed_values(constraints: tuple[ModelConstraint, ...]) -> dict[Symbol, Expr]:
+def _fixed_values(problem: ModelProblem, constraints: tuple[ModelConstraint, ...]) -> dict[Symbol, Expr]:
     fixed: dict[Symbol, Expr] = {}
-    equations = _algebra(constraints).equations
+    equations = _algebra(constraints, problem.templates.values()).equations
     while True:
         additions = {}
         for left, right in equations:
@@ -649,7 +649,7 @@ def _solution_sets(
     bindings = {item.field.symbol: item.value for item in substitutions}
     fields = {field.symbol: field for field in _canonical_fields(problem)}
     groups: dict[Symbol, list[tuple[ModelConstraint, Expr]]] = {}
-    for c, (left, right) in zip(constraints, _algebra(constraints).equations, strict=True):
+    for c, (left, right) in zip(constraints, _algebra(constraints, problem.templates.values()).equations, strict=True):
         if (
             not isinstance(c.right, Expr)
             or c.right.has(Float)
@@ -726,7 +726,7 @@ class _Analyser:
         return result
 
     def _assess(self, constraints: tuple[ModelConstraint, ...]) -> _Assessment:
-        fixed = _fixed_values(constraints)
+        fixed = _fixed_values(self.problem, constraints)
         deductions = _audit(self.problem, constraints, _candidate(self.problem, fixed))
         linear, expressions = _linear_part(self.problem, constraints)
         if linear is not None and linear.certificate is not None:
@@ -783,7 +783,7 @@ class _Analyser:
         detail = "No closed witness or exact contradiction was established."
         try:
             solutions = solve(
-                [left - right for left, right in _algebra(constraints).equations],
+                [left - right for left, right in _algebra(constraints, self.problem.templates.values()).equations],
                 [field.symbol for field in _canonical_fields(self.problem)],
                 dict=True,
                 numerical=False,

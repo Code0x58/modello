@@ -335,7 +335,7 @@ class SolutionFamily(Generic[ModelT]):
         if any(field.symbol.is_commutative is not True for field in fields):
             raise ModelInputError("Solution families currently require commutative scalar fields")
         try:
-            algebra = _algebra(problem.constraints)
+            algebra = _algebra(problem.constraints, problem.templates.values())
             resolved_conditions = tuple(
                 algebra.resolve.operators(_project_series(condition, problem.templates.values()))
                 for condition in conditions
@@ -486,7 +486,7 @@ class SolutionFamily(Generic[ModelT]):
 
     @cached_property
     def _formulae(self) -> _Algebra:
-        return _algebra(self.problem.constraints)
+        return _algebra(self.problem.constraints, self.problem.templates.values())
 
     def _scalar(self, value: object, *, allow_operators: bool = False) -> Expr:
         expression = _exact_scalar(value, allow_operators=allow_operators)

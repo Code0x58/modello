@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, Mapping, TypeVar
 
 from sympy import Basic, Expr, FiniteSet, Interval, S, Set, Symbol, SympifyError, sympify
 from sympy.printing.str import StrPrinter
 
 from modello._expressions import _DefinitionResolver, _expand_definitions
+from modello._operators import _SymbolicTemplate
 from modello._paths import FieldPath as FieldPath, _path_label
 from modello._symbols import Index
 from modello.errors import ModelInputError, ModelValidationError
@@ -87,7 +88,11 @@ class _Algebra:
     resolve: _DefinitionResolver
 
 
-def _algebra(constraints: tuple[ModelConstraint, ...]) -> _Algebra:
+def _algebra(
+    constraints: tuple[ModelConstraint, ...],
+    templates: Iterable[_SymbolicTemplate] = (),
+    known: Mapping[Symbol, Basic] | None = None,
+) -> _Algebra:
     definitions: dict[Symbol, Basic] = {}
     ambiguous: set[Symbol] = set()
     observations: dict[Symbol, Basic] = {}
@@ -104,7 +109,8 @@ def _algebra(constraints: tuple[ModelConstraint, ...]) -> _Algebra:
                 conflicting.add(constraint.left)
     for symbol in conflicting:
         del observations[symbol]
-    expanded, cyclic, resolve = _expand_definitions(definitions, frozenset(ambiguous), observations)
+    observations.update(known or {})
+    expanded, cyclic, resolve = _expand_definitions(definitions, frozenset(ambiguous), observations, templates)
     return _Algebra(expanded, cyclic, tuple((c.left, resolve(c.right)) for c in constraints), resolve)
 
 

@@ -69,6 +69,7 @@ illustrate symbolic modeling with fixed historical rates.
    debugging
    solutions
    diagnostics
+   generality
    gui
 
 .. toctree::

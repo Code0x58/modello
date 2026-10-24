@@ -9,6 +9,7 @@ from typing import Any, NamedTuple
 from sympy import (
     And,
     Basic,
+    Contains,
     Dummy,
     Eq,
     Expr,
@@ -24,8 +25,10 @@ from sympy import (
     sympify,
 )
 
+from modello._evaluation import _expand_finite_indexed
 from modello._operators import (
     _affine_coefficients,
+    _DeclarationSymbol,
     _FunctionSymbol,
     _ScopedOperator,
     _SymbolicTemplate,
@@ -48,7 +51,13 @@ class Series(_SymbolicTemplate):
     fields or vectors, and a ``Recurrence`` supplies a discrete evolution law.
     """
 
-    def __new__(cls, name: str | _FunctionSymbol, index: Symbol | None = None, **assumptions: Any) -> Series:
+    def __new__(
+        cls,
+        name: str | _FunctionSymbol,
+        index: Symbol | None = None,
+        _discrete: Basic | bool | None = None,
+        **assumptions: Any,
+    ) -> Series:
         if index is None:
             index = Index("n")
         if not isinstance(index, Symbol) or index.is_real is False:
@@ -61,7 +70,11 @@ class Series(_SymbolicTemplate):
             raise ModelInputError("A series needs a nonempty name")
         if symbol.is_commutative is not True:
             raise ModelInputError("Series currently represent commutative scalar quantities")
-        return Basic.__new__(cls, symbol, index)
+        if _discrete is None:
+            _discrete = index.is_integer is True
+        if _discrete not in (True, False, S.true, S.false):
+            raise ModelInputError("A series coordinate kind must be discrete or continuous")
+        return Basic.__new__(cls, symbol, index, S.true if _discrete else S.false)
 
     @property
     def symbol(self) -> _FunctionSymbol:
@@ -73,11 +86,21 @@ class Series(_SymbolicTemplate):
 
     @property
     def discrete(self) -> bool:
-        return self.index.is_integer is True
+        return self.args[2] is S.true
 
     @property
-    def bound_symbols(self) -> tuple[Basic, ...]:
+    def protected_symbols(self) -> tuple[Basic, ...]:
+        # This names a function signature; it does not independently bind an
+        # expression body. Its enclosing law owns any alpha-renaming.
         return (self.index,)
+
+    @property
+    def scoped_arguments(self) -> frozenset[int]:
+        return frozenset({1})
+
+    @property
+    def _binding_signature(self) -> tuple[type, tuple[bool, ...]]:
+        return type(self), (self.discrete,)
 
     @property
     def free_symbols(self) -> set[Symbol]:
@@ -160,12 +183,20 @@ class Recurrence(_SymbolicTemplate):
         expression: ScalarValue,
         initial: Mapping[int, ScalarValue] | Tuple,
         start: int | Integer | None = None,
+        _declaration: _DeclarationSymbol | None = None,
     ) -> Recurrence:
         body = sympify(expression)
         if not isinstance(target, _SeriesTerm) or not target.series.discrete or not isinstance(target.index, Symbol):
             raise ModelInputError("Use Recurrence(T[n], expression, initial={0: value}) with an integer index")
         if not isinstance(body, Expr) or body.is_Matrix:
             raise ModelInputError("A recurrence expression must be scalar")
+        body = body.xreplace(
+            {
+                term.series: target.series
+                for term in body.atoms(_SeriesTerm)
+                if term.series.symbol == target.series.symbol
+            }
+        )
         entries = (
             Tuple(*(Tuple(sympify(key), sympify(value)) for key, value in initial.items()))
             if isinstance(initial, Mapping)
@@ -188,7 +219,7 @@ class Recurrence(_SymbolicTemplate):
                 "Initial history needs integer positions and scalar values independent of the local index"
             )
         entries = Tuple(*sorted(entries, key=lambda pair: pair[0]))
-        if any(term.series == target.series for _, value in entries for term in value.atoms(_SeriesTerm)):
+        if any(term.series.symbol == target.series.symbol for _, value in entries for term in value.atoms(_SeriesTerm)):
             raise ModelInputError("Initial history must use scalar boundary quantities, not the same series")
         first, last = entries[0][0], entries[-1][0]
         start = last + 1 if start is None else sympify(start)
@@ -200,12 +231,15 @@ class Recurrence(_SymbolicTemplate):
             raise ModelInputError(
                 "Initial history must contain every position immediately before the recurrence starts"
             )
-        for term in body.atoms(_SeriesTerm):
+        for term in _expand_finite_indexed(body).atoms(_SeriesTerm):
             if term.series == target.series:
                 delay = simplify(target.index - term.index)
                 if not isinstance(delay, Integer) or not 1 <= delay <= len(entries):
                     raise ModelInputError("A causal recurrence uses fixed positive lags covered by its initial history")
-        return Basic.__new__(cls, target, body, entries, start)
+        declaration = _DeclarationSymbol("recurrence") if _declaration is None else _declaration
+        if not isinstance(declaration, _DeclarationSymbol):
+            raise ModelInputError("A recurrence needs its declaration identity")
+        return Basic.__new__(cls, target, body, entries, start, declaration)
 
     @property
     def target(self) -> _SeriesTerm:
@@ -234,6 +268,10 @@ class Recurrence(_SymbolicTemplate):
         return (self.target.index,)
 
     @property
+    def _binding_signature(self) -> tuple[type, tuple[bool, ...]]:
+        return type(self), (True,)
+
+    @property
     def scoped_arguments(self) -> frozenset[int]:
         return frozenset(range(4))
 
@@ -256,6 +294,11 @@ class Recurrence(_SymbolicTemplate):
         return vector(self.at(i), (i, first, last))
 
     @cached_property
+    def _body(self) -> Expr:
+        """Normalize finite indexed notation once, retaining the source formula."""
+        return _expand_finite_indexed(self.function)
+
+    @cached_property
     def _history(self) -> dict[int, _HistoryValue]:
         initial = self.initial
         condition = And(*(_series_condition(self.target.series, value) for value in initial.values()))
@@ -266,23 +309,24 @@ class Recurrence(_SymbolicTemplate):
         """Prove coordinate requirements by induction when scalar assumptions suffice."""
         if any(_series_condition(self.target.series, value) is not S.true for value in self.initial.values()):
             return False
-        body = self.function.xreplace(
+        body = self._body.xreplace(
             {
                 term: Dummy("previous", **self.target.series.symbol.assumptions0)
-                for term in self.function.atoms(_SeriesTerm)
+                for term in self._body.atoms(_SeriesTerm)
                 if term.series == self.target.series
             }
         )
         position = Index("position", nonnegative=True)
         return _series_condition(self.target.series, body.subs(self.target.index, position + self.start)) is S.true
 
+    @cached_property
     def _first_order(self) -> Expr | None:
         """A universal affine formula, retaining the unit-coefficient branch."""
-        if len(self.initial) != 1 or self.function.has(_VectorElement):
+        if len(self.initial) != 1 or self._body.has(_VectorElement):
             return None
         n = self.target.index
         previous = Dummy("previous")
-        body = self.function.xreplace({self.target.series[n - 1]: previous})
+        body = self._body.xreplace({self.target.series[n - 1]: previous})
         if body.has(_SeriesTerm):
             return None
         coefficients = _affine_coefficients(body, previous)
@@ -301,7 +345,7 @@ class Recurrence(_SymbolicTemplate):
             return S.NaN
         history = self._history
         for position in range(max(history) + 1, point + 1):
-            expression = self.function.subs(self.target.index, position)
+            expression = _expand_finite_indexed(self._body.subs(self.target.index, position))
             replacements = {
                 term: history[int(term.index)].value
                 for term in expression.atoms(_SeriesTerm)
@@ -316,26 +360,24 @@ class Recurrence(_SymbolicTemplate):
     @cached_property
     def _closed_form(self) -> Expr | None:
         n = self.target.index
-        result = self._first_order()
+        result = self._first_order
         if result is None:
             # Generic higher-order coefficients can conceal singular cases.
-            if self.function.free_symbols - {n} or self.function.has(_VectorElement):
+            if self._body.free_symbols - {n} or self._body.has(_VectorElement):
                 return None
-            if any(term.series != self.target.series for term in self.function.atoms(_SeriesTerm)):
+            if any(term.series != self.target.series for term in self._body.atoms(_SeriesTerm)):
                 return None
             position = Index("position", nonnegative=True)
-            denominator = self.function.as_numer_denom()[1]
+            denominator = self._body.as_numer_denom()[1]
             if denominator.subs(n, position + self.start).is_zero is not False:
                 return None
             function = Function(f"_recurrence_{self.target.series.symbol.dummy_index}")
-            native = self.function.replace(
-                lambda term: isinstance(term, _SeriesTerm), lambda term: function(term.index)
-            )
+            native = self._body.replace(lambda term: isinstance(term, _SeriesTerm), lambda term: function(term.index))
             try:
                 result = rsolve(function(n) - native, function(n), dict(self.initial))
             except (NotImplementedError, ValueError):
                 return None
-        if result is None or result.free_symbols - ({n} | self.args[2].free_symbols | self.function.free_symbols):
+        if result is None or result.free_symbols - ({n} | self.args[2].free_symbols | self._body.free_symbols):
             return None
         position = Index("position", nonnegative=True)
         if (
@@ -343,7 +385,7 @@ class Recurrence(_SymbolicTemplate):
             and _series_condition(self.target.series, result.subs(n, position + self.origin)) is not S.true
         ):
             return None
-        residual = self.function.replace(
+        residual = self._body.replace(
             lambda term: isinstance(term, _SeriesTerm), lambda term: result.subs(n, term.index)
         )
         if simplify((result - residual).subs(n, position + self.start)) != 0 or any(
@@ -392,14 +434,19 @@ class _RecurrenceValue(_ScopedOperator):
         if isinstance(point, Integer):
             if point < recurrence.origin:
                 return S.NaN
-            if point >= recurrence.start and recurrence._closed_form is not None:
+            if (
+                point >= recurrence.start
+                and recurrence._first_order is not None
+                and recurrence._closed_form is not None
+            ):
                 return simplify(recurrence._closed_form.subs(recurrence.target.index, point))
             return recurrence._at(int(point))
         result = recurrence._closed_form
         if result is None:
             return self
         value = result.subs(recurrence.target.index, point)
-        return Piecewise((value, point >= recurrence.origin), (S.NaN, True))
+        domain = And(Contains(point, S.Integers), point >= recurrence.origin)
+        return Piecewise((value, domain), (S.NaN, True))
 
     def _sympystr(self, printer: Any) -> str:
         return printer.doprint(self.args[0].target.series[self.args[1]])
@@ -417,22 +464,26 @@ def _project_series(expression: Basic, templates: Iterable[_SymbolicTemplate]) -
     """Interpret point queries through a declared law, leaving laws themselves intact."""
     if not expression.has(_SeriesTerm):
         return expression
-    laws: dict[Series, Recurrence] = {}
-    ambiguous: set[Series] = set()
+    laws: dict[_FunctionSymbol, Recurrence] = {}
+    ambiguous: set[_FunctionSymbol] = set()
     for template in templates:
         if isinstance(template, Recurrence):
-            series = template.target.series
-            if series in laws and laws[series] != template:
+            series = template.target.series.symbol
+            if (
+                series in laws
+                and laws[series].args[:4] != template.args[:4]
+                and not laws[series]._same_declaration(template)
+            ):
                 ambiguous.add(series)
             laws[series] = template
 
     def project(value: Basic) -> Basic:
         if isinstance(value, _SymbolicTemplate):
             return value
-        if isinstance(value, _SeriesTerm) and value.series in laws:
-            if value.series in ambiguous:
+        if isinstance(value, _SeriesTerm) and value.series.symbol in laws:
+            if value.series.symbol in ambiguous:
                 raise ModelInputError("The series has multiple recurrence laws; select one law explicitly with .at()")
-            return laws[value.series].at(value.index)
+            return laws[value.series.symbol].at(value.index)
         args = tuple(project(arg) for arg in value.args)
         return value.func(*args) if args != value.args else value
 

@@ -152,9 +152,9 @@ def test_indexed_field_laws_require_a_declared_model_vector():
             law = model_recurrence(state, value=1)
 
 
-@pytest.mark.parametrize("lag", [0, -1, 2])
+@pytest.mark.parametrize("lag", [-1, 2])
 def test_noncausal_or_insufficient_history_is_rejected_before_index_wrapping(lag):
-    with pytest.raises(ModelDefinitionError, match="positive lags"):
+    with pytest.raises(ModelDefinitionError, match="current terms or lags"):
 
         class Invalid(Modello):
             N = InstanceDummy("N", integer=True, nonnegative=True)

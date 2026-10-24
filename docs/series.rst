@@ -33,6 +33,8 @@ The law has no fixed horizon. The query at position ten and the window from
 zero through four are separate views. In model definitions and family queries,
 ``T[k]`` uses its declared recurrence; ``law.at(k)`` explicitly selects one law.
 Use the populated instance's law for direct evaluation outside a model.
+Composed series queries need the model or solution family's law registry;
+``family.expression(problem.symbols.T[k])`` retains that context.
 
 Series indices are mathematical positions: ``T[n-1]`` is the predecessor and
 ``T[-1]`` is position minus one. A series has no length or implicit last entry.
@@ -93,6 +95,11 @@ inferred. A vector of length at least ``p`` does not by itself identify unknown
 coefficients or innovations. The innovation vector carries no distribution
 unless the model declares one.
 
+Fixed finite sums can express a law's relative lags, for example
+``Sum(coefficients[j]*T[n-1-j], (j, 0, p-1))`` with ``p`` initial values.
+The nested sum uses its own index. Multiple declared series can drive each
+other; finite query cycles must decrease towards their initial boundaries.
+
 Continuous Itô laws
 -------------------
 
@@ -132,6 +139,8 @@ give conditional moments, also supporting affine additive diffusions such as
 mean reversion. A realised increment of zero generally differs from the mean.
 Elapsed time must be nonnegative; zero time requires a zero increment. Initial
 values must satisfy the state domain.
+Zero elapsed time returns the initial value or zero variance even when no
+nonzero-time closed form is supported.
 
 The :doc:`gallery <examples/gallery/index>` uses those formulas for inverse
 parameter inference:
@@ -151,6 +160,8 @@ An exact mean-reverting path requires a weighted stochastic integral; a single
 increment is insufficient. Zero diffusion retains deterministic exact paths.
 Multiple drivers, correlations, arbitrary stochastic integrals, and general
 SDE boundary problems are outside the supported solvers.
+The :doc:`generality review <generality>` describes further mathematical and
+computational boundaries and the independent regression scenarios.
 
 ``problem.templates`` exposes scoped, read-only laws. The explorer retains
 relative subscripts, histories, differentials, and conditional moment notation;
@@ -163,11 +174,11 @@ API
 
 .. autoclass:: Coordinate
 
-.. autoclass:: Series
+.. autoclass:: Series(name, index=None, **assumptions)
    :members: index, discrete
 
-.. autoclass:: Recurrence
+.. autoclass:: Recurrence(target, expression, initial, start=None)
    :members: at, window, initial, start, equations
 
-.. autoclass:: ItoProcess
+.. autoclass:: ItoProcess(state, drift, diffusion, time, driver=None)
    :members: drift, diffusion, generator, quadratic_variation_rate, exact, mean, variance, equations

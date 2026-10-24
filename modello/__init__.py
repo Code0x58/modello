@@ -111,7 +111,7 @@ def _solve_problem(problem: ModelProblem, *, check: bool = True) -> tuple[dict[S
     of inconsistency.
     """
     try:
-        algebra = _algebra(problem.constraints)
+        algebra = _algebra(problem.constraints, problem.templates.values())
         fields = tuple(dict.fromkeys(field.symbol for field in problem.fields))
         expressions = {symbol: algebra.definitions.get(symbol, symbol) for symbol in fields}
         equations = [Eq(expressions[left], right) for left, right in algebra.equations]

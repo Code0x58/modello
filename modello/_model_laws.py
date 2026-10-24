@@ -8,7 +8,7 @@ from typing import Any, Callable, Mapping
 from sympy import Basic, Expr, Symbol, Tuple
 
 from modello._collections import _Location
-from modello._operators import _SymbolicTemplate
+from modello._operators import _DeclarationSymbol, _SymbolicTemplate
 from modello._paths import FieldPath
 from modello.vectors import Vector
 
@@ -19,6 +19,12 @@ class ModelRecurrence(_SymbolicTemplate):
     Declare a law over ``states[n]`` with named field expressions. Members before
     ``start`` are its history; their observations participate in the joint solve.
     """
+
+    def __new__(
+        cls, equations: Tuple, limits: Tuple, _declaration: _DeclarationSymbol | None = None
+    ) -> ModelRecurrence:
+        declaration = _DeclarationSymbol("model_recurrence") if _declaration is None else _declaration
+        return Basic.__new__(cls, equations, limits, declaration)
 
     @property
     def equations(self) -> tuple[Basic, ...]:
@@ -39,6 +45,10 @@ class ModelRecurrence(_SymbolicTemplate):
     @property
     def bound_symbols(self) -> tuple[Basic, ...]:
         return (self.index,)
+
+    @property
+    def _binding_signature(self) -> tuple[type, tuple[bool, ...]]:
+        return type(self), (True,)
 
     @property
     def scoped_arguments(self) -> frozenset[int]:

@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, TypeVar, cast
 from sympy import Basic, Expr, Integer, Symbol, sympify
 
 from modello._collections import _Location, _ModelVectorSpec, _Selection, _UnresolvedSelection
-from modello._expressions import _declaration, _substitute
+from modello._expressions import _declaration, _DefinitionResolver, _substitute
 from modello._model_laws import ModelRecurrence, _ModelLawSpec
 from modello._operators import _FunctionSymbol, _SymbolicTemplate
 from modello._paths import _path_label, _path_value
-from modello._problem import ConstraintKind, FieldPath
+from modello._problem import ConstraintKind, FieldPath, _algebra
 from modello._shapes import _dimensions
 from modello._symbols import BoundInstanceDummy as BoundInstanceDummy, Coordinate, InstanceDummy as InstanceDummy
 from modello._values import (
@@ -430,6 +430,8 @@ class ModelloMetaNamespace(dict):
             if key in self.templates:
                 if self.templates[key]._binding_signature != template._binding_signature:
                     raise ModelDefinitionError(f"Cannot change the kind of symbolic declaration {self.name}.{key}")
+                if self.templates[key]._same_declaration(template):
+                    template = self.templates[key]
                 self._replace({self.templates[key]: template})
             self.templates[key] = template
             value = template
@@ -809,6 +811,11 @@ def _populate(
     input_symbols = inputs | {c.left for c in problem.constraints if c.kind is ConstraintKind.INPUT}
     symbols = problem.symbols
     aliases: dict[FieldPath, FieldPath] = {}
+    resolve = (
+        _algebra(problem.constraints, problem.templates.values(), solution).resolve.symbolic()
+        if problem.templates
+        else None
+    )
 
     def collect_aliases(model: type[Modello], prefix: FieldPath) -> None:
         aliases.update({prefix + path: prefix + target for path, target in model._modello_definition.aliases.items()})
@@ -852,6 +859,7 @@ def _populate(
             instance,
             {attr: problem.templates[prefix + (attr,)] for attr in model._modello_namespace.templates},
             solution,
+            resolve,
         )
         for attr, child in model._modello_namespace.nested_models.items():
             path = (*prefix, attr)
@@ -867,9 +875,13 @@ def _populate(
 
 
 def _populate_templates(
-    instance: Modello, templates: Mapping[str, _SymbolicTemplate], values: Mapping[Symbol, Basic]
+    instance: Modello,
+    templates: Mapping[str, _SymbolicTemplate],
+    values: Mapping[Symbol, Basic],
+    resolve: _DefinitionResolver | None = None,
 ) -> None:
-    """Keep original scoped laws while presenting their evaluated parameters."""
-    instance._modello_bound_templates = dict(templates)
-    for name, template in templates.items():
+    """Keep scoped formulas reusable while presenting their evaluated parameters."""
+    expanded = {name: resolve(template) if resolve is not None else template for name, template in templates.items()}
+    instance._modello_bound_templates = expanded
+    for name, template in expanded.items():
         setattr(instance, name, _substitute(template, values))

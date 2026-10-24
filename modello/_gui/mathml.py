@@ -170,7 +170,7 @@ class EquationPrinter(MathMLPresentationPrinter):
         return self._node("mrow", differential, self._print(variable))
 
     def _print__ItoQuantity(self, expression: Any) -> Any:
-        _, body, operation = expression.args
+        _, body, operation = expression.args[:3]
         name = ("drift", "diffusion", "L")[int(operation)]
         operator = self._node("msub", self._node("mtext", text=name), self._node("mi", text="I"))
         if int(operation) == 2:

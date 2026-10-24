@@ -39,6 +39,11 @@ class _ScopedExpression:
         return ()
 
     @property
+    def protected_symbols(self) -> tuple[Basic, ...]:
+        """Coordinates whose declarations survive observation substitution."""
+        return self.bound_symbols
+
+    @property
     def scoped_arguments(self) -> frozenset[int]:
         return frozenset()
 
@@ -49,7 +54,7 @@ class _ScopedExpression:
 
 
 class _SymbolicTemplate(_ScopedExpression, Basic):
-    """A model-local mathematical declaration, rather than a scalar quantity."""
+    """A declaration whose identity is retained in its canonical arguments."""
 
     @property
     def equations(self) -> tuple[Basic, ...]:
@@ -59,15 +64,19 @@ class _SymbolicTemplate(_ScopedExpression, Basic):
     def _binding_signature(self) -> tuple[type, tuple[bool, ...]]:
         return type(self), tuple(getattr(value, "is_integer", None) is True for value in self.bound_symbols)
 
+    def _same_declaration(self, other: _SymbolicTemplate) -> bool:
+        """Compare local coordinate names while preserving free field identities."""
+        return self == other or (type(self) is type(other) and self.as_dummy() == other.as_dummy())
+
     def _eval_subs(self, old: Basic, new: Basic) -> Basic | None:
-        return self if old in self.bound_symbols else None
+        return self if old in self.protected_symbols else None
 
 
 class _ScopedOperator(_ScopedExpression, Expr):
     """An unevaluated scalar operation that can expand model definitions."""
 
     def _eval_subs(self, old: Basic, new: Basic) -> Basic | None:
-        if old in self.bound_symbols and self.scoped_arguments:
+        if old in self.protected_symbols and self.scoped_arguments:
             evaluated = self.doit()
             return evaluated.subs(old, new) if evaluated != self else Subs(self, old, new)
         return None
@@ -80,8 +89,14 @@ class _FunctionSymbol(Dummy):
         return _FunctionSymbol(self.name, **self.assumptions0)
 
 
+class _DeclarationSymbol(Dummy):
+    """Identity retained when a law's local coordinates are alpha-renamed."""
+
+
 def _bound_coordinates(expression: Basic) -> tuple[Basic, ...]:
     """Coordinates kept local by a native operator or symbolic declaration."""
+    if isinstance(expression, _ScopedExpression):
+        return expression.protected_symbols
     if isinstance(expression, Limit):
         return (expression.args[1],)
     if isinstance(expression, (Derivative, Integral)):

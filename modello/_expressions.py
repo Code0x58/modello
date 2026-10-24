@@ -2,86 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Iterable, Mapping
 
-from sympy import Add, Basic, Derivative, Integer, Integral, Limit, Mul, Product, S, Sum, Symbol, simplify
+from sympy import Basic, Derivative, Integer, Integral, Limit, Piecewise, Product, S, Sum, Symbol, simplify
 
-from modello._operators import _bound_coordinates, _ScopedExpression, _ScopedOperator, _SymbolicTemplate
-from modello.vectors import _VectorElement, _VectorFormula
-
-_OPERATORS = (Sum, Product, Integral, Derivative, Limit, _VectorElement, _ScopedOperator)
-_BINDERS = (Sum, Product, Integral, Derivative, Limit, _VectorFormula, _SymbolicTemplate, _ScopedOperator)
+from modello._evaluation import _OPERATORS, _evaluate as _evaluate, _substitute as _substitute
+from modello._operators import _ScopedExpression, _ScopedOperator, _SymbolicTemplate
+from modello.series import _project_series, _RecurrenceValue, _SeriesTerm
+from modello.vectors import _VectorFormula
 
 
 def _declaration(expression: Basic) -> Basic:
     """Retain operators in the user-facing definition; simplify ordinary scalars."""
     return expression if expression.has(*_OPERATORS) else simplify(expression)
-
-
-def _evaluate(expression: Basic) -> Basic:
-    """Evaluate native operators, directly reducing explicitly finite vector data."""
-    if not expression.has(*_OPERATORS):
-        return expression
-    expression = expression.replace(_finite_vector_reduction, _reduce_vector)
-    if expression.has(Limit):
-        # A generic parameterized limit can discard exceptional values, even
-        # when its endpoint is fixed: lim (x+a)/(x+2*a) is 1/2 for a != 0 but
-        # is 1 for a == 0. Keep it intact until substitutions close the limit.
-        # Evaluate siblings independently without differentiating or integrating
-        # through a deferred limit as if it were an independent placeholder.
-        args = tuple(_evaluate(arg) for arg in expression.args)
-        if args != expression.args:
-            expression = expression.func(*args)
-        if isinstance(expression, Limit):
-            if expression.free_symbols:
-                return expression
-            return expression.doit()
-        elif expression.has(Limit):
-            return expression
-        return expression.doit(deep=False)
-    return expression.doit()
-
-
-def _finite_vector_reduction(expression: Basic) -> bool:
-    """Indexed data have explicit entries, rather than a closed-form summand."""
-    return (
-        isinstance(expression, (Sum, Product))
-        and len(expression.limits[-1]) == 3
-        and all(isinstance(bound, Integer) for bound in expression.limits[-1][1:])
-        and expression.function.has(_VectorElement)
-    )
-
-
-def _reduce_vector(operator: Sum | Product) -> Basic:
-    variable, first, last = operator.limits[-1]
-    first, last = int(first), int(last)
-    reversed_limits = last < first
-    if reversed_limits:
-        first, last = last + 1, first - 1
-    body = operator.func(operator.function, *operator.limits[:-1]) if len(operator.limits) > 1 else operator.function
-    terms = []
-    for index in range(first, last + 1):
-        term = _evaluate(_substitute(body, {variable: Integer(index)}))
-        if term is S.NaN:
-            return S.NaN
-        terms.append(term)
-    result = Add(*terms) if isinstance(operator, Sum) else Mul(*terms)
-    if reversed_limits:
-        return -result if isinstance(operator, Sum) else 1 / result
-    return result
-
-
-def _substitute(expression: Basic, values: Mapping[Symbol, Basic]) -> Basic:
-    """Preserve remaining binders when observations replace their variables.
-
-    SymPy uses Subs for an unresolved derivative evaluated at a numeric point;
-    xreplace alone would attempt to differentiate with respect to that number.
-    """
-    if expression.has(*_BINDERS):
-        for operator in expression.atoms(*_BINDERS):
-            if any(variable in values and values[variable] != variable for variable in _bound_coordinates(operator)):
-                return expression.subs(values, simultaneous=True)
-    return expression.xreplace(values)
 
 
 class _DefinitionResolver:
@@ -98,17 +31,46 @@ class _DefinitionResolver:
         cyclic: frozenset[Symbol],
         ambiguous: frozenset[Symbol],
         observations: Mapping[Symbol, Basic],
+        templates: Iterable[_SymbolicTemplate] = (),
+        *,
+        evaluate_operators: bool = True,
     ) -> None:
         self.definitions = definitions
         self.cyclic = cyclic
         self.ambiguous = ambiguous
         self.observations = observations
+        self.templates = tuple(templates)
+        self.evaluate_operators = evaluate_operators
         self._memo: dict[tuple[Basic, frozenset[Basic]], Basic] = {}
+        self._active: set[tuple[Basic, frozenset[Basic]]] = set()
+        self._series_points: dict[Basic, list[Integer]] = {}
+
+    def symbolic(self) -> _DefinitionResolver:
+        """Expand laws while retaining parameters for later observations or copies."""
+        return _DefinitionResolver(
+            self.definitions, self.cyclic, self.ambiguous, {}, self.templates, evaluate_operators=False
+        )
 
     def __call__(self, expression: Basic, protected: frozenset[Basic] = frozenset()) -> Basic:
         key = (expression, protected)
         if key not in self._memo:
-            self._memo[key] = self._resolve(expression, protected)
+            if key in self._active:
+                raise NotImplementedError("Cyclic symbolic queries cannot be evaluated")
+            points = None
+            if isinstance(expression, _RecurrenceValue) and isinstance(expression.args[1], Integer):
+                series = expression.args[0].target.series.symbol
+                point = expression.args[1]
+                points = self._series_points.setdefault(series, [])
+                if points and point >= points[-1]:
+                    raise NotImplementedError("Composed recurrence queries must decrease in time around a cycle")
+                points.append(point)
+            self._active.add(key)
+            try:
+                self._memo[key] = self._resolve(expression, protected)
+            finally:
+                self._active.remove(key)
+                if points is not None:
+                    points.pop()
         return self._memo[key]
 
     def operators(self, expression: Basic) -> Basic:
@@ -123,12 +85,30 @@ class _DefinitionResolver:
     def _resolve(self, expression: Basic, protected: frozenset[Basic]) -> Basic:
         if expression in protected:
             return expression
+        if isinstance(expression, _SeriesTerm) and not expression.index.free_symbols & protected:
+            projected = _project_series(expression, self.templates)
+            if projected != expression:
+                return self(projected, protected)
         if isinstance(expression, Symbol):
             if expression in self.definitions:
                 return self(self.definitions[expression], protected)
             return self.observations.get(expression, expression)
+        if isinstance(expression, Piecewise):
+            branches = []
+            for value, condition in expression.args:
+                condition = self(condition, protected)
+                if condition is S.false:
+                    continue
+                branches.append((self(value, protected), condition))
+                if condition is S.true:
+                    break
+            return Piecewise(*branches)
         if isinstance(expression, _ScopedExpression):
-            scoped = protected | frozenset(expression.bound_symbols)
+            if isinstance(expression, _SymbolicTemplate):
+                expression = next(
+                    (template for template in self.templates if template._same_declaration(expression)), expression
+                )
+            scoped = protected | frozenset(expression.protected_symbols)
             if expression.calculus_expression is not None:
                 self._check_calculus(expression.calculus_expression, scoped)
             args = tuple(
@@ -136,7 +116,7 @@ class _DefinitionResolver:
                 for i, arg in enumerate(expression.args)
             )
             operator = expression.func(*args) if args != expression.args else expression
-            if not isinstance(operator, _ScopedOperator):
+            if not isinstance(operator, _ScopedOperator) or not self.evaluate_operators:
                 return operator
             evaluated = _evaluate(operator)
             return self(evaluated, protected) if evaluated != operator else operator
@@ -145,6 +125,7 @@ class _DefinitionResolver:
             return _VectorFormula(
                 self(expression.function, protected | {variable}),
                 (variable, self(first, protected), self(last, protected)),
+                expression.args[2],
             )
         if isinstance(expression, (Sum, Product, Integral)):
             variables = frozenset(expression.variables)
@@ -169,7 +150,7 @@ class _DefinitionResolver:
         else:
             args = tuple(self(arg, protected) for arg in expression.args)
             return expression.func(*args) if args != expression.args else expression
-        evaluated = _evaluate(operator)
+        evaluated = _evaluate(operator) if self.evaluate_operators else operator
         return self(evaluated, protected) if evaluated != operator else operator
 
     def _check_calculus(self, body: Basic, protected: frozenset[Basic]) -> None:
@@ -190,6 +171,7 @@ def _expand_definitions(
     definitions: Mapping[Symbol, Basic],
     ambiguous: frozenset[Symbol] = frozenset(),
     observations: Mapping[Symbol, Basic] | None = None,
+    templates: Iterable[_SymbolicTemplate] = (),
 ) -> tuple[dict[Symbol, Basic], tuple[Symbol, ...], _DefinitionResolver]:
     """Resolve the directed part; leave algebraic cycles for the joint solver."""
     pending = dict(definitions)
@@ -201,5 +183,5 @@ def _expand_definitions(
         for left, right in ready.items():
             ordered[left] = right
             del pending[left]
-    resolve = _DefinitionResolver(ordered, frozenset(pending), ambiguous, observations or {})
+    resolve = _DefinitionResolver(ordered, frozenset(pending), ambiguous, observations or {}, templates)
     return {left: resolve(right) for left, right in ordered.items()}, tuple(pending), resolve

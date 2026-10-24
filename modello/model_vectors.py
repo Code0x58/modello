@@ -8,7 +8,7 @@ from dataclasses import replace
 from functools import lru_cache, partial
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast, overload
 
-from sympy import Basic, Dummy, Eq, Expr, Integer, Symbol, SympifyError, Tuple, simplify, sympify
+from sympy import Basic, Eq, Expr, Integer, Symbol, SympifyError, Tuple, simplify, sympify
 
 from modello._collections import (
     ModelObservations,
@@ -17,10 +17,10 @@ from modello._collections import (
     _Selection,
     _UnresolvedSelection,
 )
-from modello._expressions import _substitute
+from modello._evaluation import _expand_finite_indexed, _substitute
 from modello._model import ModelloMeta, ModelloMetaNamespace, _has_symbolic_shape, _known_integers, _ModelReference
 from modello._model_laws import ModelRecurrence, _ModelLawSpec
-from modello._operators import _bound_coordinates
+from modello._operators import _bound_coordinates, _definitely_undefined, _ScopedExpression
 from modello._paths import FieldPath, _path_label, _path_value
 from modello._symbols import Index
 from modello._values import ScalarValue, SymbolicScalar
@@ -194,11 +194,12 @@ def model_vector(model: type[_Model], *, size: int | SymbolicScalar) -> ModelVec
 
 
 def model_recurrence(target: _Model, *, start: int = 1, **updates: ScalarValue) -> ModelRecurrence:
-    """Relate fields of ``states[n]`` to earlier members and other model inputs.
+    """Relate fields of ``states[n]`` to current/earlier members and model inputs.
 
     For example, ``model_recurrence(states[n], cash=states[n-1].cash - fees[n-1])``.
-    Members before ``start`` supply the initial history. Their quantities may be
-    observed or inferred through the same joint equations as every other field.
+    Members before ``start`` supply the initial history. Current-step equations
+    may be implicit; explicit boundary references use ordinary finite indexing.
+    All quantities participate in the same joint solve as every other field.
     """
     if not isinstance(target, _Selection):
         raise ModelInputError("Select states[n] from a declared model_vector for relative field equations")
@@ -260,17 +261,21 @@ def _compile_model_law(
         raise ModelDefinitionError("The recurrence's domain must match its declared model-vector window")
     definitions = []
     for path, expression in spec.updates:
+        if _definitely_undefined(expression):
+            raise ModelInputError("A recurrent field expression is undefined in its declared window")
         terms = _validate_model_rule(expression, law.index, start, targets)
         for point in range(start, int(size)):
             bindings = {**known, law.index: Integer(point)}
             for term in terms:
-                if law.index in term.index.free_symbols:
-                    position = term.index.xreplace(bindings)
-                    count = sympify(term.vector.shape[0]).xreplace(known)
-                    if not isinstance(count, Integer):
-                        raise ModelDefinitionError("Recurrent inputs must use a finite declared vector window")
-                    if not isinstance(position, Integer) or not 0 <= position < count:
-                        raise ModelInputError("A recurrent input index falls outside its observed vector window")
+                position = term.index.xreplace(bindings)
+                count = sympify(term.vector.shape[0]).xreplace(known)
+                if not isinstance(count, Integer):
+                    raise ModelDefinitionError("Recurrent inputs must use a finite declared vector window")
+                relative = law.index in term.index.free_symbols
+                if relative and not isinstance(position, Integer):
+                    raise ModelDefinitionError("Recurrent inputs need a fixed integer index at each step")
+                if isinstance(position, Integer) and not (0 if relative else -count) <= position < count:
+                    raise ModelInputError("A recurrent input index falls outside its observed vector window")
             member = collection[point]
             target = _path_value(member, (*spec.target.suffix, *path))
             definitions.append(
@@ -280,16 +285,17 @@ def _compile_model_law(
 
 
 def _validate_model_rule(expression: Expr, index: Symbol, start: int, targets: set[Vector]) -> set[_VectorElement]:
-    if any(index in _bound_coordinates(part) for part in expression.atoms(Basic)):
+    if any(
+        not isinstance(part, _ScopedExpression) and index in _bound_coordinates(part)
+        for part in expression.atoms(Basic)
+    ):
         raise ModelDefinitionError("Use a distinct local index inside a recurrence's nested operators")
-    terms = expression.atoms(_VectorElement)
+    terms = _expand_finite_indexed(expression).atoms(_VectorElement)
     for term in terms:
-        if term.vector in targets:
+        if term.vector in targets and index in term.index.free_symbols:
             lag = simplify(index - term.index)
-            history = isinstance(term.index, Integer) and 0 <= term.index < start
-            if not history and (not isinstance(lag, Integer) or not 1 <= lag <= start):
-                raise ModelDefinitionError("A causal model recurrence uses fixed positive lags covered by its history")
-    unindexed = expression.xreplace({term: Dummy() for term in terms}).free_symbols
-    if any(symbol in unindexed for column in targets if column._finite for symbol in column[start:]):
-        raise ModelDefinitionError("Reference evolving states with a relative recurrence index")
+            if not isinstance(lag, Integer) or not 0 <= lag <= start:
+                raise ModelDefinitionError(
+                    "Relative model equations use current terms or lags covered by their history"
+                )
     return terms

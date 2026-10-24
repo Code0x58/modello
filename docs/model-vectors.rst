@@ -78,9 +78,17 @@ second-order law uses ``start=2`` and can reference ``states[n-1]`` and
 ``states[n-2]``. Those history members are ordinary unknown models, so their
 quantities may be observed or inferred.
 
-Use a distinct ``Index`` inside nested sums or integrals. The recurrence checks
-fixed positive self-lags and input bounds before indexing, avoiding accidental
-Python wraparound. Nested field updates use canonical paths, for example
+Current-step references such as ``states[n].quantity`` are joint equations;
+they can connect fields or express an implicit update. Grouping these equations
+into one law or splitting them across component laws preserves their meaning.
+An explicit ``states[-1]`` reference denotes the terminal finite member, allowing
+boundary constraints. A scalar :class:`~modello.Recurrence` instead evaluates
+causally and requires strictly earlier terms.
+
+Use a distinct ``Index`` inside nested sums or integrals. Relative references
+must use the current position or fixed lags covered by the history. The
+recurrence checks input bounds before indexing, avoiding accidental Python
+wraparound of relative positions. Nested field updates use canonical paths, for example
 ``**{"holding.quantity": expression}``.
 
 ``project(lambda member: member.field)`` provides a scalar :doc:`vector <vectors>`

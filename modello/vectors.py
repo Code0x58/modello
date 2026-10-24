@@ -11,7 +11,7 @@ from collections.abc import Iterator, Sequence
 from functools import cached_property
 from typing import Any, TypeAlias, overload
 
-from sympy import Basic, Expr, Integer, Product, S, Sum, Symbol, Tuple, sympify
+from sympy import Basic, Expr, Integer, Product, S, Sum, Symbol, Tuple, simplify, sympify
 
 from modello._operators import _FunctionSymbol
 from modello._symbols import Index, InstanceDummy
@@ -133,7 +133,7 @@ class Vector(Basic):
         return self.dot(other)
 
     def _same_shape(self, other: object) -> None:
-        if not isinstance(other, Vector) or self.shape != other.shape:
+        if not isinstance(other, Vector) or simplify(self.shape[0] - other.shape[0]) != 0:
             raise ModelInputError("Vector operations require vectors of the same size")
 
     def __add__(self, other: Vector) -> Vector:
@@ -285,7 +285,12 @@ class _VectorElement(Expr):
 class _VectorFormula(Vector):
     """A finite comprehension, retaining its binder independently of its values."""
 
-    def __new__(cls, expression: Expr, limits: tuple[Symbol, int | Expr, int | Expr] | Tuple) -> _VectorFormula:
+    def __new__(
+        cls,
+        expression: Expr,
+        limits: tuple[Symbol, int | Expr, int | Expr] | Tuple,
+        _integer_bounds: Basic | None = None,
+    ) -> _VectorFormula:
         try:
             expression = sympify(expression)
             limits = Tuple(*limits)
@@ -298,9 +303,21 @@ class _VectorFormula(Vector):
             or not isinstance(limits[0], Symbol)
         ):
             raise ModelInputError("Use vector(expression, (index, first, last))")
-        if any(bound.is_integer is not True for bound in limits[1:]) or (limits[2] - limits[1] + 1).is_negative:
+        # Native alpha-renaming temporarily removes coordinate assumptions.
+        # Preserve the original integer-bound premise in canonical arguments,
+        # while rejecting replacements that are provably noninteger.
+        if (
+            _integer_bounds not in (None, S.true)
+            or any(
+                not isinstance(bound, Expr)
+                or _invalid_index(bound)
+                or (_integer_bounds is None and bound.is_integer is not True)
+                for bound in limits[1:]
+            )
+            or (limits[2] - limits[1] + 1).is_negative
+        ):
             raise ModelInputError("Vector formula bounds must describe a finite increasing integer range")
-        return Basic.__new__(cls, expression, limits)
+        return Basic.__new__(cls, expression, limits, S.true)
 
     @property
     def function(self) -> Expr:
@@ -354,9 +371,8 @@ class _VectorFormula(Vector):
 
     def _eval_subs(self, old: Basic, new: Basic) -> _VectorFormula:
         variable, first, last = self.limits
-        if old == variable:
-            return self
-        return _VectorFormula(self.function.subs(old, new), (variable, first.subs(old, new), last.subs(old, new)))
+        body = self.function if old == variable else self.function.subs(old, new)
+        return _VectorFormula(body, (variable, first.subs(old, new), last.subs(old, new)), self.args[2])
 
     def _sympystr(self, printer: Any) -> str:
         if hasattr(printer, "_print_VectorFormula"):
