@@ -5,35 +5,16 @@ from operator import attrgetter
 import pytest
 from sympy import Rational, S, Tuple, exp
 
-from examples.gallery.models import (
-    AccountSequence,
-    GeometricDiffusion,
-    LinearExposure,
-    LinearTrend,
-    ObservedAutoregression,
-    VectorSummary,
-)
+from examples.gallery.extensions import GeometricDiffusion
+from examples.gallery.models import AccountSequence, LinearTrend
 from examples.portfolio.models import Execution, HoldingState
 from examples.symbolic import Known, SymbolicModel
 from modello import ModelObservations, Vector, inspect_model
-from modello.errors import ModelInputError
 
 
 @pytest.mark.parametrize(
     "model, observations, expected",
     [
-        (
-            VectorSummary,
-            {"samples": [1, None, 3], "total": 6},
-            {"N": 3, "samples": Vector(1, 2, 3), "product": 6, "squared_norm": 14},
-        ),
-        (VectorSummary, {"samples": []}, {"N": 0, "total": 0, "product": 1, "squared_norm": 0}),
-        (
-            ObservedAutoregression,
-            {"opening": 2, "retention": Rational(1, 2), "innovations": [1, 0, None, 0], "closing": Rational(5, 4)},
-            {"N": 4, "innovations": Vector(1, 0, 2, 0)},
-        ),
-        (LinearExposure, {"opening": 2, "duration": 3, "exposure": 9}, {"closing": 4}),
         (
             LinearTrend,
             {"times": [0, 1, 2, 3], "observations": [1, 2, 2, 4], "slope_gradient": 0, "intercept_gradient": 0},
@@ -56,7 +37,7 @@ from modello.errors import ModelInputError
             },
         ),
     ],
-    ids=["vector-inverse", "empty-vector", "relative-inverse", "integral-inverse", "gradient-fit", "ito-inverse"],
+    ids=["gradient-fit", "ito-inverse"],
 )
 def test_gallery_models_use_plain_observations_for_forward_and_inverse_solves(model, observations, expected):
     case = model("example", **observations)
@@ -113,16 +94,3 @@ def test_numerical_views_preserve_nested_model_types_and_terminal_identity(accou
     assert result.states[-1] is result.terminal
     assert result.terminal is not source.terminal
     assert source.fills[1].price.free_symbols
-
-
-def test_numerical_views_rebind_law_parameters_alongside_vector_fields():
-    class NumericalSequence(ObservedAutoregression, SymbolicModel):
-        pass
-
-    source = NumericalSequence("source", opening=1, innovations=[0, 0, 0])
-    result = source.compile().evaluate(Known(source.retention, 2))
-    assert tuple(map(float, result.levels)) == (1, 2, 4, 8)
-    assert float(result.law.at(3).doit()) == 8
-    source.levels = Vector(1, 2)
-    with pytest.raises(ModelInputError, match="levels"):
-        source.compile()

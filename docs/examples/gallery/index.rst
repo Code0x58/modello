@@ -7,30 +7,49 @@ One app introduces the library through four progressively composed models:
 
    $ uv run --extra gui python -m examples.gallery
 
-Open http://127.0.0.1:5070. Each step uses the same explorer: inspect
-**Equations**, edit an observation, or try a guided question. Follow the next
-concept in the navigation, or return to **Features**. Browser proposals start
-from each model's original observations.
+Open http://127.0.0.1:5070. Inspect **Equations**, edit an observation, or select
+**Explore a question**. Follow the next concept in the navigation, or return to
+**Features**.
 
-.. list-table:: Four core concepts
+.. list-table:: Four fundamentals
    :header-rows: 1
-   :widths: 25 45 30
+   :widths: 25 40 35
 
    * - Concept
      - Introduces
-     - Example
+     - Practical story
    * - Scalar models
      - Named quantities, domains, and forward/inverse solving
-     - Right-angle triangle
+     - Size a diagonal brace
    * - Component models
      - Typed children and joint equations across component boundaries
-     - Box with a triangle component
+     - Check a parcel's diagonal clearance
    * - Vector models
-     - Observation-sized vectors, indexed formulas, reductions, and derivatives
-     - Line fitting
+     - Observation-sized vectors, reductions, and derivatives
+     - Evaluate and fit a sensor calibration line
    * - Recurrent models
-     - Vectors of typed states, relative indices, and boundary observations
-     - Account balances and fills
+     - Typed state vectors, relative indices, and boundaries
+     - Post fills and reconcile an account
+
+The same questions, progressively richer models
+-----------------------------------------------
+
+Every fundamental starts with enough observations for a numeric result and
+provides the same five questions:
+
+1. **Calculate results** follows the supplied inputs to their consequences.
+2. **Infer missing inputs** releases inputs and supplies a result or fitting
+   condition to determine them.
+3. **Try different inputs** changes the measurements or collection length while
+   retaining the model's equations.
+4. **Leave inputs unknown** keeps a meaningful relationship symbolic.
+5. **Check the observations** deliberately supplies a conflicting claim. The
+   explorer rejects it and highlights the proposal; choose **Calculate results**
+   to return to the starting case.
+
+Each question starts from the example's original observations. Questions do not
+accumulate constraints from earlier questions. An inverse question releases the
+input it is inferring, so an old observation cannot accidentally fix its answer.
 
 Scalar models
 -------------
@@ -39,12 +58,12 @@ Scalar models
    :start-at:     a = InstanceDummy
    :language: python
 
-Observe two sides to determine the third. The same equation calculates the
-hypotenuse or infers a leg; positive domains exclude invalid side lengths.
-Leaving observations unspecified retains a symbolic relationship.
+A 3 cm run and 4 cm rise need a 5 cm brace. Observing an 8 cm rise and a 10 cm
+brace instead determines a 6 cm run. Leave the run undecided to retain the
+brace-length formula, or supply a conflicting length to inspect the rejection.
+Positive domains exclude invalid side lengths.
 
-:doc:`Solution families <../../solutions>` make those alternatives explicit in
-Python. Additional observations narrow the same model:
+:doc:`Solution families <../../solutions>` explore those unknowns in Python:
 
 .. code-block:: pycon
 
@@ -56,9 +75,8 @@ Python. Additional observations narrow the same model:
    >>> family.observe(c=5).one().b
    4
 
-Use :doc:`inspection and diagnostics <../../diagnostics>` to investigate
-conflicting observations or unresolved states. These tools apply throughout
-the walkthrough.
+:doc:`Inspection and diagnostics <../../diagnostics>` apply throughout the
+walkthrough, including conflicts and unresolved states.
 
 Component models
 ----------------
@@ -67,50 +85,52 @@ Component models
    :start-at:     base = component
    :language: python
 
-The box reuses the triangle's equations and domains. Observing the box diagonal
-can determine a quantity inside the base; the parent and its children form one
-system. The :doc:`composition guide <../../nesting>` develops typed observations,
-independent scopes, aliases, and model refinement.
+A parcel with a 3 × 4 cm base and 12 cm height has 13 cm diagonal clearance.
+Observing that clearance can determine a width inside its triangle component.
+An undecided width propagates into both diagonals; a conflicting base diagonal
+is rejected by the child's own equation. The :doc:`composition guide
+<../../nesting>` develops typed observations, scopes, aliases, and refinement.
 
 Vector models
 -------------
 
 .. literalinclude:: ../../../examples/gallery/models.py
    :start-at: class LinearTrend
-   :end-before: class GeometricDiffusion
    :language: python
 
-Observation lengths determine N. Vector residuals define a scalar objective;
-observing both gradients as zero selects an unweighted least-squares line.
-Distinct times give a unique fit; repeated times may leave a family. Supplying
-slope and intercept instead evaluates a chosen line. No noise distribution or
-uncertainty estimate is implied. See :doc:`../../vectors` for the vector API.
+The initial line ``y = 1 + t`` has squared error 1 against four sensor readings.
+**Infer missing inputs** releases its coefficients and sets both objective
+gradients to zero: slope and intercept become 0.9, with error 0.7. Least squares
+minimises error rather than requiring noisy measurements to lie on a line.
+
+Six new calibration readings determine N = 6 and fit ``y = 1 + 2t`` without
+changing the declaration. Leaving the slope open retains predictions and error
+as formulas. Claiming zero error for the original proposed line conflicts with
+its residuals. See :doc:`../../vectors` for operations and calculus.
 
 Recurrent models
 ----------------
 
-The :doc:`model-vector guide <../../model-vectors>` shows the account declaration
-and typed Python inputs. Each execution connects two account boundaries.
-Observing terminal cash can infer a missing execution price. Adding or removing
-executions changes N while retaining the relative law.
+The account starts with 3 shares and USD 1,000. Buying 2 shares at USD 100 and
+selling 1 at USD 110, with a USD 1 fee per fill, leaves 4 shares and USD 908.
 
-Further topics
---------------
+The inverse question omits the sale price and observes closing cash to infer
+USD 110. Without that closing observation, cash remains a formula in the
+unreported price. Appending a purchase changes the state-vector length; an
+inconsistent statement balance demonstrates reconciliation. The
+:doc:`model-vector guide <../../model-vectors>` shows the declaration and typed
+Python inputs.
 
-The app's **Demos and extensions** page separates specialist examples from the
-core sequence:
+Extensions and further reading
+------------------------------
 
-* Vector reductions: sums, products, dot products, and partial observations.
-* Scalar series: a recurrence independent of its observation window; see
-  :doc:`../../series`.
-* Continuous calculus: a native SymPy integral used in forward and inverse solves.
-* Itô diffusion: local transforms and conditional moments from the opt-in
-  :doc:`stochastic extension <../../contrib/stochastic>`.
-
-Inheritance and :ref:`extension annotations <extension-annotations>` are covered
-in the API guides rather than adding introductory cards.
+**Extensions** contains the opt-in :doc:`Itô example
+<../../contrib/stochastic>`. Ordinary vector reductions and scalar recurrences
+are covered by the fundamentals and their :doc:`vector <../../vectors>` and
+:doc:`series <../../series>` guides. Inheritance and :ref:`extension annotations
+<extension-annotations>` remain in the API guides.
 
 The equations reuse existing geometry/component examples and
-``examples/gallery/models.py``. ``catalog.py`` defines the four tutorial steps,
-additional demos, labels, observations, and guided questions. The app mounts the
-ordinary ``modello.gui.create_app`` explorer for every entry.
+``examples/gallery/models.py``. ``catalog.py`` defines observations and the
+shared question progression; ``extensions.py`` holds the specialist model.
+The app mounts the ordinary ``modello.gui.create_app`` explorer for each entry.

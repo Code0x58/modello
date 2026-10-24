@@ -3,20 +3,20 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>modello · {{ 'Feature walkthrough' if tutorial else 'Demos and extensions' }}</title>
+    <title>modello · {{ 'Feature walkthrough' if tutorial else 'Extensions' }}</title>
     <link rel="stylesheet" href="{{ url_for('index') }}simple/assets/explorer.css" />
     <link rel="stylesheet" href="{{ url_for('static', filename='gallery.css') }}" />
   </head>
   <body>
     <header class="topbar">
       <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">m</span>modello</a>
-      <span class="app-label">{{ 'FEATURE WALKTHROUGH' if tutorial else 'DEMOS AND EXTENSIONS' }}</span>
+      <span class="app-label">{{ 'FEATURE WALKTHROUGH' if tutorial else 'EXTENSIONS' }}</span>
       <span class="local"><i></i>Local workspace</span>
     </header>
     <main class="gallery">
       <div class="eyebrow">ONE MODEL, MANY QUESTIONS</div>
-      <h1>{{ 'Build models, one idea at a time.' if tutorial else 'Explore further.' }}</h1>
-      <p class="gallery-intro">{% if tutorial %}Start with named quantities, then compose models, work with vectors, and relate states across a sequence. Supply what you know; the same equations solve in either direction.{% else %}Try specific operations and domain extensions after the core walkthrough. Each demo uses the same modelling and inspection tools.{% endif %}</p>
+      <h1>{{ 'Build models, one idea at a time.' if tutorial else 'Extend the same modelling tools.' }}</h1>
+      <p class="gallery-intro">{% if tutorial %}Start with named quantities, then compose models, work with vectors, and relate states across a sequence. Each example follows the same questions: calculate, infer, change inputs, keep unknowns, and check observations.{% else %}Domain extensions add specialised formulas while retaining ordinary Modello equations, observations, and inspection.{% endif %}</p>
       <ol class="gallery-grid">
         {% for slug, example in examples.items() %}
         <li>
@@ -30,7 +30,7 @@
         {% endfor %}
       </ol>
       <p class="gallery-note">Use <strong>Equations</strong> to see the model. Edit any quantity, or try a guided question. Reset inputs to begin again.</p>
-      <a class="gallery-more" href="{{ url_for('demos') if tutorial else url_for('index') }}">{{ 'Demos and extensions' if tutorial else 'Back to the feature walkthrough' }} <span aria-hidden="true">→</span></a>
+      <a class="gallery-more" href="{{ url_for('extensions') if tutorial else url_for('index') }}">{{ 'Extensions' if tutorial else 'Back to the feature walkthrough' }} <span aria-hidden="true">→</span></a>
     </main>
   </body>
 </html>

@@ -6,9 +6,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from sympy import Rational
 
 from modello import Modello, Vector
-from modello.gui import create_app
+from modello.gui import FieldInfo, create_app
+from tests.modello._models import DrivenSequence
 
 
 def test_frontend_vector_proposal_state(tmp_path: Path, pytestconfig: pytest.Config) -> None:
@@ -36,9 +38,17 @@ def test_frontend_vector_proposal_state(tmp_path: Path, pytestconfig: pytest.Con
     assert rejected.status_code == 422
     from examples.gallery.catalog import EXAMPLES
 
-    example = EXAMPLES["relative"]
-    model, inputs = example.model, example.inputs
-    law_client = create_app(model, inputs=inputs).test_client()
+    example = EXAMPLES["simple"]
+    fundamental_client = create_app(example.model, inputs=example.inputs).test_client()
+    fundamental = fundamental_client.post("/api/explore", json={"bindings": {}}).json
+    assert fundamental is not None
+    conflict = fundamental_client.post("/api/explore", json={"bindings": fundamental["scenarios"][4]["bindings"]})
+    assert conflict.status_code == 422
+    law_client = create_app(
+        DrivenSequence,
+        inputs={"retention": Rational(1, 2), "levels": [2, 2, 1, Rational(5, 2), Rational(5, 4)]},
+        metadata={"law": FieldInfo(title="Relative recurrence and boundary")},
+    ).test_client()
     laws = law_client.post("/api/explore", json={"bindings": {}})
     assert laws.status_code == 200
     law_edits = {}
@@ -76,6 +86,8 @@ def test_frontend_vector_proposal_state(tmp_path: Path, pytestconfig: pytest.Con
                 edited=edited,
                 restored=restored,
                 rejected=rejected.json,
+                fundamental=fundamental,
+                conflict=conflict.json,
                 laws=laws.json,
                 sequence=sequence.json,
                 **sequence_edits,

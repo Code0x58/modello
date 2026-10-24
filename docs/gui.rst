@@ -11,8 +11,9 @@ Install its separate extra; the base library still depends only on SymPy:
 
 From a checkout, use ``uv run --extra gui python -m examples.gallery``. Open
 http://127.0.0.1:5070. The :doc:`gallery <examples/gallery/index>` introduces
-scalar models, composition, vectors, and recurrent model states. A separate
-demos page explores additional operations and domain extensions.
+scalar models, composition, vectors, and recurrent model states through the
+same practical question progression. A separate Extensions page demonstrates
+the opt-in stochastic module.
 
 Quickstart: your own explorer
 ------------------------------

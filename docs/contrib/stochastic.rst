@@ -50,7 +50,7 @@ parameter inference:
 .. code-block:: pycon
 
    >>> from sympy import Rational
-   >>> from examples.gallery.models import GeometricDiffusion
+   >>> from examples.gallery.extensions import GeometricDiffusion
    >>> fitted = GeometricDiffusion(
    ...     "coefficients", opening=100, duration=1, wiener_increment=0,
    ...     log_drift=Rational(2, 25), log_diffusion=Rational(1, 5),

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from typing import TYPE_CHECKING, Any
 
-from examples.gallery.catalog import DEMOS, EXAMPLES, TUTORIAL
+from examples.gallery.catalog import EXAMPLES, EXTENSIONS, TUTORIAL
 from modello.gui import create_app
 
 if TYPE_CHECKING:
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 def create_gallery() -> Flask:
     """Create one local app; each example retains its own equations and inputs."""
-    from flask import Flask, render_template, request
+    from flask import Flask, redirect, render_template, request, url_for
     from werkzeug.middleware.dispatcher import DispatcherMiddleware
 
     app = Flask(__name__, template_folder="templates", static_folder="static", static_url_path="/assets")
@@ -25,9 +25,13 @@ def create_gallery() -> Flask:
     def index() -> str:
         return render_template("gallery.html", examples=TUTORIAL, tutorial=True)
 
+    @app.get("/extensions/")
+    def extensions() -> str:
+        return render_template("gallery.html", examples=EXTENSIONS, tutorial=False)
+
     @app.get("/demos/")
-    def demos() -> str:
-        return render_template("gallery.html", examples=DEMOS, tutorial=False)
+    def demos() -> Any:
+        return redirect(url_for("extensions"))
 
     def navigation() -> dict[str, Any]:
         prefix, _, selected = request.script_root.rpartition("/")
@@ -39,13 +43,13 @@ def create_gallery() -> Flask:
                 following = steps[position + 1]
                 next_page = {"title": TUTORIAL[following].info.title, "url": f"{prefix}/{following}/"}
             else:
-                next_page = {"title": "Demos and extensions", "url": prefix + "/demos/"}
+                next_page = {"title": "Extensions", "url": prefix + "/extensions/"}
         return {
             "gallery_home": prefix + "/",
             "gallery_css": prefix + "/assets/gallery.css",
             "gallery_links": [
                 {"title": example.info.title, "url": f"{prefix}/{slug}/", "selected": slug == selected, "group": group}
-                for group, examples in (("Features", TUTORIAL), ("Demos and extensions", DEMOS))
+                for group, examples in (("Features", TUTORIAL), ("Extensions", EXTENSIONS))
                 for slug, example in examples.items()
             ],
             "gallery_step": f"Step {position + 1} of {len(steps)}" if position is not None else None,

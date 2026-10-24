@@ -11,7 +11,7 @@ An account across executions
 
 .. literalinclude:: ../examples/gallery/models.py
    :start-at: class AccountSequence
-   :end-before: class LinearExposure
+   :end-before: class LinearTrend
    :language: python
 
 .. math::

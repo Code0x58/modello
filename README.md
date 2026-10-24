@@ -213,8 +213,9 @@ uv run --extra gui python -m examples.gallery
 ```
 
 Open <http://127.0.0.1:5070> for a four-step feature walkthrough: scalar models,
-components, vectors, and recurrent model states. A separate demos page includes
-specialist examples such as the `modello.contrib.stochastic` Itô extension.
+components, vectors, and recurrent model states. Each offers the same practical
+questions: calculate, infer, change inputs, retain unknowns, and check observations.
+The separate Extensions page demonstrates `modello.contrib.stochastic`.
 Inspect the MathML equations, edit or release inputs, and use a calculated result as a target.
 The [gallery guide](docs/examples/gallery/index.rst) explains each model's idea;
 the [GUI quickstart](docs/gui.rst#quickstart-your-own-explorer) shows how to build

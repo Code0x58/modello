@@ -71,17 +71,16 @@ require them to resolve.
 Let observations choose the window
 ----------------------------------
 
-The gallery's autoregression declares ``N`` once. State observations have
+The guide's autoregression declares ``N`` once. State observations have
 ``N+1`` entries and innovations have ``N``:
 
-.. literalinclude:: ../examples/gallery/models.py
+.. literalinclude:: ../examples/series.py
    :start-at: class ObservedAutoregression
-   :end-before: class AccountSequence
    :language: python
 
 .. code-block:: pycon
 
-   >>> from examples.gallery.models import ObservedAutoregression
+   >>> from examples.series import ObservedAutoregression
    >>> case = ObservedAutoregression("states", retention=1, levels=[1, 3, 6, 10])
    >>> case.N, case.opening, case.innovations
    (3, 1, [2, 3, 4])

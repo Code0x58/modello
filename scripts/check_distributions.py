@@ -157,7 +157,7 @@ import examples
 from examples.geometry import RightAngleTriangle
 from examples.data import NamedMap
 from examples.gui_quickstart import ReturnModel
-from examples.gallery.models import AccountSequence, VectorSummary
+from examples.gallery.models import AccountSequence, LinearTrend
 import modello
 from examples.portfolio.models import Execution, HoldingState
 from modello.gui import Explorer
@@ -167,7 +167,7 @@ assert Path(examples.__file__).with_name("py.typed").is_file()
 assert RightAngleTriangle("T", a=3, b=4).c == 5
 assert NamedMap({"a": 2}).map(lambda value: value * 3) == {"a": 6}
 assert ReturnModel("example", capital=100_000, expected_return="2/25").gain == 8_000
-assert VectorSummary("window", samples=[1, None, 3], total=6).product == 6
+assert LinearTrend("line", times=[0, 1, 2, 3], observations=[1, 2, 2, 4], slope=1, intercept=1).squared_error == 1
 sequence = AccountSequence("installed",
     states=modello.ModelObservations({0: HoldingState("opening", quantity=3, cash=1000)}),
     fills=[Execution("fill", quantity=2, price=100, fee=1)])

@@ -117,7 +117,9 @@ observation origins; its labels preserve canonical API paths for navigation.
 
 Keep the four-step feature walkthrough small. Reuse the existing geometry models;
 ``examples/gallery/models.py`` holds the other equations. ``catalog.py`` separates
-tutorial steps from additional demos and supplies display metadata. ``app.py``
+tutorial steps from domain extensions and supplies one shared question progression.
+``extensions.py`` holds specialist models; ``examples/series.py`` supports the
+scalar-series guide independently of the GUI. ``app.py``
 mounts the existing explorer through Werkzeug, preserving URL prefixes for
 assets and API requests. Add an example when it demonstrates a distinct idea,
 and derive scenario smoke tests from the catalog. Keep mathematical regressions

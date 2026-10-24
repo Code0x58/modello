@@ -701,11 +701,13 @@ def _known_integers(
             if isinstance(scalar, Integer):
                 known[namespace.dummies[name]] = scalar
     for _ in range(len(namespace.attrs) + 1):
-        additions = {
-            namespace.dummies[name]: value.xreplace(known)
-            for name, value in namespace.attrs.items()
-            if namespace.dummies[name] not in known and isinstance(value.xreplace(known), Integer)
-        }
+        additions = {}
+        for name, value in namespace.attrs.items():
+            symbol = namespace.dummies[name]
+            if symbol not in known:
+                resolved = _substitute(value, known)
+                if isinstance(resolved, Integer):
+                    additions[symbol] = resolved
         if not additions:
             break
         known.update(additions)

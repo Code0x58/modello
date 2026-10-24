@@ -4,11 +4,25 @@ import pickle
 from copy import deepcopy
 
 import pytest
-from sympy import Rational
+from sympy import Derivative, Rational
 
 from modello import Index, InstanceDummy, Modello, Vector, component, inspect_model, vector
 from modello.errors import ModelInputError, SolutionCountError
 from tests.modello._models import DrivenSequence as ObservedAutoregression
+
+
+@pytest.mark.parametrize("point", [0, 1, 2])
+def test_shape_preparation_preserves_derivative_coordinates_when_a_field_is_observed(point):
+    class Measurement(Modello):
+        N = InstanceDummy("N", integer=True, positive=True)
+        samples = Vector("samples", size=N, real=True)
+        x = InstanceDummy("x", real=True)
+        squared = x**2
+        slope = Derivative(squared, x)
+
+    case = Measurement("point", samples=[1, 2], x=point)
+    assert case.N == 2
+    assert case.slope == 2 * point
 
 
 def test_symbolic_vector_substitution_preserves_coordinate_identities():

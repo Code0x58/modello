@@ -164,6 +164,10 @@ async function refresh(next = bindings, options = {}) {
     });
     const data = await response.json();
     if (!response.ok) {
+      if (options.scenario !== undefined) {
+        activeScenario = options.scenario;
+        renderScenarios();
+      }
       showError(data.error || "Could not update the model.", data.paths || []);
       if (options.commitInputs)
         $("message").scrollIntoView({ behavior: "smooth", block: "start" });
