@@ -123,8 +123,6 @@ API
 
 .. currentmodule:: modello
 
-.. autoclass:: Coordinate
-
 .. autoclass:: Series(name, index=None, **assumptions)
    :members: index, discrete
 

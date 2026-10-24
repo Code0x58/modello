@@ -36,8 +36,9 @@ Read :doc:`getting-started` for a complete, runnable progression:
      - Post account events or infer an event from a closing balance.
 
 You can try the same progression in the :doc:`interactive gallery
-<examples/gallery/index>`. The guides below develop particular tools when you
-need them; the API and diagnostic guarantees are separate reference material.
+<examples/gallery/index>`. To choose by notation or finite versus unbounded
+scope, start with :doc:`modelling`. The guides below develop each approach;
+the API and diagnostic guarantees are separate reference material.
 
 .. toctree::
    :caption: Start modelling
@@ -50,10 +51,11 @@ need them; the API and diagnostic guarantees are separate reference material.
    :caption: Modelling guides
    :maxdepth: 1
 
+   modelling
    nesting
    vectors
-   model-vectors
    series
+   model-vectors
    solutions
    debugging
    gui

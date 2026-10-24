@@ -105,17 +105,21 @@ API reference
 
 .. autoclass:: SymbolicCondition
 
-Vectors and indices
---------------------
+Coordinates and indexed formulas
+--------------------------------
+
+.. autoclass:: Coordinate
+
+.. autoclass:: Index
 
 .. autoclass:: Vector
    :members: shape, elements, sum, product, dot, doit
 
 .. autofunction:: vector
 
-.. autoclass:: Index
-
-See :doc:`model-vectors` for typed ordered components, ``model_vector``, and
+See :doc:`series` for ``Series`` and ``Recurrence``: scalar families and causal
+laws queried without a chosen horizon. See :doc:`model-vectors` for typed
+ordered components, ``model_vector``, and
 ``model_recurrence``. ``ModelVectorValue[Model]`` describes observations as a
 typed model vector or a sequence of compatible model instances and ``None``.
 It also accepts ``ModelObservations[Model]`` for sparse typed observations of

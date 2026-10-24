@@ -4,8 +4,8 @@ Vectors and indexed formulas
 Use ``Vector`` for measurements, predictions, or other ordered scalar quantities.
 The :doc:`calibration walkthrough <getting-started>` shows how vector expressions
 define a fitting objective. This guide covers the individual operations. Use
-:doc:`model-vectors` when each entry should contain a complete model, or
-:doc:`series` for a relative law independent of its observation window.
+:doc:`series` for a relative law independent of its observation window, or
+:doc:`model-vectors` when each entry should contain a complete model.
 
 Start with observations
 -----------------------
@@ -109,6 +109,8 @@ finite bounds and valid coordinates before requesting one. Direct invalid
 integer indexing raises ``IndexError``; an undefined symbolic selection is
 excluded from finite solutions.
 
+.. _symbolic-calculus:
+
 Calculus uses SymPy
 -------------------
 
@@ -144,6 +146,7 @@ supported calculus and domain checks.
 See the native `SymPy concrete mathematics
 <https://docs.sympy.org/latest/modules/concrete.html>`_ and
 `calculus <https://docs.sympy.org/latest/tutorials/intro-tutorial/calculus.html>`_
-APIs for operator syntax. Continue with :doc:`model-vectors` to relate typed
-states across a sequence, or try line fitting in the
-:doc:`gallery <examples/gallery/index>`.
+APIs for operator syntax. Continue with :doc:`series` for scalar recurrence
+queries, or :doc:`model-vectors` to relate typed states across a finite window.
+The :doc:`gallery <examples/gallery/index>` applies these tools to line fitting
+and account states.
