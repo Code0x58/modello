@@ -8,16 +8,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from functools import cached_property
-from typing import TYPE_CHECKING, Generic, cast
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Generic, Mapping, cast
 
 from sympy import (
     Basic,
     ConditionSet,
+    Derivative,
     Eq,
     Expr,
     FiniteSet,
     Float,
     I,
+    Integral,
+    Limit,
     Matrix,
     S,
     Set,
@@ -31,8 +35,12 @@ from sympy import (
 from sympy.core.function import AppliedUndef
 from sympy.solvers.solveset import NonlinearError
 
+from modello._evaluation import _rebind
+from modello._expressions import _evaluate, _substitute
 from modello._inputs import _InputCapture
 from modello._model import ModelloMeta, _ModelReference
+from modello._operators import _definitely_undefined, _SymbolicTemplate
+from modello._paths import _path_label
 from modello._problem import (
     AssumptionCheck,
     Candidate,
@@ -46,15 +54,17 @@ from modello._problem import (
     ResidualCheck,
     Status,
     Verdict,
+    _algebra,
     _canonical_fields,
     _domain,
     _FieldPrinter,
 )
 from modello.errors import ModelInputError, ModelSolveError as ModelSolveError, ModelValidationError
 from modello.solutions import SolutionFamily
+from modello.vectors import Vector
 
 if TYPE_CHECKING:
-    from modello import Modello, ScalarValue, SymbolicScalar
+    from modello import Modello, ModelVectorValue, ScalarValue, SymbolicScalar, VectorValue
 
 
 @dataclass(frozen=True)
@@ -95,7 +105,7 @@ class LinearCertificate:
     def verify(self) -> bool:
         """Independently check the certificate against its original equations."""
         residual = sum(weight * (constraint.left - constraint.right) for constraint, weight in self.terms)
-        return simplify(residual - self.constant).is_zero is True and self.constant.is_zero is False
+        return simplify(_evaluate(residual - self.constant)).is_zero is True and self.constant.is_zero is False
 
 
 @dataclass(frozen=True)
@@ -152,8 +162,29 @@ class ModelProblem(Generic[ModelT]):
     fields: tuple[ModelField, ...]
     constraints: tuple[ModelConstraint, ...]
     candidates: tuple[Candidate, ...] = ()
+    _template_bindings: tuple[tuple[Basic, Basic], ...] = ()
 
-    def _capture_inputs(self, **value_map: ScalarValue | Modello) -> ModelProblem[ModelT]:
+    @cached_property
+    def _declaration_bindings(self) -> dict[Basic, Basic]:
+        fields = {field.path: field.symbol for field in self.fields}
+        return {
+            **{dummy: fields[path] for path, dummy in self.model._modello_definition.fields.items()},
+            **dict(self._template_bindings),
+        }
+
+    @cached_property
+    def templates(self) -> Mapping[FieldPath, _SymbolicTemplate]:
+        """Read-only series and laws in this problem's scalar and function scope."""
+        return MappingProxyType(
+            {
+                path: _rebind(value, self._declaration_bindings)
+                for path, value in self.model._modello_definition.templates.items()
+            }
+        )
+
+    def _capture_inputs(
+        self, **value_map: ScalarValue | VectorValue | Modello | ModelVectorValue[Modello]
+    ) -> ModelProblem[ModelT]:
         """Append constructor inputs without rebinding this snapshot."""
         if not value_map:
             return self
@@ -172,7 +203,37 @@ class ModelProblem(Generic[ModelT]):
         scalar symbols and nested components, rather than solved model methods.
         Derived fields also have their own symbols, so they can be observed.
         """
-        return cast(ModelT, _ModelReference(self.model, {field.path: field.symbol for field in self.fields}))
+        return cast(
+            ModelT,
+            _ModelReference(
+                self.model, {field.path: field.symbol for field in self.fields}, self._declaration_bindings
+            ),
+        )
+
+    @cached_property
+    def vectors(self) -> Mapping[FieldPath, Vector]:
+        """Read-only vector fields, retaining paths, order, aliases, and empty shapes."""
+        fields = {field.path: field.symbol for field in self.fields}
+        bindings = {dummy: fields[path] for path, dummy in self.model._modello_definition.fields.items()}
+        return MappingProxyType(
+            {path: value.xreplace(bindings) for path, value in self.model._modello_definition.vectors.items()}
+        )
+
+    def vector(self, *path: str) -> Vector:
+        """Look up a whole vector by its component path, without printed-name matching."""
+        return self.vectors[path]
+
+    @cached_property
+    def vector_definitions(self) -> Mapping[FieldPath, Vector]:
+        """Read-only, unevaluated whole-vector formulas, before scalar expansion."""
+        fields = {field.path: field.symbol for field in self.fields}
+        bindings = {dummy: fields[path] for path, dummy in self.model._modello_definition.fields.items()}
+        return MappingProxyType(
+            {
+                path: _rebind(value, bindings)
+                for path, value in self.model._modello_definition.vector_definitions.items()
+            }
+        )
 
     def __repr__(self) -> str:
         return (
@@ -184,11 +245,24 @@ class ModelProblem(Generic[ModelT]):
         """Render paths from the model root without changing the expression."""
         return str(self._printer(expression).doprint(expression))
 
+    def latex(
+        self,
+        expression: Basic,
+        *,
+        symbol_names: Mapping[Symbol, str] | None = None,
+        vector_names: Mapping[Vector, str] | None = None,
+    ) -> str:
+        """Export scoped paths and vector notation, with optional LaTeX name overrides."""
+        from modello._printing import _latex
+
+        printer = self._printer(expression)
+        return _latex(expression, printer, printer.vector_labels, symbol_names, vector_names)
+
     def _printer(self, *expressions: Basic, scope: FieldPath = ()) -> _FieldPrinter:
         # Bound variables in a ConditionSet need the same labels as free symbols.
         referenced: frozenset[Symbol] = frozenset().union(*(expression.atoms(Symbol) for expression in expressions))
         symbols = frozenset().union(*(c.symbols for c in self.constraints), referenced)
-        return _FieldPrinter(self.fields, symbols, scope, referenced)
+        return _FieldPrinter(self.fields, symbols, scope, referenced, self.vectors.items(), self.templates.items())
 
     def __str__(self) -> str:
         return "\n".join([f"{self.model.__name__}({self.name!r})", *self._constraint_lines(self.constraints)])
@@ -196,6 +270,12 @@ class ModelProblem(Generic[ModelT]):
     def _tree_lines(self, entries: tuple[tuple[FieldPath, str], ...], indent: int) -> list[str]:
         def visit(model: type[Modello], path: FieldPath, depth: int) -> list[str]:
             lines = [" " * depth + text for owner, text in entries if owner == path]
+            for name, vector in model._modello_namespace.vectors.items():
+                vector_path = (*path, name)
+                children = [text for owner, text in entries if owner == vector_path]
+                if children:
+                    lines.append(f"{' ' * depth}{name}: Vector[{len(vector)}]")
+                    lines.extend(" " * (depth + 2) + text for text in children)
             for name, component in model._modello_namespace.nested_models.items():
                 child_path = (*path, name)
                 if any(owner[: len(child_path)] == child_path for owner, _ in entries):
@@ -216,16 +296,17 @@ class ModelProblem(Generic[ModelT]):
                 source = f"inferred in {c.input!r}"
             else:
                 source = f"{c.kind} {c.input!r}"
-            path = ".".join(c.path[len(printer.scope) :])
+            path = _path_label(c.path[len(printer.scope) :])
             entries.append((c.path[:-1], f"c{c.index}: {path} = {printer.doprint(c.right)} [{source}]"))
         return self._tree_lines(tuple(entries), indent)
 
-    def field(self, *path: str) -> ModelField:
+    def field(self, *path: str | int) -> ModelField:
         """Look up a declared path, without matching symbols by printed name."""
+        normalized = tuple(str(part) for part in path)
         for field in self.fields:
-            if field.path == path:
+            if field.path == normalized:
                 return field
-        raise KeyError(".".join(path))
+        raise KeyError(_path_label(normalized))
 
     def aliases(self, field: ModelField) -> tuple[ModelField, ...]:
         """Find all paths to the same quantity in this problem."""
@@ -275,14 +356,19 @@ class ModelProblem(Generic[ModelT]):
         """
         return _Analyser(self, max_checks).run(conflicts, relaxations)
 
-    def solutions(self, *parameters: SymbolicScalar) -> SolutionFamily[ModelT]:
+    def solutions(self, *parameters: SymbolicScalar | Vector) -> SolutionFamily[ModelT]:
         """Explore the joint family, optionally retaining chosen parameter fields.
 
         This explicit operation can invoke exact symbolic solvers. It preserves
         unresolved conditions rather than choosing a candidate or branch.
         """
         fields = []
-        for parameter in parameters:
+        coordinates = tuple(
+            entry
+            for parameter in parameters
+            for entry in (parameter if isinstance(parameter, Vector) else (parameter,))
+        )
+        for parameter in coordinates:
             if not isinstance(parameter, Symbol):
                 raise ModelInputError("A preferred coordinate must be one of this problem's field symbols")
             field = next((field for field in self.fields if field.symbol == parameter), None)
@@ -293,12 +379,19 @@ class ModelProblem(Generic[ModelT]):
         return SolutionFamily._prepare(self, tuple(fields))
 
 
-def _prepare_problem(model: type[ModelT], name: str, /, **value_map: ScalarValue | Modello) -> ModelProblem[ModelT]:
+def _prepare_problem(
+    model: type[ModelT], name: str, /, **value_map: ScalarValue | VectorValue | Modello | ModelVectorValue[Modello]
+) -> ModelProblem[ModelT]:
     """Capture a declaration and its constructor inputs as one bound snapshot."""
     if not isinstance(model, ModelloMeta):
         raise ModelInputError("inspect_model requires a Modello class and constructor inputs")
+    from modello._model import _specialize_model
+
+    model = _specialize_model(model, value_map)
     definition = model._modello_definition
     bindings = {d: d.bound(name) for d in dict.fromkeys(definition.fields.values())}
+    template_bindings = {symbol: symbol.bound(name) for symbol in definition.template_symbols}
+    bindings.update(template_bindings)
     fields = tuple(ModelField(path, bindings[d]) for path, d in definition.fields.items())
     constraints = [
         ModelConstraint(
@@ -306,11 +399,11 @@ def _prepare_problem(model: type[ModelT], name: str, /, **value_map: ScalarValue
             constraint.path,
             ConstraintKind.DEFINITION,
             bindings[constraint.left],
-            constraint.right.xreplace(bindings),
+            _rebind(constraint.right, bindings),
         )
         for i, constraint in enumerate(definition.constraints)
     ]
-    problem = ModelProblem(model, name, fields, tuple(constraints))
+    problem = ModelProblem(model, name, fields, tuple(constraints), _template_bindings=tuple(template_bindings.items()))
     return problem._capture_inputs(**value_map)
 
 
@@ -349,7 +442,7 @@ class ProblemAnalysis:
             entries = []
             for result in self.solution_sets:
                 printer = self.problem._printer(result.values, scope=result.field.path[:-1])
-                path = ".".join(result.field.path[len(printer.scope) :])
+                path = _path_label(result.field.path[len(printer.scope) :])
                 entries.append(
                     (
                         result.field.path[:-1],
@@ -395,15 +488,15 @@ def _audit(problem: ModelProblem, constraints: tuple[ModelConstraint, ...], cand
             raise ModelValidationError("Candidate contains conflicting values for aliases")
         bindings[item.field.symbol] = item.value
     residuals = []
-    for c in constraints:
-        left, right = c.left.xreplace(bindings), c.right.xreplace(bindings)
+    for c, (lhs, rhs) in zip(constraints, _algebra(constraints, problem.templates.values()).equations, strict=True):
+        left, right = lhs.xreplace(bindings), _substitute(rhs, bindings)
         verdict: Verdict
         if not isinstance(left, Expr) or not isinstance(right, Expr):
             residual, verdict = right, "unknown"
-        elif left.has(S.NaN, S.ComplexInfinity) or right.has(S.NaN, S.ComplexInfinity):
+        elif _definitely_undefined(left) or _definitely_undefined(right):
             residual, verdict = S.NaN, "violated"
         else:
-            residual = simplify(left - right)
+            residual = simplify(_evaluate(left - right))
             if (
                 c.right.has(Float)
                 or left.has(Float)
@@ -426,7 +519,7 @@ def _audit(problem: ModelProblem, constraints: tuple[ModelConstraint, ...], cand
             "defined",
             True,
             False
-            if item.value.has(S.NaN, S.ComplexInfinity)
+            if _definitely_undefined(item.value)
             else True
             if item.value.is_number is True and item.value.is_finite is True
             else None,
@@ -465,17 +558,17 @@ def _violation(problem: ModelProblem, check: CandidateCheck) -> str:
     return "No closed witness or exact contradiction was established."
 
 
-def _fixed_values(constraints: tuple[ModelConstraint, ...]) -> dict[Symbol, Expr]:
+def _fixed_values(problem: ModelProblem, constraints: tuple[ModelConstraint, ...]) -> dict[Symbol, Expr]:
     fixed: dict[Symbol, Expr] = {}
+    equations = _algebra(constraints, problem.templates.values()).equations
     while True:
-        additions = {
-            c.left: c.right.xreplace(fixed)
-            for c in constraints
-            if c.left not in fixed
-            and isinstance(c.right, Expr)
-            and not c.right.xreplace(fixed).free_symbols
-            and (isinstance(c.right, Float) or not c.right.xreplace(fixed).has(Float))
-        }
+        additions = {}
+        for left, right in equations:
+            if left in fixed or not isinstance(right, Expr):
+                continue
+            value = _substitute(right, fixed)
+            if not value.free_symbols and (isinstance(right, Float) or not value.has(Float)):
+                additions[left] = _evaluate(value)
         if not additions:
             return fixed
         fixed.update(additions)
@@ -486,12 +579,17 @@ def _linear_part(
 ) -> tuple[LinearAnalysis | None, dict[Symbol, Expr]]:
     fields = tuple(field for field in _canonical_fields(problem) if field.symbol.is_commutative is True)
     symbols = tuple(field.symbol for field in fields)
+    defined = {c.left for c in constraints if c.kind is ConstraintKind.DEFINITION}
     rows, constants, included = [], [], []
     for c in constraints:
         if not isinstance(c.right, Expr) or not c.symbols <= set(symbols):
             continue
+        # A certificate must combine original residuals with constant weights.
+        # Expanding another definition under calculus needs a different proof.
+        if c.right.has(Derivative, Integral, Limit) and c.right.free_symbols & defined:
+            continue
         try:
-            matrix, constant = linear_eq_to_matrix((c.left - c.right,), symbols)
+            matrix, constant = linear_eq_to_matrix((_evaluate(c.left - c.right),), symbols)
         except NonlinearError:
             continue
         if not all(value.is_Rational for value in (*matrix, *constant)):
@@ -552,14 +650,14 @@ def _solution_sets(
     bindings = {item.field.symbol: item.value for item in substitutions}
     fields = {field.symbol: field for field in _canonical_fields(problem)}
     groups: dict[Symbol, list[tuple[ModelConstraint, Expr]]] = {}
-    for c in constraints:
+    for c, (left, right) in zip(constraints, _algebra(constraints, problem.templates.values()).equations, strict=True):
         if (
             not isinstance(c.right, Expr)
             or c.right.has(Float)
             or any(symbol.is_commutative is not True for symbol in c.symbols)
         ):
             continue
-        residual = c.left.xreplace(bindings) - c.right.xreplace(bindings)
+        residual = _evaluate(left.xreplace(bindings) - _substitute(right, bindings))
         symbols = residual.free_symbols
         if len(symbols) == 1:
             symbol = next(iter(symbols))
@@ -629,7 +727,7 @@ class _Analyser:
         return result
 
     def _assess(self, constraints: tuple[ModelConstraint, ...]) -> _Assessment:
-        fixed = _fixed_values(constraints)
+        fixed = _fixed_values(self.problem, constraints)
         deductions = _audit(self.problem, constraints, _candidate(self.problem, fixed))
         linear, expressions = _linear_part(self.problem, constraints)
         if linear is not None and linear.certificate is not None:
@@ -686,7 +784,7 @@ class _Analyser:
         detail = "No closed witness or exact contradiction was established."
         try:
             solutions = solve(
-                [c.left - c.right for c in constraints],
+                [left - right for left, right in _algebra(constraints, self.problem.templates.values()).equations],
                 [field.symbol for field in _canonical_fields(self.problem)],
                 dict=True,
                 numerical=False,
@@ -724,7 +822,7 @@ class _Analyser:
             choices = {field.symbol: _sample(field.symbol, sample) for field in _canonical_fields(self.problem)}
             choices.update({symbol: value for symbol, value in expressions.items() if not value.free_symbols})
             values = {
-                field.symbol: expressions.get(field.symbol, field.symbol).xreplace(choices)
+                field.symbol: _evaluate(_substitute(expressions.get(field.symbol, field.symbol), choices))
                 for field in self.problem.fields
             }
             check = _audit(self.problem, constraints, _candidate(self.problem, values))

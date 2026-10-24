@@ -9,7 +9,7 @@ from typing import ClassVar, Generic, TypeVar
 
 from examples.data import NamedMap, Series, Time
 from examples.symbolic import ModelPath, SymbolicModel
-from modello import InstanceDummy, Modello, component
+from modello import Index, InstanceDummy, Modello, component, model_recurrence, model_vector
 
 
 @dataclass(frozen=True)
@@ -134,6 +134,22 @@ class Execution(Trade):
     """The economic terms of a signed fill, separate from its ledger identity."""
 
     fee = InstanceDummy("fee", nonnegative=True)
+
+
+class AccountSequence(Modello):
+    """Executions connect typed account states through relative field equations."""
+
+    N = InstanceDummy("N", integer=True, nonnegative=True)
+    fills = model_vector(Execution, size=N)
+    states = model_vector(HoldingState, size=N + 1)
+    n = Index("n")
+    law = model_recurrence(
+        states[n],
+        quantity=states[n - 1].quantity + fills[n - 1].quantity,
+        cash=states[n - 1].cash - fills[n - 1].notional - fills[n - 1].fee,
+    )
+    terminal = states[-1]
+    total_fees = fills.project(lambda fill: fill.fee).sum()
 
 
 class FillPosting(HoldingState, SymbolicModel):

@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import re
+from collections import Counter
+from dataclasses import replace
 from difflib import get_close_matches
-from typing import TYPE_CHECKING, Iterator, Mapping
+from typing import TYPE_CHECKING, Any, Iterator, Mapping
 
 from sympy import Symbol
 
 from modello._gui.mathml import EquationPrinter
+from modello._paths import _path_label, _within_path
+from modello._symbols import _minimal_assumptions
 from modello.diagnostics import ConstraintKind, ModelField, ModelProblem
 from modello.errors import ModelInputError
 from modello.gui import FieldInfo, ModelInfo, Scenario
+from modello.model_vectors import _collection_columns
+from modello.vectors import _vector_input
 
 if TYPE_CHECKING:
     from modello import Modello
@@ -19,26 +26,53 @@ if TYPE_CHECKING:
 class Layout:
     """One index for names, aliases, visibility, edit policy, and raw equations."""
 
-    def __init__(self, problem: ModelProblem, overrides: Mapping[str, FieldInfo]) -> None:
-        self.fields = {".".join(field.path): field for field in problem.fields}
+    def __init__(
+        self, problem: ModelProblem, overrides: Mapping[str, FieldInfo], *, resizable: frozenset[str] = frozenset()
+    ) -> None:
+        self.resizable = resizable
+        internal = _internal_vectors(problem.model)
+        self.fields = {
+            _path_label(field.path): field for field in problem.fields if _path_label(field.path[:-1]) not in internal
+        }
         self.metadata = dict.fromkeys(self.fields, FieldInfo())
+        self._explicit_metadata: set[str] = set()
+        self._member_styles: dict[tuple[str, str], FieldInfo] = {}
+        self.references = dict(_reference_tree(problem.symbols))
         self.components: list[str] = []
+        self.parents: dict[str, str] = {}
+        self.collections: dict[str, Any] = {}
+        self.law_fields: dict[str, str] = {}
+        self.vectors = {
+            _path_label(path): vector for path, vector in problem.vectors.items() if _path_label(path) not in internal
+        }
+        self.vector_definitions = {_path_label(path): value for path, value in problem.vector_definitions.items()}
+        self.templates = {_path_label(path): value for path, value in problem.templates.items()}
         self._collect(problem.model)
+        definitions = Counter(_path_label(c.path) for c in problem.constraints if c.kind is ConstraintKind.DEFINITION)
+        self.law_fields = {path: source for path, source in self.law_fields.items() if definitions[path] == 1}
         for path, info in overrides.items():
             self._set_info(path, info)
+        for path, vector in self.vectors.items():
+            info = self.metadata[path]
+            for i in range(len(vector)):
+                coordinate = f"{path}[{i}]"
+                if coordinate not in self._explicit_metadata:
+                    self.metadata[coordinate] = replace(info, title=f"{info.title or path}[{i}]", symbol="")
 
         hidden_roots = [path for path, info in self.metadata.items() if info.hidden]
-        hidden = {
-            path
-            for path in self.metadata
-            if any(not root or path == root or path.startswith(root + ".") for root in hidden_roots)
-        }
+        hidden = {path for path in self.metadata if any(_within_path(path, root) for root in hidden_roots)}
         hidden_symbols = {field.symbol for path, field in self.fields.items() if path in hidden}
         hidden.update(path for path, field in self.fields.items() if field.symbol in hidden_symbols)
         self.hidden = frozenset(hidden)
         self.copied = frozenset(c.left for c in problem.constraints if c.kind is ConstraintKind.INFERRED)
         self.editable = frozenset(
             path for path, field in self.fields.items() if path not in hidden and field.symbol not in self.copied
+        )
+        self.editable_vectors = frozenset(
+            path
+            for path, vector in self.vectors.items()
+            if (len(vector) or path in self.resizable)
+            and all(f"{path}[{i}]" in self.editable for i in range(len(vector)))
         )
         self.aliases: dict[Symbol, list[str]] = {}
         for path, field in self.fields.items():
@@ -47,23 +81,108 @@ class Layout:
         self._labels = {
             symbol: (paths[0], self.metadata[paths[0]].symbol or paths[0]) for symbol, paths in self.aliases.items()
         }
+        self._vector_labels = {
+            vector: (path, self.metadata[path].symbol or path)
+            for path, vector in reversed(sorted(self.vectors.items(), key=lambda item: item[0] in hidden))
+        }
+        self._coordinate_labels = {}
+        self._template_labels = {
+            template: (path, self.metadata[path].symbol or path) for path, template in self.templates.items()
+        }
+        for path, vector in reversed(self.vectors.items()):
+            for i, symbol in enumerate(vector):
+                coordinate = f"{path}[{i}]"
+                if not self.metadata[coordinate].symbol and self.aliases[symbol][0] == coordinate:
+                    self._coordinate_labels[symbol] = (coordinate, self.metadata[path].symbol or path, i)
+        for path, collection in self.collections.items():
+            reference = self.references[path]
+            parent = self.references[self.parents[path]]
+            source = getattr(parent._modello_model, "_modello_shape_source", parent._modello_model)
+            name = reference._modello_path[-1]
+            original = source._modello_namespace.nested_models.get(name)
+            columns = _collection_columns(reference)
+            originals = _collection_columns(original) if original is not None else {}
+            element = collection._modello_collection_element
+            schema = FieldInfo.for_model(element)
+            member_internal = _internal_vectors(element)
+            for field_path, column in columns.items():
+                if _path_label(field_path[:-1]) in member_internal:
+                    continue
+                member_name = _path_label(field_path)
+                style = self._member_styles.get((path, member_name), schema.get(member_name, FieldInfo()))
+                label = style.symbol or member_name
+                self._vector_labels.setdefault(column, (path, label))
+                if field_path in originals:
+                    original_column = originals[field_path].xreplace(parent._modello_bindings)
+                    self._vector_labels[original_column] = (path, label)
+                for i, symbol in enumerate(column):
+                    coordinate = f"{path}[{i}].{member_name}"
+                    if coordinate in self.fields and (
+                        not self.metadata[coordinate].symbol or self.metadata[coordinate].symbol == label
+                    ):
+                        self._coordinate_labels[symbol] = (coordinate, label, i)
+        self.editable_collections = frozenset(
+            path
+            for path in self.collections
+            if path in self.resizable
+            and path not in hidden
+            and all(name in self.editable for name in self.fields if name.startswith(path + "["))
+        )
         self._validate_navigation()
         printer = self.printer()
         self.equations = tuple(
             {
-                "path": ".".join(c.path),
+                "path": _path_label(c.path),
                 "mathml": printer.equation(c.left, c.right),
-                "text": f"{problem.format(c.left)} = {problem.format(c.right)}",
+                "text": f"{self.format(problem, c.left)} = {self.format(problem, c.right)}",
             }
             for c in problem.constraints
-            if c.kind is ConstraintKind.DEFINITION and ".".join(c.path) not in hidden
+            if c.kind is ConstraintKind.DEFINITION
+            and _path_label(c.path) not in hidden
+            and not c.path[-1].isdecimal()
+            and _path_label(c.path) not in self.law_fields
         )
+        self.vector_equations = {
+            path: {
+                "path": path,
+                "mathml": printer.vector_equation(
+                    vector, self.vector_definitions[path], path=path, label=self.metadata[path].symbol or path
+                ),
+                "text": f"{path} = {self.vector_definitions[path]}",
+            }
+            for path, vector in self.vectors.items()
+            if path in self.vector_definitions and path not in hidden
+        }
+        self.equations += tuple(self.vector_equations.values())
+        self.template_equations = {
+            path: {
+                "path": path,
+                "title": self.title(path),
+                "mathml": printer.expression(template, display=True),
+                "text": self.format(problem, template),
+            }
+            for path, template in self.templates.items()
+            if template.equations and path not in hidden
+        }
+        self.equations += tuple(self.template_equations.values())
 
     def _collect(self, model: type[Modello]) -> None:
         """Layer defaults, registry metadata, then overrides from children to parents."""
         annotated_models = ModelInfo.for_model(model)
         declarations: dict[str, ModelInfo] = {}
         for path, child in _model_tree(model):
+            for name, law in child._modello_namespace.model_laws.items():
+                size = int(
+                    getattr(
+                        child._modello_namespace.reference_at(law.target.path)._modello_model,
+                        "_modello_collection_size",
+                    )
+                )
+                for point in range(int(law.template.start), size):
+                    for field, _ in law.updates:
+                        self.law_fields[
+                            _join(path, _path_label((*law.target.path, str(point), *law.target.suffix, *field)))
+                        ] = _join(path, name)
             if hasattr(child, "__gui__"):
                 raise ModelInputError(
                     f"{child.__name__}.__gui__ is unsupported; use @ModelInfo(...) and gui(field, ...)"
@@ -75,48 +194,157 @@ class Layout:
             )
             if path:
                 self.components.append(path)
+                self.parents[path] = _parent(path)
+                if hasattr(child, "_modello_collection_size"):
+                    self.collections[path] = child
+            for name in child._modello_namespace.vectors:
+                vector_path = _join(path, name)
+                if vector_path in self.vectors:
+                    self.metadata[vector_path] = FieldInfo()
+            for name in child._modello_namespace.templates:
+                self.metadata[_join(path, name)] = FieldInfo()
         self.model_info = declarations[""]
         for path, info in FieldInfo.for_model(model).items():
             self._set_info(path, info, context=f"gui({path!r})")
-        for prefix, declaration in reversed(declarations.items()):
+        for component_path, declaration in reversed(declarations.items()):
             for relative_path, info in declaration.fields.items():
-                context = f"ModelInfo.fields[{relative_path!r}] on {prefix or model.__name__!r}"
+                context = f"ModelInfo.fields[{relative_path!r}] on {component_path or model.__name__!r}"
                 if not relative_path:
                     raise ModelInputError(
                         f"{context}: use ModelInfo for model-level text instead of an empty field path"
                     )
-                self._set_info(_join(prefix, relative_path), info, context=context)
+                self._set_info(_join(component_path, relative_path), info, context=context)
 
     def _set_info(self, path: str, info: FieldInfo, *, context: str = "metadata") -> None:
-        _require_path(path, self.metadata, context)
         if not isinstance(info, FieldInfo):
             raise ModelInputError(f"{context}: expected FieldInfo at {path!r}")
         if info.number_format not in {"number", "percent"}:
             raise ModelInputError(f"{context}: invalid number_format at {path!r}; choose 'number' or 'percent'")
+        if "[]" in path:
+            if path.endswith("[]"):
+                root = path[:-2]
+                if root not in self.collections:
+                    raise ModelInputError(f"{context}: Unknown model-vector pattern {path!r}")
+                self._member_styles[root, ""] = info
+                for i in range(int(self.collections[root]._modello_collection_size)):
+                    self._set_info(
+                        f"{root}[{i}]", replace(info, title=f"{info.title} {i}" if info.title else ""), context=context
+                    )
+                return
+            root, relative = path.split("[].", 1) if "[]." in path else (path, "")
+            collection = self.collections.get(root)
+            if collection is None or relative not in {
+                _path_label(key) for key in collection._modello_collection_element._modello_definition.fields
+            }:
+                raise ModelInputError(f"{context}: Unknown model-vector field pattern {path!r}")
+            self._member_styles[root, relative] = info
+            pattern = re.compile(re.escape(root) + r"\[[0-9]+\]\." + re.escape(relative))
+            for field in self.fields:
+                if pattern.fullmatch(field):
+                    self._set_info(field, info, context=context)
+            return
+        _require_path(path, self.metadata, context)
         self.metadata[path] = info
+        self._explicit_metadata.add(path)
 
     def printer(self) -> EquationPrinter:
         """Give each render its own printer context, including concurrent requests."""
-        return EquationPrinter(self._labels)
+        return EquationPrinter(self._labels, self._vector_labels, self._coordinate_labels, self._template_labels)
+
+    def format(self, problem: ModelProblem, expression: Any) -> str:
+        printer = problem._printer(expression)
+        printer.labels.update({symbol: label for symbol, (_, label) in self._labels.items()})
+        printer.labels.update(
+            {symbol: f"{label}[{index}]" for symbol, (_, label, index) in self._coordinate_labels.items()}
+        )
+        printer.vector_labels.update({vector: label for vector, (_, label) in self._vector_labels.items()})
+        return str(printer.doprint(expression))
+
+    def equation_path(self, path: tuple[str, ...], expression: object) -> str:
+        """Prefer a complete law for a direct scalar evaluation of that law."""
+        if _path_label(path) in self.law_fields:
+            return self.law_fields[_path_label(path)]
+        arguments = getattr(expression, "args", ())
+        if arguments:
+            for name, template in self.templates.items():
+                if name in self.template_equations and template == arguments[0]:
+                    return name
+        return _path_label(path[:-1] if _path_label(path[:-1]) in self.vectors else path)
+
+    def title(self, path: str) -> str:
+        """Give coordinates a useful default name even with explicit blank metadata."""
+        if self.metadata[path].title:
+            return self.metadata[path].title
+        field = self.fields.get(path)
+        if field is not None and field.path[-1].isdecimal():
+            return _path_label(field.path[-2:])
+        return path.rpartition(".")[2].replace("_", " ")
 
     def _validate_navigation(self) -> None:
+        quantities = self.fields | self.vectors
         for path in self.model_info.highlights:
-            self.field(path, context="ModelInfo.highlights")
+            _require_path(path, quantities, "ModelInfo.highlights")
             if path in self.hidden:
                 raise ModelInputError(f"ModelInfo.highlights: hidden field {path!r} cannot be highlighted")
         if self.model_info.initial_field:
-            self.field(self.model_info.initial_field, context="ModelInfo.initial_field")
+            _require_path(self.model_info.initial_field, quantities, "ModelInfo.initial_field")
         for index, scenario in enumerate(self.model_info.scenarios):
             if not isinstance(scenario, Scenario):
                 raise ModelInputError(f"ModelInfo.scenarios[{index}]: expected a Scenario declaration")
             context = f"Scenario {scenario.title!r}"
-            if scenario.select:
-                self.field(scenario.select, context=f"{context}.select")
-            for path in scenario.bindings:
+
+            def variable_coordinate(name: str) -> bool:
+                for root in self.resizable & self.collections.keys():
+                    match = re.fullmatch(re.escape(root) + r"\[[0-9]+\]\.(.+)", name)
+                    schema = self.collections[root]._modello_collection_element._modello_definition.fields
+                    if match and tuple(match[1].split(".")) in schema:
+                        return True
+                return any(
+                    name.startswith(path + "[") and name.endswith("]") and name[len(path) + 1 : -1].isdigit()
+                    for path in self.resizable
+                )
+
+            variable_selection = variable_coordinate(scenario.select)
+            if scenario.select and not variable_selection:
+                _require_path(scenario.select, quantities, f"{context}.select")
+            fixed_bindings = {}
+            for path, raw in scenario.bindings.items():
+                if path in self.resizable:
+                    if path not in self.editable_vectors and path not in self.editable_collections:
+                        raise ModelInputError(f"{context}.bindings: cannot edit vector {path!r}")
+                elif path not in self.fields and variable_coordinate(path):
+                    # A scenario restores its original observation window before
+                    # applying edits, which may include coordinates absent here.
+                    continue
+                else:
+                    fixed_bindings[path] = raw
+            for path, _ in self.expand_bindings(fixed_bindings):
                 self.field(path, context=f"{context}.bindings")
                 if path not in self.editable:
                     source = "hidden" if path in self.hidden else "Recorded"
                     raise ModelInputError(f"{context}.bindings: cannot edit {source} field {path!r}")
+
+    def expand_bindings(self, bindings: Mapping[str, object]) -> Iterator[tuple[str, object]]:
+        """Expand whole-vector observations at the same boundary as scalar paths."""
+        for path, raw in bindings.items():
+            if path in self.collections:
+                size = int(self.collections[path]._modello_collection_size)
+                entries = (None,) * size if raw is None else _vector_input(raw, size, path)
+                for i, entry in enumerate(entries):
+                    prefix = f"{path}[{i}]."
+                    fields = {name[len(prefix) :]: name for name in self.fields if name.startswith(prefix)}
+                    if entry is not None and not isinstance(entry, Mapping):
+                        raise ModelInputError(f"{path}[{i}] needs named model field observations")
+                    record = entry or {}
+                    for key in record:
+                        _require_path(key, fields, f"{path}[{i}]")
+                    yield from ((field, record.get(key)) for key, field in fields.items())
+            elif path in self.vectors:
+                size = len(self.vectors[path])
+                entries = (None,) * size if raw is None else _vector_input(raw, size, path)
+                yield from ((f"{path}[{i}]", entry) for i, entry in enumerate(entries))
+            else:
+                yield path, raw
 
     def field(self, path: str, *, context: str = "bindings") -> ModelField:
         """Resolve a leaf; component paths cannot be used as scalar inputs."""
@@ -133,16 +361,18 @@ def _require_path(path: str, choices: Mapping[str, object], context: str) -> Non
 
 def _assumptions(symbol: Symbol) -> list[str]:
     """Omit predicates already implied by more informative requirements."""
-    requirements = {k: v for k, v in symbol.assumptions0.items() if k != "commutative"}
-    for key in sorted(requirements):
-        others = {k: v for k, v in requirements.items() if k != key}
-        if Symbol("requirements", **others).assumptions0.get(key) == requirements[key]:
-            del requirements[key]
+    requirements = _minimal_assumptions(symbol)
     return [key if expected else f"not {key}" for key, expected in sorted(requirements.items())]
 
 
 def _join(prefix: str, name: str) -> str:
-    return f"{prefix}.{name}" if prefix else name
+    if name.isdecimal():
+        return f"{prefix}[{name}]"
+    return prefix + ("" if name.startswith("[") or not prefix else ".") + name
+
+
+def _parent(path: str) -> str:
+    return path.rpartition("[")[0] if path.endswith("]") else path.rpartition(".")[0]
 
 
 def _model_tree(model: type[Modello], prefix: str = "") -> Iterator[tuple[str, type[Modello]]]:
@@ -150,3 +380,18 @@ def _model_tree(model: type[Modello], prefix: str = "") -> Iterator[tuple[str, t
     yield prefix, model
     for name, child in model._modello_namespace.nested_models.items():
         yield from _model_tree(child._modello_model, _join(prefix, name))
+
+
+def _reference_tree(reference: Any, prefix: str = "") -> Iterator[tuple[str, Any]]:
+    yield prefix, reference
+    for name in reference._modello_model._modello_namespace.nested_models:
+        yield from _reference_tree(getattr(reference, name), _join(prefix, name))
+
+
+def _internal_vectors(model: type[Modello]) -> set[str]:
+    """Storage columns are private even inside nested model-vector members."""
+    return {
+        _join(path, name)
+        for path, child in _model_tree(model)
+        for name in getattr(child, "_modello_internal_vectors", ())
+    }

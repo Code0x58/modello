@@ -1,180 +1,106 @@
-A portfolio in connected models
-===============================
+An account across executions
+============================
 
-A trade changes shares and cash. That small idea is enough to explore a larger
-one: build a system from typed components, connect their equations, then change
-the question you ask of the whole. This is an exploration of modelling ideas;
-the portfolio supplies the setting.
+A fill changes shares and cash. Represent the account as a finite sequence of
+typed states, then supply opening balances, execution terms, or a closing
+observation according to the question. This walkthrough reuses the recurrent
+model from the :doc:`fundamentals gallery <../gallery/index>`; the equations live
+in ``examples.portfolio.models``, independently of the GUI.
 
-The examples below use only ``modello`` and its SymPy dependency. Run them in
-order in a Python session.
+Post executions and reconcile a balance
+---------------------------------------
 
-Connect before, fill, and after
--------------------------------
+``AccountSequence`` applies the same relative equations at every execution:
 
-Define the state of a holding and the terms of a filled trade. Positive trade
-quantities buy shares; negative quantities sell them:
+.. math::
 
->>> from modello import InstanceDummy, Modello, component
->>> class HoldingState(Modello):
-...     quantity = InstanceDummy("quantity", real=True)
-...     cash = InstanceDummy("cash", real=True)
->>> class Execution(Modello):
-...     quantity = InstanceDummy("quantity", real=True)
-...     price = InstanceDummy("price", positive=True)
-...     fee = InstanceDummy("fee", nonnegative=True)
-...     notional = quantity * price
+   Q_n = Q_{n-1} + u_{n-1},\qquad
+   C_n = C_{n-1} - u_{n-1}p_{n-1} - f_{n-1}.
 
-A posting connects two states through those execution terms:
+Positive quantities buy shares; negative quantities sell them. The execution
+model owns its notional equation. The :doc:`model-vector guide </model-vectors>`
+shows the sequence declaration and its boundary semantics.
 
->>> class FillPosting(HoldingState):
-...     before = component(HoldingState)
-...     fill = component(Execution)
-...     after = component(HoldingState)
-...
-...     quantity = after.quantity
-...     quantity = before.quantity + fill.quantity
-...     cash = after.cash
-...     cash = before.cash - fill.notional - fill.fee
-
-Repeating a field assignment declares an equality. Here ``quantity`` aliases
-``after.quantity`` and equates it to the opening quantity plus the trade.
-``Execution`` owns its notional equation; ``FillPosting`` owns the connections
-and balance equations.
-
-Supply an opening state and a buy to solve forwards:
-
+>>> from modello import InstanceDummy, Modello, ModelObservations, component
+>>> from examples.portfolio.models import AccountSequence, Execution, HoldingState
 >>> opening = HoldingState("opening", quantity=3, cash=1000)
->>> bought = FillPosting(
-...     "buy", before=opening,
-...     fill=Execution("execution", quantity=2, price=100, fee=1),
-... )
->>> bought.after.quantity, bought.after.cash
+>>> buy = Execution("buy", quantity=2, price=100, fee=1)
+>>> bought = AccountSequence("buy", fills=[buy], states=ModelObservations({0: opening}))
+>>> bought.terminal.quantity, bought.terminal.cash
 (5, 799)
 
-The result retains typed ``before``, ``fill``, and ``after`` components. The
-opening instance stays unchanged; the completed posting can join another model.
+Add a sale, leave its price unknown, and observe the terminal cash instead:
 
-Make the result another input
-------------------------------
-
-A ``FillPosting`` is itself a ``HoldingState``: its top-level quantity and cash
-describe the closing state. Refine its input to accept a previous posting,
-retaining that posting's components and equations:
-
->>> class FollowingFill(FillPosting):
-...     before = component(FillPosting)
-
-.. mermaid::
-   :alt: Two successive fills share their intermediate state.
-
-   flowchart LR
-       previous["State T-1"] --> first["Fill"] --> middle["State T"]
-       middle --> second["Fill"] --> next["State T+1"]
-
-Now observe the cash after selling one share, leaving the sale price unknown:
-
->>> sale = FollowingFill(
-...     "buy_then_sell", before=bought,
-...     fill=Execution("sale", quantity=-1, fee=1),
-...     after=HoldingState("observed", cash=908),
+>>> sale = AccountSequence(
+...     "buy_then_sell", fills=[buy, Execution("sale", quantity=-1, fee=1)],
+...     states=ModelObservations({0: opening}),
+...     terminal=HoldingState("statement", cash=908),
 ... )
->>> sale.quantity, sale.cash, sale.fill.price
+>>> sale.terminal.quantity, sale.terminal.cash, sale.fills[1].price
 (4, 908, 110)
->>> sale.before.fill.price
-100
+>>> tuple(state.cash for state in sale.states)
+(1000, 799, 908)
 
-The same balance equations have solved backwards. ``before`` and ``after``
-describe time order, not a required calculation order. Nesting the operations
-connects their states without writing a separate two-trade calculation. Use
-``bought.after`` when only its completed state is needed; declare the full
-posting type when its inner equations must remain part of the joint model.
+The same law handles both questions. Execution count determines ``N``; there
+are ``N+1`` account boundaries. Each execution retains its typed fields, and
+every intermediate state is available without nesting another posting model.
+The opening observation and earlier solved account stay unchanged.
 
-Add a view by joining components
---------------------------------
+Join a valuation view
+---------------------
 
-To report wealth at a market price, extend a holding with one valuation rule:
+To ask about wealth at a market price, give a holding one valuation rule and
+join its balances to the account's terminal state:
 
 >>> class Valuation(HoldingState):
 ...     price = InstanceDummy("price", positive=True)
-...     value = cash + quantity * price
-
-A review layer joins that valuation to the posting's result:
-
+...     value = HoldingState.cash + HoldingState.quantity * price
 >>> class Review(Modello):
-...     posting = component(FillPosting)
+...     account = component(AccountSequence)
 ...     marked = component(Valuation)
-...
 ...     quantity = marked.quantity
-...     quantity = posting.quantity
+...     quantity = account.terminal.quantity
 ...     cash = marked.cash
-...     cash = posting.cash
+...     cash = account.terminal.cash
 ...     value = marked.value
->>> review = Review("review", posting=bought, marked=Valuation("market", price=110))
+>>> review = Review("review", account=bought, marked=Valuation("market", price=110))
 >>> review.value
 1349
 
-The review supplies only the glue. Settlement and valuation each keep their own
-mathematics, while a constraint on ``review.value`` can reach unknowns inside
-either component. The typed paths also show where each result came from.
+Repeated assignments connect the same quantity to both components. Settlement
+and valuation each keep their own mathematics. A constraint on the review's
+value can reach an unknown execution price inside the account:
 
-Refine a component, then fit it from the outside
-------------------------------------------------
-
-Suppose execution price depends on order size. Add a deliberately simple impact
-law, then select this richer component through the existing layers:
-
->>> class ImpactExecution(Execution):
-...     reference = InstanceDummy("reference", positive=True)
-...     impact = InstanceDummy("impact", nonnegative=True)
-...     price = reference + impact * quantity
->>> class ImpactPosting(FillPosting):
-...     fill = component(ImpactExecution)
->>> class ImpactReview(Review):
-...     posting = component(ImpactPosting)
-
-Keep the opening state and known trade size, but constrain the total value at
-the review layer. The system infers the impact coefficient through valuation,
-settlement, and execution:
-
->>> fitted = ImpactReview(
-...     "calibration",
-...     posting=ImpactPosting(
-...         "buy", before=opening,
-...         fill=ImpactExecution("execution", quantity=2, reference=99, fee=1),
-...     ),
-...     marked=Valuation("market", price=110),
-...     value=1349,
+>>> partial = AccountSequence(
+...     "unpriced_buy", fills=[Execution("buy", quantity=2, fee=1)],
+...     states=ModelObservations({0: opening}),
 ... )
->>> fitted.posting.fill.impact, fitted.posting.fill.price, fitted.posting.after.cash
-(1/2, 100, 799)
+>>> fitted = Review("reconcile", account=partial,
+...                 marked=Valuation("market", price=110), value=1349)
+>>> fitted.account.fills[0].price, fitted.account.terminal.cash
+(100, 799)
 
-No settlement or valuation formula changed. Changing the component declaration
-preserved those relationships and added the impact law. Fitting here means
-solving for one unknown coefficient from an observation; a statistical fit to
-noisy data would need an explicit residual model and fitting criterion.
-
-Leaving the inputs symbolic also gives SymPy the complete expression to
-differentiate. Here the sensitivity of wealth to impact follows through all
-three layers:
+Leaving that observation out retains a SymPy formula. Its sensitivity to the
+execution price follows directly from the balance law:
 
 >>> from sympy import diff
->>> symbolic = ImpactReview("sensitivity")
->>> diff(symbolic.value, symbolic.posting.fill.impact) == -symbolic.posting.fill.quantity**2
+>>> diff(partial.terminal.cash, partial.fills[0].price) == -partial.fills[0].quantity
 True
+
+For component refinement, see :doc:`nesting </nesting>`; for calibration with
+an explicit impact model and bounded observations, see
+:doc:`solution families <../solution_families/index>`.
 
 Explore further
 ----------------
 
-The pattern extends to other state transitions and reporting layers: define
-each part's mathematics, connect the parts in a parent, and supply observations
-where the question belongs. The :doc:`nested-model guide </nesting>` and
-:doc:`API reference </api>` cover the core mechanics.
-
 The larger `portfolio prototype
-<https://github.com/Code0x58/modello/tree/master/examples/portfolio>`_ explores
-named baskets, external data, account timelines, and reports. Its
-`continuous execution study
+<https://github.com/Code0x58/modello/tree/master/examples/portfolio>`_ adds named
+baskets, external data, heterogeneous ledger events, and reports. Its event
+adapter retains individual transitions for cash flows, income, and fills.
+Use the recurrence above for a homogeneous window of executions.
+
+The `continuous execution study
 <https://github.com/Code0x58/modello/blob/master/examples/portfolio/optimal_execution.py>`_
 uses SymPy to derive differential equations, integrate onto a discrete grid,
 and fit parameters from the same underlying model. These experimental helpers

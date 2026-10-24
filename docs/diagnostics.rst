@@ -120,6 +120,12 @@ ancestor of the referenced fields. Aliases prefer a path within the displayed
 component where available. Structured paths and ``problem.format(expression)``
 retain paths from the model root.
 
+``problem.latex(expression)`` exports the same identities for notebooks and
+reports, adding vector arrows and coordinate subscripts. It prints the given
+expression without evaluating or substituting it. ``problem.vector_definitions``
+retains complete indexed vector formulas alongside the scalar constraint view;
+see :doc:`vectors`.
+
 Research and SymPy foundations
 -------------------------------
 

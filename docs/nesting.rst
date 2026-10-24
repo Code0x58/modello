@@ -1,58 +1,20 @@
-Nested models
-=============
+Component models
+================
 
-Use ``component(Model)`` to build a model from smaller models. You can refer to
-each component's quantities in expressions, then supply model instances with
-the values you know.
+Use ``component(Model)`` when a part of your problem already has its own
+quantities and relationships. The parent can use those quantities directly;
+observations on either side can determine unknowns on the other.
 
-Build a line from points
-------------------------
+This guide develops the second step of :doc:`getting-started`.
 
-First define a point, then a line whose length depends on its two endpoints:
+Reuse a smaller model
+---------------------
+
+A parcel's diagonal depends on its base diagonal. Keep the base relationship
+in a triangle model and reuse it:
 
 >>> from sympy import sqrt
 >>> from modello import InstanceDummy, Modello, component
->>> class Point(Modello):
-...     x = InstanceDummy("x", real=True)
-...     y = InstanceDummy("y", real=True)
->>> class Line(Modello):
-...     start = component(Point)
-...     end = component(Point)
-...     length = sqrt((end.x - start.x)**2 + (end.y - start.y)**2)
-
-Create the endpoints and pass them to the line:
-
->>> origin = Point("origin", x=0, y=0)
->>> endpoint = Point("endpoint", x=3, y=4)
->>> line = Line("line", start=origin, end=endpoint)
->>> line.length
-5
->>> line.end.x, line.end.y
-(3, 4)
-
-``line.start`` and ``line.end`` are ``Point`` instances, with that type available
-to editors and type checkers. Each component has its own quantities, even when
-several components use the same model class.
-
-Add another level
-------------------
-
-Components can themselves contain components. Use attribute paths to reach
-quantities at any depth:
-
->>> class Drawing(Modello):
-...     segment = component(Line)
-...     horizontal_extent = segment.end.x - segment.start.x
->>> drawing = Drawing("drawing", segment=line)
->>> drawing.segment.length, drawing.horizontal_extent
-(5, 3)
-
-Solve across components
------------------------
-
-An equation in a parent can determine a missing value in a child. For example,
-a box's height and diagonal determine the missing side of its triangular base:
-
 >>> class Triangle(Modello):
 ...     a = InstanceDummy("a", positive=True)
 ...     b = InstanceDummy("b", positive=True)
@@ -61,86 +23,77 @@ a box's height and diagonal determine the missing side of its triangular base:
 ...     base = component(Triangle)
 ...     height = InstanceDummy("height", positive=True)
 ...     diagonal = sqrt(base.c**2 + height**2)
->>> base = Triangle("base", b=4)
->>> box = Box("box", base=base, height=12, diagonal=13)
->>> box.base.a, box.base.b, box.base.c
-(3, 4, 5)
+>>> parcel = Box("parcel", base=Triangle("base", a=3, b=4), height=12)
+>>> parcel.base.c, parcel.diagonal
+(5, 13)
 
-Modello solves the parent and its components together. The positive assumptions
-on the triangle's sides select the positive solution.
+``parcel.base`` is a ``Triangle`` instance. Component paths such as ``base.c``
+let you express relationships across the whole model.
 
-The parent receives a copy of its component's values, so completing the base
-inside the box leaves the original triangle symbolic:
+Infer a quantity inside a component
+-----------------------------------
 
->>> bool(base.a.free_symbols)
+Supply exactly 13 units of diagonal clearance, rather than the base width:
+
+>>> partial_base = Triangle("base", b=4)
+>>> inferred = Box("width", base=partial_base, height=12, diagonal=13)
+>>> inferred.base.a, inferred.base.c
+(3, 5)
+
+The parent and child equations are solved together. The supplied component
+remains available for other questions; completing this parcel does not change it:
+
+>>> bool(partial_base.a.free_symbols)
 True
->>> box.base.a
-3
 
-Connect components through shared quantities
---------------------------------------------
+Omitting a component leaves its quantities unknown. Reusing a partial instance
+in several components gives each its own unknowns unless you connect them.
 
-A parent can also bind quantities in different children to each other. Build a
-two-segment path whose second line starts where the first ends:
+Connect quantities in different children
+----------------------------------------
 
->>> class Path(Modello):
-...     first = component(Line)
-...     second = component(Line)
-...     x = second.start.x
-...     x = first.end.x
-...     y = second.start.y
-...     y = first.end.y
-...     length = first.length + second.length
->>> path = Path(
-...     "path", first=line, second=Line("next", end=Point("end", x=6, y=8))
+Suppose two openings need braces of the same length. A parent can equate their
+diagonals while each child keeps its own relationship between sides and length:
+
+>>> class LinkedBraces(Modello):
+...     first = component(Triangle)
+...     second = component(Triangle)
+...
+...     length = first.c
+...     length = second.c
+>>> linked = LinkedBraces(
+...     "shared", first=Triangle("first", a=3, b=4), second=Triangle("second", b=3)
 ... )
->>> path.second.start.x, path.second.start.y, path.length
-(3, 4, 10)
+>>> linked.first.c, linked.second.c, linked.second.a
+(5, 5, 4)
 
-The first ``x`` assignment makes it an alias of ``second.start.x``. The second
-equates that quantity to ``first.end.x``; the ``y`` assignments do the same for
-the other coordinate. Each line keeps its length equation. The path supplies
-only the connections and the combined length, so the whole remains one
-symbolic model. Known values on either side can determine unknowns on the other.
+The first ``length`` assignment names the existing ``first.c`` quantity.
+Assigning ``length`` again adds the link to ``second.c``:
+``length = first.c`` **AND** ``length = second.c``. Both component equations
+remain in the joint model. An observation of ``length`` can therefore constrain
+either child.
 
-Work with symbolic inputs
--------------------------
+Openings that require different brace lengths give an empty solution family:
 
-Omit a value to leave it symbolic. Derived quantities remain expressions in
-those unknowns until other equations determine them:
-
->>> partial = Point("partial", x=3)
->>> segment = Line("segment", start=origin, end=partial)
->>> bool(segment.end.y.free_symbols)
-True
->>> segment.length == sqrt(9 + segment.end.y**2)
+>>> from modello import inspect_model
+>>> conflict = inspect_model(
+...     LinkedBraces, "different_lengths", first=Triangle("first", a=3, b=4),
+...     second=Triangle("second", a=6, b=8),
+... )
+>>> conflict.solutions().is_empty
 True
 
-Omitting an entire component leaves its inputs symbolic too:
+Components can contain further components; the same attribute-path syntax works
+at each level. These assignments belong in the model class body; assigning an
+attribute on a solved instance does not add a relationship or recalculate it.
 
->>> symbolic_line = Line("symbolic", start=origin)
->>> symbolic_line.length == sqrt(symbolic_line.end.x**2 + symbolic_line.end.y**2)
-True
+Use the same model for new observations
+---------------------------------------
 
-You can reuse an instance to give several components the same starting values.
-Each copy has its own unknowns, so subsequent equations can determine those
-values independently:
+Construct a new case to change measurements. Changing an attribute on a solved
+instance does not recalculate dependent quantities. Use :doc:`solutions` when
+you want to retain alternatives and add information to the same question.
 
->>> repeated = Line("repeated", start=partial, end=partial)
->>> repeated.start.x, repeated.end.x
-(3, 3)
->>> repeated.start.y == repeated.end.y
-False
-
-Models are solved when they are constructed. Create a new model to solve with
-different inputs; changing an attribute later does not recalculate other values.
-See the :doc:`API reference <api>` for input types, inheritance, and model methods.
-The :doc:`debugging guide <debugging>` covers unresolved quantities, conflicting
-constraints, and multiple possible solutions.
-
-The :doc:`practical applications <examples/applications/index>` apply the same
-pattern to invoices, production yield, and connected circuits. The
-:doc:`trade reconciliation example <examples/reconciliation/index>` keeps a
-trusted PnL fixed to compare source components, try common entry mistakes, and
-infer suspect inputs. It also derives a readable pricing formula from the same
-model used for those checks.
+Next, :doc:`vectors` covers collections of scalar observations, and
+:doc:`model-vectors` covers collections whose entries are complete models.
+The :doc:`API reference <api>` describes inheritance, copying, and methods.

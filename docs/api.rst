@@ -7,9 +7,13 @@ API reference
    :special-members: __init__
 
    Define quantities and their relationships as class attributes. Pass known
-   scalar values and component instances as constructor keyword arguments.
+   scalar values, finite vectors, and component instances as constructor keyword arguments.
    The model and its components are solved together; omitted inputs remain
    symbolic unless the supplied equations determine them.
+
+   Join child quantities by assigning a common scalar member to both component
+   paths. The links and both components' equations must hold together; see
+   :ref:`joining-components` for the repeated-assignment notation.
 
    ``name`` labels an instance's symbols. Separate constructions and separate
    components have independent unknowns, even when their names are the same.
@@ -24,8 +28,16 @@ API reference
    Components accept instances of their declared model class, including
    subclasses with the same field paths.
 
+   ``VectorValue`` describes vector observations: a ``Vector``, a native
+   one-dimensional array or row/column matrix, or a sequence of scalar values
+   with optional ``None`` entries for unobserved coordinates.
+   Shape and field kind are checked at runtime. See :doc:`vectors` for indexed
+   formulas, coordinate assumptions, and joint vector solving.
+
    Scalar expressions can use the model class's quantities or a parent's
-   component paths. Other SymPy symbols remain external parameters.
+   component paths. Other SymPy symbols remain external parameters. Native
+   vector containers assigned in a model body become ``Vector`` declarations.
+   See :doc:`interoperability` for the shared expression types and boundaries.
 
    Unknown keyword names, invalid scalar values, and incompatible component
    types raise :class:`modello.errors.ModelInputError`, also a :class:`TypeError`.
@@ -99,6 +111,30 @@ API reference
 .. autoclass:: SymbolicScalar
 
 .. autoclass:: SymbolicCondition
+
+.. autoclass:: SymbolicVector
+
+Coordinates and indexed formulas
+--------------------------------
+
+.. autoclass:: Coordinate
+
+.. autoclass:: Index
+
+.. autoclass:: Vector
+   :members: shape, elements, applyfunc, sum, product, dot, doit
+
+.. autofunction:: vector
+
+See :doc:`series` for ``Series`` and ``Recurrence``: scalar families and causal
+laws queried without a chosen horizon. See :doc:`model-vectors` for typed
+ordered components, ``model_vector``, and
+``model_recurrence``. ``ModelVectorValue[Model]`` describes observations as a
+typed model vector or a sequence of compatible model instances and ``None``.
+It also accepts ``ModelObservations[Model]`` for sparse typed observations of
+positions within an independently determined window. Indexed field laws use
+``model_recurrence(states[n], ...)`` and expose their source ``ModelRecurrence``
+template alongside the finite model equations.
 
 .. _extension-annotations:
 

@@ -1,34 +1,32 @@
 Debugging a model
 =================
 
-A model can be useful before every quantity is numerical. An under-specified
-model may describe a family of answers. Over-specifying a model with extra
-observations can be useful for consistency checks. Distinguish these cases:
+Start with the question the observations leave unresolved. A missing value,
+conflicting measurements, several valid states, and an unsupported calculation
+need different responses:
 
 .. list-table::
    :header-rows: 1
    :widths: 40 60
 
-   * - Situation
-     - Behaviour
-   * - Some quantities remain undetermined
-     - Construction can succeed with symbolic expressions.
-   * - Extra observations repeat information already supplied
-     - Redundancy is allowed; it does not itself cause a failure.
-   * - The constructor retains no solver candidate
-     - ``SolutionCountError`` with ``solution_count == 0``.
-   * - Several solver candidates remain
-     - ``SolutionCountError`` with ``solution_count > 1``.
-   * - The solver raises an exception
-     - ``SolverBackendError`` retaining the original ``backend_error``.
+   * - What you see
+     - What to try
+   * - An output remains symbolic
+     - Keep the formula, or supply information that determines its inputs.
+   * - Additional observations agree
+     - Keep them as a consistency check; redundancy is allowed.
+   * - Observations appear to conflict
+     - Inspect the recorded equations and ask for a conflict report.
+   * - Several answers are possible
+     - Add a meaningful domain or condition, or explore a solution family.
+   * - A calculation remains unresolved
+     - Inspect the remaining conditions and check the supported problem classes.
 
-Counts of inputs and equations alone cannot establish consistency or uniqueness.
-Conflicting observations and several valid answers can both be useful modelling
-outcomes. Both solve exception types inherit from ``ModelSolveError`` (also a
-``ValueError``) and carry the recorded ``problem``. A zero candidate count alone
-does not prove inconsistency. Use the structured attributes to handle failures;
-the :ref:`error reference <errors>` describes them and the common ``ModelloError``
-base for library failures.
+A solve failure retains a ``problem`` snapshot. Its candidate count alone does
+not establish whether the mathematical model is inconsistent. Use the
+:doc:`diagnostic reference <diagnostics>` for report guarantees and the
+:ref:`error reference <errors>` for exception handling.
+
 The following small model illustrates how to investigate each case:
 
 >>> from modello import InstanceDummy, Modello, ModelSolveError, SolutionCountError, component, inspect_model

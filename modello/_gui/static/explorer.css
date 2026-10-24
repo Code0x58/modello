@@ -1,3 +1,15 @@
+@font-face {
+  font-family: "STIX Two Math";
+  src: url("fonts/STIXTwoMath-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+math {
+  font-family: "STIX Two Math", "Cambria Math", math;
+  font-weight: 400;
+  line-height: normal;
+}
 :root {
   font-family:
     Inter,
@@ -121,6 +133,88 @@ main {
   max-width: 1480px;
   margin: auto;
   padding: 35px 4% 26px;
+}
+.vector-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.vector-heading .component-head {
+  flex: 1;
+  min-width: 0;
+}
+.vector-inspect {
+  border: 0;
+  background: transparent;
+  color: #4c6eaa;
+  font-size: 11px;
+  padding: 10px;
+  flex-shrink: 0;
+}
+.collection-add,
+.collection-remove {
+  flex-shrink: 0;
+  padding: 7px 10px;
+  margin-right: 8px;
+  border: 1px solid #d9e2ee;
+  border-radius: 6px;
+  background: #fff;
+  color: #4c6eaa;
+  font-size: 11px;
+}
+.collection-remove {
+  border-color: transparent;
+  color: #7c8797;
+}
+.model-member-value {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(60px, auto);
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #eef1f5;
+}
+.model-member-value .quantity-value {
+  text-align: right;
+}
+@media (max-width: 700px) {
+  .component.vector > .vector-heading {
+    flex-wrap: wrap;
+    gap: 0;
+  }
+  .component.vector > .vector-heading > .component-head {
+    flex-basis: 100%;
+  }
+  .component.vector > .vector-heading > .vector-inspect,
+  .component.vector > .vector-heading > .collection-add {
+    margin: 0 0 10px 12px;
+  }
+}
+.vector-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+}
+.observation-form textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid #dce4f2;
+  border-radius: 6px;
+  padding: 10px;
+  color: inherit;
+  background: #fff;
+  font: inherit;
+  line-height: 1.7;
+}
+.badge.mixed {
+  color: #6f628b;
+  background: #f1edf8;
+}
+.current-value:has(mtable) .quantity-value {
+  max-height: 260px;
+  overflow: auto;
 }
 .eyebrow {
   font-size: 9px;
@@ -524,7 +618,8 @@ input[type="checkbox"] {
   gap: 5px;
   min-width: 0;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
+  padding-block: 0.15em;
   color: #324e77;
   font-size: 15px;
   line-height: 1.7;
@@ -645,8 +740,17 @@ input[type="checkbox"] {
 .component.collapsed > .component-body {
   display: none;
 }
-.component.collapsed > .component-head > .chevron {
+.component.collapsed > .component-head > .chevron,
+.component.collapsed > .vector-heading > .component-head > .chevron {
   transform: rotate(-90deg);
+}
+.component.vector.selected > .vector-heading {
+  background: #f3f7ff;
+  box-shadow: inset 3px 0 #7ea5e3;
+}
+.component.vector.error > .vector-heading {
+  background: #fff4f1;
+  box-shadow: inset 3px 0 #cb735f;
 }
 .canvas-foot {
   display: flex;

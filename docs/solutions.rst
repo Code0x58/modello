@@ -4,7 +4,9 @@ Explore a solution family
 An observation can leave several alternatives, or a continuous family of
 answers. ``problem.solutions()`` keeps those answers together so that you can
 restrict them, examine possible outputs, and select ordinary model instances.
-This API is a WIP exploration; its current scope and guarantees are below.
+Use this after :doc:`getting-started` when you need bounds, alternative states,
+or a formula for the remaining unknowns. Families use exact inputs; use SymPy
+``Rational(9, 10)`` or ``Rational("0.9")`` for fractional or decimal observations.
 
 Start with the :doc:`debugging guide's <debugging>` small composed model:
 
@@ -18,21 +20,14 @@ Start with the :doc:`debugging guide's <debugging>` small composed model:
 >>> problem = inspect_model(Check, "explore")
 >>> check = problem.symbols
 >>> family = problem.solutions()
->>> family.parameters[0].symbol == check.reading.x
-True
->>> family.parameter_domain
-Reals
 >>> family.expression(check.total) == check.reading.x**2 + 1
 True
 >>> family.values(check.total)
 Interval(1, oo)
 
-``problem.symbols`` exposes the declared component tree with its model type,
-so attribute completion follows ``Check`` and ``Reading``. Like component
-references in a class definition, this read-only namespace provides symbols,
-rather than solved instances or their methods. Each quantity has its own symbol,
-including derived fields such as ``check.total``: observing that symbol can
-constrain the inputs that produce it. ``family.symbols`` exposes the same view.
+``problem.symbols`` provides model quantities by their usual attribute paths.
+Use these symbols to ask about outputs or add conditions. ``family.symbols``
+provides the same quantities.
 
 The family uses the model's expressions and domains. Here one real coordinate
 describes every possible state. ``expression(...)`` rewrites a scalar expression
@@ -42,9 +37,13 @@ values. Both accept model symbols or expressions built from them. For example:
 >>> family.expression(check.total - check.reading.squared)
 1
 
-Coordinate count is not generally a dimension: a
-coordinate domain can still contain equations, discrete alternatives, or
-unresolved conditions.
+Continue with SymPy
+-------------------
+
+The returned expression uses the family's actual symbols. Use ``expression``
+before differentiating to include dependencies resolved by the model. See
+:doc:`interoperability` for calculus, numerical compilation, finite vector
+exports, and returning native solver candidates for model validation.
 
 Refine observations and select a state
 ---------------------------------------
@@ -72,12 +71,9 @@ independently bound models:
 (2, 5)
 
 Each case is checked against the original equations, all declared assumptions,
-and the added conditions before being returned. Components and methods retain
-their model types. Materialisation uses the same population mechanism as solved
-components; custom constructor hooks are not invoked. The source problem and
-earlier families stay unchanged.
-Calling ``observe()`` or ``where()`` without arguments returns the same family
-without repeating symbolic reduction.
+and the added conditions before being returned. Components retain their model
+types. The source problem and earlier families stay unchanged; see the
+:doc:`API reference <api>` for copying and model methods.
 
 Observations accumulate; supplying a different value adds a constraint rather
 than overwriting the earlier one. Typed component observations use the same
@@ -157,6 +153,9 @@ reduction attempts with their original backend exception objects.
 Guarantees and current scope
 -----------------------------
 
+Materialised cases retain model types and methods; custom constructor hooks
+are not invoked. See :doc:`api` for model and component construction behavior.
+
 A family represents the captured equations over finite, commutative scalar
 values. Every field's declared assumptions remain explicit domain restrictions,
 including assumptions on quantities eliminated during reduction. Inferred
@@ -166,12 +165,10 @@ records constructor-style observations and their origins. Its symbols retain
 their identities across refinements. Symbols from another prepared problem
 raise ``ModelValidationError``, even when their printed names coincide.
 
-Directed substitutions and exact rational affine elimination simplify the
-system without discarding other equations. A one-coordinate system can use
-``solveset`` and real inequality solving. External coefficients and unevaluated
-functions remain conditional where generic solving could lose a singular case.
-Solver failures retain the condition; they do not imply an empty family.
-General multivariate nonlinear systems keep their joint ``ConditionSet``.
+Some questions retain conditions rather than reducing to an explicit list of
+answers. External parameters and unevaluated functions may leave conditional
+results. A failed reduction does not imply an empty family. See
+:doc:`generality` for the supported problem classes.
 
 Returned sets can therefore remain implicit. An ``ImageSet`` or ``ConditionSet``
 can be an exact representation without an explicit enumeration, a decided
@@ -184,13 +181,13 @@ prefer particular coordinates; remaining constraints can still restrict them.
 The ``parameters`` field records remain available for path and alias inspection.
 
 The exploratory API requires exact expressions: use ``Rational`` for decimal
-observations. Evaluate bound-variable expressions such as integrals and
-derivatives before exploring. Other model-construction behaviour is unchanged.
-Scalar queries and observations follow the same commutative-scalar scope as
-model fields. ``where(...)`` accepts symbolic relations and Python booleans;
-the ``SymbolicCondition`` protocol keeps this boundary visible to type checkers.
+observations. Finite sums and products, and evaluable integrals, derivatives,
+and limits are expanded through model definitions before exploring. Operators
+that remain unevaluated raise ``ModelInputError``. Vector observations use the
+same scalar coordinate domains; vector queries retain coupled tuple outputs.
+See :doc:`vectors` for examples. ``where(...)`` accepts symbolic relations and Python booleans.
 Unsupported domain predicates raise ``ModelInputError`` instead of being omitted.
-These limits keep unsupported operations explicit while the WIP develops.
+Unsupported calculations remain explicit.
 
 The implementation builds on SymPy's
 `sets <https://docs.sympy.org/latest/modules/sets.html>`_,
@@ -214,6 +211,8 @@ Reference
    reductions. ``is_empty`` is ``True``, ``False``, or ``None``.
 
 .. automethod:: SolutionFamily.format
+
+.. automethod:: SolutionFamily.latex
 
 .. automethod:: SolutionFamily.expression
 

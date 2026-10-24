@@ -1,0 +1,135 @@
+"""Deferred ordered component declarations, independent of model construction."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from dataclasses import dataclass, field, replace
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Callable, Generic, Mapping, TypeVar
+
+from sympy import Basic, Expr, Integer
+
+from modello._paths import FieldPath
+from modello.errors import ModelInputError
+from modello.vectors import Vector
+
+if TYPE_CHECKING:
+    from modello import Modello
+
+_Model = TypeVar("_Model", bound="Modello", covariant=True)
+
+
+@dataclass(frozen=True)
+class ModelObservations(Mapping[int, _Model], Generic[_Model]):
+    """Sparse typed observations within a separately determined finite window."""
+
+    records: Mapping[int, _Model]
+
+    def __post_init__(self) -> None:
+        if any(isinstance(index, bool) or not isinstance(index, int) for index in self.records):
+            raise ModelInputError("Model observation indices must be integers")
+        object.__setattr__(self, "records", MappingProxyType(dict(self.records)))
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(self.records)
+
+    def __getitem__(self, index: int) -> _Model:
+        return self.records[index]
+
+
+class _UnresolvedSelection(Exception):
+    """A collection or index still needs its finite structural parameters."""
+
+
+@dataclass(frozen=True)
+class _Location:
+    path: FieldPath
+    index: Expr | None = None
+    suffix: FieldPath = ()
+
+    def substitute(self, bindings: Mapping[Basic, Basic]) -> _Location:
+        return replace(self, index=None if self.index is None else self.index.xreplace(bindings))
+
+    def resolve(self, namespace: Any, known: Mapping[Basic, Basic]) -> Any:
+        result = namespace.reference_at(self.path)
+        if self.index is not None:
+            index = self.index.xreplace(known)
+            if not isinstance(index, Integer):
+                raise _UnresolvedSelection
+            result = result[index]
+            if isinstance(result, _Selection):
+                raise _UnresolvedSelection
+        for name in self.suffix:
+            result = getattr(result, name)
+        return result
+
+
+@dataclass(frozen=True)
+class _Selection:
+    model: type[Any]
+    location: _Location
+    columns: Mapping[FieldPath, Vector] = field(default_factory=dict)
+
+    @property
+    def _modello_model(self) -> type[Any]:
+        return self.model
+
+    def substitute(self, bindings: Mapping[Basic, Basic]) -> _Selection:
+        return replace(
+            self,
+            location=self.location.substitute(bindings),
+            columns={path: column.xreplace(bindings) for path, column in self.columns.items()},
+        )
+
+    def __getitem__(self, index: object) -> _Selection:
+        size = getattr(self.model, "_modello_collection_size", None)
+        if isinstance(index, bool) or not isinstance(index, (int, Integer)) or not isinstance(size, Integer):
+            raise ModelInputError("Nested model projections need a concrete integer collection index")
+        position = int(index) if index >= 0 else int(size + index)
+        if not 0 <= position < size:
+            raise IndexError("Model vector index out of range")
+        name = str(position)
+        child = self.model._modello_namespace.nested_models[name]
+        return _Selection(
+            child._modello_model,
+            replace(self.location, suffix=(*self.location.suffix, name)),
+            {path[1:]: value for path, value in self.columns.items() if path[0] == name},
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_modello_"):
+            raise AttributeError(name)
+        if (name,) in self.columns:
+            return self.columns[(name,)][self.location.index]
+        child = self.model._modello_namespace.nested_models.get(name)
+        if child is not None:
+            return _Selection(
+                child._modello_model,
+                replace(self.location, suffix=(*self.location.suffix, name)),
+                {path[1:]: value for path, value in self.columns.items() if path[0] == name},
+            )
+        vector = self.model._modello_namespace.vectors.get(name)
+        if vector is not None:
+            return Vector(*(self.columns[(name, str(i))][self.location.index] for i in range(len(vector))))
+        raise AttributeError(f"{self.model.__name__} has no projected field {name!r}")
+
+
+@dataclass(frozen=True)
+class _ModelVectorSpec:
+    model: type[Any]
+    size: Expr
+    factory: Callable[[Expr], type[Any]]
+
+    @property
+    def shape(self) -> tuple[int | Expr]:
+        return (int(self.size) if isinstance(self.size, Integer) else self.size,)
+
+    @property
+    def _finite(self) -> bool:
+        return isinstance(self.size, Integer)
+
+    def substitute(self, bindings: Mapping[Basic, Basic]) -> _ModelVectorSpec:
+        return replace(self, size=self.size.xreplace(bindings))
