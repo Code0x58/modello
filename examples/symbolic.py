@@ -12,7 +12,10 @@ from typing import Generic, Literal, Protocol, TypeVar, cast, overload, runtime_
 from sympy import Expr, Float, Symbol, lambdify, sympify
 
 from examples.data import NamedMap, Series, Time
-from modello import ConstraintKind, FieldPath, Modello, SymbolicScalar
+from modello import ConstraintKind, FieldPath, Modello, SymbolicScalar, Vector
+from modello._inputs import _validate_vector_values
+from modello._model import _populate_templates
+from modello._paths import _path_value
 
 
 class ScalarPlan:
@@ -97,9 +100,7 @@ class ModelField:
 
 
 def _get_field(model: Modello, path: FieldPath) -> Expr:
-    value: object = model
-    for name in path:
-        value = getattr(value, name)
+    value = _path_value(model, path)
     if not isinstance(value, Expr):
         raise TypeError(f"{'.'.join(path)} must be a scalar expression")
     return value
@@ -133,8 +134,13 @@ def _copy_model(model: Model, values: dict[FieldPath, Expr], inputs: tuple[Expr,
     Cached properties must be recomputed for the copied field values.
     """
 
+    copies: dict[int, Modello] = {}
+
     def populate(source: Modello, prefix: FieldPath) -> Modello:
+        if id(source) in copies:
+            return copies[id(source)]
         result = copy(source)
+        copies[id(source)] = result
         result._modello_bound_fields = {}
         for path, dummy in type(source)._modello_definition.fields.items():
             binding = source._modello_bound_fields[dummy]
@@ -150,6 +156,17 @@ def _copy_model(model: Model, values: dict[FieldPath, Expr], inputs: tuple[Expr,
         namespace = type(source)._modello_namespace
         for name in namespace.dummies:
             setattr(result, name, values[prefix + (name,)])
+        for name, vector in namespace.vectors.items():
+            setattr(result, name, Vector(*(values[prefix + (name, str(i))] for i in range(len(vector)))))
+        _populate_templates(
+            result,
+            source._modello_bound_templates,
+            {
+                binding.symbol: values[prefix + path]
+                for path, dummy in type(source)._modello_definition.fields.items()
+                for binding in (source._modello_bound_fields[dummy],)
+            },
+        )
         for name in namespace.nested_models:
             setattr(result, name, populate(getattr(source, name), (*prefix, name)))
         return result
@@ -172,6 +189,7 @@ class ModelPlan(Generic[Model]):
         inputs: tuple[SymbolicScalar, ...] | None = None,
         properties: tuple[SymbolicScalar, ...] = (),
     ) -> None:
+        _validate_vector_values(type(model), model)
         expressions = {path: _get_field(model, path) for path in type(model)._modello_definition.fields}
         self.source = _copy_model(model, expressions)
         self._paths = tuple(expressions)

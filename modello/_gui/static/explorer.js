@@ -21,6 +21,10 @@ const kinds = {
     explanation:
       "A retained component observation in this recorded problem; it cannot be edited here.",
   },
+  mixed: {
+    label: "Mixed",
+    explanation: "Entries have different sources. Inspect the vector to see which are observed, free, or calculated.",
+  },
 };
 const domains = {
   positive: "Positive",
@@ -43,7 +47,8 @@ let fieldsByPath = new Map(),
   errors = new Set();
 const drafts = new Map(),
   inputEdits = new Map(),
-  collapsed = new Set();
+  collapsed = new Set(),
+  seenComponents = new Set();
 const node = (tag, className, text) => {
   const element = document.createElement(tag);
   if (className) element.className = className;
@@ -141,7 +146,7 @@ async function refresh(next = bindings, options = {}) {
   busy = true;
   $("canvas").setAttribute("aria-busy", "true");
   const disabledBefore = new Map();
-  document.querySelectorAll("button, input").forEach((element) => {
+  document.querySelectorAll("button, input, textarea").forEach((element) => {
     disabledBefore.set(element, element.disabled);
     element.disabled = true;
   });
@@ -152,7 +157,7 @@ async function refresh(next = bindings, options = {}) {
     disabledBefore.clear();
   };
   try {
-    const response = await fetch("/api/explore", {
+    const response = await fetch(document.body.dataset.exploreUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ bindings: next, raw: $("raw").checked }),
@@ -165,7 +170,7 @@ async function refresh(next = bindings, options = {}) {
       return;
     }
     changed = new Set(
-      data.fields
+      [...data.fields, ...(data.vectors || [])]
         .filter(
           (field) =>
             fieldsByPath.has(field.path) &&
@@ -179,7 +184,7 @@ async function refresh(next = bindings, options = {}) {
       !Object.keys(data.scenarios[0].bindings).length
     )
       activeScenario = 0;
-    bindings = { ...next };
+    bindings = data.bindings ?? { ...next };
     state = data;
     errors.clear();
     drafts.clear();
@@ -204,16 +209,44 @@ async function refresh(next = bindings, options = {}) {
 }
 function withoutAliases(base, field) {
   const next = { ...base };
-  field.aliases.forEach((alias) => delete next[alias]);
+  (field.observation_paths || field.aliases).forEach((alias) => delete next[alias]);
+  return next;
+}
+function vectorEntryProposal(field, text) {
+  const collection = state.components.find(item => item.collection && item.resizable && typeof bindings[item.path] === "string"
+    && field.aliases.some(alias => alias.startsWith(item.path + "[")));
+  if (collection) {
+    const path = field.aliases.find(alias => alias.startsWith(collection.path + "["));
+    const rest = path.slice(collection.path.length + 1);
+    const position = Number(rest.slice(0, rest.indexOf("]")));
+    const name = rest.slice(rest.indexOf("]") + 2);
+    const records = collection.observations.map(record => ({...record}));
+    records[position][name] = text?.trim() || null;
+    const next = withoutAliases(bindings, field);
+    next[collection.path] = JSON.stringify(records);
+    return next;
+  }
+  const vector = (state.vectors || []).find(
+    item => item.resizable && item.entries.includes(field.path) && typeof bindings[item.path] === "string",
+  );
+  if (!vector) return null;
+  const next = withoutAliases(bindings, field);
+  const entries = bindings[vector.path].slice(1, -1).split(",").map(entry => entry.trim());
+  entries[vector.entries.indexOf(field.path)] = text?.trim() || "?";
+  next[vector.path] = `[${entries.join(", ")}]`;
   return next;
 }
 function apply(field, text) {
+  const entry = vectorEntryProposal(field, text);
+  if (entry) return refresh(entry, { edit: true });
   const next = withoutAliases(bindings, field);
-  next[field.path] = text.trim() || null;
+  next[field.path] = text.trim() || (field.resizable
+    ? `[${field.entries.map(() => "?").join(", ")}]`
+    : null);
   return refresh(next, { edit: true });
 }
 function restore(field) {
-  return refresh(withoutAliases(bindings, field), { edit: true });
+  return refresh(vectorEntryProposal(field, field.initial_input) || withoutAliases(bindings, field), { edit: true });
 }
 function section(title) {
   const element = node("section", "detail-section");
@@ -228,7 +261,11 @@ function fieldLink(path, title) {
 }
 function details() {
   const field = fieldsByPath.get(selected);
-  if (!field) return;
+  if (!field) {
+    const component = state.components.find(item => item.path === selected);
+    if (component) componentDetails(component);
+    return;
+  }
   $("field-title").textContent = field.title;
   $("field-symbol").replaceChildren(math(field.symbol_mathml, true));
   $("field-path").textContent = field.path.split(".").join("  /  ");
@@ -243,11 +280,13 @@ function details() {
   detail.append(current);
   if (
     field.editable &&
-    field.initial_input &&
-    field.input_state !== "initial"
+    ((field.initial_input && field.input_state !== "initial") || field.window_changed)
   ) {
     const history = node("div", "input-history");
-    history.append(node("p", "", `Original input: ${field.initial_input}.`));
+    if (field.initial_input)
+      history.append(node("p", "", `Original input: ${field.initial_input}.`));
+    if (field.window_changed)
+      history.append(node("p", "", `Original window: ${field.initial_shape[0]} entries.`));
     if (field.input_state === "dropped")
       history.append(
         node(
@@ -274,27 +313,28 @@ function details() {
     const label = node(
       "label",
       "detail-label",
-      field.kind === "input"
+      field.shape ? "YOUR VECTOR OBSERVATIONS" : field.kind === "input"
         ? "YOUR OBSERVATION"
         : field.kind === "free"
           ? "SET THIS INPUT"
           : "OBSERVE A TARGET",
     );
     label.htmlFor = "binding-input";
-    const input = node("input");
+    const input = node(field.shape ? "textarea" : "input");
     input.id = "binding-input";
-    input.type = "text";
+    if (field.shape) input.rows = 3;
+    else input.type = "text";
     input.setAttribute("aria-label", `Value for ${field.path}`);
     input.setAttribute("aria-invalid", String(errors.has(field.path)));
     input.setAttribute("aria-describedby", "input-help");
     input.value = drafts.has(field.path) ? drafts.get(field.path) : field.input;
     input.placeholder =
-      field.number_format === "percent" ? "e.g. 70%" : "e.g. 3/2";
+      field.shape ? "e.g. [1, ?, 3/2]" : field.number_format === "percent" ? "e.g. 70%" : "e.g. 3/2";
     input.addEventListener("input", () => drafts.set(field.path, input.value));
     const actions = node("div", "form-actions");
-    actions.append(node("button", "primary", "Apply value"));
-    if (field.kind === "input") {
-      const release = node("button", "ghost", "Drop input");
+    actions.append(node("button", "primary", field.shape ? "Apply entries" : "Apply value"));
+    if (field.input) {
+      const release = node("button", "ghost", field.shape ? "Drop observations" : "Drop input");
       release.type = "button";
       release.addEventListener("click", () => apply(field, ""));
       actions.append(release);
@@ -302,7 +342,11 @@ function details() {
     const hint = node(
       "p",
       "input-help",
-      field.number_format === "percent"
+      field.shape
+        ? (field.resizable
+          ? "Paste any length, such as [1, ?, 3/2]. Its length determines the observation window. A ? leaves a state unknown; other observed quantities still constrain the same path."
+          : "Use brackets and comma-separated exact values, such as [1, ?, 3/2]. A ? leaves that entry unobserved. You can also edit entries individually below.")
+        : field.number_format === "percent"
         ? "Use 70% or 7/10. Clear to stop supplying a value; the equations still apply."
         : "Exact arithmetic, such as 3/2 or sqrt(2). Clear to stop supplying a value; the equations still apply.",
     );
@@ -326,11 +370,25 @@ function details() {
       node(
         "p",
         "input-help",
-        field.value_state === "hidden"
+        field.shape
+          ? "Select an entry to inspect it. Whole-vector editing is available when every entry can be edited."
+          : field.value_state === "hidden"
           ? "This background quantity stays in the model without an editor."
           : "This result is retained from a component snapshot.",
       ),
     );
+  if (field.shape) {
+    const entries = section("Vector entries");
+    const list = node("div", "vector-entries");
+    field.entries.forEach((path) => {
+      const entry = fieldsByPath.get(path);
+      const row = node("div", "vector-entry");
+      row.append(fieldLink(path, entry?.title || path), badge(entry));
+      list.append(row);
+    });
+    entries.append(list);
+    detail.append(entries);
+  }
   const domain = section("Domain & assumptions");
   const tags = node("div", "domain-tags");
   (field.assumptions.length ? field.assumptions : ["finite scalar"]).forEach(
@@ -357,7 +415,7 @@ function details() {
       activeView = "equations";
       setView();
       document
-        .querySelector(`[data-equation="${CSS.escape(own.path)}"]`)
+        .querySelector(`[data-equation="${CSS.escape(own.equation_path || own.path)}"]`)
         ?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
     definition.append(expand);
@@ -401,6 +459,36 @@ function details() {
     detail.append(exact);
   }
 }
+function componentDetails(component) {
+  $("field-title").textContent = component.title;
+  $("field-symbol").replaceChildren(...(component.symbol_mathml ? [math(component.symbol_mathml, true)] : []));
+  $("field-path").textContent = component.path;
+  $("field-description").textContent = component.description || (component.collection ? "An ordered vector of model elements." : "A model with related quantities.");
+  const detail = $("field-detail");
+  detail.replaceChildren();
+  const members = component.collection ? state.components.filter(item => item.parent === component.path) : [component];
+  members.forEach(member => {
+    const entry = section(member.title);
+    state.fields.filter(field => field.parent === member.path).forEach(field => {
+      const row = node("div", "model-member-value");
+      row.append(fieldLink(field.path, field.title), math(field.symbol_mathml, true), value(field));
+      entry.append(row);
+    });
+    detail.append(entry);
+  });
+}
+function resizeCollection(collection, removeIndex = null) {
+  const records = collection.observations.map(record => ({...record}));
+  if (removeIndex === null) records.push({});
+  else records.splice(removeIndex, 1);
+  const next = {...bindings};
+  Object.keys(next).forEach(path => {
+    if (path === collection.path || path.startsWith(collection.path + "[") || path.startsWith(collection.path + ".")) delete next[path];
+  });
+  collection.dimensions.forEach(path => { next[path] = null; });
+  next[collection.path] = JSON.stringify(records);
+  return refresh(next, {edit: true});
+}
 function quantity(field) {
   const row = node(
     "div",
@@ -437,23 +525,33 @@ function quantity(field) {
 function renderTree() {
   $("tree").replaceChildren();
   const components = new Map(
-    state.components.map((component) => [component.path, component]),
+    [...state.components, ...(state.vectors || [])].map((component) => [component.path, component]),
   );
   const containers = new Map([["", $("tree")]]);
   function ensure(path) {
     if (containers.has(path)) return containers.get(path);
     const group = node("section", "component");
+    group.dataset.component = path;
     const header = node("button", "component-head");
     header.type = "button";
     const info = components.get(path);
-    header.append(
-      node("span", "chevron", "⌄"),
-      node("span", "", info?.title || path.split(".").at(-1)),
-    );
+    if (!seenComponents.has(path)) {
+      seenComponents.add(path);
+      if (info?.collapsed) collapsed.add(path);
+    }
+    if (info?.shape) {
+      group.classList.add("vector");
+      group.dataset.field = path;
+    }
+    header.append(node("span", "chevron", "⌄"));
+    if (info?.symbol_mathml) header.append(math(info.symbol_mathml, true));
+    header.append(node("span", "", info?.title || path.split(".").at(-1)));
     const count = state.fields.filter((field) =>
-      field.path.startsWith(path + "."),
+      field.parent === path || field.path.startsWith(path + "."),
     ).length;
-    header.append(node("span", "component-count", `${count} quantities`));
+    header.append(node("span", "component-count", info?.collection
+      ? `${info.shape[0]} models`
+      : `${count} ${info?.shape ? "entries" : "quantities"}`));
     header.title = info?.description || "Nested model";
     header.setAttribute("aria-expanded", String(!collapsed.has(path)));
     group.classList.toggle("collapsed", collapsed.has(path));
@@ -464,8 +562,31 @@ function renderTree() {
       header.setAttribute("aria-expanded", String(!collapsed.has(path)));
     });
     const body = node("div", "component-body");
-    group.append(header, body);
-    ensure(path.split(".").slice(0, -1).join(".")).append(group);
+    if (info?.shape) {
+      const heading = node("div", "vector-heading");
+      const inspect = node("button", "vector-inspect", info.collection ? "Inspect models" : "Inspect vector");
+      inspect.type = "button";
+      inspect.setAttribute("aria-label", `Inspect vector ${path}`);
+      inspect.addEventListener("click", () => choose(path));
+      heading.append(header, inspect);
+      if (info.collection && info.resizable) {
+        const add = node("button", "collection-add", `+ Add ${info.member_title.toLowerCase()}`);
+        add.type = "button";
+        add.setAttribute("aria-label", `Add a model to ${path}`);
+        add.addEventListener("click", () => resizeCollection(info));
+        heading.append(add);
+      }
+      group.append(heading, body);
+    } else if (info?.index !== undefined && components.get(info.parent)?.resizable) {
+      const heading = node("div", "vector-heading");
+      const remove = node("button", "collection-remove", "Remove");
+      remove.type = "button";
+      remove.setAttribute("aria-label", `Remove ${path}`);
+      remove.addEventListener("click", () => resizeCollection(components.get(info.parent), info.index));
+      heading.append(header, remove);
+      group.append(heading, body);
+    } else group.append(header, body);
+    ensure(info?.parent ?? path.split(".").slice(0, -1).join(".")).append(group);
     containers.set(path, body);
     return body;
   }
@@ -478,15 +599,16 @@ function renderTree() {
   fields
     .filter((field) => field.depth)
     .forEach((field) =>
-      ensure(field.path.split(".").slice(0, -1).join(".")).append(
+      ensure(field.parent ?? field.path.split(".").slice(0, -1).join(".")).append(
         quantity(field),
       ),
     );
   state.components.forEach((component) => ensure(component.path));
+  (state.vectors || []).forEach((vector) => ensure(vector.path));
   fields
     .filter((field) => !field.depth && !["input", "free"].includes(field.kind))
     .forEach((field) => $("tree").append(quantity(field)));
-  if (!state.fields.length)
+  if (!state.fields.length && !(state.vectors || []).length)
     $("tree").append(
       node("p", "empty", "This model has no visible quantities."),
     );
@@ -693,9 +815,9 @@ function setView() {
 }
 function render() {
   fieldsByPath = new Map(
-    [...state.fields, ...state.symbols].map((field) => [field.path, field]),
+    [...state.fields, ...state.symbols, ...(state.vectors || [])].map((field) => [field.path, field]),
   );
-  if (!fieldsByPath.has(selected))
+  if (!fieldsByPath.has(selected) && !state.components.some(component => component.path === selected))
     selected = state.initial_field || state.fields[0]?.path;
   $("title").textContent = state.title;
   document.title = `${state.title} · modello`;
@@ -731,18 +853,25 @@ function render() {
   renderInputs();
   renderHighlights();
   renderTree();
+  renderEquations();
+  setView();
+  choose(selected, false, false);
+}
+function renderEquations() {
   $("equation-list").replaceChildren();
   state.equations.forEach((equation) => {
     const block = node("section", "equation");
     block.dataset.equation = equation.path;
     const field = fieldsByPath.get(equation.path);
     const label = node(
-      "button",
+      field ? "button" : "span",
       "equation-label",
-      field?.title || equation.path,
+      field?.title || equation.title || equation.path,
     );
-    label.type = "button";
-    label.addEventListener("click", () => choose(equation.path));
+    if (field) {
+      label.type = "button";
+      label.addEventListener("click", () => choose(equation.path));
+    }
     block.append(label, math(equation.mathml));
     $("equation-list").append(block);
   });
@@ -754,8 +883,6 @@ function render() {
         "No defining equations yet. Set a free quantity in Explore.",
       ),
     );
-  setView();
-  choose(selected, false, false);
 }
 function hideTooltips() {
   document.querySelectorAll('[role="tooltip"]').forEach((tip) => {

@@ -6,13 +6,13 @@ import sys
 from xml.etree import ElementTree
 
 import pytest
-from sympy import Rational, Symbol
+from sympy import Rational, Sum, Symbol
 
-from modello import InstanceDummy, Modello, component, inspect_model
+from modello import Index, InstanceDummy, Modello, Vector, component, inspect_model, vector
 from modello.diagnostics import ConstraintKind
 from modello.errors import ModelDefinitionError, ModelInputError
 from modello.gui import BindingError, Explorer, FieldInfo, ModelInfo, Scenario, create_app, gui
-from tests.modello._gui_models import Estimate, Panel, rows
+from tests.modello._gui_models import Estimate, Panel, Window, mathml_text, rows
 
 from ._models import Reading
 
@@ -273,7 +273,13 @@ def test_inline_annotations_supply_model_component_and_scalar_presentation():
     data = Explorer(Project, inputs={"panel.width": 2, "panel.height": 3}).snapshot()
     assert data["title"] == "A project"
     assert data["highlights"] == ["panel.area"]
-    assert data["components"][0] == {"path": "panel", "title": "Geometry", "description": "A nested panel."}
+    assert data["components"][0] == {
+        "path": "panel",
+        "parent": "",
+        "title": "Geometry",
+        "description": "A nested panel.",
+        "collapsed": False,
+    }
     assert rows(data)["panel.width"]["title"] == "Clear width"
     assert rows(data)["panel.area"]["unit"] == "m²"
     assert rows(data)["total"]["value"] == "60"
@@ -404,3 +410,293 @@ def test_external_metadata_and_input_path_errors_have_context_and_suggestions():
     with pytest.raises(BindingError) as error:
         Explorer(Panel).snapshot({"unrelated": 2})
     assert str(error.value) == "bindings: Unknown field path 'unrelated'."
+
+
+def test_vector_inputs_partial_inverse_solve_and_per_entry_release():
+    explorer = Explorer(Window, inputs={"samples": [1, None, 3]})
+    initial = rows(explorer.snapshot())
+    assert initial["samples[1]"]["kind"] == "free"
+    inverse = explorer.snapshot({"total": 6})
+    assert inverse["status"] == "checked"
+    assert rows(inverse)["samples[1]"]["value"] == "2"
+    assert rows(inverse)["growth"]["value"] == "24"
+    assert rows(inverse, "vectors")["changes"]["value"] == "[1, 1]"
+    released = rows(explorer.snapshot({"samples[0]": None}))
+    assert released["samples[0]"]["input_state"] == "dropped"
+    assert released["samples[2]"]["kind"] == "input"
+    assert all(
+        entry["kind"] == "free"
+        for name, entry in rows(explorer.snapshot({"samples": None})).items()
+        if name.startswith("samples[")
+    )
+
+
+def test_browser_can_edit_each_coordinate_and_rejects_invalid_edits():
+    client = create_app(Window, inputs={"samples": [1, 2, 3]}).test_client()
+    response = client.post("/api/explore", json={"bindings": {"samples[1]": "5/2"}})
+    assert response.status_code == 200
+    assert rows(response.json)["total"]["value"] == "13/2"
+    assert rows(response.json)["samples[1]"]["input_state"] == "overridden"
+    invalid = client.post("/api/explore", json={"bindings": {"samples[1]": "[1,2]"}})
+    assert invalid.status_code == 422
+    assert invalid.json["paths"] == ["samples[1]"]
+    assert rows(client.post("/api/explore", json={}).json)["total"]["value"] == "6"
+
+
+def test_coordinate_definitions_link_to_the_complete_formula_through_a_vector_alias():
+    class Parent(Modello):
+        window = component(Window)
+        alias = window.changes
+
+    data = Explorer(Parent).snapshot(raw=True)
+    coordinate = rows(data)["alias[0]"]
+    own = next(
+        constraint
+        for constraint in coordinate["constraints"]
+        if constraint["kind"] == "definition" and constraint["path"] in coordinate["aliases"]
+    )
+    assert own["path"] == "window.changes[0]"
+    assert own["equation_path"] == "window.changes"
+    assert own["equation_path"] in rows(data, "equations")
+
+
+def test_nested_vector_copy_can_be_reopened_without_turning_outputs_into_inputs():
+    class Pair(Modello):
+        window = component(Window)
+        doubled = window.total * 2
+
+    original = Pair("source", window=Window("source-window", samples=[1, 2, 3]))
+    data = Explorer(original).snapshot({"window.samples[1]": 4})
+    assert rows(data)["doubled"]["value"] == "16"
+    assert original.window.samples == Vector(1, 2, 3)
+    assert rows(data, "vectors")["window.samples"]["shape"] == [3]
+
+
+def test_hidden_vector_entries_are_omitted_from_summaries_and_editors():
+    explorer = Explorer(Window, inputs={"samples": [1, 1234567, 3]}, metadata={"samples[1]": FieldInfo(hidden=True)})
+    data = explorer.snapshot()
+    assert "samples[1]" not in rows(data)
+    summary = rows(data, "vectors")["samples"]
+    assert "1234567" not in json.dumps(summary)
+    assert summary["entries"] == ["samples[0]", "samples[2]"]
+    assert "samples[1]" in summary["value"]
+    hidden = Explorer(Window, metadata={"samples": FieldInfo(hidden=True)}).snapshot(raw=True)
+    assert "samples" not in rows(hidden, "vectors")
+    assert not any(path.startswith("samples[") for path in rows(hidden))
+
+
+def test_vector_metadata_escapes_literal_labels_and_inherits_percent_formatting():
+    data = Explorer(
+        Window,
+        inputs={"samples": [Rational(1, 10), 0, 0]},
+        metadata={"samples": FieldInfo(symbol='<x>"&', number_format="percent")},
+    ).snapshot()
+    summary = rows(data, "vectors")["samples"]
+    assert '<x>"&' in mathml_text(summary["symbol_mathml"])
+    assert ElementTree.fromstring(summary["symbol_mathml"]).find(".//x") is None
+    assert rows(data)["samples[0]"]["display_value"] == "10%"
+    assert mathml_text(summary["value_mathml"]) == "[1000]"
+
+
+def test_vector_scenarios_are_flattened_to_safe_coordinate_edits():
+    @ModelInfo(
+        initial_field="samples",
+        highlights=("samples", "total"),
+        scenarios=(
+            Scenario(
+                title="A complete window",
+                description="Observe all entries.",
+                bindings={"samples": [1, 2, 3]},
+                select="samples",
+            ),
+        ),
+    )
+    class Guided(Window):
+        pass
+
+    client = create_app(Guided).test_client()
+    raw = client.post("/api/explore", json={"raw": True}).json
+    scenario = raw["scenarios"][0]
+    assert scenario["bindings"] == {"samples[0]": "1", "samples[1]": "2", "samples[2]": "3"}
+    assert scenario["select"] == "samples"
+    response = client.post("/api/explore", json={"bindings": scenario["bindings"]})
+    assert response.status_code == 200
+    assert rows(response.json)["total"]["value"] == "6"
+
+
+def test_component_paths_are_not_valid_quantity_highlights():
+    @ModelInfo(highlights=("window",))
+    class Invalid(Modello):
+        window = component(Window)
+
+    with pytest.raises(ModelInputError, match="highlights"):
+        Explorer(Invalid)
+
+
+def test_whole_vector_edits_normalize_to_independent_coordinate_proposals():
+    client = create_app(Window, inputs={"samples": [1, None, 3]}).test_client()
+    initial = client.post("/api/explore", json={}).json
+    summary = rows(initial, "vectors")["samples"]
+    assert summary["kind"] == "mixed"
+    assert summary["input"] == summary["initial_input"] == "[1, ?, 3]"
+    assert summary["input_state"] == "initial"
+    assert summary["editable"]
+    response = client.post("/api/explore", json={"bindings": {"samples": "[1, 5/2, 3]"}})
+    assert response.status_code == 200
+    assert response.json["bindings"] == {"samples[0]": "1", "samples[1]": "5/2", "samples[2]": "3"}
+    assert rows(response.json)["total"]["value"] == "13/2"
+    next_bindings = {**response.json["bindings"], "samples[1]": "2"}
+    assert rows(client.post("/api/explore", json={"bindings": next_bindings}).json)["total"]["value"] == "6"
+    dropped = client.post("/api/explore", json={"bindings": {"samples": None}}).json
+    assert all(value is None for value in dropped["bindings"].values())
+    assert rows(dropped, "vectors")["samples"]["input_state"] == "dropped"
+
+
+def test_bulk_edits_cannot_change_hidden_or_recorded_coordinates():
+    client = create_app(
+        Window, inputs={"samples": [1, 2, 3]}, metadata={"samples[1]": FieldInfo(hidden=True)}
+    ).test_client()
+    response = client.post("/api/explore", json={"bindings": {"samples": "[4, 5, 6]"}})
+    assert response.status_code == 422
+    assert response.json["paths"] == ["samples"]
+    assert not rows(client.post("/api/explore", json={}).json, "vectors")["samples"]["editable"]
+
+    class Parent(Modello):
+        window = component(Window)
+
+    problem = inspect_model(Parent, "recorded", window=Window("source", samples=[1, None, 3], total=6))
+    recorded = create_app(problem).test_client()
+    data = recorded.post("/api/explore", json={}).json
+    assert rows(data)["window.samples[1]"]["kind"] == "fixed"
+    assert not rows(data, "vectors")["window.samples"]["editable"]
+    response = recorded.post("/api/explore", json={"bindings": {"window.samples": "[1,2,3]"}})
+    assert response.status_code == 422
+
+
+def test_vector_domain_validation_covers_each_entry_and_retains_applied_inputs():
+    class Positive(Modello):
+        samples = Vector("x", size=2, positive=True)
+        total = samples.sum()
+
+    client = create_app(Positive, inputs={"samples": [1, 2]}).test_client()
+    response = client.post("/api/explore", json={"bindings": {"samples": "[1, -2]"}})
+    assert response.status_code == 422
+    assert "samples[1]" in response.json["paths"]
+    assert rows(client.post("/api/explore", json={}).json)["total"]["value"] == "3"
+
+
+def test_explicit_coordinate_metadata_replaces_inherited_vector_metadata():
+    data = Explorer(
+        Window, metadata={"samples": FieldInfo(unit="USD", number_format="percent"), "samples[0]": FieldInfo()}
+    ).snapshot(raw=True)
+    assert rows(data)["samples[0]"]["unit"] == ""
+    assert rows(data)["samples[0]"]["number_format"] == "number"
+    assert rows(data)["samples[0]"]["title"] == "samples[0]"
+    assert rows(data)["samples[1]"]["unit"] == "USD"
+
+
+def test_hidden_vector_symbols_remain_navigable_without_observation_values():
+    data = Explorer(
+        Window, inputs={"samples": [1, 1234567, 3]}, metadata={"samples": FieldInfo(hidden=True)}
+    ).snapshot()
+    symbol = rows(data, "symbols")["samples"]
+    assert symbol["value_state"] == "hidden"
+    assert "1234567" not in json.dumps(symbol)
+    assert not symbol["entries"] and not symbol["editable"]
+    assert 'data-path="samples"' in symbol["symbol_mathml"]
+
+
+def test_empty_vectors_keep_their_own_labels_and_show_an_empty_definition():
+    class Empty(Modello):
+        first = Vector("a", size=0)
+        second = vector(1, (Index("i"), 0, -1))
+
+    data = Explorer(Empty).snapshot(raw=True)
+    vectors = rows(data, "vectors")
+    assert mathml_text(vectors["first"]["symbol_mathml"]) == "first→"
+    assert mathml_text(vectors["second"]["symbol_mathml"]) == "second→"
+    assert "∅" not in mathml_text(data["equations"][0]["mathml"])
+    assert mathml_text(data["equations"][0]["mathml"]) == "second→=[]"
+
+
+def test_derived_vector_dependencies_link_to_free_inputs_in_other_vectors():
+    class Scaled(Modello):
+        samples = Vector("x", size=3, real=True)
+        doubled = 2 * samples
+
+    data = Explorer(Scaled, inputs={"samples": [1, None, 3]}).snapshot()
+    dependencies = rows(data, "vectors")["doubled"]["depends_on"]
+    assert [item["path"] for item in dependencies] == ["samples[1]"]
+
+
+def test_a_large_out_of_range_prefix_is_rejected_without_losing_the_initial_case():
+    class Prefix(Modello):
+        samples = Vector("x", size=3, real=True)
+        count = InstanceDummy("count", integer=True, nonnegative=True)
+        i = Index("i")
+        total = Sum(samples[i], (i, 0, count - 1))
+
+    client = create_app(Prefix, inputs={"samples": [1, 2, 3], "count": 3}).test_client()
+    rejected = client.post("/api/explore", json={"bindings": {"count": "1e100"}})
+    assert rejected.status_code == 422
+    restored = client.post("/api/explore", json={"bindings": {}})
+    assert restored.status_code == 200
+    assert rows(restored.json)["total"]["value"] == "6"
+
+
+def test_accepted_arithmetic_text_survives_repeated_browser_edits():
+    client = create_app(Window).test_client()
+    expression = "(1/3)**100"
+    response = client.post("/api/explore", json={"bindings": {"samples": f"[{expression}, 2, 3]"}})
+    assert response.status_code == 200
+    assert response.json["bindings"]["samples[0]"] == expression
+    assert rows(response.json)["samples[0]"]["input"] == expression
+    seed = rows(response.json, "vectors")["samples"]["input"]
+    assert expression in seed
+    assert client.post("/api/explore", json={"bindings": response.json["bindings"]}).status_code == 200
+    assert client.post("/api/explore", json={"bindings": {"samples": seed}}).status_code == 200
+
+
+def test_scalar_binding_normalization_preserves_the_accepted_expression():
+    class Scalar(Modello):
+        value = gui(InstanceDummy("value"))
+
+    client = create_app(Scalar).test_client()
+    expression = "2**100 * 2**100"
+    response = client.post("/api/explore", json={"bindings": {"value": expression}})
+    assert response.status_code == 200
+    assert response.json["bindings"]["value"] == expression
+    assert rows(response.json)["value"]["input"] == expression
+    assert client.post("/api/explore", json={"bindings": response.json["bindings"]}).status_code == 200
+
+
+def test_large_bulk_edit_can_be_followed_by_an_individual_coordinate_edit():
+    class Large(Modello):
+        samples = Vector("x", size=1024, real=True)
+
+    client = create_app(Large).test_client()
+    bulk = "[" + ",".join(["1"] * 1024) + "]"
+    response = client.post("/api/explore", json={"raw": True, "bindings": {"samples": bulk}})
+    assert response.status_code == 200
+    proposal = {**response.json["bindings"], "samples[0]": "2"}
+    assert len(json.dumps(proposal)) > 16_384
+    response = client.post("/api/explore", json={"raw": True, "bindings": proposal})
+    assert response.status_code == 200
+    assert rows(response.json)["samples[0]"]["input"] == "2"
+
+
+def test_oversized_requests_return_a_json_validation_message():
+    app = create_app(Window)
+    response = app.test_client().post(
+        "/api/explore", data=" " * app.config["MAX_CONTENT_LENGTH"] + "{}", content_type="application/json"
+    )
+    assert response.status_code == 413
+    assert response.is_json
+    assert "too large" in response.json["error"]
+
+
+def test_reopening_an_instance_rejects_a_changed_vector_shape():
+    original = Window("source", samples=[1, 2, 3])
+    original.samples = Vector(1, 2)
+    with pytest.raises(ModelInputError, match="samples"):
+        Explorer(original)

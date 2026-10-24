@@ -8,7 +8,7 @@ from functools import cache
 from typing import Any, Callable, ClassVar, Generic, TypeVar, cast
 
 from examples.data import NamedMap
-from modello import Modello, ModelloMeta, ModelloMetaNamespace, ScalarValue, _ModelReference
+from modello import Modello, ModelloMeta, ModelloMetaNamespace, ScalarValue, VectorValue, _ModelReference
 
 _Model = TypeVar("_Model", bound=Modello)
 _Binding = TypeVar("_Binding")
@@ -79,7 +79,7 @@ def component_members(group: Modello | type[Modello], member_type: type[_Model])
     """
     model = _model_type(group)
     namespace = model._modello_namespace
-    if namespace.dummies:
+    if namespace.dummies or namespace.vectors:
         raise TypeError("A member group must contain only model components")
     for name, child in namespace.nested_models.items():
         if not issubclass(child._modello_model, member_type):
@@ -113,7 +113,7 @@ class ModelFactory(Generic[_Model, _Binding]):
     model: type[_Model]
     binding_type: type[_Binding]
 
-    def __call__(self, name: str, **knowns: ScalarValue | Modello) -> _Model:
+    def __call__(self, name: str, **knowns: ScalarValue | VectorValue | Modello) -> _Model:
         return self.model(name, **knowns)
 
     def component(self, binding: _Binding) -> _Model:

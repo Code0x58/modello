@@ -12,7 +12,7 @@ def display_number(value: Expr, *, percent: bool = False) -> tuple[str, bool]:
     if value.is_number is not True or value.is_real is not True or value.is_finite is not True:
         return "", False
     number = float(value.evalf(16))
-    if not math.isfinite(number):
+    if not math.isfinite(number) or (number == 0 and value.is_zero is False):
         return str(value.evalf(4)) + ("%" if percent else ""), True
     if number and (abs(number) < 0.01 or abs(number) >= 1e12):
         text = format(number, ".3g")

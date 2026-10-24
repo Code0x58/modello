@@ -45,6 +45,9 @@ values. Both accept model symbols or expressions built from them. For example:
 Coordinate count is not generally a dimension: a
 coordinate domain can still contain equations, discrete alternatives, or
 unresolved conditions.
+The :doc:`calculus examples <vectors>` explain how to differentiate a reduced
+response along a parameterized family, as distinct from a quantity's declared
+formula.
 
 Refine observations and select a state
 ---------------------------------------
@@ -184,10 +187,11 @@ prefer particular coordinates; remaining constraints can still restrict them.
 The ``parameters`` field records remain available for path and alias inspection.
 
 The exploratory API requires exact expressions: use ``Rational`` for decimal
-observations. Evaluate bound-variable expressions such as integrals and
-derivatives before exploring. Other model-construction behaviour is unchanged.
-Scalar queries and observations follow the same commutative-scalar scope as
-model fields. ``where(...)`` accepts symbolic relations and Python booleans;
+observations. Finite sums and products, and evaluable integrals, derivatives,
+and limits are expanded through model definitions before exploring. Operators
+that remain unevaluated raise ``ModelInputError``. Vector observations use the
+same scalar coordinate domains; vector queries retain coupled tuple outputs.
+See :doc:`vectors` for examples. ``where(...)`` accepts symbolic relations and Python booleans;
 the ``SymbolicCondition`` protocol keeps this boundary visible to type checkers.
 Unsupported domain predicates raise ``ModelInputError`` instead of being omitted.
 These limits keep unsupported operations explicit while the WIP develops.
@@ -214,6 +218,8 @@ Reference
    reductions. ``is_empty`` is ``True``, ``False``, or ``None``.
 
 .. automethod:: SolutionFamily.format
+
+.. automethod:: SolutionFamily.latex
 
 .. automethod:: SolutionFamily.expression
 

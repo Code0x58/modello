@@ -11,7 +11,7 @@ Reading the core
 Follow a model from its class body to its populated instances:
 
 1. ``ModelloMetaNamespace`` in ``modello/_model.py`` collects scalar expressions,
-   components, and inherited replacements. ``compile()`` produces one
+   vectors, components, and inherited replacements. ``compile()`` produces one
    ``_ModelDefinition`` containing the field paths and scoped equations. Each
    ``_Definition`` keeps an equation together with its origin path, including
    separate definitions of the same aliased quantity. ``ModelloMeta`` attaches
@@ -21,15 +21,26 @@ Follow a model from its class body to its populated instances:
    ``_inputs.py`` appends scalar and component observations in that scope. It
    retains each copied value's supplied or inferred origin and groups all values
    from a component under its constructor argument. Preparation does not solve.
-3. ``Modello.__init__()`` prepares the problem, generates joint candidates,
+3. ``_algebra()`` in ``_problem.py`` creates an evaluated view of those equations.
+   ``_expressions.py`` resolves directed definitions within local binder scopes,
+   evaluates SymPy operators, and leaves ordinary algebraic cycles for the joint
+   solver. This view is shared by construction, audits, and solution families;
+   the original snapshot remains unchanged. A per-problem memo prevents repeated
+   expansion of shared dependency graphs. Limits remain unevaluated until their
+   free quantities are substituted, preserving exceptional parameter values
+   that generic limit evaluation can discard.
+4. ``Modello.__init__()`` prepares the problem, generates joint candidates,
    selects one compatible with the declared assumptions, and calls ``_populate()``
    to materialize the complete component tree. Symbolic construction accepts
    undecided assumptions. Diagnostic audits require a checked, closed witness
    before claiming consistency.
-4. ``SolutionFamily._prepare()`` in ``solutions.py`` gives the same snapshot an
+5. ``SolutionFamily._prepare()`` in ``solutions.py`` gives the same snapshot an
    explicit coordinate domain. ``_FamilyReduction`` owns the evolving coordinate
    expressions: first substitute isolated quantities, then eliminate rational
-   affine joins. The family retains all original equations and every field's
+   affine joins. Independent observations and outputs are substituted in batches;
+   cyclic joins retain a chart coordinate. Remaining operators are checked after
+   observations and conditions have resolved their bounds.
+   The family retains all original equations and every field's
    domain as predicates, including conditions on eliminated quantities. Backend
    failures retain the conditions and record a ``SolutionIssue``. ``cases()``
    audits each finite state before populating a freshly bound model tree.
@@ -38,6 +49,76 @@ Shared problem records live in ``_problem.py``. Runtime imports point downwards
 through records, declarations, input capture, solution families, diagnosis, and
 the public namespace; reverse type references use ``TYPE_CHECKING``. The GUI and
 numerical example adapters consume the compiled declaration's fields.
+``ModelProblem.vector_definitions`` retains complete vector formulas in the same
+scope. Both GUI equations and LaTeX exports consume this public view instead of
+reconstructing formulas from scalar constraints. ``_printing.py`` adds scoped
+LaTeX labels; native vector printing remains in ``vectors.py``.
+Text and LaTeX contexts receive the explicit vector schema, including public and
+chart aliases. They choose names within the current component without guessing
+vector identities from their scalar coordinate paths.
+
+``_values.py`` holds structural input types; ``_symbols.py`` owns independent
+quantity identities and local indices. ``vectors.py`` implements immutable
+scalar containers and finite comprehensions without importing model or GUI
+machinery. Vector coordinates use normal scalar field records. ``_paths.py``
+shares coordinate traversal and bracketed display paths across consumers.
+The GUI separates layout and permissions, MathML printing, bounded input parsing,
+and vector summaries under ``_gui/``. Finance and time-series examples stay above
+these layers.
+
+``series.py`` and ``stochastic.py`` declare relative recurrences and Itô laws.
+``_shapes.py`` solves symbolic finite axes from observation lengths before scalar
+coordinates are compiled. Shape specialization produces a cached subclass; it
+does not mutate the reusable declaration. The GUI creates a fresh finite context
+for each proposed window, preserving original observations and restore behavior.
+
+``_operators.py`` supplies their common scoped-expression protocol: operators
+identify local coordinates and the arguments in which those coordinates are
+protected while model definitions expand. They produce scalar expressions for
+the existing algebra boundary. Series and laws are template declarations in
+the compiled model, with fresh function identities in each component and problem.
+``ModelProblem.templates`` exposes those scoped originals to printing and GUI
+equations. Population and numerical views retain the originals and bind their
+scalar parameters together, so a copied law cannot keep obsolete coefficients.
+
+Delegate scalar algebra to SymPy: ``check_assumptions`` checks compatibility,
+``Sum`` evaluates geometric weights in affine recurrences, and a shared
+derivative-based recognizer identifies affine drift and diffusion. Keep the
+recognizer independent of polynomial syntax: parameter-dependent ``Piecewise``
+expressions can be affine without being accepted by ``as_poly``. Local state
+variables retain the declared domain and the Itô law's real-state premise.
+
+The remaining adapters preserve model semantics. Recurrence evaluation keeps
+shifted, contiguous history and checks hidden intermediate states; replacing it
+with an unrestricted sequence solver must preserve those requirements. History
+records keep each value and its cumulative domain condition together. Scoped
+expansion protects local coordinates and diagnoses implicit calculus through
+cyclic definitions. Unknown assumptions remain distinct from disproven ones.
+Finite data reductions and explicit zero-rate kernels avoid slower generic
+symbolic work while retaining exceptional parameter cases.
+
+``model_vectors.py`` builds typed collections and compiles relative field laws
+into ordinary scalar definitions. ``_model_laws.py`` separates structural
+declaration records from immutable source templates: normalize the entire
+record on inheritance and keep source formulas distinct from finite expansion.
+Validate positive self-lags and input bounds before Python indexing can wrap.
+Use the existing binder-aware substitution for lowering; preserve equations
+already declared by member schemas. The compiler stores ordered field updates;
+only the inspection template retains complete source equations. Deferred laws
+must trigger shape preparation rather than disappearing from a finite solve.
+
+``_collections.py`` holds deferred locations and typed sparse observations
+without importing model construction. Population allocates canonical components
+once and connects their views. Structural shape/index binding precedes scalar
+solving. The GUI's ``_gui/collections.py`` summarizes nested model members and
+observation origins; its labels preserve canonical API paths for navigation.
+
+Keep the gallery small. ``examples/gallery/models.py`` contains the equations;
+``catalog.py`` supplies labels, observations, and guided questions. ``app.py``
+mounts the existing explorer through Werkzeug, preserving URL prefixes for
+assets and API requests. Add an example when it demonstrates a distinct idea,
+and derive scenario smoke tests from the catalog. Keep mathematical regressions
+in focused library tests, independent of the gallery's menu and wording.
 
 Validation
 ----------
@@ -59,6 +140,12 @@ Mirror source packages under ``tests/`` and use ``test_<module>.py``, omitting a
 module's leading underscore. Use ``test_init.py`` for package entry points and
 keep repository-wide checks at the test root.
 
+When Node.js is available, pytest also exercises the frontend's proposal state
+against real Flask response fixtures. It covers bulk vector edits, subsequent
+coordinate edits, restoring a vector while retaining a separate target, and
+preserving the applied case after rejection. This optional check does not
+replace visual browser review and adds no runtime dependency to the library.
+
 Keep regressions focused on distinct behavior and independent mathematical
 checks. Refresh dependencies with ``uv lock --upgrade`` and commit ``uv.lock``.
 Dependabot proposes grouped weekly dependency and GitHub Actions updates.
@@ -66,7 +153,8 @@ Workflows do not schedule rebuilds.
 
 Distribution checks install the wheel outside the checkout, rebuild the source
 distribution, and repeat the runtime and typing checks. They also exercise the
-packaged examples and fixtures. Builds use the installed, locked backend. Start
+packaged examples and fixtures, then install the locked GUI extra and exercise
+the gallery and its assets. Builds use the installed, locked backend. Start
 with an empty ``dist`` directory so the checks receive exactly one wheel and
 one source distribution.
 

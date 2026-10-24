@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from html import escape
 from itertools import combinations
 from math import isfinite
-from operator import attrgetter
 from pathlib import Path
 from typing import Generic, Iterator, TypeVar
 
@@ -48,6 +47,7 @@ from modello import (
     SymbolicScalar,
     UnresolvedSolutionError,
 )
+from modello._paths import _path_label, _path_value
 
 M = TypeVar("M", bound=Modello)
 
@@ -94,7 +94,7 @@ def _polynomials(family: SolutionFamily[M], expressions: tuple[ScalarValue, ...]
 
 
 def _value(model: M, field: ModelField) -> Expr:
-    expression = sympify(attrgetter(".".join(field.path))(model))
+    expression = sympify(_path_value(model, field.path))
     if not isinstance(expression, Expr) or any(
         getattr(expression, predicate) is not True for predicate in ("is_number", "is_real", "is_finite")
     ):
@@ -196,7 +196,7 @@ class ModelView(Generic[M]):
         if not np.isfinite(values).all():
             raise UnresolvedSolutionError(self.family, "The response exceeds the numeric range of this plot.")
         output_label = self.family.format(sympify(output))
-        labels = (*(".".join(field.path) for field in self.family.parameters), output_label)
+        labels = (*(_path_label(field.path) for field in self.family.parameters), output_label)
         figure = plt.figure(figsize=(8, 6))
         try:
             axes = figure.add_subplot(projection="3d" if len(grids) > 1 else None)
@@ -241,7 +241,7 @@ class ModelView(Generic[M]):
             )
         if type(samples) is not int or samples < 2:
             raise ModelInputError("Plot samples must be an integer of at least two per control")
-        labels = tuple(".".join(field.path) for field in self.family.parameters)
+        labels = tuple(_path_label(field.path) for field in self.family.parameters)
         destination.parent.mkdir(parents=True, exist_ok=True)
         if len(parameters) == 2:
             if predicate is S.true:
@@ -345,7 +345,7 @@ def main() -> None:
     print("Controls | Control dimension | Image dimension (height) | Envelope height")
     for view in ModelViews(family, through=anchor).sections():
         print(
-            ", ".join(".".join(field.path) for field in view.controls),
+            ", ".join(_path_label(field.path) for field in view.controls),
             view.control_dimension,
             view.image_dimension(flight.height),
             view.family.format(view.family.expression(flight.height)),
