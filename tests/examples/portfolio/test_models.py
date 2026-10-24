@@ -127,10 +127,10 @@ def test_invalid_closing_states_are_rejected_at_points_and_on_paths(amount):
         Known(source.before.units, 10.0),
         Known(source.flow.amount, amount),
     )
-    with pytest.raises(ValueError, match="model assumptions"):
+    with pytest.raises(ValueError, match="model assumptions|finite"):
         view.evaluate(*knowns)
     times = (date(2026, 1, 1),)
-    with pytest.raises(ValueError, match="model assumptions"):
+    with pytest.raises(ValueError, match="model assumptions|finite"):
         view.over(times, *(Known(known.field, Series(times, (known.value,))) for known in knowns))
 
 

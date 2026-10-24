@@ -93,6 +93,14 @@ def _algebra(
     templates: Iterable[_SymbolicTemplate] = (),
     known: Mapping[Symbol, Basic] | None = None,
 ) -> _Algebra:
+    templates = tuple(
+        dict.fromkeys(
+            (
+                *templates,
+                *(template for constraint in constraints for template in constraint.right.atoms(_SymbolicTemplate)),
+            )
+        )
+    )
     definitions: dict[Symbol, Basic] = {}
     ambiguous: set[Symbol] = set()
     observations: dict[Symbol, Basic] = {}

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from functools import cached_property
-from typing import Any, NamedTuple
+from typing import Any
 
 from sympy import (
     And,
@@ -25,11 +25,14 @@ from sympy import (
     sympify,
 )
 
-from modello._evaluation import _expand_finite_indexed
+from modello._evaluation import _ConditionalValue, _evaluate, _expand_finite_indexed
 from modello._operators import (
     _affine_coefficients,
     _DeclarationSymbol,
+    _defined_part,
+    _denominator_condition,
     _FunctionSymbol,
+    _scalar_atoms,
     _ScopedOperator,
     _SymbolicTemplate,
     _value_condition,
@@ -164,11 +167,6 @@ class _SeriesTerm(_ScopedOperator):
         return rf"{printer._print(self.series)}_{{{printer._print(self.index)}}}"
 
 
-class _HistoryValue(NamedTuple):
-    value: Expr
-    condition: Basic
-
-
 class Recurrence(_SymbolicTemplate):
     """A causal relative law and an explicit contiguous initial history.
 
@@ -193,7 +191,7 @@ class Recurrence(_SymbolicTemplate):
         body = body.xreplace(
             {
                 term.series: target.series
-                for term in body.atoms(_SeriesTerm)
+                for term in _scalar_atoms(body, _SeriesTerm)
                 if term.series.symbol == target.series.symbol
             }
         )
@@ -219,7 +217,11 @@ class Recurrence(_SymbolicTemplate):
                 "Initial history needs integer positions and scalar values independent of the local index"
             )
         entries = Tuple(*sorted(entries, key=lambda pair: pair[0]))
-        if any(term.series.symbol == target.series.symbol for _, value in entries for term in value.atoms(_SeriesTerm)):
+        if any(
+            term.series.symbol == target.series.symbol
+            for _, value in entries
+            for term in _scalar_atoms(value, _SeriesTerm)
+        ):
             raise ModelInputError("Initial history must use scalar boundary quantities, not the same series")
         first, last = entries[0][0], entries[-1][0]
         start = last + 1 if start is None else sympify(start)
@@ -231,8 +233,10 @@ class Recurrence(_SymbolicTemplate):
             raise ModelInputError(
                 "Initial history must contain every position immediately before the recurrence starts"
             )
-        for term in _expand_finite_indexed(body).atoms(_SeriesTerm):
+        for term in _scalar_atoms(_expand_finite_indexed(body), _SeriesTerm):
             if term.series == target.series:
+                if isinstance(term.index, Integer) and first <= term.index < start:
+                    continue
                 delay = simplify(target.index - term.index)
                 if not isinstance(delay, Integer) or not 1 <= delay <= len(entries):
                     raise ModelInputError("A causal recurrence uses fixed positive lags covered by its initial history")
@@ -294,15 +298,26 @@ class Recurrence(_SymbolicTemplate):
         return vector(self.at(i), (i, first, last))
 
     @cached_property
+    def _transition(self) -> _ConditionalValue:
+        """Normalize notation and boundary references without losing their poles."""
+        body = _expand_finite_indexed(self.function)
+        condition = _denominator_condition(body)
+        boundaries = {
+            term: self.initial[int(term.index)]
+            for term in _scalar_atoms(body, _SeriesTerm)
+            if term.series == self.target.series and isinstance(term.index, Integer) and int(term.index) in self.initial
+        }
+        return _ConditionalValue(_defined_part(body).xreplace(boundaries), condition.xreplace(boundaries))
+
+    @property
     def _body(self) -> Expr:
-        """Normalize finite indexed notation once, retaining the source formula."""
-        return _expand_finite_indexed(self.function)
+        return self._transition.value
 
     @cached_property
-    def _history(self) -> dict[int, _HistoryValue]:
+    def _history(self) -> dict[int, _ConditionalValue]:
         initial = self.initial
         condition = And(*(_series_condition(self.target.series, value) for value in initial.values()))
-        return {point: _HistoryValue(value, condition) for point, value in initial.items()}
+        return {point: _ConditionalValue(value, condition) for point, value in initial.items()}
 
     @cached_property
     def _invariant(self) -> bool:
@@ -312,7 +327,7 @@ class Recurrence(_SymbolicTemplate):
         body = self._body.xreplace(
             {
                 term: Dummy("previous", **self.target.series.symbol.assumptions0)
-                for term in self._body.atoms(_SeriesTerm)
+                for term in _scalar_atoms(self._body, _SeriesTerm)
                 if term.series == self.target.series
             }
         )
@@ -348,24 +363,43 @@ class Recurrence(_SymbolicTemplate):
             expression = _expand_finite_indexed(self._body.subs(self.target.index, position))
             replacements = {
                 term: history[int(term.index)].value
-                for term in expression.atoms(_SeriesTerm)
+                for term in _scalar_atoms(expression, _SeriesTerm)
                 if term.series == self.target.series
             }
-            value = expression.xreplace(replacements)
-            condition = And(history[position - 1].condition, _series_condition(self.target.series, value))
-            history[position] = _HistoryValue(value, condition)
+            condition = self._transition.condition.subs(self.target.index, position).xreplace(replacements)
+            value = _evaluate(expression.xreplace(replacements))
+            condition = And(history[position - 1].condition, condition, _series_condition(self.target.series, value))
+            history[position] = _ConditionalValue(value, condition)
         selected = history[point]
         return Piecewise((selected.value, selected.condition), (S.NaN, True))
 
     @cached_property
+    def _closed_condition(self) -> Basic | None:
+        """A fast formula may only bypass poles proven independent of its path."""
+        position = Index("position", nonnegative=True)
+        previous = {
+            term: Dummy("previous", **self.target.series.symbol.assumptions0)
+            for term in _scalar_atoms(self._body, _SeriesTerm)
+            if term.series == self.target.series
+        }
+        condition = self._transition.condition.xreplace(previous).subs(self.target.index, position + self.start)
+        if condition.has(position, *previous.values()) or _scalar_atoms(condition, _SeriesTerm):
+            return None
+        return condition
+
+    @cached_property
     def _closed_form(self) -> Expr | None:
         n = self.target.index
+        if self._closed_condition is None:
+            return None
         result = self._first_order
         if result is None:
+            if any(not isinstance(value, _SeriesTerm) for value in _scalar_atoms(self._body, _ScopedOperator)):
+                return None
             # Generic higher-order coefficients can conceal singular cases.
             if self._body.free_symbols - {n} or self._body.has(_VectorElement):
                 return None
-            if any(term.series != self.target.series for term in self._body.atoms(_SeriesTerm)):
+            if any(term.series != self.target.series for term in _scalar_atoms(self._body, _SeriesTerm)):
                 return None
             position = Index("position", nonnegative=True)
             denominator = self._body.as_numer_denom()[1]
@@ -439,13 +473,20 @@ class _RecurrenceValue(_ScopedOperator):
                 and recurrence._first_order is not None
                 and recurrence._closed_form is not None
             ):
-                return simplify(recurrence._closed_form.subs(recurrence.target.index, point))
+                value = simplify(recurrence._closed_form.subs(recurrence.target.index, point))
+                condition = And(recurrence._history[recurrence.origin].condition, recurrence._closed_condition)
+                return Piecewise((value, condition), (S.NaN, True))
             return recurrence._at(int(point))
         result = recurrence._closed_form
         if result is None:
             return self
         value = result.subs(recurrence.target.index, point)
-        domain = And(Contains(point, S.Integers), point >= recurrence.origin)
+        domain = And(
+            Contains(point, S.Integers),
+            point >= recurrence.origin,
+            recurrence._history[recurrence.origin].condition,
+            (point < recurrence.start) | recurrence._closed_condition,
+        )
         return Piecewise((value, domain), (S.NaN, True))
 
     def _sympystr(self, printer: Any) -> str:
@@ -457,7 +498,7 @@ class _RecurrenceValue(_ScopedOperator):
 
 def _series_condition(series: Series, value: Expr) -> Basic:
     """Retain requirements on the full evaluated history, including hidden lags."""
-    return _value_condition(series._requirements, value)
+    return And(_value_condition(series._requirements, value), _denominator_condition(value))
 
 
 def _project_series(expression: Basic, templates: Iterable[_SymbolicTemplate]) -> Basic:

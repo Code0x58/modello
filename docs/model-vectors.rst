@@ -72,24 +72,24 @@ accept the same typed inputs.
 History and formulas
 --------------------
 
-``model_recurrence(states[n], ...)`` updates named scalar fields from an
-initial history. The default ``start=1`` leaves member zero as history; a
-second-order law uses ``start=2`` and can reference ``states[n-1]`` and
-``states[n-2]``. Those history members are ordinary unknown models, so their
-quantities may be observed or inferred.
+``model_recurrence(states[n], ...)`` declares equations for named scalar fields
+over the prepared window. The default ``start=1`` leaves member zero available
+for boundary data; a second-order initial-value law can use ``start=2``.
+Those prefix members are ordinary unknown models, so their quantities may be
+observed or inferred.
 
-Current-step references such as ``states[n].quantity`` are joint equations;
-they can connect fields or express an implicit update. Grouping these equations
-into one law or splitting them across component laws preserves their meaning.
-An explicit ``states[-1]`` reference denotes the terminal finite member, allowing
-boundary constraints. A scalar :class:`~modello.Recurrence` instead evaluates
-causally and requires strictly earlier terms.
+Current-step, backward, and forward references are joint equations within that
+window. They can connect fields, express implicit updates, or form centered
+difference equations with Piecewise boundaries. Grouping these equations into
+one law or splitting them across component laws preserves their meaning.
+An explicit ``states[-1]`` reference denotes the terminal finite member.
+A scalar :class:`~modello.Recurrence` instead evaluates causally from history.
 
-Use a distinct ``Index`` inside nested sums or integrals. Relative references
-must use the current position or fixed lags covered by the history. The
-recurrence checks input bounds before indexing, avoiding accidental Python
-wraparound of relative positions. Nested field updates use canonical paths, for example
-``**{"holding.quantity": expression}``.
+Relative positions are checked before indexing, avoiding accidental Python
+wraparound. Inactive Piecewise branches may contain references outside the
+window. Nested sums and calculus operators keep their own lexical coordinates;
+distinct ``Index`` objects make their scopes easier to read. Nested field
+updates use canonical paths, for example ``**{"holding.quantity": expression}``.
 
 ``project(lambda member: member.field)`` provides a scalar :doc:`vector <vectors>`
 when a calculation needs one. It can select nested fields or fixed inner

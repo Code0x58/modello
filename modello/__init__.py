@@ -112,6 +112,9 @@ def _solve_problem(problem: ModelProblem, *, check: bool = True) -> tuple[dict[S
     """
     try:
         algebra = _algebra(problem.constraints, problem.templates.values())
+    except NotImplementedError as error:
+        raise ModelInputError(str(error)) from error
+    try:
         fields = tuple(dict.fromkeys(field.symbol for field in problem.fields))
         expressions = {symbol: algebra.definitions.get(symbol, symbol) for symbol in fields}
         equations = [Eq(expressions[left], right) for left, right in algebra.equations]
@@ -124,6 +127,8 @@ def _solve_problem(problem: ModelProblem, *, check: bool = True) -> tuple[dict[S
             {symbol: _evaluate(_substitute(expression, result)) for symbol, expression in expressions.items()}
             for result in solutions
         )
+    except ModelInputError:
+        raise
     except Exception as error:
         raise SolverBackendError(problem, error) from error
 

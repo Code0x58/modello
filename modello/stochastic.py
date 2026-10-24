@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from functools import cached_property
 from typing import Any
 
 from sympy import And, Basic, Dummy, Eq, Expr, Integer, Or, Piecewise, S, Symbol, Tuple, diff, exp, simplify, sympify
 
-from modello._evaluation import _evaluate
+from modello._evaluation import _ConditionalValue, _evaluate_scalar, _pending
 from modello._operators import (
     _affine_coefficients,
+    _bound_coordinates,
+    _conditioned,
     _DeclarationSymbol,
+    _scalar_atoms,
     _ScopedOperator,
     _SymbolicTemplate,
     _value_condition,
@@ -22,8 +26,81 @@ from modello.series import Series, _SeriesTerm
 __all__ = ["ItoProcess"]
 
 
+def _check_point_expression(expression: Expr, state: Expr, time: Symbol) -> None:
+    """A process trajectory under a time binder is not a point-state function."""
+    if isinstance(state, _SeriesTerm) and any(
+        time in _bound_coordinates(part) and state in _scalar_atoms(part, _SeriesTerm)
+        for part in _scalar_atoms(expression, Basic)
+    ):
+        raise ModelInputError("Time-bound process expressions require a path or joint-process model")
+
+
 class _StateDomain(_DeclarationSymbol):
     """A law's identity and state assumptions, independent of local coordinates."""
+
+
+class _ProcessContext(_SymbolicTemplate):
+    """Keep dynamic dependencies separate from observed point coefficients."""
+
+    @property
+    def protected_symbols(self) -> tuple[Basic, ...]:
+        return (*self.args[1], *(state for _, state in self.args[0]), *self.args[3])
+
+    @property
+    def scoped_arguments(self) -> frozenset[int]:
+        return frozenset(range(4))
+
+    @property
+    def free_symbols(self) -> set[Symbol]:
+        return set()
+
+    @property
+    def needs_parametrization(self) -> bool:
+        unresolved = set(self.args[3])
+        return any(value.free_symbols & unresolved for coefficient in self._coefficients for value in coefficient)
+
+    @cached_property
+    def _coefficients(self) -> tuple[_ConditionalValue, ...]:
+        return tuple(_evaluate_scalar(self._attach(expression)) for expression in self.args[2])
+
+    def others(self, law: ItoProcess) -> set[Basic]:
+        own = {law.state, *(state for origin, state in self.args[0] if origin == law._state_domain)}
+        return {state for _, state in self.args[0]} - own
+
+    def depends_on_other_states(self, law: ItoProcess) -> bool:
+        others = self.others(law)
+        for coefficient in self._coefficients:
+            if any((value.free_symbols | _scalar_atoms(value, _SeriesTerm)) & others for value in coefficient):
+                return True
+        return False
+
+    def _attach(self, expression: Basic) -> Basic:
+        if isinstance(expression, _ProcessContext):
+            return expression
+        if isinstance(expression, Piecewise):
+            branches = []
+            for value, condition in expression.args:
+                if condition is S.false:
+                    continue
+                branches.append((self._attach(value), condition))
+                if condition is S.true:
+                    break
+            return Piecewise(*branches)
+        args = tuple(self._attach(arg) for arg in expression.args)
+        value = expression.func(*args) if args != expression.args else expression
+        if isinstance(value, ItoProcess):
+            previous = value._context
+            declarations = (
+                self.args[0] if previous is None else Tuple(*dict.fromkeys((*previous.args[0], *self.args[0])))
+            )
+            context = _ProcessContext(
+                declarations,
+                Tuple(*value.bound_symbols) if previous is None else previous.args[1],
+                Tuple(value.drift_expression, value.diffusion_expression) if previous is None else previous.args[2],
+                self.args[3] if previous is None else Tuple(*dict.fromkeys((*previous.args[3], *self.args[3]))),
+            )
+            return value._with_context(context)
+        return value
 
 
 class ItoProcess(_SymbolicTemplate):
@@ -43,8 +120,13 @@ class ItoProcess(_SymbolicTemplate):
         time: Symbol,
         driver: Series | None = None,
         _state_domain: _StateDomain | None = None,
+        _context: _ProcessContext | Basic | None = None,
     ) -> ItoProcess:
         drift, diffusion = sympify(drift), sympify(diffusion)
+        if isinstance(time, Symbol):
+            for value in (drift, diffusion):
+                if isinstance(value, Expr):
+                    _check_point_expression(value, state, time)
         if (
             not isinstance(state, (Symbol, _SeriesTerm))
             or state.is_real is False
@@ -71,7 +153,10 @@ class ItoProcess(_SymbolicTemplate):
             _state_domain = _StateDomain("state", **{"real": True, **state.assumptions0})
         if not isinstance(_state_domain, _StateDomain):
             raise ModelInputError("An Itô law needs its declared real-state domain")
-        return Basic.__new__(cls, state, drift, diffusion, time, driver, _state_domain)
+        context = S.EmptySet if _context is None else _context
+        if context is not S.EmptySet and not isinstance(context, _ProcessContext):
+            raise ModelInputError("An Itô law needs its process dependency context")
+        return Basic.__new__(cls, state, drift, diffusion, time, driver, _state_domain, context)
 
     @property
     def state(self) -> Expr:
@@ -96,6 +181,13 @@ class ItoProcess(_SymbolicTemplate):
     @property
     def _state_domain(self) -> _StateDomain:
         return self.args[5]
+
+    @property
+    def _context(self) -> _ProcessContext | None:
+        return None if self.args[6] is S.EmptySet else self.args[6]
+
+    def _with_context(self, context: _ProcessContext) -> ItoProcess:
+        return self.func(*self.args[:6], context)
 
     @property
     def _state_requirements(self) -> dict[str, bool]:
@@ -161,21 +253,42 @@ class ItoProcess(_SymbolicTemplate):
         """Conditional variance given the initial state for the supported exact laws."""
         return _ItoSolution(self, initial, elapsed, S.Zero, 2)
 
-    def _state_variable(self) -> Dummy:
-        """Use the real-state premise together with the declared state domain."""
+    @cached_property
+    def _local_state(self) -> Dummy:
+        """A local calculus coordinate carrying this law's state premises."""
         return Dummy("state", **self._state_domain.assumptions0)
 
-    def _coefficients_at(self, state: Symbol) -> tuple[Expr, Expr]:
-        """Evaluate both coefficients in the same local calculus coordinate."""
+    @cached_property
+    def _local_coefficients(self) -> tuple[_ConditionalValue, _ConditionalValue]:
         drift, diffusion = (
-            _evaluate(expression.xreplace({self.state: state}))
+            _evaluate_scalar(expression.xreplace({self.state: self._local_state}))
             for expression in (self.drift_expression, self.diffusion_expression)
         )
         return drift, diffusion
 
-    def _coefficients(self) -> tuple[str, Expr, Expr, Expr]:
-        x = self._state_variable()
-        a, b = self._coefficients_at(x)
+    def _coefficient_condition(self, *, exact: bool = False) -> Basic:
+        """Keep coefficient poles, rejecting path-dependent holes in exact laws."""
+        condition = And(*(value.condition for value in self._local_coefficients))
+        if exact and condition.has(self._local_state, self.time):
+            raise NotImplementedError("Exact Itô coefficients must be defined throughout the declared state domain")
+        return condition.xreplace({self._local_state: self.state})
+
+    @cached_property
+    def _exact_coefficients(self) -> tuple[str, Expr, Expr, Expr]:
+        if self._context is not None and self._context.needs_parametrization:
+            raise NotImplementedError(
+                "Exact Itô coefficients need an explicit parametrization of cyclic or multiply defined quantities"
+            )
+        if self._context is not None and self._context.depends_on_other_states(self):
+            raise NotImplementedError(
+                "Exact Itô queries cannot treat other registered process states as constant coefficients"
+            )
+        x = self._local_state
+        a, b = (value.value for value in self._local_coefficients)
+        if _pending(a) or _pending(b):
+            raise NotImplementedError("Exact Itô coefficients must resolve before evaluating nonzero-time queries")
+        if _scalar_atoms(a, _SeriesTerm) or _scalar_atoms(b, _SeriesTerm):
+            raise NotImplementedError("Exact Itô coefficients cannot depend on another unmodelled process")
         drift = _affine_coefficients(a, x)
         diffusion = _affine_coefficients(b, x)
         if (
@@ -241,10 +354,21 @@ class _ItoQuantity(_ScopedOperator):
         _coordinates = Tuple(*law.bound_symbols) if _coordinates is None else _coordinates
         if not isinstance(_coordinates, Tuple) or len(_coordinates) != 2:
             raise ModelInputError("An Itô transformation needs its state and time coordinates")
+        if isinstance(expression, Expr):
+            _check_point_expression(expression, _coordinates[0], _coordinates[1])
         if not isinstance(expression, Expr) or expression.is_Matrix or expression.is_commutative is not True:
             raise ModelInputError("An Itô transformation needs a scalar expression")
-        if any(term != _coordinates[0] for term in expression.atoms(_SeriesTerm)):
+        if any(
+            term != _coordinates[0] and (not term.series.discrete or _coordinates[1] in term.index.free_symbols)
+            for term in _scalar_atoms(expression, _SeriesTerm)
+        ):
             raise ModelInputError("A one-state Itô transformation cannot differentiate another unmodelled process")
+        if law._context is not None and (
+            expression.free_symbols | _scalar_atoms(expression, _SeriesTerm)
+        ) & law._context.others(law):
+            raise ModelInputError(
+                "A one-state Itô transformation cannot differentiate another registered process state"
+            )
         return Expr.__new__(cls, law, expression, Integer(operation), _coordinates)
 
     @property
@@ -271,16 +395,35 @@ class _ItoQuantity(_ScopedOperator):
     def calculus_expression(self) -> Expr:
         return self.args[1]
 
+    def _eval_subs(self, old: Basic, new: Basic) -> Basic | None:
+        if old in self.protected_symbols:
+            if not isinstance(new, Expr):
+                raise ModelInputError("An Itô observation must be scalar")
+            requirements = self.args[0]._state_requirements if old == self.args[3][0] else {"real": True}
+            condition = _value_condition(requirements, new)
+            if condition is S.false:
+                return S.NaN
+            value = super()._eval_subs(old, new)
+            if value is not None:
+                return Piecewise((value, condition), (S.NaN, True))
+        return super()._eval_subs(old, new)
+
     def doit(self, **hints: Any) -> Expr:
         law, expression, operation = self.args[:3]
         state, time = self.args[3]
-        x = law._state_variable()
-        body = _evaluate(expression.xreplace({state: x, time: law.time}))
-        a, b = law._coefficients_at(x)
+        x = law._local_state
+        transformed = _evaluate_scalar(expression.xreplace({state: x, time: law.time}))
+        condition = And(transformed.condition, law._coefficient_condition())
+        if condition is S.false:
+            return S.NaN
+        body = transformed.value
+        a, b = (value.value for value in law._local_coefficients)
         result = b * diff(body, x) if operation == 1 else a * diff(body, x) + b**2 * diff(body, x, 2) / 2
         if operation == 0:
             result += diff(body, law.time)
-        return simplify(result.xreplace({x: state, law.time: time}))
+        result = simplify(result.xreplace({x: state, law.time: time}))
+        condition = condition.xreplace({x: state, law.state: state, law.time: time})
+        return _conditioned(result, condition)
 
     def _sympystr(self, printer: Any) -> str:
         name = ("ItoDrift", "ItoDiffusion", "Generator")[int(self.args[2])]
@@ -328,13 +471,18 @@ class _ItoSolution(_ScopedOperator):
         if elapsed.is_zero is True:
             result = S.Zero if operation == 2 else initial
         else:
+            domain = And(domain, law._coefficient_condition(exact=True))
+            if domain is S.false:
+                return S.NaN
             result = self._result()
-        return Piecewise((simplify(result), domain), (S.NaN, True))
+        if operation == 0:
+            domain = And(domain, _value_condition(law._state_requirements, result))
+        return _conditioned(simplify(result), domain)
 
     def _result(self) -> Expr:
         """Calculate a supported nonzero-time query after validating its domain."""
         law, initial, elapsed, increment, operation = self.args
-        kind, a, b, gradient = law._coefficients()
+        kind, a, b, gradient = law._exact_coefficients
         if kind == "arithmetic":
             mean = initial + a * elapsed
             result = b**2 * elapsed if operation == 2 else mean

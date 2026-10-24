@@ -1,105 +1,113 @@
 Generality and solver boundaries
 ================================
 
-A rendered formula is a declaration, not evidence that every associated problem
-can be solved. ``tests/scenario/`` exercises models independently of the gallery,
-including equivalent notation, alternative component groupings, inverse
-problems, degenerate coefficients, and rejected problem classes. The test
-README maps the features to scenario modules.
+Modello composes mathematical declarations and solves their finite scalar
+equations with SymPy. The same definitions support forward calculations,
+inverse problems, inspection, and exact solution families.
 
-What the review uncovered
+Representations and composition
+--------------------------------
+
+* :class:`~modello.Vector` contains scalar coordinates. Observed lengths and
+  explicit size fields determine its finite shape before scalar solving.
+  :func:`~modello.model_vector` retains a typed model at each position,
+  including its component equations and fixed inner vectors.
+* :func:`~modello.model_recurrence` generates joint equations over a finite
+  window. Current-step, implicit, backward, and forward references are allowed
+  within that window. ``start`` leaves a prefix available for boundary data.
+  Piecewise boundaries can express centered difference or boundary-value
+  equations using the ordinary solver.
+* Relative vector positions are checked without Python negative-index
+  wraparound. Explicit selections such as ``states[-1]`` keep Python indexing.
+  Native sums, products, integrals, derivatives, and limits retain their own
+  lexical coordinates, including when a bound name also occurs freely in its
+  limits.
+* :class:`~modello.Series` names a scalar family without a chosen horizon.
+  :class:`~modello.Recurrence` evaluates strictly causal self-lags from
+  contiguous history; fixed references to that history are also allowed.
+  Explicit queries of another recurrence compose directly. Unqualified terms
+  from several series use the model's law registry through model fields or
+  ``family.expression``; a standalone law has no implicit global registry.
+
+Ordinary scalar fields are quantities, not parameterized function definitions.
+Keep relative functions inside their law or a bound comprehension. Use
+``Index`` and ``Coordinate`` for local coordinates, and ``InstanceDummy`` for
+quantities to observe or infer.
+
+Validity and solver results
+----------------------------
+
+Declarations retain their identities, coordinate kinds, and state domains
+through symbolic reconstruction and renaming. Independently scoped components
+remain independent. Named definitions expand in their declaration context
+before calculus or parameter observations are applied.
+
+Explicit denominator exclusions are retained through library substitution,
+finite reduction, and cancellation. A zero observation cannot turn an undefined
+ratio into a valid zero. Inactive Piecewise branches and empty reductions do
+not evaluate unused operations. Limits with unresolved parameters, and
+parameterized integrals with potential poles in their interval, remain
+unevaluated until the required data or a SymPy domain proof is available.
+
+Undefined queries produce ``nan`` and are excluded from materialized solutions.
+Symbolic results retain necessary conditions. Exact families preserve joint
+alternatives and unresolved conditions, accept exact inputs, and require checked
+finite points before materialization. Unsupported operations report an error
+or remain symbolic; an empty backend answer alone is not a proof of
+inconsistency.
+
+Unsupported model calculations raise ``ModelInputError`` through both solve
+APIs. Exceptions raised by the actual solving backend use ``SolverBackendError``;
+standalone symbolic operations may raise ``NotImplementedError``.
+
+Construction requires one retained solver candidate. That candidate may be
+symbolic and depend on external parameters. Attribute assignment after
+construction does not recompute the model; construct another state or add
+observations to a solution family.
+
+One-state Itô calculations
 --------------------------
 
-The initial scenario pass found library defects beyond the examples:
+:class:`~modello.ItoProcess` provides local drift, diffusion, spatial generators,
+and quadratic variation for a smooth function of one state and time. Its
+coefficients may be nonlinear, time-dependent, or adapted to another declared
+state for these local calculations.
 
-* A vector comprehension protected its bound index in its bounds as well as its
-  body, so substituting a free endpoint could leave the window unchanged.
-* Composed recurrences exposed terms from other series that were never resolved.
-  Laws are now resolved in the problem context, including terms produced by
-  earlier queries. Cycles must make progress towards an initial boundary.
-* A symbolic discrete query lost its integer domain after conversion to a closed
-  form. Its validity condition now includes integer membership.
-* Current-step model equations worked when split into components but were
-  rejected when grouped into one state law. Finite model laws now compile joint
-  equations consistently, including implicit current-step equations and
-  explicit terminal boundary references.
-* Moving sums and sums of recurrence lags depended on their notation. Shared
-  finite-index expansion now exposes the same terms for validation and solving.
-* Native SymPy variable renaming could erase a series' discrete kind or an Itô
-  state's domain, and detach a transformation from its law. Semantic metadata
-  now survives reconstruction independently of coordinate spelling. Equivalent
-  reconstructions retain their model context when named coefficients expand;
-  populated laws preserve those formulas for subsequent queries and copies.
-* Standalone Itô calculus and exact coefficient classification differed from
-  calculations inside a model for finite operator bodies. They now share the
-  same evaluation path. Zero-time identities precede exact classification.
-* ``Piecewise`` evaluated unsupported formulas in branches already excluded by
-  observations. Conditions now resolve before values; inactive branches are
-  skipped while reachable unsupported calculations still report their limits.
+Nonzero-time exact queries support arithmetic/geometric coefficients and
+affine-additive conditional moments. Deterministic affine paths are supported;
+a general mean-reverting path requires more information than one Wiener
+increment. Zero elapsed time retains its initial-value and zero-variance
+identities. Exact realizations check both initial and endpoint state domains.
 
-These are library regressions covered by passing tests. The separate strict
-upstream xfail reproduces a SymPy 1.14 finite-sum derivative that acquires a
-spurious singularity at zero. Its docstring contains a standalone program and
-source diagnostics. Materializing the finite body first avoids that failure in
-Modello's evaluation path.
+Known stochastic dependencies are checked before point observations can freeze
+them, and remain attached to returned law objects. A one-state transform cannot
+silently omit another state's dynamics; an exact moment cannot treat another
+process as a fixed coefficient. Time-bound process trajectories require a path
+or joint-process model. Standalone unregistered symbols represent fixed
+parameters; declare processes in the model when their dynamics matter.
+Exact coefficients that still depend on cyclic or multiply defined quantities
+require an explicit parametrization; observations at one point do not supply it.
 
-Choose the appropriate representation
--------------------------------------
+Mathematical and computational scope
+------------------------------------
 
-:class:`~modello.Vector` contains scalar coordinates with a known or inferable
-finite shape. :func:`~modello.model_vector` preserves a typed component at each
-position; its finite field equations enter the same scalar solver. Current-step
-implicit equations can therefore express discrete schemes such as implicit
-Euler. Relative self-references must use fixed covered lags or the current
-position. Explicit boundary references follow finite Python indexing.
+Vectors are one-dimensional and model-vector members require a concrete schema.
+Finite windows expand into scalar equations; large or nonlinear systems can be
+expensive. A general numerical time-stepper, ragged/tensor solver, coupled SDE
+solver, correlated drivers, stochastic integration, and hitting-time or SDE
+boundary solvers are outside the implementation.
 
-:class:`~modello.Series` names a scalar family without a finite horizon.
-:class:`~modello.Recurrence` evaluates causal laws from contiguous history.
-Unlike finite model equations, it requires strictly positive self-lags.
-Several declared laws may drive each other when finite queries reach their
-boundaries. Finite higher-order queries iterate directly; symbolic queries seek
-verified closed forms. An unresolved symbolic query remains an expression,
-not a promise of a closed form.
-Queries involving several laws need their problem context: use model fields or
-``family.expression``. A standalone recurrence cannot discover another series'
-law from its name.
+Finite causal recurrences may be nonlinear. Symbolic-index closed forms are
+limited to verified supported cases and SymPy's recurrence solver. Calculus
+through cyclic or multiply defined quantities requires an explicit
+parametrization.
 
-An ordinary scalar field is not a parameterized function definition. Keep a
-relative expression inside its law, use a bound vector comprehension, or declare
-a ``Series`` and its law. A free local ``Index`` cannot be observed like an
-``InstanceDummy``; exact families reject unresolved indexing.
+Symbolic formulas assume their declared domains. Smoothness, adaptedness,
+integrability, and pathwise domain invariance are mathematical hypotheses;
+initial and endpoint checks do not prove an entire path admissible. Conditions
+already removed by ordinary SymPy simplification before a declaration reaches
+Modello cannot be recovered. Retain such domain requirements explicitly.
 
-Remaining limitations
-----------------------
-
-* Vectors are one-dimensional scalar containers. Model-vector elements need a
-  concrete member schema; they may contain fixed inner vectors and components.
-  Arbitrary tensors, ragged collections, and vector-valued continuous processes
-  do not have dedicated modelling or solver support.
-* Finite windows expand into scalar equations. Symbolic shape inference needs
-  enough independent length or size observations before this expansion. It does
-  not solve an unbounded collection of unknowns. Large or nonlinear windows may
-  be expensive, and no general numerical time-stepper is provided.
-* General symbolic recurrence solutions are limited by the implemented verified
-  cases and SymPy. A finite nonlinear recurrence can work while the same law's
-  symbolic-index query remains unresolved. Calculus through cyclic or multiply
-  defined scalar quantities needs an explicit parametrization first.
-* Local Itô drift, diffusion, and generators support one scalar state and one
-  standard Wiener driver. Exact nonzero-time queries cover arithmetic/geometric
-  coefficients and affine-additive conditional moments, with deterministic
-  affine paths when diffusion is zero. Arbitrary SDEs, stochastic integrals,
-  correlated drivers, hitting times, and SDE boundary solvers are not implemented.
-* Smoothness, adaptedness, integrability, and pathwise domain invariance are
-  mathematical premises, not automatic proofs. Checking an initial state and a
-  supplied increment does not validate an entire stochastic path. Ordinary SymPy
-  simplification can also discard a singularity before Modello receives an
-  expression; retain necessary domain conditions explicitly.
-* Construction requires one retained symbolic solver candidate. It is not a
-  completeness proof. Exact solution families retain alternatives and conditions,
-  reject floating observations, and require checked points for materialization.
-  Attribute assignment after construction does not recompute a model.
-
-The scenario suite tests these boundaries alongside successful cases. Passing
-it establishes regression coverage for those contracts, not universal symbolic
-solvability. See :doc:`series`, :doc:`model-vectors`, and :doc:`solutions` for the
+``tests/scenario/README.rst`` maps independent regression scenarios to these
+contracts. See :doc:`series`, :doc:`model-vectors`, and :doc:`solutions` for the
 supported workflows.

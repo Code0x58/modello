@@ -2,13 +2,41 @@
 
 from __future__ import annotations
 
+from functools import cached_property
 from typing import Iterable, Mapping
 
-from sympy import Basic, Derivative, Integer, Integral, Limit, Piecewise, Product, S, Sum, Symbol, simplify
+from sympy import (
+    And,
+    Basic,
+    Derivative,
+    Expr,
+    Integer,
+    Integral,
+    Limit,
+    Piecewise,
+    Product,
+    S,
+    Subs,
+    Sum,
+    Symbol,
+    Tuple,
+    default_sort_key,
+    simplify,
+)
 
-from modello._evaluation import _OPERATORS, _evaluate as _evaluate, _substitute as _substitute
-from modello._operators import _ScopedExpression, _ScopedOperator, _SymbolicTemplate
+from modello._evaluation import _OPERATORS, _evaluate as _evaluate, _rebuild, _substitute as _substitute
+from modello._operators import (
+    _conditioned,
+    _defined_part,
+    _denominator_condition,
+    _scalar_atoms,
+    _ScopedExpression,
+    _ScopedOperator,
+    _SymbolicTemplate,
+)
+from modello.errors import ModelInputError
 from modello.series import _project_series, _RecurrenceValue, _SeriesTerm
+from modello.stochastic import ItoProcess, _ItoQuantity, _ProcessContext
 from modello.vectors import _VectorFormula
 
 
@@ -34,6 +62,7 @@ class _DefinitionResolver:
         templates: Iterable[_SymbolicTemplate] = (),
         *,
         evaluate_operators: bool = True,
+        attach_process_context: bool = True,
     ) -> None:
         self.definitions = definitions
         self.cyclic = cyclic
@@ -41,14 +70,27 @@ class _DefinitionResolver:
         self.observations = observations
         self.templates = tuple(templates)
         self.evaluate_operators = evaluate_operators
+        self.attach_process_context = attach_process_context
         self._memo: dict[tuple[Basic, frozenset[Basic]], Basic] = {}
         self._active: set[tuple[Basic, frozenset[Basic]]] = set()
-        self._series_points: dict[Basic, list[Integer]] = {}
+        self._series_points: dict[tuple[Basic, Basic], list[Integer]] = {}
 
     def symbolic(self) -> _DefinitionResolver:
         """Expand laws while retaining parameters for later observations or copies."""
         return _DefinitionResolver(
             self.definitions, self.cyclic, self.ambiguous, {}, self.templates, evaluate_operators=False
+        )
+
+    @cached_property
+    def _raw_symbolic(self) -> _DefinitionResolver:
+        return _DefinitionResolver(
+            self.definitions,
+            self.cyclic,
+            self.ambiguous,
+            {},
+            self.templates,
+            evaluate_operators=False,
+            attach_process_context=False,
         )
 
     def __call__(self, expression: Basic, protected: frozenset[Basic] = frozenset()) -> Basic:
@@ -58,7 +100,8 @@ class _DefinitionResolver:
                 raise NotImplementedError("Cyclic symbolic queries cannot be evaluated")
             points = None
             if isinstance(expression, _RecurrenceValue) and isinstance(expression.args[1], Integer):
-                series = expression.args[0].target.series.symbol
+                law = expression.args[0]
+                series = (law.args[4], law.target.series.symbol)
                 point = expression.args[1]
                 points = self._series_points.setdefault(series, [])
                 if points and point >= points[-1]:
@@ -104,7 +147,11 @@ class _DefinitionResolver:
                     break
             return Piecewise(*branches)
         if isinstance(expression, _ScopedExpression):
-            if isinstance(expression, _SymbolicTemplate):
+            if self.evaluate_operators and isinstance(expression, _ItoQuantity):
+                self._check_stochastic(expression, protected)
+            if isinstance(expression, _SymbolicTemplate) and not (
+                isinstance(expression, ItoProcess) and expression._context is not None
+            ):
                 expression = next(
                     (template for template in self.templates if template._same_declaration(expression)), expression
                 )
@@ -116,6 +163,8 @@ class _DefinitionResolver:
                 for i, arg in enumerate(expression.args)
             )
             operator = expression.func(*args) if args != expression.args else expression
+            if isinstance(operator, ItoProcess) and self.attach_process_context and operator._context is None:
+                operator = operator._with_context(self._process_context(expression, protected))
             if not isinstance(operator, _ScopedOperator) or not self.evaluate_operators:
                 return operator
             evaluated = _evaluate(operator)
@@ -129,14 +178,18 @@ class _DefinitionResolver:
             )
         if isinstance(expression, (Sum, Product, Integral)):
             variables = frozenset(expression.variables)
-            if isinstance(expression, Integral):
-                self._check_calculus(expression.function, protected | variables)
-            body = self(expression.function, protected | variables)
             limits = []
             for i, limit in enumerate(expression.limits):
                 # Inner bounds may depend on variables bound by outer operators.
                 outer = frozenset(item[0] for item in expression.limits[i + 1 :])
                 limits.append((limit[0], *(self(bound, protected | outer) for bound in limit[1:])))
+            if isinstance(expression, (Sum, Product)) and any(
+                len(limit) == 3 and simplify(limit[2] - limit[1]) == -1 for limit in limits
+            ):
+                return S.Zero if isinstance(expression, Sum) else S.One
+            if isinstance(expression, Integral):
+                self._check_calculus(expression.function, protected | variables)
+            body = self(expression.function, protected | variables)
             operator = expression.func(body, *limits)
         elif isinstance(expression, Derivative):
             variables = frozenset(expression.variables)
@@ -147,11 +200,59 @@ class _DefinitionResolver:
             body, variable, point, direction = expression.args
             self._check_calculus(body, protected | {variable})
             operator = Limit(self(body, protected | {variable}), variable, self(point, protected), dir=str(direction))
+        elif isinstance(expression, Subs):
+            variables = frozenset(expression.variables)
+            body = self(expression.expr, protected | variables)
+            operator = Subs(body, expression.variables, tuple(self(point, protected) for point in expression.point))
         else:
             args = tuple(self(arg, protected) for arg in expression.args)
-            return expression.func(*args) if args != expression.args else expression
+            if not isinstance(expression, Expr):
+                return expression.func(*args) if args != expression.args else expression
+            condition = And(
+                self(_denominator_condition(expression), protected),
+                *(_denominator_condition(arg) for arg in args if isinstance(arg, Expr)),
+            )
+            if condition is S.false:
+                return S.NaN
+            values = tuple(_defined_part(arg) if isinstance(arg, Expr) else arg for arg in args)
+            value = _rebuild(expression, values)
+            return _conditioned(value, condition)
         evaluated = _evaluate(operator) if self.evaluate_operators else operator
         return self(evaluated, protected) if evaluated != operator else operator
+
+    def _process_context(self, law: ItoProcess, protected: frozenset[Basic]) -> _ProcessContext:
+        processes = tuple(template for template in self.templates if isinstance(template, ItoProcess))
+        dynamic = frozenset(process.state for process in processes)
+        unresolved = self.cyclic | self.ambiguous
+        source = self._raw_symbolic(law, protected | dynamic | unresolved)
+        declarations = Tuple(
+            *sorted({Tuple(process._state_domain, process.state) for process in processes}, key=default_sort_key)
+        )
+        context = _ProcessContext(
+            declarations,
+            Tuple(*source.bound_symbols),
+            Tuple(source.drift_expression, source.diffusion_expression),
+            Tuple(*sorted(unresolved, key=default_sort_key)),
+        )
+        return _substitute(context, self.observations)
+
+    def _check_stochastic(self, operator: _ItoQuantity, protected: frozenset[Basic]) -> None:
+        """One-state queries must not silently freeze another declared process."""
+        processes = tuple(template for template in self.templates if isinstance(template, ItoProcess))
+        if not processes:
+            return
+        dynamic = frozenset(process.state for process in processes)
+        resolved = self._raw_symbolic(operator, protected | dynamic)
+        law = resolved.args[0]
+        state, time = resolved.args[3]
+        expression = resolved.args[1].xreplace({state: law.state, time: law.time})
+        expression = self(expression, protected | dynamic | frozenset(law.bound_symbols))
+        others = dynamic - {law.state}
+        states = expression.free_symbols | _scalar_atoms(expression, _SeriesTerm)
+        if states & others:
+            raise ModelInputError(
+                "A one-state Itô transformation cannot differentiate another registered process state"
+            )
 
     def _check_calculus(self, body: Basic, protected: frozenset[Basic]) -> None:
         pending = set(body.free_symbols - protected)

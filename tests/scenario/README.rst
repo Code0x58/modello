@@ -43,6 +43,11 @@ Module                           Contracts
                                  boundaries; sliding windows in equivalent
                                  notation; nested paths; invalid indices;
                                  empty/start-zero laws; disjoint state laws.
+``test_composition_contracts``    Explicit nested laws; lexical binders; centered
+                                 boundary equations; source denominator domains;
+                                 unused branches/reductions; persistent process
+                                 dependencies; local versus path calculations;
+                                 exact endpoint state validation.
 ``test_solver_composition``      Typed members and schema equations; nonlinear
                                  joint alternatives; observation order and
                                  release; inheritance/refinement; shared inverse

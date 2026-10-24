@@ -3,7 +3,7 @@
 from copy import deepcopy
 
 import pytest
-from sympy import Derivative, Integral, Limit, MatrixSymbol, Product, Sum
+from sympy import Derivative, Integral, Limit, MatrixSymbol, Product, Rational, Sum
 
 from modello import (
     Index,
@@ -153,14 +153,15 @@ def test_indexed_field_laws_require_a_declared_model_vector():
 
 
 @pytest.mark.parametrize("lag", [-1, 2])
-def test_noncausal_or_insufficient_history_is_rejected_before_index_wrapping(lag):
-    with pytest.raises(ModelDefinitionError, match="current terms or lags"):
+def test_relative_references_are_checked_against_the_prepared_window(lag):
+    class Invalid(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        states = model_vector(State, size=N + 1)
+        n = Index("n")
+        law = model_recurrence(states[n], value=states[n - lag].value)
 
-        class Invalid(Modello):
-            N = InstanceDummy("N", integer=True, nonnegative=True)
-            states = model_vector(State, size=N + 1)
-            n = Index("n")
-            law = model_recurrence(states[n], value=states[n - lag].value)
+    with pytest.raises(ModelInputError, match="window"):
+        Invalid("invalid", N=2)
 
 
 def test_relative_input_indices_cannot_wrap_to_the_end_of_a_data_vector():
@@ -171,7 +172,7 @@ def test_relative_input_indices_cannot_wrap_to_the_end_of_a_data_vector():
         n = Index("n")
         law = model_recurrence(states[n], value=states[n - 1].value + events[n - 2].amount)
 
-    with pytest.raises(ModelInputError, match="outside"):
+    with pytest.raises(ModelInputError, match="window"):
         BadInput("bad", N=2)
 
 
@@ -239,19 +240,20 @@ def test_member_equations_remain_constraints_alongside_recurrent_fields(initial_
 
 
 @pytest.mark.parametrize(
-    "bind",
+    "bind,expected",
     [
-        pytest.param(lambda body, n: Sum(body, (n, 0, 2)), id="sum"),
-        pytest.param(lambda body, n: Product(body, (n, 0, 2)), id="product"),
-        pytest.param(lambda body, n: Integral(body, (n, 0, 2)), id="integral"),
-        pytest.param(lambda body, n: Derivative(body, n, evaluate=False), id="derivative"),
-        pytest.param(lambda body, n: Limit(body, n, 0), id="limit"),
+        pytest.param(lambda body, n: Sum(body, (n, 0, 2)), (5, 5), id="sum"),
+        pytest.param(lambda body, n: Product(body, (n, 0, 2)), (0, 0), id="product"),
+        pytest.param(lambda body, n: Integral(body, (n, 0, 2)), (Rational(8, 3), Rational(8, 3)), id="integral"),
+        pytest.param(lambda body, n: Derivative(body, n, evaluate=False), (2, 4), id="derivative"),
+        pytest.param(lambda body, n: Limit(body, n, 0), (0, 0), id="limit"),
     ],
 )
-def test_nested_native_operators_cannot_shadow_the_recurrence_coordinate(bind):
-    with pytest.raises(ModelDefinitionError, match="distinct local index"):
+def test_nested_native_operators_preserve_their_own_coordinate_scope(initial_state, bind, expected):
+    class Scoped(Modello):
+        states = model_vector(State, size=3)
+        n = Index("n")
+        law = model_recurrence(states[n], value=bind(n**2, n))
 
-        class Invalid(Modello):
-            states = model_vector(State, size=3)
-            n = Index("n")
-            law = model_recurrence(states[n], value=bind(states[n - 1].value, n))
+    case = Scoped("scoped", states=initial_state)
+    assert tuple(state.value for state in case.states[1:]) == expected

@@ -148,7 +148,10 @@ variables stay independent until their derivatives are taken. To differentiate
 along a constrained family, first obtain its reduced expression with
 ``family.expression``. Calculus through cyclic or multiply defined quantities
 is unsupported. Parameterized limits wait for the necessary observations so
-exceptional values are preserved.
+exceptional values are preserved. Parameterized integrals with possible poles
+in their interval also wait for observations or a SymPy domain proof. Explicit
+denominator exclusions survive substitution and finite reductions, including
+when observed zeros cancel the resulting expression.
 
 See the native `SymPy concrete mathematics
 <https://docs.sympy.org/latest/modules/concrete.html>`_ and

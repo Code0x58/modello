@@ -8,7 +8,7 @@ from dataclasses import replace
 from functools import lru_cache, partial
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast, overload
 
-from sympy import Basic, Eq, Expr, Integer, Symbol, SympifyError, Tuple, simplify, sympify
+from sympy import And, Basic, Contains, Eq, Expr, Integer, Piecewise, S, Symbol, SympifyError, Tuple, sympify
 
 from modello._collections import (
     ModelObservations,
@@ -20,7 +20,7 @@ from modello._collections import (
 from modello._evaluation import _expand_finite_indexed, _substitute
 from modello._model import ModelloMeta, ModelloMetaNamespace, _has_symbolic_shape, _known_integers, _ModelReference
 from modello._model_laws import ModelRecurrence, _ModelLawSpec
-from modello._operators import _bound_coordinates, _definitely_undefined, _ScopedExpression
+from modello._operators import _definitely_undefined
 from modello._paths import FieldPath, _path_label, _path_value
 from modello._symbols import Index
 from modello._values import ScalarValue, SymbolicScalar
@@ -221,7 +221,6 @@ def model_recurrence(target: _Model, *, start: int = 1, **updates: ScalarValue) 
             raise ModelInputError("Recurrent field definitions must be scalar expressions") from error
         if not isinstance(expression, Expr) or expression.is_Matrix:
             raise ModelInputError("Recurrent field definitions must be scalar expressions")
-        _validate_model_rule(expression, index, start, set(target.columns.values()))
         fields.append((path, expression))
     equations = Tuple(*(Eq(target.columns[path][index], expression, evaluate=False) for path, expression in fields))
     size = next(iter(target.columns.values())).shape[0]
@@ -254,48 +253,38 @@ def _compile_model_law(
     start = int(law.start)
     if size < start:
         raise ModelInputError("The model vector must contain the recurrence's initial history")
-    targets = set(columns.values())
     known = _known_integers(namespace)
     stop = law.stop.xreplace(known)
     if isinstance(stop, Integer) and stop != size - 1:
         raise ModelDefinitionError("The recurrence's domain must match its declared model-vector window")
     definitions = []
     for path, expression in spec.updates:
-        if _definitely_undefined(expression):
-            raise ModelInputError("A recurrent field expression is undefined in its declared window")
-        terms = _validate_model_rule(expression, law.index, start, targets)
+        position = Index(law.index.name)
+        # A fresh coordinate distinguishes free relative indices from native
+        # binders that happen to use the same symbol as this law.
+        body = _substitute(_substitute(expression, {law.index: position}), known)
+        body = _guard_relative_indices(body, position)
         for point in range(start, int(size)):
-            bindings = {**known, law.index: Integer(point)}
-            for term in terms:
-                position = term.index.xreplace(bindings)
-                count = sympify(term.vector.shape[0]).xreplace(known)
-                if not isinstance(count, Integer):
-                    raise ModelDefinitionError("Recurrent inputs must use a finite declared vector window")
-                relative = law.index in term.index.free_symbols
-                if relative and not isinstance(position, Integer):
-                    raise ModelDefinitionError("Recurrent inputs need a fixed integer index at each step")
-                if isinstance(position, Integer) and not (0 if relative else -count) <= position < count:
-                    raise ModelInputError("A recurrent input index falls outside its observed vector window")
+            value = _expand_finite_indexed(_substitute(body, {position: Integer(point)}))
+            if _definitely_undefined(value):
+                raise ModelInputError("A recurrent field expression is undefined in its declared vector window")
             member = collection[point]
             target = _path_value(member, (*spec.target.suffix, *path))
-            definitions.append(
-                ((*spec.target.path, str(point), *spec.target.suffix, *path), target, _substitute(expression, bindings))
-            )
+            definitions.append(((*spec.target.path, str(point), *spec.target.suffix, *path), target, value))
     return tuple(definitions)
 
 
-def _validate_model_rule(expression: Expr, index: Symbol, start: int, targets: set[Vector]) -> set[_VectorElement]:
-    if any(
-        not isinstance(part, _ScopedExpression) and index in _bound_coordinates(part)
-        for part in expression.atoms(Basic)
-    ):
-        raise ModelDefinitionError("Use a distinct local index inside a recurrence's nested operators")
-    terms = _expand_finite_indexed(expression).atoms(_VectorElement)
-    for term in terms:
-        if term.vector in targets and index in term.index.free_symbols:
-            lag = simplify(index - term.index)
-            if not isinstance(lag, Integer) or not 0 <= lag <= start:
-                raise ModelDefinitionError(
-                    "Relative model equations use current terms or lags covered by their history"
-                )
-    return terms
+def _guard_relative_indices(expression: Basic, position: Symbol) -> Basic:
+    """Relative positions never inherit Python's negative-index wraparound."""
+    guards = {}
+    # The fresh position can occur freely inside an embedded declaration;
+    # its local binders cannot capture this marker.
+    for term in expression.atoms(_VectorElement):
+        if position not in term.index.free_symbols:
+            continue
+        count = sympify(term.vector.shape[0])
+        if not isinstance(count, Integer):
+            raise ModelDefinitionError("Recurrent inputs must use a finite declared vector window")
+        valid = And(Contains(term.index, S.Integers), term.index >= 0, term.index < count)
+        guards[term] = Piecewise((term, valid), (S.NaN, True))
+    return expression.xreplace(guards)

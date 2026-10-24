@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, TypeVar
 
 from sympy import (
     And,
@@ -14,6 +14,9 @@ from sympy import (
     Expr,
     Integral,
     Limit,
+    Mul,
+    Ne,
+    Or,
     Piecewise,
     Product,
     Q,
@@ -22,10 +25,64 @@ from sympy import (
     Sum,
     Symbol,
     diff,
+    piecewise_fold,
+    refine,
     simplify,
 )
 
 from modello.errors import ModelInputError
+
+_Atom = TypeVar("_Atom", bound=Basic)
+
+
+def _scalar_atoms(expression: Basic, kind: type[_Atom]) -> set[_Atom]:
+    """Find scalar terms without entering the local bodies of declarations."""
+    found: set[_Atom] = set()
+    pending = [expression]
+    visited: set[Basic] = set()
+    while pending:
+        value = pending.pop()
+        if value in visited or isinstance(value, _SymbolicTemplate):
+            continue
+        visited.add(value)
+        if isinstance(value, kind):
+            found.add(value)
+        pending.extend(value.args)
+    return found
+
+
+def _denominator_condition(expression: Expr) -> Basic:
+    """Retain explicit poles before substitution or algebra can cancel them."""
+    if _definitely_undefined(expression):
+        return S.false
+    if isinstance(expression, Piecewise):
+        remaining = S.true
+        cases = []
+        for value, condition in expression.args:
+            cases.append(And(remaining, condition, _denominator_condition(value)))
+            remaining = And(remaining, ~condition)
+        return Or(*cases)
+    if isinstance(expression, (_SymbolicTemplate, _ScopedOperator, Sum, Product, Integral, Derivative, Limit, Subs)):
+        return S.true
+    return And(
+        *(Ne(factor, 0) for factor in Mul.make_args(expression.as_numer_denom()[1])),
+        *(_denominator_condition(arg) for arg in expression.args if isinstance(arg, Expr)),
+    )
+
+
+def _defined_part(expression: Expr) -> Expr:
+    """Use a guarded expression only under its separately retained domain."""
+    if isinstance(expression, Piecewise) and expression.args[-1] == (S.NaN, S.true) and len(expression.args) > 1:
+        return Piecewise(*expression.args[:-2], (expression.args[-2][0], True))
+    return expression
+
+
+def _conditioned(expression: Expr, condition: Basic) -> Expr:
+    if condition is not S.true:
+        condition = refine(condition)
+    if condition is S.true:
+        return expression
+    return piecewise_fold(Piecewise((expression, condition), (S.NaN, True)))
 
 
 class _ScopedExpression:
@@ -89,8 +146,11 @@ class _FunctionSymbol(Dummy):
         return _FunctionSymbol(self.name, **self.assumptions0)
 
 
-class _DeclarationSymbol(Dummy):
+class _DeclarationSymbol(_FunctionSymbol):
     """Identity retained when a law's local coordinates are alpha-renamed."""
+
+    def bound(self, name: str) -> _DeclarationSymbol:
+        return type(self)(self.name, **self.assumptions0)
 
 
 def _bound_coordinates(expression: Basic) -> tuple[Basic, ...]:

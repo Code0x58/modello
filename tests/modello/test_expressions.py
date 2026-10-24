@@ -22,7 +22,7 @@ from sympy import (
 
 from modello import Index, InstanceDummy, Modello, Vector, component, inspect_model
 from modello._expressions import _evaluate
-from modello.errors import ModelInputError, SolverBackendError
+from modello.errors import ModelInputError
 
 
 @pytest.mark.parametrize("first,last", [(0, 3), (-4, -1), (2, 1), (2, 0), (3, 0)])
@@ -67,9 +67,8 @@ def test_calculus_rejects_indirect_cyclic_dependencies(indirect):
 
     with pytest.raises(ModelInputError, match="cyclic"):
         inspect_model(Cyclic, "cycle").solutions()
-    with pytest.raises(SolverBackendError) as caught:
+    with pytest.raises(ModelInputError, match="cyclic"):
         Cyclic("cycle", x=0)
-    assert isinstance(caught.value.backend_error, NotImplementedError)
 
 
 def test_calculus_does_not_choose_arbitrarily_between_joint_definitions():
@@ -91,9 +90,8 @@ def test_calculus_does_not_choose_arbitrarily_between_joint_definitions():
 
     with pytest.raises(ModelInputError, match="multiply defined"):
         inspect_model(Differentiated, "ambiguous").solutions()
-    with pytest.raises(SolverBackendError) as caught:
+    with pytest.raises(ModelInputError, match="multiply defined"):
         Differentiated("ambiguous")
-    assert isinstance(caught.value.backend_error, NotImplementedError)
 
     class LocalCoordinate(Joined):
         slope = Derivative(Joined.alias**2, Joined.alias)
@@ -262,9 +260,8 @@ def test_calculus_through_a_cycle_reports_an_explicit_limitation():
 
     problem = inspect_model(Cyclic, "cycle")
     assert problem.constraints[-1].right.has(Derivative)
-    with pytest.raises(SolverBackendError) as caught:
+    with pytest.raises(ModelInputError, match="cyclic"):
         Cyclic("cycle", x=0)
-    assert isinstance(caught.value.backend_error, NotImplementedError)
     with pytest.raises(ModelInputError, match="cyclic"):
         problem.solutions()
 

@@ -33,7 +33,9 @@ The law has no fixed horizon. The query at position ten and the window from
 zero through four are separate views. In model definitions and family queries,
 ``T[k]`` uses its declared recurrence; ``law.at(k)`` explicitly selects one law.
 Use the populated instance's law for direct evaluation outside a model.
-Composed series queries need the model or solution family's law registry;
+Explicit queries such as ``other_law.at(n)`` compose directly, including nested
+queries evaluated by one ``.doit()``. Unqualified terms from several series need
+the model or solution family's law registry;
 ``family.expression(problem.symbols.T[k])`` retains that context.
 
 Series indices are mathematical positions: ``T[n-1]`` is the predecessor and
@@ -55,8 +57,9 @@ Its fixed positive lags must be covered by that history:
    >>> law.start, law.at(10).doit()
    (2, 55)
 
-History may start at a negative or shifted position. Queries before it are
-undefined. Series domains apply to intermediate states as well as exposed
+History may start at a negative or shifted position. Fixed references to initial
+positions, such as ``T[0]``, can also appear in the transition. Queries before
+the history are undefined. Series domains apply to intermediate states as well as exposed
 outputs. For example, a positive terminal value cannot excuse a negative
 predecessor in a positive series.
 
@@ -138,7 +141,7 @@ values conditional on a supplied Wiener increment. ``mean`` and ``variance``
 give conditional moments, also supporting affine additive diffusions such as
 mean reversion. A realised increment of zero generally differs from the mean.
 Elapsed time must be nonnegative; zero time requires a zero increment. Initial
-values must satisfy the state domain.
+values and exact realised endpoints must satisfy the state domain.
 Zero elapsed time returns the initial value or zero variance even when no
 nonzero-time closed form is supported.
 
@@ -160,7 +163,11 @@ An exact mean-reverting path requires a weighted stochastic integral; a single
 increment is insufficient. Zero diffusion retains deterministic exact paths.
 Multiple drivers, correlations, arbitrary stochastic integrals, and general
 SDE boundary problems are outside the supported solvers.
-The :doc:`generality review <generality>` describes further mathematical and
+Known process dependencies remain attached to returned laws: observing another
+state at a point does not make it a constant coefficient for exact moments.
+Declare related processes together when their dynamics matter. These checks do
+not prove that an entire path stays in its declared state domain.
+The :doc:`solver boundaries <generality>` describe further mathematical and
 computational boundaries and the independent regression scenarios.
 
 ``problem.templates`` exposes scoped, read-only laws. The explorer retains
