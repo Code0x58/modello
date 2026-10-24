@@ -49,7 +49,7 @@ from sympy.solvers.solveset import NonlinearError
 
 from modello._expressions import _evaluate, _substitute
 from modello._model import InstanceDummy, _populate
-from modello._operators import _ScopedOperator
+from modello._operators import _scalar_expression, _ScopedOperator
 from modello._paths import _path_label, _path_value
 from modello._problem import (
     Candidate,
@@ -108,10 +108,7 @@ def _require_exact(*expressions: Basic, allow_operators: bool = False) -> None:
 
 
 def _exact_scalar(value: object, *, allow_operators: bool = False) -> Expr:
-    try:
-        expression = sympify(value)
-    except (TypeError, ValueError, AttributeError) as error:
-        raise ModelInputError("Expected a commutative scalar expression") from error
+    expression = _scalar_expression(value, "Expected a commutative scalar expression")
     commutativity_probe = expression
     if allow_operators and isinstance(expression, Expr) and expression.has(Limit):
         # Native Limit does not infer commutativity from its scalar body.

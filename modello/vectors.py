@@ -11,11 +11,13 @@ from collections.abc import Callable, Iterator, Sequence
 from functools import cached_property
 from typing import Any, TypeAlias, overload
 
-from sympy import Basic, Expr, Integer, Product, S, Sum, Symbol, Tuple, simplify, sympify
+from sympy import Basic, Expr, Integer, Product, S, Sum, Symbol, Tuple, simplify
+from sympy.matrices import MatrixBase
+from sympy.tensor.array import NDimArray
 
-from modello._operators import _FunctionSymbol
+from modello._operators import _FunctionSymbol, _scalar_expression
 from modello._symbols import Index, InstanceDummy
-from modello._values import ScalarValue, SymbolicScalar
+from modello._values import ScalarValue, SymbolicScalar, SymbolicVector
 from modello.errors import ModelInputError
 
 __all__ = ["Vector", "VectorValue", "vector"]
@@ -32,7 +34,10 @@ class Vector(Basic):
     """
 
     def __new__(
-        cls, *values: ScalarValue | Sequence[ScalarValue], size: int | SymbolicScalar | None = None, **assumptions: Any
+        cls,
+        *values: ScalarValue | Sequence[ScalarValue] | SymbolicVector,
+        size: int | SymbolicScalar | None = None,
+        **assumptions: Any,
     ) -> Vector:
         if size is not None:
             if len(values) != 1 or not isinstance(values[0], str) or not values[0]:
@@ -47,18 +52,16 @@ class Vector(Basic):
         else:
             if assumptions:
                 raise ModelInputError("Assumptions apply to declared vectors; supply a name and size")
+            supplied: Sequence[object] = values
             if (
                 len(values) == 1
-                and isinstance(values[0], (Vector, Sequence, Tuple))
+                and isinstance(values[0], (Vector, Sequence, Tuple, MatrixBase, NDimArray))
                 and not isinstance(values[0], (str, bytes))
             ):
-                values = tuple(values[0])
-            try:
-                entries = tuple(sympify(value) for value in values)
-            except (TypeError, ValueError) as error:
-                raise ModelInputError("Vector entries must be SymPy-compatible scalars") from error
-            if any(not isinstance(value, Expr) or value.is_Matrix for value in entries):
-                raise ModelInputError("Vector entries must be SymPy-compatible scalars")
+                supplied = _vector_input(values[0], None, "Vector")
+            entries = tuple(
+                _scalar_expression(value, "Vector entries must be SymPy-compatible scalars") for value in supplied
+            )
         return Basic.__new__(cls, *entries)
 
     @property
@@ -113,11 +116,8 @@ class Vector(Basic):
             return Vector(*(self._at(i) for i in range(len(self))[index]))
         if isinstance(index, bool):
             raise ModelInputError("A vector index must be an integer")
-        try:
-            position = sympify(index)
-        except (TypeError, ValueError) as error:
-            raise ModelInputError("A vector index must be an integer") from error
-        if not isinstance(position, Expr) or _invalid_index(position):
+        position = _scalar_expression(index, "A vector index must be an integer")
+        if _invalid_index(position):
             raise ModelInputError("A vector index must be an integer")
         if isinstance(position, Integer):
             return self._at(int(position))
@@ -308,17 +308,12 @@ class _VectorFormula(Vector):
         limits: tuple[Symbol, int | Expr, int | Expr] | Tuple,
         _integer_bounds: Basic | None = None,
     ) -> _VectorFormula:
+        expression = _scalar_expression(expression, "Use vector(expression, (index, first, last))")
         try:
-            expression = sympify(expression)
             limits = Tuple(*limits)
         except (TypeError, ValueError) as error:
             raise ModelInputError("Use vector(expression, (index, first, last))") from error
-        if (
-            not isinstance(expression, Expr)
-            or expression.is_Matrix
-            or len(limits) != 3
-            or not isinstance(limits[0], Symbol)
-        ):
+        if len(limits) != 3 or not isinstance(limits[0], Symbol):
             raise ModelInputError("Use vector(expression, (index, first, last))")
         # Native alpha-renaming temporarily removes coordinate assumptions.
         # Preserve the original integer-bound premise in canonical arguments,
@@ -423,7 +418,7 @@ def vector(expression: ScalarValue, limits: tuple[Symbol, int | SymbolicScalar, 
     return _VectorFormula(expression, limits)
 
 
-VectorValue: TypeAlias = Vector | Sequence[ScalarValue | None]
+VectorValue: TypeAlias = Vector | Sequence[ScalarValue | None] | SymbolicVector
 
 
 def _invalid_index(index: Expr) -> bool:
@@ -433,13 +428,7 @@ def _invalid_index(index: Expr) -> bool:
 
 
 def _factor(scalar: ScalarValue) -> Expr:
-    try:
-        value = sympify(scalar)
-    except (TypeError, ValueError) as error:
-        raise ModelInputError("Scale a vector by a scalar; use dot for a contraction") from error
-    if not isinstance(value, Expr) or value.is_Matrix:
-        raise ModelInputError("Scale a vector by a scalar; use dot for a contraction")
-    return value
+    return _scalar_expression(scalar, "Scale a vector by a scalar; use dot for a contraction")
 
 
 def _local_index(*vectors: Vector) -> Index:
@@ -456,9 +445,17 @@ def _local_index(*vectors: Vector) -> Index:
 
 def _vector_input(value: object, size: int | None, path: str) -> tuple[object, ...]:
     """Read finite observations, optionally checking their resolved shape."""
-    if not isinstance(value, (Vector, Sequence, Tuple)) or isinstance(value, (str, bytes)):
+    if isinstance(value, MatrixBase):
+        if value.rows != 1 and value.cols != 1 and value.shape != (0, 0):
+            raise ModelInputError(f"{path} needs a row or column matrix; received shape {value.shape}")
+    elif isinstance(value, NDimArray):
+        if value.rank() != 1:
+            raise ModelInputError(f"{path} needs a one-dimensional array; received shape {value.shape}")
+    elif not isinstance(value, (Vector, Sequence, Tuple)) or isinstance(value, (str, bytes)):
         count = "" if size is None else f"{size} "
-        raise ModelInputError(f"{path} must be a vector or a sequence of {count}scalar values")
+        raise ModelInputError(
+            f"{path} must be a vector, a native vector container, or a sequence of {count}scalar values"
+        )
     if isinstance(value, Vector) and not value._finite:
         raise ModelInputError(f"{path} observations must have a known finite length")
     if size is not None and len(value) != size:

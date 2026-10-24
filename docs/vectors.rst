@@ -92,8 +92,8 @@ its size expression.
 
 .. _custom-vector-operations:
 
-Custom operations and SymPy interoperability
---------------------------------------------
+Custom scalar operations
+-------------------------
 
 ``applyfunc(f)`` preserves the vector's length and order while applying a scalar
 expression builder. It accepts ordinary functions, Python lambdas, native SymPy
@@ -140,25 +140,9 @@ expression. Python lambdas do not close over a class namespace:
    >>> Calibration("forward", readings=[1, 2, 3], scale=2).adjusted
    [3, 5, 7]
 
-Finite vectors pass directly to SymPy's ``Array`` and ``Matrix`` constructors.
-Their ``elements`` tuple supplies scalar outputs to ``lambdify``:
-
-.. code-block:: pycon
-
-   >>> from sympy import Matrix, lambdify
-   >>> gain = Symbol("gain", real=True)
-   >>> response = x.applyfunc(lambda value: gain * value)
-   >>> Array(response).shape, Matrix(response).shape
-   ((3,), (3, 1))
-   >>> calculate = lambdify(gain, response.elements, modules="math")
-   >>> calculate(2)
-   (2, 4, 6)
-
-Specialize the size before exporting individual entries. Scalar results are
-ordinary SymPy expressions, ready for substitution, simplification, calculus,
-or numerical compilation. Within a solution family, use ``family.expression``
-to express outputs in its remaining coordinates first. Conditions remain on the
-family; numerical compilation alone does not check them.
+Native one-dimensional arrays and row or column matrices also work as vector
+inputs. See :doc:`interoperability` for exchanging containers, symbolic
+expressions, and numerical functions with SymPy.
 
 Inspection and solution families
 --------------------------------

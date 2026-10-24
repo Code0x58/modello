@@ -362,7 +362,7 @@ def test_unsupported_expression_kinds_fail_with_owned_input_errors(kind, message
     "value, message",
     [
         pytest.param(0.1, "exact", id="inexact-float"),
-        pytest.param(MatrixSymbol("matrix", 2, 2), "commutative scalar", id="matrix"),
+        pytest.param(MatrixSymbol("matrix", 2, 2), "scalar", id="matrix"),
         pytest.param(Symbol("operator", commutative=False), "commutative scalar", id="noncommutative-symbol"),
     ],
 )

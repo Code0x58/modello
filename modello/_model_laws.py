@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping
 from sympy import Basic, Expr, Symbol, Tuple
 
 from modello._collections import _Location
+from modello._evaluation import _rebind
 from modello._operators import _DeclarationSymbol, _SymbolicTemplate
 from modello._paths import FieldPath
 from modello.vectors import Vector
@@ -87,6 +88,6 @@ class _ModelLawSpec:
             self,
             target=self.target.substitute(bindings),
             columns={path: vector.xreplace(bindings) for path, vector in self.columns.items()},
-            template=self.template.xreplace(scalar_bindings),
-            updates=tuple((path, expression.xreplace(bindings)) for path, expression in self.updates),
+            template=_rebind(self.template, scalar_bindings),
+            updates=tuple((path, _rebind(expression, bindings)) for path, expression in self.updates),
         )

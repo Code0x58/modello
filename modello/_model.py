@@ -6,9 +6,12 @@ from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
 from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, TypeVar, cast
 
-from sympy import Basic, Expr, Integer, Symbol, sympify
+from sympy import Basic, Expr, Integer, Lambda, Symbol, sympify
+from sympy.matrices import MatrixBase
+from sympy.tensor.array import NDimArray
 
 from modello._collections import _Location, _ModelVectorSpec, _Selection, _UnresolvedSelection
+from modello._evaluation import _rebind
 from modello._expressions import _declaration, _DefinitionResolver, _substitute
 from modello._model_laws import ModelRecurrence, _ModelLawSpec
 from modello._operators import _FunctionSymbol, _SymbolicTemplate
@@ -134,7 +137,7 @@ class _ModelReference:
     @property
     def _modello_templates(self) -> dict[FieldPath, _SymbolicTemplate]:
         return {
-            path: value.xreplace(self._modello_bindings)
+            path: _rebind(value, self._modello_bindings)
             for path, value in self._modello_model._modello_definition.templates.items()
         }
 
@@ -327,11 +330,11 @@ class ModelloMetaNamespace(dict):
         self._replacements = {d: replacements.get(value, value) for d, value in self._replacements.items()}
         self._replacements.update(replacements)
         self._missing = {value.xreplace(replacements): path for value, path in self._missing.items()}
-        self.attrs = {key: expr.xreplace(replacements) for key, expr in self.attrs.items()}
+        self.attrs = {key: _rebind(expr, replacements) for key, expr in self.attrs.items()}
         self.dummies = {key: replacements.get(d, d) for key, d in self.dummies.items()}
         self.vectors = {key: value.xreplace(replacements) for key, value in self.vectors.items()}
-        self.vector_attrs = {key: value.xreplace(replacements) for key, value in self.vector_attrs.items()}
-        self.templates = {key: value.xreplace(replacements) for key, value in self.templates.items()}
+        self.vector_attrs = {key: _rebind(value, replacements) for key, value in self.vector_attrs.items()}
+        self.templates = {key: _rebind(value, replacements) for key, value in self.templates.items()}
         self.collections = {key: value.substitute(replacements) for key, value in self.collections.items()}
         self.views = {key: value.substitute(replacements) for key, value in self.views.items()}
         self.model_laws = {key: value.substitute(replacements) for key, value in self.model_laws.items()}
@@ -426,7 +429,7 @@ class ModelloMetaNamespace(dict):
         elif isinstance(value, _SymbolicTemplate):
             if key in self.dummies or key in self.vectors or key in self.nested_models:
                 raise ModelDefinitionError(f"Cannot replace a model quantity {self.name}.{key} with a symbolic law")
-            template = cast(_SymbolicTemplate, value.xreplace(self._replacements))
+            template = cast(_SymbolicTemplate, _rebind(value, self._replacements))
             if key in self.templates:
                 if self.templates[key]._binding_signature != template._binding_signature:
                     raise ModelDefinitionError(f"Cannot change the kind of symbolic declaration {self.name}.{key}")
@@ -435,8 +438,8 @@ class ModelloMetaNamespace(dict):
                 self._replace({self.templates[key]: template})
             self.templates[key] = template
             value = template
-        elif isinstance(value, Vector):
-            value = self._declare_vector(key, value)
+        elif isinstance(value, (Vector, MatrixBase, NDimArray)):
+            value = self._declare_vector(key, value if isinstance(value, Vector) else Vector(value))
         elif isinstance(value, Basic):
             value = self._declare_scalar(key, value)
         elif is_model:
@@ -449,9 +452,17 @@ class ModelloMetaNamespace(dict):
 
     def _declare_scalar(self, key: str, value: Basic) -> InstanceDummy:
         """Bind an expression and propagate changes to inherited aliases."""
+        if isinstance(value, Lambda):
+            raise ModelDefinitionError(
+                "A Lambda is a function, not a scalar quantity; apply it inline or keep it outside the model class"
+            )
+        if not isinstance(value, Expr) or value.is_Matrix:
+            raise ModelDefinitionError(
+                f"{self.name}.{key} must be a scalar expression; use Vector for vector containers"
+            )
         if key in self.nested_models or key in self.vectors or key in self.templates:
             raise ModelDefinitionError(f"Cannot replace nested model {self.name}.{key} with a scalar")
-        expr = _declaration(value).xreplace(self._replacements)
+        expr = _rebind(_declaration(value), self._replacements)
         dummy = expr if isinstance(expr, InstanceDummy) else self.dummies.get(key)
         if dummy is None:
             dummy = InstanceDummy(key, **expr.assumptions0)
@@ -469,7 +480,7 @@ class ModelloMetaNamespace(dict):
         """Keep the indexed formula while giving each coordinate a scalar identity."""
         if key in self.dummies or key in self.nested_models or key in self.templates:
             raise ModelDefinitionError(f"Cannot replace scalar or nested model {self.name}.{key} with a vector")
-        expression = value.xreplace(self._replacements)
+        expression = _rebind(value, self._replacements)
         previous = self.vectors.get(key)
         if previous is not None:
             self._require_shape(key, previous, expression)
@@ -601,7 +612,7 @@ class ModelloMetaNamespace(dict):
                 _Definition(
                     (attr, *constraint.path),
                     replacements[constraint.left],
-                    constraint.right.xreplace(replacements).xreplace(self._replacements),
+                    _rebind(_rebind(constraint.right, replacements), self._replacements),
                 )
                 for constraint in definition.constraints
                 if not any((attr, *constraint.path)[: len(path)] == path for path in self.aliases)
@@ -628,11 +639,11 @@ class ModelloMetaNamespace(dict):
             replacements = child._modello_bindings
             vectors.update(((name, *path), value.xreplace(replacements)) for path, value in definition.vectors.items())
             vector_definitions.update(
-                ((name, *path), value.xreplace(replacements).xreplace(self._replacements))
+                ((name, *path), _rebind(_rebind(value, replacements), self._replacements))
                 for path, value in definition.vector_definitions.items()
             )
             templates.update(
-                ((name, *path), value.xreplace(replacements).xreplace(self._replacements))
+                ((name, *path), _rebind(_rebind(value, replacements), self._replacements))
                 for path, value in definition.templates.items()
             )
         constraints = [_Definition(c.path, c.left, _project_series(c.right, templates.values())) for c in constraints]

@@ -57,6 +57,7 @@ the API and diagnostic guarantees are separate reference material.
    series
    model-vectors
    solutions
+   interoperability
    debugging
    gui
 

@@ -37,7 +37,11 @@ from modello.vectors import _VectorFormula
 
 def _declaration(expression: Basic) -> Basic:
     """Retain operators in the user-facing definition; simplify ordinary scalars."""
-    return expression if expression.has(*_OPERATORS) else simplify(expression)
+    if expression.has(*_OPERATORS):
+        return expression
+    condition = _denominator_condition(expression)
+    value = simplify(expression)
+    return value if _denominator_condition(value) == condition else _conditioned(value, condition)
 
 
 class _DefinitionResolver:

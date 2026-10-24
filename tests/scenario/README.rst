@@ -62,6 +62,11 @@ Module                           Contracts
                                  calculus; standalone/native/finite bodies;
                                  zero-time identities and domains; inverse
                                  coefficient fitting; named model definitions.
+``test_sympy_interop``           Native array/matrix round trips and shape
+                                 inference; mutable input snapshots; deferred
+                                 operators and source denominator domains;
+                                 class series inputs; native function rules;
+                                 numerical exports and checked solver returns.
 ``test_symbolic_protocol``       SymPy reconstruction, copying/serialization,
                                  alpha-renaming, scopes, assumptions, and native
                                  operators surrounding custom declarations.

@@ -40,6 +40,7 @@ from modello._operators import (
     _denominator_condition,
     _FunctionSymbol,
     _scalar_atoms,
+    _scalar_expression,
     _ScopedOperator,
     _SymbolicTemplate,
     _value_condition,
@@ -135,11 +136,8 @@ class _SeriesTerm(_ScopedOperator):
     is_commutative = True
 
     def __new__(cls, series: Series, index: ScalarValue) -> _SeriesTerm:
-        try:
-            point = sympify(index)
-        except (TypeError, ValueError) as error:
-            raise ModelInputError("A series coordinate must be scalar") from error
-        if not isinstance(series, Series) or not isinstance(point, Expr) or point.is_Matrix:
+        point = _scalar_expression(index, "A series coordinate must be scalar")
+        if not isinstance(series, Series):
             raise ModelInputError("A series coordinate must be scalar")
         if series.discrete and _invalid_index(point):
             raise ModelInputError("A discrete series coordinate must be an integer")
@@ -190,11 +188,9 @@ class Recurrence(_SymbolicTemplate):
         start: int | Integer | None = None,
         _declaration: _DeclarationSymbol | None = None,
     ) -> Recurrence:
-        body = sympify(expression)
+        body = _scalar_expression(expression, "A recurrence expression must be scalar")
         if not isinstance(target, _SeriesTerm) or not target.series.discrete or not isinstance(target.index, Symbol):
             raise ModelInputError("Use Recurrence(T[n], expression, initial={0: value}) with an integer index")
-        if not isinstance(body, Expr) or body.is_Matrix:
-            raise ModelInputError("A recurrence expression must be scalar")
         body = body.xreplace(
             {
                 term.series: target.series
@@ -203,27 +199,26 @@ class Recurrence(_SymbolicTemplate):
             }
         )
         entries = (
-            Tuple(*(Tuple(sympify(key), sympify(value)) for key, value in initial.items()))
-            if isinstance(initial, Mapping)
-            else initial
+            Tuple(*(Tuple(key, value) for key, value in initial.items())) if isinstance(initial, Mapping) else initial
         )
         if (
             not isinstance(entries, Tuple)
             or not entries
             or any(
-                not isinstance(pair, Tuple)
-                or len(pair) != 2
-                or not isinstance(pair[0], Integer)
-                or not isinstance(pair[1], Expr)
-                or pair[1].is_Matrix
-                or target.index in pair[1].free_symbols
-                for pair in entries
+                not isinstance(pair, Tuple) or len(pair) != 2 or not isinstance(pair[0], Integer) for pair in entries
             )
         ):
             raise ModelInputError(
                 "Initial history needs integer positions and scalar values independent of the local index"
             )
-        entries = Tuple(*sorted(entries, key=lambda pair: pair[0]))
+        entries = Tuple(
+            *(
+                Tuple(point, _scalar_expression(value, "Initial history values must be scalar"))
+                for point, value in sorted(entries, key=lambda pair: pair[0])
+            )
+        )
+        if any(target.index in value.free_symbols for _, value in entries):
+            raise ModelInputError("Initial history values must be independent of the local index")
         if any(
             term.series.symbol == target.series.symbol
             for _, value in entries
@@ -476,8 +471,8 @@ class _RecurrenceValue(_ScopedOperator):
     is_commutative = True
 
     def __new__(cls, recurrence: Recurrence, index: ScalarValue) -> _RecurrenceValue:
-        point = sympify(index)
-        if not isinstance(point, Expr) or _invalid_index(point):
+        point = _scalar_expression(index, "A recurrence position must be an integer")
+        if _invalid_index(point):
             raise ModelInputError("A recurrence position must be an integer")
         return Expr.__new__(cls, recurrence, point)
 

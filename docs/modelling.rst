@@ -115,8 +115,9 @@ Python function or SymPy ``Lambda``. It uses the same name as SymPy arrays:
    17
 
 Use an indexed comprehension when the operation needs positions or several
-vectors. See :ref:`custom-vector-operations` for composition and export to
-SymPy arrays or numerical functions.
+vectors. See :ref:`custom-vector-operations` for composition and
+:doc:`interoperability` for exchanging native containers, formulas, and solver
+answers.
 
 See :doc:`vectors` for partial data, domains, and fitting with these formulas.
 For a collection of complete models, use :doc:`model_vector <model-vectors>`.

@@ -10,6 +10,8 @@ Representations and composition
 
 * :class:`~modello.Vector` contains scalar coordinates. Observed lengths and
   explicit size fields determine its finite shape before scalar solving.
+  Native one-dimensional arrays and concrete row/column matrices work as
+  declarations and observations; conversion retains order and copies entries.
   ``applyfunc`` accepts symbolic scalar functions and preserves shape; indexed
   comprehensions also express operations involving positions or several vectors.
   :func:`~modello.model_vector` retains a typed model at each position,
@@ -53,7 +55,8 @@ through symbolic reconstruction and renaming. Independently scoped components
 remain independent. Named definitions expand in their declaration context
 before calculus or parameter observations are applied.
 
-Explicit denominator exclusions are retained through library substitution,
+Scalar inputs are sympified without eager simplification. Explicit denominator
+exclusions are retained through declaration rebinding, library substitution,
 finite reduction, and cancellation. A zero observation cannot turn an undefined
 ratio into a valid zero. Inactive Piecewise branches and empty reductions do
 not evaluate unused operations. Limits with unresolved parameters, and
@@ -123,5 +126,6 @@ requirements explicitly when simplification removes them. Upstream-only
 regressions record independently reproduced SymPy failures separately.
 
 ``tests/scenario/README.rst`` maps independent regression scenarios to these
-contracts. See :doc:`series`, :doc:`model-vectors`, and :doc:`solutions` for the
+contracts. See :doc:`interoperability` for native expression and container
+exchange, and :doc:`series`, :doc:`model-vectors`, and :doc:`solutions` for the
 supported workflows.

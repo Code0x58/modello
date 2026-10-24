@@ -35,6 +35,7 @@ from sympy import (
 from sympy.core.function import AppliedUndef
 from sympy.solvers.solveset import NonlinearError
 
+from modello._evaluation import _rebind
 from modello._expressions import _evaluate, _substitute
 from modello._inputs import _InputCapture
 from modello._model import ModelloMeta, _ModelReference
@@ -176,7 +177,7 @@ class ModelProblem(Generic[ModelT]):
         """Read-only series and laws in this problem's scalar and function scope."""
         return MappingProxyType(
             {
-                path: value.xreplace(self._declaration_bindings)
+                path: _rebind(value, self._declaration_bindings)
                 for path, value in self.model._modello_definition.templates.items()
             }
         )
@@ -229,7 +230,7 @@ class ModelProblem(Generic[ModelT]):
         bindings = {dummy: fields[path] for path, dummy in self.model._modello_definition.fields.items()}
         return MappingProxyType(
             {
-                path: value.xreplace(bindings)
+                path: _rebind(value, bindings)
                 for path, value in self.model._modello_definition.vector_definitions.items()
             }
         )
@@ -398,7 +399,7 @@ def _prepare_problem(
             constraint.path,
             ConstraintKind.DEFINITION,
             bindings[constraint.left],
-            constraint.right.xreplace(bindings),
+            _rebind(constraint.right, bindings),
         )
         for i, constraint in enumerate(definition.constraints)
     ]

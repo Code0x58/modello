@@ -13,6 +13,7 @@ from sympy import (
     Eq,
     Expr,
     Integral,
+    Lambda,
     Limit,
     Mul,
     Ne,
@@ -24,10 +25,12 @@ from sympy import (
     Subs,
     Sum,
     Symbol,
+    SympifyError,
     diff,
     piecewise_fold,
     refine,
     simplify,
+    sympify,
 )
 
 from modello.errors import ModelInputError
@@ -36,6 +39,17 @@ if TYPE_CHECKING:
     from modello._expressions import _DefinitionResolver
 
 _Atom = TypeVar("_Atom", bound=Basic)
+
+
+def _scalar_expression(value: object, message: str = "Expected a SymPy-compatible scalar expression") -> Expr:
+    """Coerce scalar inputs without evaluating operators or cancelling poles."""
+    try:
+        expression = sympify(value)
+    except (SympifyError, TypeError, ValueError, AttributeError) as error:
+        raise ModelInputError(message) from error
+    if not isinstance(expression, Expr) or expression.is_Matrix or isinstance(expression, Lambda):
+        raise ModelInputError(message)
+    return expression
 
 
 def _scalar_atoms(expression: Basic, kind: type[_Atom]) -> set[_Atom]:

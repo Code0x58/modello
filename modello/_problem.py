@@ -6,14 +6,14 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, Mapping, TypeVar
 
-from sympy import Basic, Expr, FiniteSet, Interval, S, Set, Symbol, SympifyError, sympify
+from sympy import Basic, Expr, FiniteSet, Interval, S, Set, Symbol
 from sympy.printing.str import StrPrinter
 
 from modello._expressions import _DefinitionResolver, _expand_definitions
-from modello._operators import _SymbolicTemplate
+from modello._operators import _scalar_expression, _SymbolicTemplate
 from modello._paths import FieldPath as FieldPath, _path_label
 from modello._symbols import Index
-from modello.errors import ModelInputError, ModelValidationError
+from modello.errors import ModelValidationError
 from modello.vectors import Vector
 
 if sys.version_info >= (3, 11):
@@ -130,12 +130,7 @@ class FieldValue:
     value: Expr
 
     def __init__(self, field: ModelField, value: ScalarValue) -> None:
-        try:
-            expression = value if isinstance(value, Expr) else sympify(value)
-        except (SympifyError, TypeError) as error:
-            raise ModelInputError("A field value must be a SymPy-compatible scalar") from error
-        if not isinstance(expression, Expr):
-            raise ModelInputError("A field value must be a SymPy-compatible scalar")
+        expression = _scalar_expression(value, "A field value must be a SymPy-compatible scalar")
         object.__setattr__(self, "field", field)
         object.__setattr__(self, "value", expression)
 

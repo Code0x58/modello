@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Mapping
 
-from sympy import Expr, Symbol, SympifyError, simplify
+from sympy import Expr, Symbol
 
 from modello._collections import ModelObservations
+from modello._evaluation import _rebind
 from modello._model import _BoundField
-from modello._operators import _FunctionSymbol
+from modello._operators import _FunctionSymbol, _scalar_expression
 from modello._paths import _path_label, _path_value
 from modello._problem import ConstraintKind, FieldPath, ModelConstraint
 from modello.errors import ModelInputError
@@ -29,6 +30,7 @@ class _InputCapture:
         self.bindings: dict[Symbol, Symbol] = {
             dummy: self.fields[path] for path, dummy in self.model._modello_definition.fields.items()
         }
+        self.bindings.update(problem._template_bindings)
         self.constraints = list(problem.constraints)
 
     def capture(
@@ -73,15 +75,10 @@ class _InputCapture:
         source: _BoundField | None = None,
     ) -> None:
         """Validate a scalar, rebind its expression, and record its provenance."""
-        try:
-            value = simplify(raw)
-        except (SympifyError, TypeError, AttributeError) as error:
-            raise ModelInputError(f"{_path_label(path)} must be a SymPy-compatible scalar") from error
-        if not isinstance(value, Expr):
-            raise ModelInputError(f"{_path_label(path)} must be a SymPy-compatible scalar")
+        value = _scalar_expression(raw, f"{_path_label(path)} must be a SymPy-compatible scalar")
         kind = ConstraintKind.INPUT if source is None else source.copied_kind(raw)
         self.constraints.append(
-            ModelConstraint(len(self.constraints), path, kind, self.fields[path], value.xreplace(scope), group)
+            ModelConstraint(len(self.constraints), path, kind, self.fields[path], _rebind(value, scope), group)
         )
 
     def _add_component(self, attr: str, value: object) -> None:

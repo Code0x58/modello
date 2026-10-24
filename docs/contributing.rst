@@ -60,7 +60,11 @@ vector identities from their scalar coordinate paths.
 ``_values.py`` holds structural input types; ``_symbols.py`` owns independent
 quantity identities and local indices. ``vectors.py`` implements immutable
 scalar containers and finite comprehensions without importing model or GUI
-machinery. Vector coordinates use normal scalar field records. ``_paths.py``
+machinery. Its shared container reader checks native array rank and matrix
+orientation for construction and observations. ``_scalar_expression`` sympifies
+scalar inputs without evaluating them; ``_rebind`` preserves source denominator
+domains while renaming declarations. Vector coordinates use normal scalar field
+records. ``_paths.py``
 shares coordinate traversal and bracketed display paths across consumers.
 The GUI separates layout and permissions, MathML printing, bounded input parsing,
 and vector summaries under ``_gui/``. Finance and time-series examples stay above

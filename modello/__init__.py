@@ -33,6 +33,7 @@ from modello._problem import (
     _algebra,
 )
 from modello._symbols import Coordinate as Coordinate, Index as Index
+from modello._values import SymbolicVector as SymbolicVector
 from modello.annotations import Annotation as Annotation, annotate as annotate, annotate_model as annotate_model
 from modello.diagnostics import ModelProblem, _prepare_problem
 from modello.errors import (

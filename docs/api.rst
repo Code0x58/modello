@@ -24,13 +24,16 @@ API reference
    Components accept instances of their declared model class, including
    subclasses with the same field paths.
 
-   ``VectorValue`` describes vector observations: a ``Vector`` or a sequence of
-   scalar values with optional ``None`` entries for unobserved coordinates.
+   ``VectorValue`` describes vector observations: a ``Vector``, a native
+   one-dimensional array or row/column matrix, or a sequence of scalar values
+   with optional ``None`` entries for unobserved coordinates.
    Shape and field kind are checked at runtime. See :doc:`vectors` for indexed
    formulas, coordinate assumptions, and joint vector solving.
 
    Scalar expressions can use the model class's quantities or a parent's
-   component paths. Other SymPy symbols remain external parameters.
+   component paths. Other SymPy symbols remain external parameters. Native
+   vector containers assigned in a model body become ``Vector`` declarations.
+   See :doc:`interoperability` for the shared expression types and boundaries.
 
    Unknown keyword names, invalid scalar values, and incompatible component
    types raise :class:`modello.errors.ModelInputError`, also a :class:`TypeError`.
@@ -104,6 +107,8 @@ API reference
 .. autoclass:: SymbolicScalar
 
 .. autoclass:: SymbolicCondition
+
+.. autoclass:: SymbolicVector
 
 Coordinates and indexed formulas
 --------------------------------

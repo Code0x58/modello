@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import cache
 from typing import Mapping, NamedTuple
 
 from sympy import (
@@ -320,6 +321,29 @@ def _substitute(expression: Basic, values: Mapping[Symbol, Basic]) -> Basic:
             ):
                 return expression.subs(values, simultaneous=True)
     return expression.xreplace(values)
+
+
+def _rebind(expression: Basic, values: Mapping[Basic, Basic]) -> Basic:
+    """Rename a declaration without losing exclusions when arithmetic collapses."""
+    if not values:
+        return expression
+
+    @cache
+    def replace(value: Basic) -> Basic:
+        if value in values:
+            return values[value]
+        args = tuple(replace(arg) for arg in value.args)
+        if args == value.args:
+            return value
+        result = value.func(*args)
+        condition = _denominator_condition(value) if isinstance(value, Expr) else S.true
+        if condition is not S.true and isinstance(result, Expr):
+            condition = condition.xreplace(values)
+            if _denominator_condition(result) != condition:
+                result = _conditioned(result, condition)
+        return result
+
+    return replace(expression)
 
 
 def _protect_limits(expression: Basic, values: Mapping[Symbol, Basic]) -> Basic:
