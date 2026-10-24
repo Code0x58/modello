@@ -165,8 +165,9 @@ The same recurrence can infer an unreported sale price from closing cash:
 110
 
 Without that closing observation, cash remains a formula in the missing price.
-See :doc:`model-vectors` for partial states and boundary equations, or
-:doc:`series` for a scalar recurrence without a fixed observation window.
+See :doc:`model-vectors` for partial states and boundary equations. A scalar
+recurrence can instead answer position queries without choosing a finite state
+window; :ref:`sequence-representations` explains when to use each representation.
 
 Keep alternatives and check observations
 ----------------------------------------

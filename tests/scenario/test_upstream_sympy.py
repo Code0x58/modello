@@ -2,7 +2,8 @@
 
 import pytest
 import sympy
-from sympy import Sum, Symbol, diff, srepr
+from sympy import Function, Subs, Sum, Symbol, diff, srepr
+from sympy.series.sequences import RecursiveSeq
 
 
 @pytest.mark.xfail(
@@ -38,4 +39,91 @@ def test_differentiating_a_finite_polynomial_sum_preserves_its_value_at_zero():
     assert actual == expected == 2, (
         f"SymPy {sympy.__version__}: source={source!r}; derivative={derivative!r}; "
         f"srepr={srepr(derivative)}; actual={actual}; expected={expected}"
+    )
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        0,
+        pytest.param(
+            10,
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=AssertionError,
+                reason="SymPy RecursiveSeq uses an absolute position as a cache offset; diagnostics in docstring",
+            ),
+        ),
+        pytest.param(
+            -3,
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=UnboundLocalError,
+                reason="SymPy RecursiveSeq leaves its shifted-origin loop variable unbound; diagnostics in docstring",
+            ),
+        ),
+    ],
+)
+def test_recursive_sequence_coefficients_respect_a_shifted_origin(start):
+    """SymPy 1.14.0 misaddresses cached values when RecursiveSeq starts away from zero.
+
+    Standalone reproducer, with no Modello imports::
+
+        n = Symbol("n", integer=True)
+        y = Function("y")
+        seq = RecursiveSeq(y(n - 1) + 1, y(n), n, [0], start=10)
+        seq.coeff(12)  # 12; expected 2 (already stored as seq.cache[y(12)])
+
+    With start=-3, coeff(-1) raises UnboundLocalError for ``current``; start=0
+    passes. RecursiveSeq._eval_coeff in sympy/series/sequences.py iterates
+    range(len(cache), index + 1), then adds self.start to its loop variable.
+    The endpoint should use an offset from start. Positive origins compute
+    extra terms and return the wrong one; negative origins can skip the loop.
+    A workaround is a zero-based sequence with an external coordinate shift.
+    No upstream issue number has been established here. The strict xfails pin
+    the two distinct failures and must be removed once an upgrade repairs them.
+    """
+    n = Symbol("n", integer=True)
+    y = Function("y")
+    sequence = RecursiveSeq(y(n - 1) + 1, y(n), n, [0], start=start)
+    point = start + 2
+    actual = sequence.coeff(point)
+    assert actual == 2, (
+        f"SymPy {sympy.__version__}: start={start}; point={point}; actual={actual}; "
+        f"expected=2; cache={sequence.cache!r}; recurrence={srepr(sequence.recurrence)}"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="SymPy Subs equality conflates ordered overlapping replacements; diagnostics in docstring",
+)
+def test_ordered_compound_substitutions_with_different_values_have_distinct_identities():
+    """SymPy 1.14.0 equates substitutions with different ordered evaluations.
+
+    Standalone reproducer, with no Modello imports::
+
+        n, j, k = symbols("n j k")
+        f = Function("f")
+        first = Subs(f(j), (j, j+k), (j+k, n-2))
+        second = Subs(f(j), (j+k, j), (n-2, j+k))
+        first == second  # True; expected False
+        first.doit(), second.doit()  # (f(n-2), f(j+k))
+
+    Subs.doit applies replacements in order, but Subs._hashable_content in
+    sympy/core/function.py uses a normalized expression that loses that order.
+    Equal hashes and equality can then let enclosing cached expressions reuse
+    the wrong substitution, before a downstream library receives the input.
+    Use nonoverlapping symbolic binders, or evaluate substitutions before building
+    enclosing expressions when safe. No upstream issue number is established.
+    Remove this strict xfail once equality distinguishes these two operations.
+    """
+    n, j, k = (Symbol(name) for name in ("n", "j", "k"))
+    f = Function("f")
+    first = Subs(f(j), (j, j + k), (j + k, n - 2))
+    second = Subs(f(j), (j + k, j), (n - 2, j + k))
+    assert first != second, (
+        f"SymPy {sympy.__version__}: first={srepr(first)}; second={srepr(second)}; "
+        f"values={(first.doit(), second.doit())}; hashes={(hash(first), hash(second))}"
     )

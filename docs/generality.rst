@@ -19,6 +19,8 @@ Representations and composition
   equations using the ordinary solver.
 * Relative vector positions are checked without Python negative-index
   wraparound. Explicit selections such as ``states[-1]`` keep Python indexing.
+  The checks include local indices whose reduction bounds depend on a relative
+  position, including nested moving windows.
   Native sums, products, integrals, derivatives, and limits retain their own
   lexical coordinates, including when a bound name also occurs freely in its
   limits.
@@ -28,6 +30,13 @@ Representations and composition
   Explicit queries of another recurrence compose directly. Unqualified terms
   from several series use the model's law registry through model fields or
   ``family.expression``; a standalone law has no implicit global registry.
+
+Finite causal equations agree across these representations when they describe
+the same history, window, and domains. A scalar recurrence checks its declared
+initial history and states needed by a query; a model sequence checks every
+member of its declared window. A later invalid state can therefore invalidate
+that window while an earlier scalar query remains defined. See
+:ref:`sequence-representations` for choosing between them.
 
 Ordinary scalar fields are quantities, not parameterized function definitions.
 Keep relative functions inside their law or a bound comprehension. Use
@@ -105,9 +114,11 @@ parametrization.
 
 Symbolic formulas assume their declared domains. Smoothness, adaptedness,
 integrability, and pathwise domain invariance are mathematical hypotheses;
-initial and endpoint checks do not prove an entire path admissible. Conditions
-already removed by ordinary SymPy simplification before a declaration reaches
-Modello cannot be recovered. Retain such domain requirements explicitly.
+initial and endpoint checks do not prove an entire path admissible. Modello
+cannot recover information already removed or conflated during native SymPy
+expression construction, before it receives a declaration. Retain domain
+requirements explicitly when simplification removes them. Upstream-only
+regressions record independently reproduced SymPy failures separately.
 
 ``tests/scenario/README.rst`` maps independent regression scenarios to these
 contracts. See :doc:`series`, :doc:`model-vectors`, and :doc:`solutions` for the

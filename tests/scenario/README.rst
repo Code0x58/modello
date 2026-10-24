@@ -43,6 +43,10 @@ Module                           Contracts
                                  boundaries; sliding windows in equivalent
                                  notation; nested paths; invalid indices;
                                  empty/start-zero laws; disjoint state laws.
+``test_sequence_parity``         Shared finite causal answers, forward/inverse
+                                 solving and domains; moving input bounds;
+                                 native binder scopes; symbolic input sizes;
+                                 queried-prefix versus whole-window validity.
 ``test_composition_contracts``    Explicit nested laws; lexical binders; centered
                                  boundary equations; source denominator domains;
                                  unused branches/reductions; persistent process
@@ -65,7 +69,7 @@ Module                           Contracts
                                  ambiguous laws, unbound indices, schema and
                                  dimensional errors. These are explicit library
                                  limits, never upstream xfails.
-``test_upstream_sympy``          Standalone upstream-only regression reproducer.
+``test_upstream_sympy``          Standalone upstream-only regression reproducers.
 ===============================  ==============================================
 
 Regression policy

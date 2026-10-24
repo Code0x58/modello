@@ -90,24 +90,14 @@ recognizer independent of polynomial syntax: parameter-dependent ``Piecewise``
 expressions can be affine without being accepted by ``as_poly``. Local state
 variables retain the declared domain and the Itô law's real-state premise.
 
-The remaining adapters preserve model semantics. Recurrence evaluation keeps
-shifted, contiguous history and checks hidden intermediate states; replacing it
-with an unrestricted sequence solver must preserve those requirements. History
-records keep each value and its cumulative domain condition together. Scoped
-expansion protects local coordinates and diagnoses implicit calculus through
-cyclic definitions. Unknown assumptions remain distinct from disproven ones.
-Finite data reductions and explicit zero-rate kernels avoid slower generic
-symbolic work while retaining exceptional parameter cases.
-
 ``model_vectors.py`` builds typed collections and compiles relative field laws
 into ordinary scalar definitions. ``_model_laws.py`` separates structural
 declaration records from immutable source templates: normalize the entire
 record on inheritance and keep source formulas distinct from finite expansion.
-Validate positive self-lags and input bounds before Python indexing can wrap.
-Use the existing binder-aware substitution for lowering; preserve equations
-already declared by member schemas. The compiler stores ordered field updates;
-only the inspection template retains complete source equations. Deferred laws
-must trigger shape preparation rather than disappearing from a finite solve.
+Preserve equations already declared by member schemas. The compiler stores
+ordered field updates; only the inspection template retains complete source
+equations. Deferred laws must trigger shape preparation rather than disappearing
+from a finite solve.
 
 ``_collections.py`` holds deferred locations and typed sparse observations
 without importing model construction. Population allocates canonical components
@@ -124,6 +114,53 @@ mounts the existing explorer through Werkzeug, preserving URL prefixes for
 assets and API requests. Add an example when it demonstrates a distinct idea,
 and derive scenario smoke tests from the catalog. Keep mathematical regressions
 in focused library tests, independent of the gallery's menu and wording.
+
+Two sequence evaluation strategies
+----------------------------------
+
+The public choice is explained in :ref:`sequence-representations`. Both laws
+are immutable SymPy ``Basic`` declarations; their calculated quantities are
+scalar ``Expr`` objects. The common scoped-expression protocol retains identity
+and lexical bindings. Neither is a wrapper around ``IndexedBase`` or a native
+SymPy sequence class.
+
+* ``Series`` names a scalar family; its terms retain their series identity and
+  coordinate. ``Recurrence`` stores a causal transition and contiguous history.
+  It evaluates required positions while caching each value with its cumulative
+  domain condition. Affine formulas and ``rsolve`` results are used only after
+  checking boundary values, the transition, and the state domains. ``rsolve``
+  receives an ordinary SymPy ``Function`` equation.
+* ``ModelVector`` retains typed members. ``model_recurrence`` first records a
+  deferred field update; its ``ModelRecurrence`` template retains source
+  equations. Once shape is known, the compiler instantiates scalar equations
+  across the finite window. Ordinary model solving handles these jointly with
+  member equations and observations, including current or future references.
+
+Share position handling rather than these two solvers. In ``_evaluation.py``,
+``_relative_expression`` protects local binders and guards relative input
+selections, propagating through moving reduction bounds. ``_indexed_value``
+binds a position using the common substitution and finite-reduction machinery.
+Conditional scalar evaluation keeps the value separate from its domain, so
+substitution cannot hide undefined inputs or accumulate nested validity wrappers.
+``test_sequence_parity`` runs finite causal problems through both representations;
+it also checks the intentional difference between a queried prefix and an entire
+finite window.
+
+SymPy's `RecursiveSeq
+<https://docs.sympy.org/latest/modules/series/sequences.html#sympy.series.sequences.RecursiveSeq>`_
+does not replace the domain-carrying, scoped history required here. The
+upstream-only tests also reproduce incorrect nonzero-origin queries in SymPy
+1.14.0. Native ``Subs`` applies replacements in order; delegate that ordering
+instead of rebuilding it as a dependency graph. Overlapping compound binders
+can nevertheless compare equal despite different results, conflating inputs
+inside native expression caches before Modello receives them. Strict upstream
+xfails isolate these defects; library contracts must pass normally.
+
+Other adapters follow the same rule: preserve exceptional parameter cases
+while delegating supported scalar algebra to SymPy. Scoped expansion diagnoses
+implicit calculus through cyclic definitions; unknown assumptions remain
+distinct from disproven ones. Finite data reductions and explicit zero-rate
+kernels avoid slower generic symbolic work without discarding valid cases.
 
 Validation
 ----------

@@ -8,7 +8,7 @@ from dataclasses import replace
 from functools import lru_cache, partial
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast, overload
 
-from sympy import And, Basic, Contains, Eq, Expr, Integer, Piecewise, S, Symbol, SympifyError, Tuple, sympify
+from sympy import Basic, Eq, Expr, Integer, Symbol, SympifyError, Tuple, sympify
 
 from modello._collections import (
     ModelObservations,
@@ -17,7 +17,7 @@ from modello._collections import (
     _Selection,
     _UnresolvedSelection,
 )
-from modello._evaluation import _expand_finite_indexed, _substitute
+from modello._evaluation import _indexed_value, _relative_expression, _substitute
 from modello._model import ModelloMeta, ModelloMetaNamespace, _has_symbolic_shape, _known_integers, _ModelReference
 from modello._model_laws import ModelRecurrence, _ModelLawSpec
 from modello._operators import _definitely_undefined
@@ -194,11 +194,11 @@ def model_vector(model: type[_Model], *, size: int | SymbolicScalar) -> ModelVec
 
 
 def model_recurrence(target: _Model, *, start: int = 1, **updates: ScalarValue) -> ModelRecurrence:
-    """Relate fields of ``states[n]`` to current/earlier members and model inputs.
+    """Declare joint field equations over a finite model-vector window.
 
     For example, ``model_recurrence(states[n], cash=states[n-1].cash - fees[n-1])``.
-    Members before ``start`` supply the initial history. Current-step equations
-    may be implicit; explicit boundary references use ordinary finite indexing.
+    Members before ``start`` remain available for boundary observations. Equations
+    may reference current, earlier, or later members within the window.
     All quantities participate in the same joint solve as every other field.
     """
     if not isinstance(target, _Selection):
@@ -259,32 +259,12 @@ def _compile_model_law(
         raise ModelDefinitionError("The recurrence's domain must match its declared model-vector window")
     definitions = []
     for path, expression in spec.updates:
-        position = Index(law.index.name)
-        # A fresh coordinate distinguishes free relative indices from native
-        # binders that happen to use the same symbol as this law.
-        body = _substitute(_substitute(expression, {law.index: position}), known)
-        body = _guard_relative_indices(body, position)
+        body = _relative_expression(_substitute(expression, known), law.index)
         for point in range(start, int(size)):
-            value = _expand_finite_indexed(_substitute(body, {position: Integer(point)}))
+            value = _indexed_value(body, law.index, Integer(point))
             if _definitely_undefined(value):
                 raise ModelInputError("A recurrent field expression is undefined in its declared vector window")
             member = collection[point]
             target = _path_value(member, (*spec.target.suffix, *path))
             definitions.append(((*spec.target.path, str(point), *spec.target.suffix, *path), target, value))
     return tuple(definitions)
-
-
-def _guard_relative_indices(expression: Basic, position: Symbol) -> Basic:
-    """Relative positions never inherit Python's negative-index wraparound."""
-    guards = {}
-    # The fresh position can occur freely inside an embedded declaration;
-    # its local binders cannot capture this marker.
-    for term in expression.atoms(_VectorElement):
-        if position not in term.index.free_symbols:
-            continue
-        count = sympify(term.vector.shape[0])
-        if not isinstance(count, Integer):
-            raise ModelDefinitionError("Recurrent inputs must use a finite declared vector window")
-        valid = And(Contains(term.index, S.Integers), term.index >= 0, term.index < count)
-        guards[term] = Piecewise((term, valid), (S.NaN, True))
-    return expression.xreplace(guards)

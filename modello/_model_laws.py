@@ -17,7 +17,8 @@ class ModelRecurrence(_SymbolicTemplate):
     """The scoped equations returned by an indexed ``model_recurrence`` declaration.
 
     Declare a law over ``states[n]`` with named field expressions. Members before
-    ``start`` are its history; their observations participate in the joint solve.
+    ``start`` are boundary unknowns; observations anywhere in the finite window
+    participate in the joint solve. This template retains the source equations.
     """
 
     def __new__(

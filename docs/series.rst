@@ -1,13 +1,15 @@
-Relative series and recurrence laws
-===================================
+Scalar recurrence queries
+=========================
 
 ``Series`` names an indexed scalar family. ``Recurrence`` relates discrete
 positions. Their queries are scalar formulas in an ordinary Modello model, so
 the same solver can calculate results or infer parameters from observations.
 
-Use this representation for a single quantity such as ``T[n]`` when you want to
-query positions without choosing a finite horizon. For typed states containing
-several quantities, start with :doc:`model-vectors` or :doc:`getting-started`.
+Use this representation for a quantity such as ``T[n]`` when you want to query
+positions without choosing a finite horizon. A :doc:`finite model sequence
+<model-vectors>` instead solves joint equations over a declared window and can
+also express implicit updates and boundary constraints. See
+:ref:`sequence-representations` for their overlap and different semantics.
 
 One relative law, many queries
 ------------------------------
@@ -60,11 +62,17 @@ Its fixed positive lags must be covered by that history:
    >>> law.start, law.at(10).doit()
    (2, 55)
 
-History may start at a negative or shifted position. Fixed references to initial
-positions, such as ``T[0]``, can also appear in the transition. Queries before
-the history are undefined. Series domains apply to intermediate states as well
-as outputs. For example, a positive terminal value cannot excuse a negative
-predecessor in a positive series.
+History may start at a negative or shifted position. ``law.origin`` is its first
+mathematical position; ``law.start`` is the first generated position. Neither is
+a Python vector offset. Fixed references to initial positions, such as ``T[0]``,
+can also appear in the transition. Queries before the history are undefined.
+
+Series domains apply to all declared initial history and every intermediate
+state needed by the query. For example, a positive terminal value cannot excuse
+a negative predecessor in a positive series. A later invalid state does not
+invalidate an earlier query. A finite model sequence checks its entire declared
+window, so these are different problems when that window includes the invalid
+state.
 
 Finite causal queries support nonlinear laws. Verified closed forms support
 constant first-order affine laws and suitable higher-order linear laws through
@@ -93,6 +101,10 @@ Either vector's length, or an explicit ``N``, determines the finite window.
 ``None`` entries still count toward its length. Observing states and innovations
 constrains the same equation; contradictory observations are rejected. To change
 the driving data, construct a new case with innovations instead of observed states.
+Although the law has no intrinsic horizon, finite inputs constrain which queries
+are defined. Relative input positions use the same checked indexing as
+:ref:`finite model sequences <sequence-representations>`; they never wrap to the
+end of an input vector.
 
 History and observation length are separate. A recurrence of order ``p`` needs
 ``p`` history positions, but those quantities may be observed separately or
@@ -117,4 +129,4 @@ API
    :members: index, discrete
 
 .. autoclass:: Recurrence(target, expression, initial, start=None)
-   :members: at, window, initial, start, equations
+   :members: at, window, index, initial, origin, start, equations

@@ -82,7 +82,11 @@ def _defined_part(expression: Expr) -> Expr:
 
 def _conditioned(expression: Expr, condition: Basic) -> Expr:
     if condition is not S.true:
-        condition = refine(condition)
+        try:
+            condition = refine(condition)
+        except (NotImplementedError, ValueError):
+            # An unsupported assumption proof must leave the domain intact.
+            pass
     if condition is S.true:
         return expression
     return piecewise_fold(Piecewise((expression, condition), (S.NaN, True)))

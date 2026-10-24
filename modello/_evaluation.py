@@ -8,6 +8,7 @@ from sympy import (
     Add,
     And,
     Basic,
+    Contains,
     Derivative,
     Dummy,
     Eq,
@@ -19,6 +20,7 @@ from sympy import (
     Mul,
     Ne,
     Or,
+    Piecewise,
     Product,
     S,
     Subs,
@@ -34,9 +36,11 @@ from modello._operators import (
     _defined_part,
     _denominator_condition,
     _scalar_atoms,
+    _ScopedExpression,
     _ScopedOperator,
     _SymbolicTemplate,
 )
+from modello._symbols import Index
 from modello.vectors import _VectorElement, _VectorFormula
 
 _OPERATORS = (Sum, Product, Integral, Derivative, Limit, Subs, _VectorElement, _ScopedOperator)
@@ -126,7 +130,7 @@ def _calculus(operator: Limit | Integral | Derivative | Subs) -> Basic:
         body = _evaluate_scalar(operator.expr)
         points = tuple(_evaluate_scalar(point) for point in operator.point)
         held = Subs(_conditioned(*body), operator.variables, tuple(point.value for point in points))
-        value = held if _pending(body.value) else held.doit(deep=False)
+        value = held if _has_calculus(body.value) else held.doit(deep=False)
         return _conditioned(value, And(*(point.condition for point in points)))
     body = _evaluate(operator.args[0])
     variables = set(_bound_coordinates(operator))
@@ -180,6 +184,78 @@ def _regular_integral(operator: Integral, condition: Basic) -> bool:
     except (NotImplementedError, ValueError, TypeError):
         return False
     return True
+
+
+def _relative_expression(expression: Expr, index: Symbol) -> Expr:
+    """Guard free relative selections, including locally bound moving windows."""
+    position = Index(index.name)
+    body = _substitute(expression, {index: position})
+    return _substitute(_guard_relative_indices(body, frozenset({position})), {position: index})
+
+
+def _guard_relative_indices(expression: Basic, relative: frozenset[Basic]) -> Basic:
+    if isinstance(expression, (Sum, Product, Integral, _VectorFormula)):
+        limits = (expression.limits,) if isinstance(expression, _VectorFormula) else expression.limits
+        body_relative = relative
+        resolved_limits = []
+        for variable, *bounds in reversed(limits):
+            resolved_limits.append((variable, *(_guard_relative_indices(bound, body_relative) for bound in bounds)))
+            dependent = any(bound.free_symbols & body_relative for bound in bounds)
+            body_relative = body_relative - {variable}
+            if dependent:
+                body_relative = body_relative | {variable}
+        body = _guard_relative_indices(expression.function, body_relative)
+        if isinstance(expression, _VectorFormula):
+            return expression.func(body, resolved_limits[0], expression.args[2])
+        return expression.func(body, *reversed(resolved_limits))
+    if isinstance(expression, Subs):
+        bindings = list(zip(expression.variables, expression.point))
+        if not _has_calculus(expression.expr):
+            # Delegate ordered and compound substitution without evaluating its body.
+            body = expression.expr.subs(bindings)
+            condition = And(
+                _denominator_condition(expression.expr).subs(bindings),
+                *(_denominator_condition(point) for point in expression.point),
+            )
+            if body != expression:
+                return _guard_relative_indices(_conditioned(body, condition), relative)
+        local = relative
+        for variable, point in reversed(bindings):
+            dependent = bool(point.free_symbols & local)
+            local = local - {variable}
+            if dependent:
+                local = local | {variable}
+        body = _guard_relative_indices(expression.expr, local)
+        return Subs(
+            body, expression.variables, tuple(_guard_relative_indices(point, relative) for point in expression.point)
+        )
+    if isinstance(expression, _ScopedExpression):
+        scoped = relative - set(expression.protected_symbols)
+        args = tuple(
+            _guard_relative_indices(arg, scoped if i in expression.scoped_arguments else relative)
+            for i, arg in enumerate(expression.args)
+        )
+    elif isinstance(expression, Derivative):
+        local = relative - set(_bound_coordinates(expression))
+        return Derivative(_guard_relative_indices(expression.expr, local), *expression.variable_count, evaluate=False)
+    elif isinstance(expression, Limit):
+        local = relative - set(_bound_coordinates(expression))
+        args = (
+            _guard_relative_indices(expression.args[0], local),
+            *(_guard_relative_indices(arg, relative) for arg in expression.args[1:]),
+        )
+    else:
+        args = tuple(_guard_relative_indices(arg, relative) for arg in expression.args)
+    value = expression.func(*args) if args != expression.args else expression
+    if isinstance(value, _VectorElement) and value.index.free_symbols & relative:
+        valid = And(Contains(value.index, S.Integers), value.index >= 0, value.index < value.vector.shape[0])
+        return Piecewise((value, valid), (S.NaN, True))
+    return value
+
+
+def _indexed_value(expression: Basic, index: Symbol, point: Basic) -> Basic:
+    """Instantiate one position without capturing native or declared binders."""
+    return _expand_finite_indexed(_substitute(expression, {index: point}))
 
 
 def _finite_indexed_reduction(expression: Basic) -> bool:
@@ -238,7 +314,10 @@ def _substitute(expression: Basic, values: Mapping[Symbol, Basic]) -> Basic:
         expression = _protect_limits(expression, values)
     if expression.has(*_BINDERS):
         for operator in expression.atoms(*_BINDERS):
-            if any(variable in values and values[variable] != variable for variable in _bound_coordinates(operator)):
+            if any(
+                (variable in values and values[variable] != variable) or variable.free_symbols & values.keys()
+                for variable in _bound_coordinates(operator)
+            ):
                 return expression.subs(values, simultaneous=True)
     return expression.xreplace(values)
 
