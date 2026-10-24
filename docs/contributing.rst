@@ -173,6 +173,11 @@ including doctests:
    $ uv sync --locked --dev --group docs --python 3.12
    $ uv run --locked --dev pytest
 
+Use ``.. code-block:: pycon`` for executable documentation examples, including
+their imports, setup, and expected results. The configured
+``--doctest-glob=*.rst`` runs these examples directly from the displayed source.
+For a focused check, run ``uv run --locked --dev pytest --no-cov docs/modelling.rst``.
+
 Unset ``PYTEST_DISABLE_PLUGIN_AUTOLOAD`` before running pytest if your shell
 defines it. CI also checks formatting, lint, types, documentation, and both
 distribution formats. The commands are maintained in ``AGENTS.md`` and
