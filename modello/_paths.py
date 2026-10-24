@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeAlias
+
+FieldPath: TypeAlias = tuple[str, ...]
 
 
-def _path_label(path: tuple[str, ...]) -> str:
+def _path_label(path: FieldPath) -> str:
     """Keep component dots and zero-based vector subscripts unambiguous."""
     result = ""
     for part in path:
@@ -13,7 +15,7 @@ def _path_label(path: tuple[str, ...]) -> str:
     return result
 
 
-def _path_value(value: Any, path: tuple[str, ...]) -> Any:
+def _path_value(value: Any, path: FieldPath) -> Any:
     """Traverse the same schema on a reference, a populated model, or a vector."""
     for part in path:
         try:

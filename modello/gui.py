@@ -24,7 +24,7 @@ from modello import (
 from modello._gui.collections import component_views, update_collection_observations
 from modello._gui.formatting import display_number
 from modello._gui.inputs import (
-    ExplorerValue,
+    ExplorerValue as ExplorerValue,
     ModelVectorInput as ModelVectorInput,
     binding_texts,
     parse_model_vector,
@@ -46,7 +46,17 @@ from modello.errors import ModelInputError, ModelValidationError, SolverBackendE
 if TYPE_CHECKING:
     from flask import Flask
 
-__all__ = ["BindingError", "Explorer", "FieldInfo", "ModelInfo", "ModelVectorInput", "Scenario", "create_app", "gui"]
+__all__ = [
+    "BindingError",
+    "Explorer",
+    "ExplorerValue",
+    "FieldInfo",
+    "ModelInfo",
+    "ModelVectorInput",
+    "Scenario",
+    "create_app",
+    "gui",
+]
 
 _ValueT = TypeVar("_ValueT")
 _ModelT = TypeVar("_ModelT", bound=Modello)
@@ -387,12 +397,8 @@ class Explorer:
             return self._window_history(self._finite_context(shape_bindings)._browser_snapshot(bindings, raw=raw))
         parsed = self._browser_bindings(bindings)
         sizes = {path: len(value) for path, value in self._layout.vectors.items()}
-        texts = binding_texts(bindings, sizes)
-        for path, text in bindings.items():
-            if path in self._layout.collections and text:
-                for i, record in enumerate(json.loads(text)):
-                    for name, value in (record or {}).items():
-                        texts[f"{path}[{i}].{name}"] = value
+        collections = {path: len(self._layout.references[path]) for path in self._layout.collections}
+        texts = binding_texts(bindings, sizes, collections=collections)
         data = self.snapshot(parsed, raw=raw)
         data["bindings"] = binding_texts(bindings, sizes, preserve=self._layout.resizable)
         rows = {row["path"]: row for row in data["fields"]}
@@ -562,6 +568,7 @@ class Explorer:
         scaled = factor_terms(expression * 100 if info.number_format == "percent" else expression)
         parenthesize = info.number_format == "percent" and scaled.is_Add
         number, approximate = ("", False) if hidden else display_number(scaled, percent=info.number_format == "percent")
+        markup = "" if hidden else context.printer.expression(scaled, parenthesize=parenthesize)
         return {
             "path": path,
             "name": field.path[-1],
@@ -587,8 +594,8 @@ class Explorer:
             else "symbolic",
             "display_value": number,
             "approximate": approximate,
-            "value_mathml": "" if hidden else context.printer.expression(scaled, parenthesize=parenthesize),
-            "exact_mathml": "" if hidden else context.printer.expression(scaled, parenthesize=parenthesize),
+            "value_mathml": markup,
+            "exact_mathml": markup,
             "symbol_mathml": context.printer.expression(symbol),
             "input": self._input_text(path, context.supplied[symbol], context.format)
             if symbol in context.supplied and not hidden

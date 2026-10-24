@@ -83,6 +83,7 @@ modello = ["py.typed"]
 "modello._gui" = ["templates/*.html", "static/*.css", "static/*.js", "static/fonts/*"]
 examples = ["py.typed"]
 "examples.portfolio" = ["data/*.csv"]
+"examples.gallery" = ["templates/*.html", "static/*.css"]
 
 [tool.setuptools_scm]
 

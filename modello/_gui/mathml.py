@@ -226,58 +226,6 @@ class EquationPrinter(MathMLPresentationPrinter):
             ).toxml()
         )
 
-    def model_recurrence(
-        self, label: str, initial: str, transition: str, inputs: tuple[tuple[str, bool], ...], count: int
-    ) -> str:
-        """Show the component transition once, with relative state/input indices."""
-
-        def indexed(name: str, index: Any) -> Any:
-            return self._node("msub", self._node("mi", text=name), index)
-
-        def reference(name: str) -> Any:
-            match = re.fullmatch(r"(.+)\[([0-9]+)\]", name)
-            return indexed(match[1], self._node("mn", text=match[2])) if match else self._node("mi", text=name)
-
-        def lag() -> Any:
-            return self._node(
-                "mrow", self._node("mi", text="n"), self._node("mo", text="−"), self._node("mn", text="1")
-            )
-
-        arguments = [indexed(label, lag())]
-        for name, per_step in inputs:
-            arguments.extend((self._node("mo", text=","), indexed(name, lag()) if per_step else reference(name)))
-        transition_node = self._node(
-            "mrow",
-            self._node("mtext", text=transition),
-            self._fence("(", opening=True),
-            *arguments,
-            self._fence(")", opening=False),
-        )
-        rows = self._node(
-            "mtable",
-            self._node(
-                "mtr",
-                self._node(
-                    "mtd",
-                    indexed(label, self._node("mn", text="0")),
-                    self._node("mo", text="="),
-                    reference(initial),
-                ),
-            ),
-            self._node(
-                "mtr",
-                self._node(
-                    "mtd", indexed(label, self._node("mi", text="n")), self._node("mo", text="="), transition_node
-                ),
-                self._node("mtd", self._iteration(Symbol("n"), S.One, S(count))),
-            ),
-        )
-        rows.setAttribute("columnalign", "left left")
-        rows.setAttribute("columnspacing", "1em")
-        rows.setAttribute("rowspacing", "0.4em")
-        body = self._node("mrow", self._fence("{", opening=True), rows)
-        return self._markup(body.toxml(), display=True)
-
     def vector_values(self, expression: Vector) -> Any:
         """Display values as a column, independently of their vector identity."""
         table = self._node("mtable", *(self._node("mtr", self._node("mtd", self._print(v))) for v in expression))

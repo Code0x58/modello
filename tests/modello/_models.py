@@ -2,7 +2,7 @@
 
 from sympy import sin
 
-from modello import InstanceDummy, Modello, component
+from modello import Index, InstanceDummy, Modello, Recurrence, Series, Vector, component
 
 
 class Scalar(Modello):
@@ -74,3 +74,15 @@ class Envelope(Modello):
 class PositiveScalar(Modello):
     x = InstanceDummy("x", positive=True)
     alias = x
+
+
+class DrivenSequence(Modello):
+    N = InstanceDummy("N", integer=True, nonnegative=True)
+    opening = InstanceDummy("opening", real=True)
+    retention = InstanceDummy("retention", real=True)
+    innovations = Vector("epsilon", size=N, real=True)
+    n = Index("n", nonnegative=True)
+    T = Series("T", n, real=True)
+    law = Recurrence(T[n], retention * T[n - 1] + innovations[n - 1], initial={0: opening})
+    levels = law.window(0, N)
+    closing = T[N]

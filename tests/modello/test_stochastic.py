@@ -3,7 +3,7 @@
 import pytest
 from sympy import Abs, Piecewise, Rational, S, Symbol, conjugate, exp, log, simplify
 
-from modello import Coordinate, InstanceDummy, ItoProcess, Modello, Series, inspect_model
+from modello import Coordinate, InstanceDummy, ItoProcess, Modello, Series
 
 
 def test_brownian_chain_rule_and_explicit_time_dependence():
@@ -52,7 +52,7 @@ def test_affine_coefficient_recognition_preserves_parameter_dependent_cases():
     assert simplify(mean.subs(switch, -1) - (4 * exp(3) - 1) / 3) == 0
 
 
-def test_named_formulas_are_expanded_before_the_ito_derivatives_and_observations():
+def test_named_formulas_are_expanded_before_the_ito_derivatives_and_observations(solve_model):
     class Square(Modello):
         t = Coordinate("t", real=True)
         state = InstanceDummy("state", positive=True)
@@ -62,11 +62,10 @@ def test_named_formulas_are_expanded_before_the_ito_derivatives_and_observations
         squared = state**2
         drift = process.drift(squared)
 
-    assert Square("point", state=3, mu=1, sigma=2).drift == 54
-    assert inspect_model(Square, "family", state=3, mu=1, sigma=2).solutions().one().drift == 54
+    assert solve_model(Square, state=3, mu=1, sigma=2).drift == 54
 
 
-def test_flat_model_can_infer_diffusion_parameters_from_transformed_coefficients():
+def test_flat_model_can_infer_diffusion_parameters_from_transformed_coefficients(solve_model):
     class LogModel(Modello):
         t = Coordinate("t", real=True)
         state = Coordinate("S", positive=True)
@@ -76,12 +75,9 @@ def test_flat_model_can_infer_diffusion_parameters_from_transformed_coefficients
         log_drift = process.drift(log(state))
         log_diffusion = process.diffusion(log(state))
 
-    result = LogModel("calibrated", log_drift=Rational(2, 25), log_diffusion=Rational(1, 5))
+    result = solve_model(LogModel, log_drift=Rational(2, 25), log_diffusion=Rational(1, 5))
     assert result.mu == Rational(1, 10)
     assert result.sigma == Rational(1, 5)
-    assert inspect_model(
-        LogModel, "family", log_drift=Rational(2, 25), log_diffusion=Rational(1, 5)
-    ).solutions().one().mu == Rational(1, 10)
 
 
 def test_exact_arithmetic_and_geometric_values_and_conditional_moments():
@@ -129,15 +125,16 @@ def test_zero_diffusion_preserves_exact_deterministic_limits():
     assert simplify(ItoProcess(x, 3 - 2 * x, 0, t).exact(0, 1, 0).doit() - Rational(3, 2) * (1 - exp(-2))) == 0
 
 
-def test_conditional_queries_retain_the_initial_state_domain():
+@pytest.mark.parametrize("as_series", [False, True], ids=["coordinate", "series"])
+def test_conditional_queries_retain_the_initial_state_domain(as_series):
     t = Coordinate("t", real=True)
-    for state in (Coordinate("x", positive=True), Series("X", t, positive=True)[t]):
-        process = ItoProcess(state, state, state / 2, t)
-        assert process.exact(-1, 1, 0).doit() is S.NaN
-        assert process.mean(0, 1).doit() is S.NaN
-        assert process.variance(-1, 1).doit() is S.NaN
-        assert process.mean(2, 0).doit() == 2
-        opening = Symbol("opening", real=True)
-        mean = process.mean(opening, 1).doit()
-        assert mean.subs(opening, -1) is S.NaN
-        assert mean.subs(opening, 2) == 2 * exp(1)
+    state = Series("X", t, positive=True)[t] if as_series else Coordinate("x", positive=True)
+    process = ItoProcess(state, state, state / 2, t)
+    assert process.exact(-1, 1, 0).doit() is S.NaN
+    assert process.mean(0, 1).doit() is S.NaN
+    assert process.variance(-1, 1).doit() is S.NaN
+    assert process.mean(2, 0).doit() == 2
+    opening = Symbol("opening", real=True)
+    mean = process.mean(opening, 1).doit()
+    assert mean.subs(opening, -1) is S.NaN
+    assert mean.subs(opening, 2) == 2 * exp(1)

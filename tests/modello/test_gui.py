@@ -620,12 +620,13 @@ def test_empty_vectors_keep_their_own_labels_and_show_an_empty_definition():
 
 
 def test_derived_vector_dependencies_link_to_free_inputs_in_other_vectors():
-    from examples.gui_timeseries import DEMOS
+    class Scaled(Modello):
+        samples = Vector("x", size=3, real=True)
+        doubled = 2 * samples
 
-    model, inputs = DEMOS["inventory"]
-    data = Explorer(model, inputs=inputs).snapshot()
-    dependencies = rows(data, "vectors")["quantities"]["depends_on"]
-    assert [item["path"] for item in dependencies] == ["fills[2]"]
+    data = Explorer(Scaled, inputs={"samples": [1, None, 3]}).snapshot()
+    dependencies = rows(data, "vectors")["doubled"]["depends_on"]
+    assert [item["path"] for item in dependencies] == ["samples[1]"]
 
 
 def test_a_large_out_of_range_prefix_is_rejected_without_losing_the_initial_case():

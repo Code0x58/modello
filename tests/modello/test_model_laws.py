@@ -3,7 +3,7 @@
 from copy import deepcopy
 
 import pytest
-from sympy import MatrixSymbol, Sum
+from sympy import Derivative, Integral, Limit, MatrixSymbol, Product, Sum
 
 from modello import (
     Index,
@@ -37,9 +37,18 @@ class Walk(Modello):
     terminal = states[-1]
 
 
-def test_indexed_models_solve_forward_and_inverse_without_transition_components():
-    observed = ModelObservations({0: State("initial", value=1)})
-    forward = Walk("forward", states=observed, events=[Event("a", amount=2), Event("b", amount=4)])
+@pytest.fixture
+def initial_state():
+    return ModelObservations({0: State("initial", value=1)})
+
+
+@pytest.fixture
+def two_events():
+    return [Event("a", amount=2), Event("b", amount=4)]
+
+
+def test_indexed_models_solve_forward_and_inverse_without_transition_components(initial_state, two_events):
+    forward = Walk("forward", states=initial_state, events=two_events)
     assert forward.N == 2
     assert forward.states.project(lambda state: state.value) == Vector(1, 3, 7)
     assert forward.terminal.twice == 14
@@ -52,10 +61,10 @@ def test_indexed_models_solve_forward_and_inverse_without_transition_components(
     )
     assert inverse.events[1].amount == 4
     assert inverse.states[1].twice == 6
-    assert Walk("empty", states=observed, events=[]).terminal.value == 1
+    assert Walk("empty", states=initial_state, events=[]).terminal.value == 1
 
 
-def test_source_law_is_scoped_and_reconstructible_while_finite_equations_use_member_paths():
+def test_source_law_is_scoped_and_reconstructible_while_finite_equations_use_member_paths(initial_state, two_events):
     first = inspect_model(Walk, "same", N=2)
     second = inspect_model(Walk, "same", N=2)
     law = first.symbols.law
@@ -70,14 +79,11 @@ def test_source_law_is_scoped_and_reconstructible_while_finite_equations_use_mem
         ("states", "0", "twice"),
         ("states", "2", "twice"),
     }
-    observed = first.solutions().observe(
-        states=ModelObservations({0: State("initial", value=1)}),
-        events=[Event("a", amount=2), Event("b", amount=4)],
-    )
+    observed = first.solutions().observe(states=initial_state, events=two_events)
     assert observed.one().terminal.value == 7
 
 
-def test_refinement_rebinds_new_laws_and_parameters_before_compilation():
+def test_refinement_rebinds_new_laws_and_parameters_before_compilation(initial_state):
     class Base(Modello):
         N = InstanceDummy("N", integer=True, nonnegative=True)
         rate = InstanceDummy("rate", real=True)
@@ -90,7 +96,7 @@ def test_refinement_rebinds_new_laws_and_parameters_before_compilation():
         rate = InstanceDummy("rate", positive=True)
         law = model_recurrence(Base.states[Base.n], value=Base.states[Base.n - 1].value + Base.rate)
 
-    case = Refined("refined", N=2, rate=2, states=ModelObservations({0: State("initial", value=1)}))
+    case = Refined("refined", N=2, rate=2, states=initial_state)
     assert case.states[-1].value == 5
     assert not case.states[-1].value.free_symbols
     with pytest.raises(ModelDefinitionError, match="model_recurrence"):
@@ -118,7 +124,7 @@ def test_second_order_history_is_ordinary_model_members():
         Fibonacci("too_short", N=0)
 
 
-def test_redeclared_model_windows_keep_the_inherited_symbolic_shape():
+def test_redeclared_model_windows_keep_the_inherited_symbolic_shape(initial_state):
     class Refined(Walk):
         N = InstanceDummy("N", integer=True, positive=True)
         states = model_vector(State, size=Walk.N + 1)
@@ -126,7 +132,7 @@ def test_redeclared_model_windows_keep_the_inherited_symbolic_shape():
     case = Refined(
         "refined",
         N=2,
-        states=ModelObservations({0: State("initial", value=1)}),
+        states=initial_state,
         events=[Event("event", amount=2), None],
     )
     assert case.states[1].value == 3
@@ -139,13 +145,11 @@ def test_redeclared_model_windows_keep_the_inherited_symbolic_shape():
 
 
 def test_indexed_field_laws_require_a_declared_model_vector():
-    from tests.modello.test_model_vectors import Path
+    with pytest.raises(ModelInputError, match=r"states\[n\].*model_vector"):
 
-    with pytest.raises(ModelDefinitionError, match="state window with model_vector"):
-
-        class Invalid(Path):
-            n = Index("n")
-            law = model_recurrence(Path.states[n], balance=Path.states[n - 1].balance - 1)
+        class Invalid(Modello):
+            state = State
+            law = model_recurrence(state, value=1)
 
 
 @pytest.mark.parametrize("lag", [0, -1, 2])
@@ -198,14 +202,14 @@ def test_model_field_updates_reject_matrix_values():
             law = model_recurrence(states[n], value=MatrixSymbol("A", 2, 2))
 
 
-def test_nested_reductions_keep_distinct_local_indices():
+def test_nested_reductions_keep_distinct_local_indices(initial_state):
     class Weighted(Modello):
         states = model_vector(State, size=3)
         weights = Vector("w", size=2, real=True)
         n, j = Index("n"), Index("j")
         law = model_recurrence(states[n], value=states[n - 1].value + Sum(weights[j], (j, 0, 1)))
 
-    case = Weighted("weighted", weights=[1, 2], states=ModelObservations({0: State("initial", value=1)}))
+    case = Weighted("weighted", weights=[1, 2], states=initial_state)
     assert case.states[-1].value == 7
 
 
@@ -224,11 +228,30 @@ def test_sparse_observations_are_typed_immutable_and_do_not_determine_window_siz
         Walk("outside", N=2, states=ModelObservations({3: State("bad")}))
 
 
-def test_member_equations_remain_constraints_alongside_recurrent_fields():
+def test_member_equations_remain_constraints_alongside_recurrent_fields(initial_state):
     class Overconstrained(Modello):
         states = model_vector(State, size=2)
         n = Index("n")
         law = model_recurrence(states[n], value=states[n - 1].value + 1, twice=0)
 
     with pytest.raises(SolutionCountError):
-        Overconstrained("conflict", states=ModelObservations({0: State("initial", value=1)}))
+        Overconstrained("conflict", states=initial_state)
+
+
+@pytest.mark.parametrize(
+    "bind",
+    [
+        pytest.param(lambda body, n: Sum(body, (n, 0, 2)), id="sum"),
+        pytest.param(lambda body, n: Product(body, (n, 0, 2)), id="product"),
+        pytest.param(lambda body, n: Integral(body, (n, 0, 2)), id="integral"),
+        pytest.param(lambda body, n: Derivative(body, n, evaluate=False), id="derivative"),
+        pytest.param(lambda body, n: Limit(body, n, 0), id="limit"),
+    ],
+)
+def test_nested_native_operators_cannot_shadow_the_recurrence_coordinate(bind):
+    with pytest.raises(ModelDefinitionError, match="distinct local index"):
+
+        class Invalid(Modello):
+            states = model_vector(State, size=3)
+            n = Index("n")
+            law = model_recurrence(states[n], value=bind(states[n - 1].value, n))

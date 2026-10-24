@@ -3,14 +3,16 @@
 import json
 from xml.etree import ElementTree
 
-from examples.gui_timeseries import DEMOS
+from examples.gallery.catalog import EXAMPLES
+from examples.gallery.models import AccountSequence
 from modello import Index, InstanceDummy, Modello, component, model_recurrence, model_vector
-from modello.gui import Explorer, FieldInfo, ModelInfo, create_app
+from modello.gui import Explorer, FieldInfo, ModelInfo, Scenario, create_app
 from tests.modello._gui_models import mathml_text, rows
 
 
 def test_model_vector_members_and_state_recurrence_use_mathml_and_bracketed_paths():
-    model, inputs = DEMOS["sequence"]
+    example = EXAMPLES["sequence"]
+    model, inputs = example.model, example.inputs
     data = Explorer(model, inputs=inputs).snapshot({"terminal.cash": 908})
     fields = rows(data)
     assert fields["fills[1].price"]["value"] == "110"
@@ -46,8 +48,21 @@ def test_model_vector_members_and_state_recurrence_use_mathml_and_bracketed_path
 
 
 def test_sequence_demo_resizes_to_zero_and_restores_scenarios_after_shortening():
-    model, inputs = DEMOS["sequence"]
-    client = create_app(model, inputs=inputs).test_client()
+    example = EXAMPLES["sequence"]
+
+    @ModelInfo(
+        scenarios=(
+            Scenario(
+                title="Original second price",
+                description="Restore the original horizon.",
+                bindings={"fills[1].price": 110},
+            ),
+        )
+    )
+    class WithOriginalCoordinate(AccountSequence):
+        pass
+
+    client = create_app(WithOriginalCoordinate, inputs=example.inputs).test_client()
     shorter = {"fills": json.dumps([{"quantity": "2", "price": "100", "fee": "1"}])}
     empty = {"fills": "[]"}
     for proposal, size, cash in [(shorter, 1, "799"), (empty, 0, "1000")]:
@@ -63,7 +78,8 @@ def test_sequence_demo_resizes_to_zero_and_restores_scenarios_after_shortening()
 
 
 def test_model_records_keep_only_observed_cells_and_preserve_editor_arithmetic():
-    model, inputs = DEMOS["sequence"]
+    example = EXAMPLES["sequence"]
+    model, inputs = example.model, example.inputs
     client = create_app(model, inputs=inputs).test_client()
     bindings = {"fills": json.dumps([{"quantity": "2", "price": "10**20 * 10**20", "fee": "1"}])}
     response = client.post("/api/explore", json={"bindings": bindings})
@@ -80,7 +96,8 @@ def test_model_records_keep_only_observed_cells_and_preserve_editor_arithmetic()
 
 
 def test_unobserved_model_records_resize_with_the_related_execution_window():
-    model, original = DEMOS["sequence"]
+    example = EXAMPLES["sequence"]
+    model, original = example.model, example.inputs
     inputs = {"fills": original["fills"], "states": [{}, {}, {}]}
     client = create_app(model, inputs=inputs).test_client()
     added = {"fills": json.dumps([{"quantity": "2", "price": "100", "fee": "1"}, {}, {}])}
@@ -156,20 +173,6 @@ def test_nested_collections_without_scalar_fields_still_specialize():
     copied = Parent("parent", child=supplied)
     assert len(copied.child.items) == copied.child.N == 2
     assert len(copied.child.items[0]._modello_bound_fields) == 0
-
-
-def test_chained_recurrence_markup_names_the_selected_prior_boundary():
-    from examples.model_sequences import AccountSequence
-    from examples.portfolio.models import FillPosting
-
-    class Chained(AccountSequence):
-        continuation = model_recurrence(FillPosting, initial=AccountSequence.states[-1], size=0)
-
-    data = Explorer(Chained, inputs={"N": 2}).snapshot(raw=True)
-    equation = next(row for row in data["equations"] if row["path"] == "continuation")
-    assert "continuation[0] = states[2]" in equation["text"]
-    assert "<msub><mi>states</mi><mn>2</mn></msub>" in equation["mathml"]
-    assert "∅" in equation["mathml"]
 
 
 def test_member_schema_constraints_are_retained_when_a_law_also_defines_that_field():

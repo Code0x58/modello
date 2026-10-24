@@ -3,7 +3,7 @@
 import pytest
 from sympy import Rational, pi, sqrt
 
-from modello._gui.inputs import parse_scalar, parse_vector
+from modello._gui.inputs import parse_model_vector, parse_scalar, parse_vector
 from modello.errors import ModelInputError
 
 
@@ -72,9 +72,23 @@ def test_vector_parser_reuses_scalar_limits_and_rejects_code(raw):
         parse_vector(raw, 3)
 
 
-def test_vector_parser_supports_exact_percentages_and_explicit_missing_entries():
-    assert parse_vector("[10%, ?, 3/2]", 3) == (Rational(1, 10), None, Rational(3, 2))
-    assert parse_vector("[]", 0) == ()
+@pytest.mark.parametrize(
+    "parse, text, size, expected",
+    [
+        pytest.param(parse_vector, "[10%, ?, 3/2]", 3, (Rational(1, 10), None, Rational(3, 2)), id="vector"),
+        pytest.param(
+            parse_model_vector,
+            '[{"quantity": "10%", "price": "3/2"}, null]',
+            2,
+            ({"quantity": Rational(1, 10), "price": Rational(3, 2)}, {}),
+            id="model-records",
+        ),
+        pytest.param(parse_vector, "[]", 0, (), id="empty-vector"),
+        pytest.param(parse_model_vector, "[]", 0, (), id="empty-model-vector"),
+    ],
+)
+def test_vector_parsers_share_exact_arithmetic_and_explicit_missing_entries(parse, text, size, expected):
+    assert parse(text, size) == expected
 
 
 def test_vector_text_budget_scales_with_its_trusted_shape():

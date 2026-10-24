@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, Iterator, Mapping
 from sympy import Symbol
 
 from modello._gui.mathml import EquationPrinter
-from modello._model import _known_integers
 from modello._paths import _path_label, _within_path
 from modello._symbols import _minimal_assumptions
 from modello.diagnostics import ConstraintKind, ModelField, ModelProblem
@@ -31,11 +30,7 @@ class Layout:
         self, problem: ModelProblem, overrides: Mapping[str, FieldInfo], *, resizable: frozenset[str] = frozenset()
     ) -> None:
         self.resizable = resizable
-        internal = {
-            _join(path, name)
-            for path, child in _model_tree(problem.model)
-            for name in getattr(child, "_modello_internal_vectors", ())
-        }
+        internal = _internal_vectors(problem.model)
         self.fields = {
             _path_label(field.path): field for field in problem.fields if _path_label(field.path[:-1]) not in internal
         }
@@ -46,9 +41,7 @@ class Layout:
         self.components: list[str] = []
         self.parents: dict[str, str] = {}
         self.collections: dict[str, Any] = {}
-        self.recurrences: dict[str, tuple[str, Any, Any]] = {}
         self.law_fields: dict[str, str] = {}
-        self.folded: set[str] = set()
         self.vectors = {
             _path_label(path): vector for path, vector in problem.vectors.items() if _path_label(path) not in internal
         }
@@ -102,8 +95,6 @@ class Layout:
                 if not self.metadata[coordinate].symbol and self.aliases[symbol][0] == coordinate:
                     self._coordinate_labels[symbol] = (coordinate, self.metadata[path].symbol or path, i)
         for path, collection in self.collections.items():
-            if collection._modello_collection_kind != "vector":
-                continue
             reference = self.references[path]
             parent = self.references[self.parents[path]]
             source = getattr(parent._modello_model, "_modello_shape_source", parent._modello_model)
@@ -113,11 +104,7 @@ class Layout:
             originals = _collection_columns(original) if original is not None else {}
             element = collection._modello_collection_element
             schema = FieldInfo.for_model(element)
-            member_internal = {
-                _join(relative, name)
-                for relative, child in _model_tree(element)
-                for name in getattr(child, "_modello_internal_vectors", ())
-            }
+            member_internal = _internal_vectors(element)
             for field_path, column in columns.items():
                 if _path_label(field_path[:-1]) in member_internal:
                     continue
@@ -178,42 +165,6 @@ class Layout:
             if template.equations and path not in hidden
         }
         self.equations += tuple(self.template_equations.values())
-        relative = []
-        for path, (prefix, namespace, spec) in self.recurrences.items():
-            if path in hidden:
-                continue
-            model = self.collections[path]
-            label = self.metadata[path].symbol or path
-            known = _known_integers(namespace)
-            initial = _join(prefix, _path_label(spec.initial.resolve(namespace, known)._modello_path))
-            sources = {
-                name: _join(prefix, _path_label(location.resolve(namespace, known)._modello_path))
-                for name, location in spec.inputs.items()
-            }
-            inputs = tuple((self._component_label(source), name in spec.indexed) for name, source in sources.items())
-            arguments = [
-                f"{path}[n - 1]",
-                *(f"{source}[n - 1]" if name in spec.indexed else source for name, source in sources.items()),
-            ]
-            transition = model._modello_transition.__name__ + "." + model._modello_result
-            relative.append(
-                {
-                    "path": path,
-                    "mathml": printer.model_recurrence(
-                        label, self._component_label(initial), transition, inputs, int(spec.size - 1)
-                    ),
-                    "text": f"{path}[0] = {initial}; {path}[n] = {transition}({', '.join(arguments)})",
-                }
-            )
-        self.equations = (*relative, *self.equations)
-
-    def _component_label(self, path: str) -> str:
-        if self.metadata[path].symbol:
-            return self.metadata[path].symbol
-        parent, _, index = path.rpartition("[")
-        if path.endswith("]") and parent in self.collections:
-            return f"{self.metadata[parent].symbol or parent}[{index[:-1]}]"
-        return path
 
     def _collect(self, model: type[Modello]) -> None:
         """Layer defaults, registry metadata, then overrides from children to parents."""
@@ -228,13 +179,10 @@ class Layout:
                     )
                 )
                 for point in range(int(law.template.start), size):
-                    for field in law.paths:
+                    for field, _ in law.updates:
                         self.law_fields[
                             _join(path, _path_label((*law.target.path, str(point), *law.target.suffix, *field)))
                         ] = _join(path, name)
-            for name, spec in child._modello_namespace.collections.items():
-                if spec.wire is not None:
-                    self.recurrences[_join(path, name)] = (path, child._modello_namespace, spec)
             if hasattr(child, "__gui__"):
                 raise ModelInputError(
                     f"{child.__name__}.__gui__ is unsupported; use @ModelInfo(...) and gui(field, ...)"
@@ -249,8 +197,6 @@ class Layout:
                 self.parents[path] = _parent(path)
                 if hasattr(child, "_modello_collection_size"):
                     self.collections[path] = child
-                    if getattr(child, "_modello_collection_kind") == "sequence":
-                        self.folded.update((_join(path, "initial"), _join(path, "steps")))
             for name in child._modello_namespace.vectors:
                 vector_path = _join(path, name)
                 if vector_path in self.vectors:
@@ -440,3 +386,12 @@ def _reference_tree(reference: Any, prefix: str = "") -> Iterator[tuple[str, Any
     yield prefix, reference
     for name in reference._modello_model._modello_namespace.nested_models:
         yield from _reference_tree(getattr(reference, name), _join(prefix, name))
+
+
+def _internal_vectors(model: type[Modello]) -> set[str]:
+    """Storage columns are private even inside nested model-vector members."""
+    return {
+        _join(path, name)
+        for path, child in _model_tree(model)
+        for name in getattr(child, "_modello_internal_vectors", ())
+    }

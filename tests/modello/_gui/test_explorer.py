@@ -34,9 +34,10 @@ def test_frontend_vector_proposal_state(tmp_path: Path, pytestconfig: pytest.Con
     restored = propose({"total": "6"})
     rejected = client.post("/api/explore", json={"bindings": {"total": "6", "samples[1]": "4"}})
     assert rejected.status_code == 422
-    from examples.gui_timeseries import DEMOS
+    from examples.gallery.catalog import EXAMPLES
 
-    model, inputs = DEMOS["relative"]
+    example = EXAMPLES["relative"]
+    model, inputs = example.model, example.inputs
     law_client = create_app(model, inputs=inputs).test_client()
     laws = law_client.post("/api/explore", json={"bindings": {}})
     assert laws.status_code == 200
@@ -50,7 +51,8 @@ def test_frontend_vector_proposal_state(tmp_path: Path, pytestconfig: pytest.Con
         assert response.status_code == 200
         law_edits[name] = response.json
     fixtures = tmp_path / "state.json"
-    model, inputs = DEMOS["sequence"]
+    example = EXAMPLES["sequence"]
+    model, inputs = example.model, example.inputs
     sequence_client = create_app(model, inputs=inputs).test_client()
     sequence = sequence_client.post("/api/explore", json={"bindings": {}})
     assert sequence.status_code == 200

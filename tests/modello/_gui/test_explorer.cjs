@@ -34,6 +34,7 @@ const responses = [];
 let booting = true;
 const context = vm.createContext({
   document: {
+    body: { dataset: { exploreUrl: "/mounted/api/explore" } },
     activeElement: null,
     getElementById(id) {
       if (!elements.has(id)) elements.set(id, new Element());
@@ -52,7 +53,8 @@ const context = vm.createContext({
     parseFromString() { return { documentElement: Object.assign(new Element(), { localName: "math" }) }; }
   },
   CSS: { escape: value => value },
-  fetch: async (_, options) => {
+  fetch: async (url, options) => {
+    assert.equal(url, "/mounted/api/explore", "Requests use the URL supplied by the mounted explorer");
     // Hold the initial request while the isolated test takes control.
     if (booting) return new Promise(() => {});
     assert.equal(textarea.disabled, true, "Vector editing must lock during a request");

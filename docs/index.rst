@@ -78,7 +78,7 @@ illustrate symbolic modeling with fixed historical rates.
    examples/applications/index
    examples/reconciliation/index
    examples/portfolio/index
-   examples/timeseries/index
+   examples/gallery/index
    examples/solution_families/index
 
 .. toctree::

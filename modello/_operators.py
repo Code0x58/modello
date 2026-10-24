@@ -80,6 +80,15 @@ class _FunctionSymbol(Dummy):
         return _FunctionSymbol(self.name, **self.assumptions0)
 
 
+def _bound_coordinates(expression: Basic) -> tuple[Basic, ...]:
+    """Coordinates kept local by a native operator or symbolic declaration."""
+    if isinstance(expression, Limit):
+        return (expression.args[1],)
+    if isinstance(expression, (Derivative, Integral)):
+        return tuple(expression.variables)
+    return tuple(getattr(expression, "bound_symbols", ()))
+
+
 def _affine_coefficients(expression: Expr, variable: Symbol) -> tuple[Expr, Expr] | None:
     """Return the slope and intercept when both are independent of ``variable``."""
     slope = simplify(diff(expression, variable))

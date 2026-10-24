@@ -157,7 +157,7 @@ async function refresh(next = bindings, options = {}) {
     disabledBefore.clear();
   };
   try {
-    const response = await fetch("/api/explore", {
+    const response = await fetch(document.body.dataset.exploreUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ bindings: next, raw: $("raw").checked }),

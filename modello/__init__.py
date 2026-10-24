@@ -48,7 +48,6 @@ from modello.errors import (
 )
 from modello.model_vectors import (
     ModelRecurrence as ModelRecurrence,
-    ModelSequence as ModelSequence,
     ModelVector as ModelVector,
     ModelVectorValue as ModelVectorValue,
     model_recurrence as model_recurrence,

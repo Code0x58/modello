@@ -264,13 +264,10 @@ class _ItoSolution(_ScopedOperator):
             return S.NaN
         kind, a, b, gradient = law._coefficients()
         if kind == "arithmetic":
-            result = (
-                initial + a * elapsed + b * increment
-                if operation == 0
-                else initial + a * elapsed
-                if operation == 1
-                else b**2 * elapsed
-            )
+            mean = initial + a * elapsed
+            result = b**2 * elapsed if operation == 2 else mean
+            if operation == 0:
+                result += b * increment
         elif kind == "affine":
             if operation == 0 and b.is_zero is not True:
                 raise NotImplementedError(
@@ -280,13 +277,13 @@ class _ItoSolution(_ScopedOperator):
             integral = Piecewise((elapsed, Eq(rate, 0)), ((exp(rate * elapsed) - 1) / rate, True))
             result = initial * exp(gradient * elapsed) + a * integral if operation != 2 else b**2 * integral
         else:
-            result = (
-                initial * exp((a - b**2 / 2) * elapsed + b * increment)
-                if operation == 0
-                else initial * exp(a * elapsed)
-                if operation == 1
-                else initial**2 * exp(2 * a * elapsed) * (exp(b**2 * elapsed) - 1)
-            )
+            mean = initial * exp(a * elapsed)
+            if operation == 2:
+                result = mean**2 * (exp(b**2 * elapsed) - 1)
+            elif operation == 0:
+                result = initial * exp((a - b**2 / 2) * elapsed + b * increment)
+            else:
+                result = mean
         state = law.state.series.symbol if isinstance(law.state, _SeriesTerm) else cast(Symbol, law.state)
         domain = And(_value_condition(_minimal_assumptions(state), initial), elapsed >= 0)
         if operation == 0:

@@ -10,7 +10,7 @@ from sympy import Basic, Expr, FiniteSet, Interval, S, Set, Symbol, SympifyError
 from sympy.printing.str import StrPrinter
 
 from modello._expressions import _DefinitionResolver, _expand_definitions
-from modello._paths import _path_label
+from modello._paths import FieldPath as FieldPath, _path_label
 from modello._symbols import Index
 from modello.errors import ModelInputError, ModelValidationError
 from modello.vectors import Vector
@@ -35,7 +35,6 @@ if TYPE_CHECKING:
 
 ModelT = TypeVar("ModelT", bound="Modello")
 
-FieldPath = tuple[str, ...]
 Status = Literal["consistent", "inconsistent", "unknown"]
 Verdict = Literal["satisfied", "violated", "unknown"]
 

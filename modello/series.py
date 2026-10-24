@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from functools import cached_property
-from typing import Any
+from typing import Any, NamedTuple
 
 from sympy import (
     And,
@@ -141,6 +141,11 @@ class _SeriesTerm(_ScopedOperator):
         return rf"{printer._print(self.series)}_{{{printer._print(self.index)}}}"
 
 
+class _HistoryValue(NamedTuple):
+    value: Expr
+    condition: Basic
+
+
 class Recurrence(_SymbolicTemplate):
     """A causal relative law and an explicit contiguous initial history.
 
@@ -251,13 +256,10 @@ class Recurrence(_SymbolicTemplate):
         return vector(self.at(i), (i, first, last))
 
     @cached_property
-    def _terms(self) -> dict[int, Expr]:
-        return dict(self.initial)
-
-    @cached_property
-    def _conditions(self) -> dict[int, Basic]:
-        condition = And(*(_series_condition(self.target.series, value) for value in self.initial.values()))
-        return {point: condition for point in self.initial}
+    def _history(self) -> dict[int, _HistoryValue]:
+        initial = self.initial
+        condition = And(*(_series_condition(self.target.series, value) for value in initial.values()))
+        return {point: _HistoryValue(value, condition) for point, value in initial.items()}
 
     @cached_property
     def _invariant(self) -> bool:
@@ -297,19 +299,19 @@ class Recurrence(_SymbolicTemplate):
     def _at(self, point: int) -> Expr:
         if point < self.origin:
             return S.NaN
-        conditions = self._conditions
-        for position in range(max(self._terms) + 1, point + 1):
+        history = self._history
+        for position in range(max(history) + 1, point + 1):
             expression = self.function.subs(self.target.index, position)
             replacements = {
-                term: self._terms[int(term.index)]
+                term: history[int(term.index)].value
                 for term in expression.atoms(_SeriesTerm)
                 if term.series == self.target.series
             }
-            self._terms[position] = expression.xreplace(replacements)
-            conditions[position] = And(
-                conditions[position - 1], _series_condition(self.target.series, self._terms[position])
-            )
-        return Piecewise((self._terms[point], conditions[point]), (S.NaN, True))
+            value = expression.xreplace(replacements)
+            condition = And(history[position - 1].condition, _series_condition(self.target.series, value))
+            history[position] = _HistoryValue(value, condition)
+        selected = history[point]
+        return Piecewise((selected.value, selected.condition), (S.NaN, True))
 
     @cached_property
     def _closed_form(self) -> Expr | None:

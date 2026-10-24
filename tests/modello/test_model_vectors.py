@@ -7,7 +7,6 @@ from modello import (
     Index,
     InstanceDummy,
     Modello,
-    ModelSequence,
     ModelVector,
     Recurrence,
     Series,
@@ -30,19 +29,13 @@ class Payment(Modello):
     debit = amount + fee
 
 
-class Posting(Modello):
-    before = component(State)
-    payment = component(Payment)
-    after = component(State)
-    balance = after.balance
-    balance = before.balance - payment.debit
-
-
 class Path(Modello):
     N = InstanceDummy("N", integer=True, nonnegative=True)
-    opening = component(State)
     payments = model_vector(Payment, size=N)
-    states = model_recurrence(Posting, initial=opening, payment=payments)
+    states = model_vector(State, size=N + 1)
+    opening = states[0]
+    n = Index("n")
+    law = model_recurrence(states[n], balance=states[n - 1].balance - payments[n - 1].debit)
     terminal = states[-1]
     amounts = payments.project(lambda payment: payment.amount)
     balances = states.project(lambda state: state.balance)
@@ -56,7 +49,7 @@ def observations():
 def test_model_vectors_infer_length_preserve_types_and_share_state_views():
     case = Path("path", opening=State("opening", balance=100), payments=observations())
     assert isinstance(case.payments, ModelVector)
-    assert isinstance(case.states, ModelSequence)
+    assert isinstance(case.states, ModelVector)
     assert isinstance(case.payments[0], Payment)
     assert isinstance(case.states[-1], State)
     assert len(case.payments) == case.N == 2
@@ -65,8 +58,6 @@ def test_model_vectors_infer_length_preserve_types_and_share_state_views():
     assert case.total_debit == 33
     assert case.states[0] is case.opening
     assert case.states[-1] is case.terminal
-    assert case.states.steps[1].before is case.states[1]
-    assert case.states.steps[0].payment is case.payments[0]
     assert case.payments[::-1] == (case.payments[1], case.payments[0])
     assert tuple(case.states) == (case.opening, case.states[1], case.terminal)
     assert case.payments.project(lambda payment: 2 * payment.amount).doit() == Vector(20, 40)
@@ -136,20 +127,16 @@ def test_projection_uses_typed_nested_fields_and_vector_member_schema():
 
 
 def test_multiple_indexed_inputs_have_joint_shape_equations():
-    class TwoPayments(Posting):
-        second = component(Payment)
-        balance = Posting.before.balance - Posting.payment.debit - second.debit
-
     class PairPath(Modello):
         N = InstanceDummy("N", integer=True, nonnegative=True)
-        M = InstanceDummy("M", integer=True, nonnegative=True)
-        opening = component(State)
         left = model_vector(Payment, size=N)
-        right = model_vector(Payment, size=M)
-        states = model_recurrence(TwoPayments, initial=opening, payment=left, second=right)
+        right = model_vector(Payment, size=N)
+        states = model_vector(State, size=N + 1)
+        n = Index("n")
+        law = model_recurrence(states[n], balance=states[n - 1].balance - left[n - 1].debit - right[n - 1].debit)
 
     case = PairPath("shape", left=observations())
-    assert len(case.right) == case.M == case.N == 2
+    assert len(case.right) == case.N == 2
     with pytest.raises(ModelInputError, match="conflict"):
         PairPath("bad", left=observations(), right=[None])
 
@@ -173,49 +160,24 @@ def test_collection_input_and_index_errors_are_owned():
         model_vector(Payment, size=True)
 
 
-def test_recurrence_rejects_incompatible_ports_and_competing_wiring():
-    class OtherState(State):
-        pass
-
-    class Wrong(Posting):
-        after = component(OtherState)
-
-    with pytest.raises(ModelInputError, match="matching"):
-
-        class Invalid(Modello):
-            opening = component(State)
-            states = model_recurrence(Wrong, initial=opening, size=2)
-
-    with pytest.raises(ModelInputError, match="distinct"):
-
-        class Competing(Modello):
-            opening = component(State)
-            states = model_recurrence(Posting, initial=opening, size=2, before=opening)
-
-
-def test_state_domains_and_function_identities_survive_component_wiring():
+def test_state_domains_and_function_identities_survive_member_recursion():
     class LawState(Modello):
         value = InstanceDummy("value", positive=True)
         n = Index("n")
         T = Series("T", n, positive=True)
         law = Recurrence(T[n], 2 * T[n - 1], initial={0: value})
 
-    class Evolution(Modello):
-        before = component(LawState)
-        after = component(LawState)
-        value = after.value
-        value = before.law.at(1)
-
     class EvolutionPath(Modello):
-        opening = component(LawState)
-        states = model_recurrence(Evolution, initial=opening, size=2)
+        states = model_vector(LawState, size=3)
+        opening = states[0]
+        n = Index("n")
+        law = model_recurrence(states[n], value=2 * states[n - 1].value)
         terminal = states[-1]
 
     case = EvolutionPath("law", opening=LawState("opening", value=3))
     assert case.terminal.value == 12
-    assert case.states.steps[1].before.law == case.states[1].law
+    assert case.states[1].law.at(1).doit() == 12
     problem = inspect_model(EvolutionPath, "scope")
-    assert problem.symbols.states.steps[1].before.T == problem.symbols.states[1].T
     assert problem.symbols.states[0].T != problem.symbols.states[1].T
     target = LawState("bad")
     target.value = -1
@@ -329,41 +291,32 @@ def test_state_observations_determine_the_horizon_and_unknown_opening():
         Path("no_boundary", states=[])
 
 
-def test_shared_component_inputs_and_custom_port_names():
+def test_shared_component_parameter_is_inferred_from_the_terminal_state():
     class Factor(Modello):
         value = InstanceDummy("factor", positive=True)
 
-    class Growth(Modello):
-        source = component(State)
-        target = component(State)
-        factor = component(Factor)
-        balance = target.balance
-        balance = source.balance * factor.value
-
     class GrowthPath(Modello):
-        opening = component(State)
         factor = component(Factor)
-        states = model_recurrence(Growth, initial=opening, size=2, previous="source", result="target", factor=factor)
+        states = model_vector(State, size=3)
+        opening = states[0]
+        n = Index("n")
+        law = model_recurrence(states[n], balance=states[n - 1].balance * factor.value)
         terminal = states[-1]
 
     result = GrowthPath("inverse", opening=State("initial", balance=2), terminal=State("target", balance=18))
     assert result.factor.value == 3
-    assert result.states.steps[0].factor is result.states.steps[1].factor is result.factor
+    assert result.states[1].balance == 6
 
 
-def test_nonlinear_transition_domains_select_the_positive_inverse_path():
+def test_nonlinear_recurrence_domains_select_the_positive_inverse_path():
     class PositiveState(Modello):
         value = InstanceDummy("value", positive=True)
 
-    class Square(Modello):
-        before = component(PositiveState)
-        after = component(PositiveState)
-        value = after.value
-        value = before.value**2
-
     class SquarePath(Modello):
-        opening = component(PositiveState)
-        states = model_recurrence(Square, initial=opening, size=2)
+        states = model_vector(PositiveState, size=3)
+        opening = states[0]
+        n = Index("n")
+        law = model_recurrence(states[n], value=states[n - 1].value ** 2)
         terminal = states[-1]
 
     case = SquarePath("inverse", terminal=PositiveState("target", value=81))
@@ -407,47 +360,6 @@ def test_projection_can_select_a_fixed_member_of_a_nested_model_vector():
     assert case.seconds[1] == case.rows[1].payments[1].amount
     with pytest.raises(ModelInputError, match="concrete integer"):
         Table.rows.project(lambda row: row.payments[Index("j")].amount)
-
-
-def test_chained_recurrences_resolve_the_prior_terminal_after_binding_its_horizon():
-    class Chained(Modello):
-        N = InstanceDummy("N", integer=True, nonnegative=True)
-        opening = component(State)
-        payments = model_vector(Payment, size=N)
-        first = model_recurrence(Posting, initial=opening, payment=payments)
-        last_payment = component(Payment)
-        next = model_recurrence(Posting, initial=first[-1], size=1, payment=last_payment)
-        terminal = next[-1]
-
-    case = Chained(
-        "chained",
-        opening=State("opening", balance=100),
-        payments=observations(),
-        last_payment=Payment("extra", amount=5, fee=1),
-    )
-    assert case.terminal.balance == 61
-    assert case.next[0] is case.first[-1]
-    assert case.next.steps[0].payment is case.last_payment
-
-
-def test_recurrence_sources_can_use_a_supplied_integer_component_selection():
-    class SelectedInitial(Modello):
-        index = InstanceDummy("index", integer=True)
-        options = model_vector(State, size=2)
-        payment = component(Payment)
-        states = model_recurrence(Posting, initial=options[index], size=1, payment=payment)
-        terminal = states[-1]
-
-    case = SelectedInitial(
-        "selected",
-        index=1,
-        options=[State("a", balance=200), State("b", balance=100)],
-        payment=Payment("payment", amount=10, fee=1),
-    )
-    assert case.terminal.balance == 89
-    assert case.states[0] is case.options[1]
-    with pytest.raises(ModelInputError, match="integer index"):
-        SelectedInitial("missing")
 
 
 def test_unresolved_overridden_template_observations_require_their_concrete_schema():

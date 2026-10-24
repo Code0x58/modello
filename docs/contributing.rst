@@ -90,7 +90,8 @@ variables retain the declared domain and the Itô law's real-state premise.
 
 The remaining adapters preserve model semantics. Recurrence evaluation keeps
 shifted, contiguous history and checks hidden intermediate states; replacing it
-with an unrestricted sequence solver must preserve those requirements. Scoped
+with an unrestricted sequence solver must preserve those requirements. History
+records keep each value and its cumulative domain condition together. Scoped
 expansion protects local coordinates and diagnoses implicit calculus through
 cyclic definitions. Unknown assumptions remain distinct from disproven ones.
 Finite data reductions and explicit zero-rate kernels avoid slower generic
@@ -102,14 +103,22 @@ declaration records from immutable source templates: normalize the entire
 record on inheritance and keep source formulas distinct from finite expansion.
 Validate positive self-lags and input bounds before Python indexing can wrap.
 Use the existing binder-aware substitution for lowering; preserve equations
-already declared by member schemas. The transition-model overload remains
-compatible with existing component models.
+already declared by member schemas. The compiler stores ordered field updates;
+only the inspection template retains complete source equations. Deferred laws
+must trigger shape preparation rather than disappearing from a finite solve.
 
 ``_collections.py`` holds deferred locations and typed sparse observations
 without importing model construction. Population allocates canonical components
 once and connects their views. Structural shape/index binding precedes scalar
 solving. The GUI's ``_gui/collections.py`` summarizes nested model members and
 observation origins; its labels preserve canonical API paths for navigation.
+
+Keep the gallery small. ``examples/gallery/models.py`` contains the equations;
+``catalog.py`` supplies labels, observations, and guided questions. ``app.py``
+mounts the existing explorer through Werkzeug, preserving URL prefixes for
+assets and API requests. Add an example when it demonstrates a distinct idea,
+and derive scenario smoke tests from the catalog. Keep mathematical regressions
+in focused library tests, independent of the gallery's menu and wording.
 
 Validation
 ----------
@@ -144,7 +153,8 @@ Workflows do not schedule rebuilds.
 
 Distribution checks install the wheel outside the checkout, rebuild the source
 distribution, and repeat the runtime and typing checks. They also exercise the
-packaged examples and fixtures. Builds use the installed, locked backend. Start
+packaged examples and fixtures, then install the locked GUI extra and exercise
+the gallery and its assets. Builds use the installed, locked backend. Start
 with an empty ``dist`` directory so the checks receive exactly one wheel and
 one source distribution.
 

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, TypeVar, cast
 
 from sympy import Basic, Expr, Integer, Symbol, sympify
 
-from modello._collections import _CollectionSpec, _Location, _Selection, _UnresolvedSelection
+from modello._collections import _Location, _ModelVectorSpec, _Selection, _UnresolvedSelection
 from modello._expressions import _declaration, _substitute
 from modello._model_laws import ModelRecurrence, _ModelLawSpec
 from modello._operators import _FunctionSymbol, _SymbolicTemplate
@@ -198,11 +198,11 @@ class ModelloMetaNamespace(dict):
         self.vector_attrs: dict[str, Vector] = {}
         self.templates: dict[str, _SymbolicTemplate] = {}
         self.nested_models: dict[str, _ModelReference] = {}
-        self.collections: dict[str, _CollectionSpec] = {}
+        self.collections: dict[str, _ModelVectorSpec] = {}
         self.views: dict[str, _Selection] = {}
         self.aliases: dict[FieldPath, FieldPath] = {}
         self.structural_indices: dict[Symbol, Basic] = {}
-        self.pending_wiring: set[str] = set()
+        self.pending_laws: set[str] = set()
         self.model_laws: dict[str, _ModelLawSpec] = {}
         self.annotations: dict[type[Annotation], dict[str, Annotation]] = {}
         self._declared_annotations: set[tuple[type[Annotation], str]] = set()
@@ -375,17 +375,17 @@ class ModelloMetaNamespace(dict):
             value = value.template
         elif isinstance(value, ModelRecurrence) or key in self.model_laws:
             raise ModelDefinitionError("Declare indexed model equations with model_recurrence(states[n], ...)")
-        if key in self.collections and not isinstance(value, _CollectionSpec):
+        if key in self.collections and not isinstance(value, _ModelVectorSpec):
             raise ModelDefinitionError(f"Cannot replace model collection {self.name}.{key} with another field kind")
         is_view = isinstance(value, _Selection) or isinstance(value, _ModelReference) and value._modello_view
         if key in self.views and not is_view:
             raise ModelDefinitionError(f"Cannot replace component view {self.name}.{key} with another field kind")
         is_model = isinstance(value, ModelloMeta)
-        if (isinstance(value, (Basic, _CollectionSpec, _Selection, _ModelReference)) or is_model) and key.startswith(
+        if (isinstance(value, (Basic, _ModelVectorSpec, _Selection, _ModelReference)) or is_model) and key.startswith(
             "_modello_"
         ):
             raise ModelDefinitionError("The _modello_ prefix is reserved for model metadata")
-        if isinstance(value, _CollectionSpec):
+        if isinstance(value, _ModelVectorSpec):
             value = value.substitute(self._replacements)
             if (
                 key in self.dummies
@@ -396,7 +396,7 @@ class ModelloMetaNamespace(dict):
             ):
                 raise ModelDefinitionError(f"Cannot replace model field {self.name}.{key} with a model collection")
             previous = self.collections.get(key)
-            if previous is not None and (previous.model is not value.model or bool(previous.wire) != bool(value.wire)):
+            if previous is not None and previous.model is not value.model:
                 raise ModelDefinitionError(f"Cannot change the component schema of {self.name}.{key}")
             if previous is not None and previous.size != value.size:
                 raise ModelDefinitionError(f"Cannot change the size of {self.name}.{key}; declare a new model shape")
@@ -566,13 +566,7 @@ class ModelloMetaNamespace(dict):
 
     def compile(self) -> _ModelDefinition:
         """Include descendants' equations, preserving their paths and aliases."""
-        self.pending_wiring.clear()
-        for name, spec in self.collections.items():
-            if spec._finite and spec.wire is not None:
-                try:
-                    spec.wire(self, name, spec)
-                except _UnresolvedSelection:
-                    self.pending_wiring.add(name)
+        self.pending_laws.clear()
         self._resolve_views()
         constraints = [
             _Definition((attr,), self.dummies[attr], expr)
@@ -593,9 +587,9 @@ class ModelloMetaNamespace(dict):
         )
         for name, law in self.model_laws.items():
             try:
-                constraints.extend(_Definition(*definition) for definition in law.compile(self, name, law))
+                constraints.extend(_Definition(*definition) for definition in law.compile(self, law))
             except _UnresolvedSelection:
-                self.pending_wiring.add(name)
+                self.pending_laws.add(name)
         for attr, child in self.nested_models.items():
             if attr in self.views:
                 continue
@@ -720,7 +714,7 @@ def _has_symbolic_shape(model: type[Modello]) -> bool:
     namespace = model._modello_namespace
     return (
         bool(namespace.views.keys() - namespace.nested_models.keys())
-        or bool(namespace.pending_wiring)
+        or bool(namespace.pending_laws)
         or any(not value._finite for value in namespace.vectors.values())
         or any(not value._finite for value in namespace.collections.values())
         or any(
@@ -745,32 +739,15 @@ def _specialize_model(model: type[ShapeModel], values: Mapping[str, object]) -> 
                     f"Supply a {child._modello_model.__name__} instance to determine {name}'s vector sizes"
                 )
             children.append((name, type(value)))
-    axes: dict[str, Vector | _CollectionSpec] = {**namespace.vectors, **namespace.collections}
+    axes: dict[str, Vector | _ModelVectorSpec] = {**namespace.vectors, **namespace.collections}
     finite = all(vector._finite for vector in axes.values())
     pending = namespace.views.keys() - namespace.nested_models.keys()
-    if finite and not children and not pending and not namespace.pending_wiring:
+    if finite and not children and not pending and not namespace.pending_laws:
         return model
-    dimensions = (
-        {}
-        if finite
-        else _dimensions(
-            axes,
-            namespace.dummies,
-            namespace.attrs,
-            values,
-            tuple(relation for spec in namespace.collections.values() for relation in spec.relations),
-        )
-    )
+    dimensions = {} if finite else _dimensions(axes, namespace.dummies, namespace.attrs, values)
     known = _known_integers(namespace, values, dimensions)
     selected = {}
     locations = [namespace.views[name].location for name in pending]
-    for name in namespace.pending_wiring:
-        if name in namespace.model_laws:
-            continue
-        spec = namespace.collections[name]
-        locations.extend(spec.inputs.values())
-        if spec.initial is not None:
-            locations.append(spec.initial)
     for location in locations:
         index = location.index
         if index is not None:

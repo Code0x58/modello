@@ -80,11 +80,14 @@ def test_second_order_history_and_shifted_origin():
     assert shifted.at(12).doit() == 12
 
 
-def test_nonlinear_causal_law_can_be_evaluated_without_claiming_a_closed_form():
+@pytest.mark.parametrize("positions", [(0, 1, 2, 3, 4), (4, 1, 3, 0, 4)], ids=["in-order", "revisited"])
+def test_nonlinear_causal_law_can_be_evaluated_without_claiming_a_closed_form(positions):
     n = Index("n")
     series = Series("X", n)
     law = Recurrence(series[n], series[n - 1] ** 2 + 1, initial={0: 0})
-    assert law.at(4).doit() == 26
+    values = (0, 1, 2, 5, 26)
+    for point in positions:
+        assert law.at(point).doit() == values[point]
     assert law.at(n).doit() == law.at(n)
 
 
@@ -96,17 +99,19 @@ def test_noncausal_or_incomplete_histories_are_explicit(lag, initial):
         Recurrence(series[n], series[n - lag], initial=initial)
 
 
-def test_relative_laws_solve_forward_and_inverse_and_retain_inspection_metadata():
-    result = Growth("forward", opening=1, ratio=2, periods=4)
+def test_relative_laws_solve_forward_and_inverse(solve_model):
+    result = solve_model(Growth, opening=1, ratio=2, periods=4)
     assert result.terminal == 16
     assert result.direct == result.terminal
     assert result.path == Vector(1, 2, 4, 8, 16)
     assert result.law.at(6).doit() == 64
-    assert Growth("inverse", terminal=16, ratio=2, periods=4).opening == 1
-    assert Growth("ratio", terminal=16, opening=1, periods=4).ratio == 2
-    assert Growth("position", terminal=16, opening=1, ratio=2).periods == 4
+    assert solve_model(Growth, terminal=16, ratio=2, periods=4).opening == 1
+    assert solve_model(Growth, terminal=16, opening=1, periods=4).ratio == 2
+    assert solve_model(Growth, terminal=16, opening=1, ratio=2).periods == 4
+
+
+def test_relative_law_inspection_retains_templates_and_projects_direct_queries():
     problem = inspect_model(Growth, "family", opening=1, ratio=2, periods=4)
-    assert problem.solutions().one().terminal == 16
     assert problem.solutions().expression(problem.symbols.T[4]) == 16
     assert problem.symbols.law == problem.templates[("law",)]
     assert set(problem.templates) == {("T",), ("law",)}

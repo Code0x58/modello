@@ -9,6 +9,18 @@ from modello import ModelProblem, inspect_model
 from ._models import Check, PositiveScalar, Reading, Sum
 
 
+@pytest.fixture(params=("constructor", "family"))
+def solve_model(request: pytest.FixtureRequest):
+    """Check equivalent numerical contracts through both public solve entrypoints."""
+
+    def solve(model, **observations):
+        if request.param == "constructor":
+            return model("case", **observations)
+        return inspect_model(model, "case", **observations).solutions().one()
+
+    return solve
+
+
 @pytest.fixture(
     params=[(NotImplementedError, "unsupported solver"), (ValueError, "solver value error")],
     ids=["unsupported", "value-error"],

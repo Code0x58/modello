@@ -51,7 +51,7 @@ def component_views(
             "parent": parent,
             "title": info.title or path.split(".")[-1],
             "description": info.description,
-            "collapsed": path in layout.folded,
+            "collapsed": False,
         }
         if path in layout.collections:
             size = int(layout.collections[path]._modello_collection_size)

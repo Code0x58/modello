@@ -6,7 +6,7 @@ from typing import Mapping
 
 from sympy import Add, Basic, Derivative, Integer, Integral, Limit, Mul, Product, S, Sum, Symbol, simplify
 
-from modello._operators import _ScopedExpression, _ScopedOperator, _SymbolicTemplate
+from modello._operators import _bound_coordinates, _ScopedExpression, _ScopedOperator, _SymbolicTemplate
 from modello.vectors import _VectorElement, _VectorFormula
 
 _OPERATORS = (Sum, Product, Integral, Derivative, Limit, _VectorElement, _ScopedOperator)
@@ -79,10 +79,7 @@ def _substitute(expression: Basic, values: Mapping[Symbol, Basic]) -> Basic:
     """
     if expression.has(*_BINDERS):
         for operator in expression.atoms(*_BINDERS):
-            variables = [operator.args[1]] if isinstance(operator, Limit) else getattr(operator, "variables", ())
-            if isinstance(operator, (_VectorFormula, _ScopedExpression)):
-                variables = operator.bound_symbols
-            if any(variable in values and values[variable] != variable for variable in variables):
+            if any(variable in values and values[variable] != variable for variable in _bound_coordinates(operator)):
                 return expression.subs(values, simultaneous=True)
     return expression.xreplace(values)
 

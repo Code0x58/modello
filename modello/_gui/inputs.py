@@ -23,6 +23,14 @@ _MAX_SCALAR_LENGTH = 160
 
 def parse_model_vector(text: str, size: int | None) -> tuple[dict[str, Expr | None], ...]:
     """Read model records using the existing bounded scalar language per cell."""
+    return tuple(
+        {name: None if value is None else parse_scalar(value) for name, value in record.items()}
+        for record in model_vector_entries(text, size)
+    )
+
+
+def model_vector_entries(text: str, size: int | None) -> tuple[dict[str, str | None], ...]:
+    """Read bounded observation records while retaining their arithmetic text."""
     if len(text) > max(16_000, (size or 0) * 2048):
         raise ModelInputError("The model vector observation is too large")
     try:
@@ -43,7 +51,7 @@ def parse_model_vector(text: str, size: int | None) -> tuple[dict[str, Expr | No
                 raise ModelInputError("Model observations need valid field names")
             if value is not None and not isinstance(value, str):
                 raise ModelInputError("Enter model field values as text")
-            values[name] = None if value is None or not value.strip() else parse_scalar(value)
+            values[name] = None if value is None or not value.strip() else value.strip()
         result.append(values)
     return tuple(result)
 
@@ -137,7 +145,11 @@ def vector_entries(text: str, size: int | None) -> tuple[str | None, ...]:
 
 
 def binding_texts(
-    bindings: Mapping[str, str | None], sizes: Mapping[str, int], *, preserve: frozenset[str] = frozenset()
+    bindings: Mapping[str, str | None],
+    sizes: Mapping[str, int],
+    *,
+    collections: Mapping[str, int] | None = None,
+    preserve: frozenset[str] = frozenset(),
 ) -> dict[str, str | None]:
     """Normalize paths while preserving the caller's bounded scalar syntax."""
     result: dict[str, str | None] = {}
@@ -148,6 +160,9 @@ def binding_texts(
         if path in sizes:
             entries = (None,) * sizes[path] if text is None or not text.strip() else vector_entries(text, sizes[path])
             result.update((f"{path}[{i}]", entry) for i, entry in enumerate(entries))
+        elif collections is not None and path in collections and text:
+            for i, record in enumerate(model_vector_entries(text, collections[path])):
+                result.update((f"{path}[{i}].{name}", value) for name, value in record.items())
         else:
             result[path] = None if text is None or not text.strip() else text.strip()
     return result

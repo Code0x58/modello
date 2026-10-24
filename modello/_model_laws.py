@@ -5,10 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping
 
-from sympy import Basic, Symbol, Tuple
+from sympy import Basic, Expr, Symbol, Tuple
 
 from modello._collections import _Location
 from modello._operators import _SymbolicTemplate
+from modello._paths import FieldPath
 from modello.vectors import Vector
 
 
@@ -63,18 +64,18 @@ class ModelRecurrence(_SymbolicTemplate):
 @dataclass(frozen=True)
 class _ModelLawSpec:
     target: _Location
-    columns: Mapping[tuple[str, ...], Vector]
-    paths: tuple[tuple[str, ...], ...]
+    columns: Mapping[FieldPath, Vector]
     template: ModelRecurrence
-    equations: tuple[Basic, ...]
-    compile: Callable[[Any, str, Any], tuple[tuple[tuple[str, ...], Symbol, Basic], ...]]
+    updates: tuple[tuple[FieldPath, Expr], ...]
+    compile: Callable[[Any, _ModelLawSpec], tuple[tuple[FieldPath, Symbol, Basic], ...]]
 
     def substitute(self, bindings: Mapping[Basic, Basic]) -> _ModelLawSpec:
+        """Rebind updates while preserving distinct source columns, even at N=0."""
         scalar_bindings = {key: value for key, value in bindings.items() if not isinstance(key, Vector)}
         return replace(
             self,
             target=self.target.substitute(bindings),
             columns={path: vector.xreplace(bindings) for path, vector in self.columns.items()},
             template=self.template.xreplace(scalar_bindings),
-            equations=tuple(eq.xreplace(bindings) for eq in self.equations),
+            updates=tuple((path, expression.xreplace(bindings)) for path, expression in self.updates),
         )

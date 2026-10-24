@@ -7,10 +7,11 @@ Install its separate extra; the base library still depends only on SymPy:
 .. code-block:: console
 
    $ pip install 'modello[gui]'
-   $ python -m examples.gui
+   $ python -m examples.gallery
 
-From a checkout, use ``uv run --extra gui python -m examples.gui``. Open
-http://127.0.0.1:5058.
+From a checkout, use ``uv run --extra gui python -m examples.gallery``. Open
+http://127.0.0.1:5070. The :doc:`gallery <examples/gallery/index>` introduces
+vectors, relative sequences, typed account models, calculus, and an Itô process.
 
 Quickstart: your own explorer
 ------------------------------
@@ -33,61 +34,6 @@ Plain model declarations work without presentation metadata. Add ``gui`` where
 labels, descriptions, symbols, or display formats help. ``@ModelInfo`` adds the
 model's text and optional guided questions. Only serving the browser requires
 the GUI extra; core annotations and Python snapshots work without Flask.
-
-A portfolio to explore
-----------------------
-
-The demo is a familiar two-asset mean–variance portfolio. Equity and bond
-assumptions live in nested components, and allocation weights must be
-non-negative and sum to 100%. It starts with the equity allocation **free**,
-so the results remain expressions in that unknown.
-
-The illustrative annual inputs are 8% equity return with 20% volatility and
-3% bond return with 5% volatility, on USD 100,000 of starting capital.
-Zero return correlation and a 2% risk-free rate are retained as background
-inputs. These are supplied assumptions, not estimates from market data.
-
-For equity weight :math:`w` and bond weight :math:`b`, the model relates:
-
-.. math::
-
-   b &= 1-w, \\
-   \mu_p &= w\mu_e + b\mu_b, \\
-   \sigma_p &= \sqrt{w^2\sigma_e^2+b^2\sigma_b^2+2wb\rho\sigma_e\sigma_b}, \\
-   G &= C\mu_p, \qquad S = \frac{\mu_p-r_f}{\sigma_p}.
-
-The weighted mean and covariance-based variance follow the standard
-`mean–variance formulation in the CVX short course
-<https://www.cvxgrp.org/cvx_short_course/docs/applications/notebooks/portfolio_optimization.html>`_.
-The demo evaluates and inverts these relationships; it does not optimise an
-allocation or estimate return statistics.
-
-.. image:: _static/gui/partial.png
-   :alt: An open equity allocation drives typeset symbolic portfolio results.
-
-Use the guided questions to see different ways to bind the same model:
-
-* **Explore freely** retains the assumptions and leaves the allocation open.
-* **70 / 30 split** supplies a 70% equity allocation. The expected return is
-  6.5%, volatility is approximately 14.08%, and expected gain is USD 6,500.
-* **Target 6% return** observes a result instead of an input. The equations
-  infer a 60% equity / 40% bond mix and USD 6,000 expected gain.
-* **Find a missing return** supplies a 70/30 mix, drops the original equity
-  return assumption, and observes a 6% portfolio return. The equations infer
-  an equity return of approximately 7.29%.
-
-Each question restores the initial inputs before applying its observations.
-Subsequent edits are marked as a custom exploration. Inspect a quantity,
-enter a value, and choose **Apply value** or press Enter. **Drop input**
-removes a supplied observation; clearing the editor does the same.
-Try a 120% equity allocation to see the derived bond weight violate its
-non-negative domain. The change is rejected and the previous results remain.
-
-.. image:: _static/gui/explore.png
-   :alt: A checked 70/30 case with calculated outputs and a mathematical risk definition in the inspector.
-
-.. image:: _static/gui/inverse.png
-   :alt: A return target is marked as an input while the allocation is inferred.
 
 Choosing what you know
 ----------------------
@@ -113,40 +59,8 @@ that quantity's original input state in the draft; it does not reset other
 quantities. Aliases share one observation and one row. Hidden inputs remain
 active and have no checkbox or editor.
 
-Useful stories to try:
-
-* **Compare an assumption.** Start with **70 / 30 split**. Change bond return
-  from 3% to 4%: portfolio return becomes 6.8%. **Restore original input** in
-  its inspector returns to 6.5%, retaining the 70/30 allocation. This restores
-  only the selected assumption; **Reset inputs** restores the entire initial
-  model instead.
-* **Stop assuming a value.** Drop the equity return input in the same 70/30
-  case. Equity return becomes free and portfolio return becomes an expression.
-  You can explore this partly specified model without choosing a replacement.
-* **Solve for a missing assumption.** In **Inputs**, uncheck equity return,
-  check expected portfolio return, enter ``6%``, and apply them together.
-  Equity return is now approximately 7.29% and labelled Calculated, with its
-  original 8% explicitly marked as a Dropped input. The guided question
-  **Find a missing return** sets up exactly this case.
-* **Return to forward calculation.** From that case, restore the equity
-  return with its row's reset arrow and uncheck the portfolio return target.
-  Apply both changes together: the original 8% assumption again produces a
-  6.5% portfolio return, with the 70/30 allocation retained.
-
-Keeping both the original 8% equity return and a 6% portfolio return target
-with the 70/30 allocation is contradictory. It is rejected rather than silently
-changing the allocation or an assumption. Changing several observations
-together avoids passing through that contradictory intermediate case.
-
-.. image:: _static/gui/inputs.png
-   :alt: Explicit supplied-input checkboxes, original values, and per-quantity restore controls.
-
-.. image:: _static/gui/missing-return.png
-   :alt: A dropped equity return assumption is inferred from a supplied portfolio return target.
-
-.. image:: _static/gui/mobile-inputs.png
-   :width: 260px
-   :alt: The mobile editor supplies expected return while other results remain unobserved.
+Each guided question restores the initial observations before applying its
+changes. Subsequent edits remain a custom exploration until you reset inputs.
 
 Vectors and indexed formulas
 ------------------------------
@@ -180,19 +94,6 @@ vector path, including nested paths such as ``"window.samples"``. The browser
 uses bracketed coordinate paths such as ``"window.samples[2]"``.
 An entry's **View in equations** action opens the complete indexed vector
 definition, including when the entry was reached through an alias.
-
-Run ``python -m examples.gui_timeseries`` and open http://127.0.0.1:5059 to explore
-inventory transitions. Use ``--example returns``, ``rolling``, ``exposure``, or
-``trend`` for compounding, rolling windows, a continuous integral, or calibration.
-See :doc:`vectors`
-and :doc:`examples/timeseries/index` for model definitions and their assumptions.
-
-Select ``--example relative`` to paste state vectors of different lengths and infer
-the recurrence horizon and innovations,
-``--example diffusion`` for Itô transformations and a geometric Brownian law, or
-``--example reversion`` for exact mean-reverting conditional moments. Their
-equations view retains the relative law or SDE and its boundary information.
-See :doc:`series` for the modelling API and the scope of the analytic solvers.
 
 Understanding the interface
 ---------------------------
@@ -404,48 +305,31 @@ Pass all desired overrides and drops together in one mapping. The browser
 retains this mapping between edits and removes a field's override when you
 restore it individually.
 
+Typed model vectors
+-------------------
+
+The :doc:`account gallery model <model-vectors>` nests typed executions and
+account states under their vectors. Add or remove executions, inspect a member,
+and edit its quantities. The source recurrence appears once; calculated fields
+link back to it. Patterns such as ``fills[]`` and ``fills[].price`` provide
+member labels and indexed symbols.
+
+``ExplorerValue`` covers scalar, vector, and model-vector observations. For the
+Python API, ``ModelVectorInput`` supplies ordered records such as
+``{"fills": [{"quantity": 2, "price": 100, "fee": 1}]}`` alongside scalar
+paths such as ``"states[0].cash"``. Record length determines the window.
+
+Mathematical rendering
+----------------------
+
+Native MathML renders vector arrows, subscripts, Σ/Π/∫, and stretchy brackets
+using the locally bundled STIX Two Math font. Expectation, variance, and the
+process generator use 𝔼, 𝕍, and ℒ. LaTeX export uses the corresponding
+mathematical alphabets. Font attribution and its SIL Open Font License are
+bundled under ``modello/_gui/static/fonts/``.
+
 API
 ---
 
 .. automodule:: modello.gui
    :members: gui, ModelInfo, FieldInfo, Scenario, Explorer, BindingError, create_app
-
-Typed model vectors
--------------------
-
-The :doc:`account sequence demo <model-vectors>` relates vectors of execution
-and account models through relative field equations.
-Run ``python -m examples.gui_timeseries --example sequence --port 5071``.
-Each vector nests its model members with indexed symbols. Add or remove
-executions in the vector header and inspect or edit their individual fields.
-The first account member holds the initial observations. The equations view
-shows the original relative law once, with individual fields linking back to
-it. ``ModelInfo.fields`` patterns such as ``fills[]`` and ``fills[].price``
-provide common member labels and symbols; ``p`` becomes ``p_i``.
-
-The Python explorer accepts ``ModelVectorInput`` records, such as
-``{"fills": [{"quantity": 2, "price": 100, "fee": 1}]}``, alongside its
-usual scalar observations. Model-vector length determines the finite window.
-
-Run the diffusion separately with ``--example diffusion --port 5070``. Ports
-5060 and 5061 are restricted by common browsers; use the demo's default port
-or these alternatives.
-
-Mathematical typography
------------------------
-
-The explorer uses native MathML with the bundled, unmodified STIX Two Math
-2.13 b171 font. Its OpenType MATH table provides stretchy vector brackets,
-boundary braces, and accents consistently across machines. Fences declare their
-stretch and symmetry explicitly. The font and its SIL Open Font License are
-served locally under ``/assets/fonts/``. Source and attribution are recorded in
-``modello/_gui/static/fonts/README.txt``; see the
-`STIX project <https://github.com/stipub/stixfonts/tree/v2.13b171>`_ and
-`MathML Core operator rules <https://www.w3.org/TR/mathml-core/#operator-fence-separator-or-accent-mo>`_.
-
-Expectation and variance use the mathematical Unicode symbols 𝔼 and 𝕍;
-the generator uses ℒ. Their LaTeX forms are ``\mathbb{E}``, ``\mathbb{V}``,
-and ``\mathcal{L}``. MathML uses Unicode mathematical characters rather than
-legacy ``mathvariant`` styles, following
-`MathML Core <https://www.w3.org/TR/mathml-core/>`_. Conditional brackets
-stretch around their contents, and subtraction uses the mathematical minus.

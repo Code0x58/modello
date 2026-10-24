@@ -2,14 +2,16 @@
 
 from xml.etree import ElementTree
 
-from examples.gui_timeseries import DEMOS
-from modello.gui import Explorer
+from sympy import log
+
+from modello import Coordinate, InstanceDummy, ItoProcess, Modello, Series
+from modello.gui import Explorer, FieldInfo
 from tests.modello._gui_models import NS, mathml_text, rows
+from tests.modello._models import DrivenSequence
 
 
-def test_relative_equation_retains_its_predecessor_and_boundary_and_is_the_query_target():
-    model, inputs = DEMOS["relative"]
-    data = Explorer(model, inputs=inputs).snapshot(raw=True)
+def test_relative_equation_retains_its_predecessor_and_boundary_and_is_the_query_target(relative_inputs):
+    data = Explorer(DrivenSequence, inputs=relative_inputs).snapshot(raw=True)
     equations = rows(data, "equations")
     law = ElementTree.fromstring(equations["law"]["mathml"])
     indices = ["".join(node[1].itertext()) for node in law.findall(".//m:msub", NS) if node[0].text == "T"]
@@ -22,8 +24,19 @@ def test_relative_equation_retains_its_predecessor_and_boundary_and_is_the_query
 
 
 def test_continuous_equation_and_conditional_moments_have_mathematical_markup():
-    model, inputs = DEMOS["diffusion"]
-    explorer = Explorer(model, inputs=inputs)
+    class Brownian(Modello):
+        t = Coordinate("t", real=True)
+        S = Series("S", t, positive=True)
+        growth = InstanceDummy("growth", real=True)
+        volatility = InstanceDummy("volatility", nonnegative=True)
+        opening = InstanceDummy("opening", positive=True)
+        duration = InstanceDummy("duration", nonnegative=True)
+        process = ItoProcess(S[t], growth * S[t], volatility * S[t], t)
+        log_drift = process.drift(log(S[t]))
+        mean = process.mean(opening, duration)
+        variance = process.variance(opening, duration)
+
+    explorer = Explorer(Brownian, metadata={"duration": FieldInfo(symbol="τ")})
     data = explorer.snapshot(raw=True)
     equations = rows(data, "equations")
     assert "dW" in mathml_text(equations["process"]["mathml"])

@@ -20,7 +20,6 @@ from modello import (
     ModelObservations,
     ModelProblem,
     ModelRecurrence,
-    ModelSequence,
     ModelSolveError,
     ModelVector,
     ModelVectorValue,
@@ -258,13 +257,14 @@ def check_solution_families() -> None:
 
 
 def check_model_vector_contracts() -> None:
-    from examples.model_sequences import AccountSequence
-    from examples.portfolio.models import Execution, FillPosting, HoldingState
+    from examples.gallery.models import AccountSequence
+    from examples.portfolio.models import Execution, HoldingState
 
     class Model(Modello):
-        opening = component(HoldingState)
         fills = model_vector(Execution, size=2)
-        states = model_recurrence(FillPosting, initial=opening, fill=fills)
+        states = model_vector(HoldingState, size=3)
+        n = Index("n")
+        law = model_recurrence(states[n], cash=states[n - 1].cash - fills[n - 1].notional)
         terminal = states[-1]
         prices = fills.project(lambda fill: fill.price)
 
@@ -272,21 +272,19 @@ def check_model_vector_contracts() -> None:
     case = Model("typed", fills=fills)
     member: Execution = case.fills[0]
     state: HoldingState = case.states[-1]
-    step: FillPosting = case.states.steps[0]
-    sequence: ModelSequence[HoldingState, FillPosting] = case.states
+    sequence: ModelVector[HoldingState] = case.states
     vector: ModelVector[Execution] = case.fills
     projection: Vector = vector.project(lambda fill: fill.price)
     pair: tuple[Execution, ...] = vector[:2]
     problem = inspect_model(AccountSequence, "typed", fills=fills)
     problem.solutions().observe(fills=fills)
-    assert member and state and step and sequence and projection and pair
+    assert member and state and sequence and projection and pair
     _wrong: HoldingState = case.fills[0]  # type: ignore[assignment]
-    _wrong_step: Execution = case.states.steps[0]  # type: ignore[assignment]
     vector.project(lambda fill: fill)  # type: ignore[arg-type, return-value]
 
 
 def check_indexed_model_equations() -> None:
-    from examples.model_sequences import AccountSequence
+    from examples.gallery.models import AccountSequence
     from examples.portfolio.models import HoldingState
 
     initial: ModelObservations[HoldingState] = ModelObservations({0: HoldingState("initial", cash=1000)})
@@ -294,4 +292,4 @@ def check_indexed_model_equations() -> None:
     law: ModelRecurrence = case.law
     state: HoldingState = case.states[-1]
     assert law.equations and state
-    model_recurrence(AccountSequence.states[AccountSequence.n], cash={})  # type: ignore[call-overload]
+    model_recurrence(AccountSequence.states[AccountSequence.n], cash={})  # type: ignore[arg-type]

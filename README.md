@@ -188,8 +188,8 @@ Use SymPy `Product`, `Integral`, `Derivative`, and `Limit` directly; the explore
 keeps their mathematical notation and gives vector symbols an arrow. The
 [vector guide](docs/vectors.rst) explains indices, observations, and symbolic
 vector sizes such as `size=N`, where supplied lengths determine the finite horizon. The
-[finite-path examples](docs/examples/timeseries/index.rst) demonstrate inventory
-transitions, compounding, rolling windows, integrated exposure, and analytic calibration.
+[example gallery](docs/examples/gallery/index.rst) demonstrates vector summaries,
+relative sequences, typed account states, integrals, calibration, and Itô processes.
 
 Declare horizon-independent relative laws with `Series` and `Recurrence`, such
 as `T[n] = a*T[n-1]`, then query a position or a finite observation window.
@@ -206,16 +206,15 @@ is described in [notebooks/README.md](notebooks/README.md).
 
 ### Interactive exploration (WIP)
 
-Install `modello[gui]` for the optional local browser explorer. Run
-`python -m examples.gui` and open <http://127.0.0.1:5058> to explore nested
-quantities, edit or release inputs, inspect domains and provenance, and browse
-typeset MathML equations. The portfolio demo starts with a free stock–bond
-allocation and also solves for a return target. Field presentation lives beside
-declarations with `gui(field, title=..., ...)`, using the core's generic annotation
-registry. Start with the [runnable quickstart](docs/gui.rst#quickstart-your-own-explorer)
-to build your own explorer. The [GUI guide](docs/gui.rst) covers metadata, hidden
-inputs, validation, and the prototype's scope. The base install remains SymPy only.
+Install `modello[gui]` and run `python -m examples.gallery`, or from a checkout:
 
-Run `python -m examples.gui_timeseries` and open <http://127.0.0.1:5059> for indexed
-paths, vector entry editing, and Σ/Π/∫ formulas. Select `--example returns`,
-`rolling`, `exposure`, or `trend` to explore the other examples.
+```console
+uv run --extra gui python -m examples.gallery
+```
+
+Open <http://127.0.0.1:5070> for six small models in one app. Inspect the MathML
+equations, edit or release inputs, and use a calculated result as a target.
+The [gallery guide](docs/examples/gallery/index.rst) explains each model's idea;
+the [GUI quickstart](docs/gui.rst#quickstart-your-own-explorer) shows how to build
+your own explorer. Presentation metadata uses the core annotation registry,
+and Python snapshots work without Flask. The base install remains SymPy only.

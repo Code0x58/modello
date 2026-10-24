@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 
 from packaging.version import Version
@@ -124,17 +125,13 @@ class AccountState(modello.Modello):
     cash = modello.InstanceDummy("cash", real=True)
 class Debit(modello.Modello):
     amount = modello.InstanceDummy("amount", real=True)
-class Posting(modello.Modello):
-    before = modello.component(AccountState)
-    fill = modello.component(Debit)
-    after = modello.component(AccountState)
-    cash = after.cash
-    cash = before.cash - fill.amount
 class Accounts(modello.Modello):
     N = modello.InstanceDummy("N", integer=True, nonnegative=True)
-    opening = modello.component(AccountState)
     fills = modello.model_vector(Debit, size=N)
-    states = modello.model_recurrence(Posting, initial=opening, fill=fills)
+    states = modello.model_vector(AccountState, size=N+1)
+    n = modello.Index("n")
+    law = modello.model_recurrence(states[n], cash=states[n-1].cash-fills[n-1].amount)
+    opening = states[0]
     terminal = states[-1]
     balances = states.project(lambda state: state.cash)
 accounts = Accounts("accounts", opening=AccountState("opening", cash=100),
@@ -142,7 +139,6 @@ accounts = Accounts("accounts", opening=AccountState("opening", cash=100),
 assert accounts.N == 2
 assert accounts.balances == modello.Vector(100, 90, 70)
 assert accounts.terminal is accounts.states[-1]
-assert accounts.states.steps[1].before is accounts.states[1]
 assert Accounts("empty", opening=AccountState("opening", cash=100), fills=[]).terminal.cash == 100
 vector_snapshot = Explorer(window).snapshot()
 assert vector_snapshot["vectors"][0]["shape"] == [3]
@@ -160,8 +156,7 @@ import examples
 from examples.geometry import RightAngleTriangle
 from examples.data import NamedMap
 from examples.gui_quickstart import ReturnModel
-from examples.timeseries import rolling_window
-from examples.model_sequences import AccountSequence
+from examples.gallery.models import AccountSequence, VectorSummary
 import modello
 from examples.portfolio.models import Execution, HoldingState
 from modello.gui import Explorer
@@ -171,7 +166,7 @@ assert Path(examples.__file__).with_name("py.typed").is_file()
 assert RightAngleTriangle("T", a=3, b=4).c == 5
 assert NamedMap({"a": 2}).map(lambda value: value * 3) == {"a": 6}
 assert ReturnModel("example", capital=100_000, expected_return="2/25").gain == 8_000
-assert tuple(rolling_window(4, 2)("window", samples=[1, 3, 5, 7]).means) == (2, 4, 6)
+assert VectorSummary("window", samples=[1, None, 3], total=6).product == 6
 sequence = AccountSequence("installed",
     states=modello.ModelObservations({0: HoldingState("opening", quantity=3, cash=1000)}),
     fills=[Execution("fill", quantity=2, price=100, fee=1)])
@@ -179,6 +174,9 @@ assert sequence.terminal.cash == 799
 assert sequence.terminal is sequence.states[-1]
 assert Explorer(ReturnModel, inputs={"capital": 100_000}).snapshot(raw=True)["raw"]
 assert "flask" not in sys.modules
+gallery = resources.files("examples.gallery")
+assert gallery.joinpath("templates/gallery.html").is_file()
+assert gallery.joinpath("static/gallery.css").is_file()
 data = resources.files("examples.portfolio").joinpath("data")
 for name in ("market.csv", "transactions.csv", "benchmark.csv"):
     assert data.joinpath(name).is_file(), name
@@ -186,29 +184,43 @@ print("Validated installed example modules, type marker, and portfolio fixtures"
 """
 
 
-def check_wheel(
-    wheel: Path, directory: Path, requirements: Path, examples_requirements: Path, expected_version: str
-) -> None:
-    """Exercise the base library and the examples extra outside the checkout."""
+GUI_SMOKE_TEST = r"""
+from examples.gallery.app import create_gallery
+
+client = create_gallery().test_client()
+assert client.get("/").status_code == 200
+assert b'data-explore-url="/sequence/api/explore"' in client.get("/sequence/").data
+assert client.get("/assets/gallery.css").status_code == 200
+assert client.get("/sequence/assets/fonts/STIXTwoMath-Regular.woff2").data.startswith(b"wOF2")
+response = client.post("/sequence/api/explore", json={"bindings": {"terminal.cash": "908"}})
+assert response.status_code == 200, response.json
+assert next(field["value"] for field in response.json["fields"] if field["path"] == "fills[1].price") == "110"
+print("Validated installed gallery, assets, and inverse account solve")
+"""
+
+
+def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], expected_version: str) -> None:
+    """Exercise the base library, examples, and GUI outside the checkout."""
     environment = directory / "environment"
     python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     subprocess.run(["uv", "venv", "--python", sys.executable, str(environment)], check=True)
-    subprocess.run(
-        ["uv", "pip", "install", "--python", str(python), "--require-hashes", "-r", str(requirements)],
-        check=True,
-    )
-    subprocess.run(["uv", "pip", "install", "--python", str(python), "--no-deps", str(wheel)], check=True)
+
+    def install(extra: str) -> None:
+        subprocess.run(
+            ["uv", "pip", "install", "--python", str(python), "--require-hashes", "-r", str(requirements[extra])],
+            check=True,
+        )
+        artifact = f"{wheel}[{extra}]" if extra else str(wheel)
+        subprocess.run(["uv", "pip", "install", "--python", str(python), "--no-deps", artifact], check=True)
+
+    install("")
     subprocess.run(
         [str(python), "-I", "-c", SMOKE_TEST, expected_version],
         cwd=directory,
         check=True,
     )
 
-    subprocess.run(
-        ["uv", "pip", "install", "--python", str(python), "--require-hashes", "-r", str(examples_requirements)],
-        check=True,
-    )
-    subprocess.run(["uv", "pip", "install", "--python", str(python), "--no-deps", f"{wheel}[examples]"], check=True)
+    install("examples")
     subprocess.run([str(python), "-I", "-c", EXAMPLES_SMOKE_TEST], cwd=directory, check=True)
     for module in (
         "examples.portfolio",
@@ -217,16 +229,19 @@ def check_wheel(
         "examples.solution_views",
         "examples.applications",
         "examples.reconciliation",
-        "examples.timeseries",
-        "examples.relative_series",
+        "examples.gallery",
     ):
         arguments = [str(python), "-I", "-m", module]
         if module == "examples.portfolio":
             arguments.extend(["--json", str(directory / "report.json"), "--html", str(directory / "report.html")])
+        elif module == "examples.gallery":
+            arguments.append("--help")
         subprocess.run(arguments, cwd=directory, check=True, stdout=subprocess.DEVNULL)
     assert json.loads((directory / "report.json").read_text())["snapshots"][-1]["nav"] == 3066.9
     assert (directory / "report.html").read_text().startswith("<!doctype html>")
     print(f"Validated all installed example runners from {wheel.name}", flush=True)
+    install("gui")
+    subprocess.run([str(python), "-I", "-c", GUI_SMOKE_TEST], cwd=directory, check=True)
     typing_checks = []
     for path in (
         "typing_checks.py",
@@ -278,9 +293,9 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="modello-distributions-") as temporary:
         scratch = Path(temporary)
-        requirements = scratch / "runtime-requirements.txt"
-        examples_requirements = scratch / "examples-requirements.txt"
-        for target, options in ((requirements, ()), (examples_requirements, ("--extra", "examples"))):
+        requirements = {extra: scratch / f"{extra or 'runtime'}-requirements.txt" for extra in ("", "examples", "gui")}
+        for extra, target in requirements.items():
+            options = ("--extra", extra) if extra else ()
             subprocess.run(
                 [
                     "uv",
@@ -297,7 +312,7 @@ def main() -> None:
                 check=True,
                 stdout=subprocess.DEVNULL,
             )
-        check_wheel(wheels[0], scratch / "wheel", requirements, examples_requirements, expected_version)
+        check_wheel(wheels[0], scratch / "wheel", requirements, expected_version)
         rebuilt = scratch / "rebuilt"
         subprocess.run(
             [
@@ -316,7 +331,7 @@ def main() -> None:
         rebuilt_wheels = list(rebuilt.glob("*.whl"))
         if len(rebuilt_wheels) != 1:
             parser.error("the source distribution must build exactly one wheel")
-        check_wheel(rebuilt_wheels[0], scratch / "sdist", requirements, examples_requirements, expected_version)
+        check_wheel(rebuilt_wheels[0], scratch / "sdist", requirements, expected_version)
 
 
 if __name__ == "__main__":

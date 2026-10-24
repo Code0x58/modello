@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, Mapping, TypeVar
 
 from sympy import Basic, Expr, Integer
 
+from modello._paths import FieldPath
 from modello.errors import ModelInputError
 from modello.vectors import Vector
 
@@ -45,9 +46,9 @@ class _UnresolvedSelection(Exception):
 
 @dataclass(frozen=True)
 class _Location:
-    path: tuple[str, ...]
+    path: FieldPath
     index: Expr | None = None
-    suffix: tuple[str, ...] = ()
+    suffix: FieldPath = ()
 
     def substitute(self, bindings: Mapping[Basic, Basic]) -> _Location:
         return replace(self, index=None if self.index is None else self.index.xreplace(bindings))
@@ -70,7 +71,7 @@ class _Location:
 class _Selection:
     model: type[Any]
     location: _Location
-    columns: Mapping[tuple[str, ...], Vector] = field(default_factory=dict)
+    columns: Mapping[FieldPath, Vector] = field(default_factory=dict)
 
     @property
     def _modello_model(self) -> type[Any]:
@@ -117,15 +118,10 @@ class _Selection:
 
 
 @dataclass(frozen=True)
-class _CollectionSpec:
+class _ModelVectorSpec:
     model: type[Any]
     size: Expr
     factory: Callable[[Expr], type[Any]]
-    initial: _Location | None = None
-    inputs: Mapping[str, _Location] = field(default_factory=dict)
-    indexed: frozenset[str] = frozenset()
-    relations: tuple[Basic, ...] = ()
-    wire: Callable[[Any, str, Any], None] | None = None
 
     @property
     def shape(self) -> tuple[int | Expr]:
@@ -135,20 +131,5 @@ class _CollectionSpec:
     def _finite(self) -> bool:
         return isinstance(self.size, Integer)
 
-    def substitute(self, bindings: Mapping[Basic, Basic]) -> _CollectionSpec:
-        return replace(
-            self,
-            size=self.size.xreplace(bindings),
-            initial=None if self.initial is None else self.initial.substitute(bindings),
-            inputs={name: value.substitute(bindings) for name, value in self.inputs.items()},
-            relations=tuple(value.xreplace(bindings) for value in self.relations),
-        )
-
-
-def _location(value: Any) -> _Location:
-    if isinstance(value, _Selection):
-        return value.location
-    path = getattr(value, "_modello_path", None)
-    if path is None:
-        raise ModelInputError("Declare the source as a component or model vector in the model class")
-    return _Location(path)
+    def substitute(self, bindings: Mapping[Basic, Basic]) -> _ModelVectorSpec:
+        return replace(self, size=self.size.xreplace(bindings))

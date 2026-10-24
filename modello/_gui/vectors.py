@@ -71,6 +71,7 @@ def vector_view(
         for name, field in layout.fields.items()
         if field.symbol in free and name not in layout.hidden and name == layout.aliases[field.symbol][0]
     ]
+    markup = context.printer.values(scaled)
     return {
         "path": path,
         "parent": path.rpartition(".")[0],
@@ -90,8 +91,8 @@ def vector_view(
         "value_state": "numeric" if all(entry.is_number for entry in elements) else "symbolic",
         "display_value": "",
         "approximate": False,
-        "value_mathml": context.printer.values(scaled),
-        "exact_mathml": context.printer.values(scaled),
+        "value_mathml": markup,
+        "exact_mathml": markup,
         "symbol_mathml": context.printer.vector_symbol(path, info.symbol or path),
         "input": current_input,
         "initial_input": initial_input,

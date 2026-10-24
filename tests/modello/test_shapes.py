@@ -6,9 +6,9 @@ from copy import deepcopy
 import pytest
 from sympy import Rational
 
-from examples.relative_series import ObservedAutoregression
 from modello import Index, InstanceDummy, Modello, Vector, component, inspect_model, vector
 from modello.errors import ModelInputError, SolutionCountError
+from tests.modello._models import DrivenSequence as ObservedAutoregression
 
 
 def test_symbolic_vector_substitution_preserves_coordinate_identities():

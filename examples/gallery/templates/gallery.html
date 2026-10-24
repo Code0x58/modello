@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>modello · Example gallery</title>
+    <link rel="stylesheet" href="{{ url_for('index') }}vectors/assets/explorer.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='gallery.css') }}" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">m</span>modello</a>
+      <span class="app-label">EXAMPLE GALLERY</span>
+      <span class="local"><i></i>Local workspace</span>
+    </header>
+    <main class="gallery">
+      <div class="eyebrow">ONE MODEL, MANY QUESTIONS</div>
+      <h1>Start with a relationship.</h1>
+      <p class="gallery-intro">Supply what you know, then use the same equations to calculate results or infer missing inputs. Each example introduces one idea.</p>
+      <ol class="gallery-grid">
+        {% for slug, example in examples.items() %}
+        <li>
+          <a class="gallery-card" href="{{ url_for('index') }}{{ slug }}/">
+            <span class="eyebrow">{{ '%02d' % loop.index }}</span>
+            <h2>{{ example.info.title }}</h2>
+            <p>{{ example.info.description }}</p>
+            <span class="gallery-open">Explore <span aria-hidden="true">→</span></span>
+          </a>
+        </li>
+        {% endfor %}
+      </ol>
+      <p class="gallery-note">Use <strong>Equations</strong> to see the model. Edit any quantity, or try a guided question. Reset inputs to begin again.</p>
+    </main>
+  </body>
+</html>
