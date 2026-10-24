@@ -6,8 +6,8 @@ import pytest
 from sympy import Rational, S, Tuple, exp
 
 from examples.gallery.extensions import GeometricDiffusion
-from examples.gallery.models import AccountSequence, LinearTrend
-from examples.portfolio.models import Execution, HoldingState
+from examples.gallery.models import LinearTrend
+from examples.portfolio.models import AccountSequence, Execution, HoldingState
 from examples.symbolic import Known, SymbolicModel
 from modello import ModelObservations, Vector, inspect_model
 

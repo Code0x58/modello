@@ -172,14 +172,11 @@ class _FunctionSymbol(Dummy):
     """Marker for identities of functions, separate from scalar quantities."""
 
     def bound(self, name: str) -> _FunctionSymbol:
-        return _FunctionSymbol(self.name, **self.assumptions0)
+        return type(self)(self.name, **self.assumptions0)
 
 
 class _DeclarationSymbol(_FunctionSymbol):
     """Identity retained when a law's local coordinates are alpha-renamed."""
-
-    def bound(self, name: str) -> _DeclarationSymbol:
-        return type(self)(self.name, **self.assumptions0)
 
 
 def _bound_coordinates(expression: Basic) -> tuple[Basic, ...]:

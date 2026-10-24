@@ -6,9 +6,10 @@ from typing import Mapping, TypeAlias
 from sympy import Rational
 
 from examples.gallery.extensions import GeometricDiffusion
-from examples.gallery.models import AccountSequence, LinearTrend
+from examples.gallery.models import LinearTrend
 from examples.geometry import RightAngleTriangle
 from examples.nested_geometry import Box
+from examples.portfolio.models import AccountSequence
 from modello import Modello
 from modello.gui import ExplorerValue, FieldInfo, ModelInfo, Scenario
 

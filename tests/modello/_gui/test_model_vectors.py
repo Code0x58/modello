@@ -4,7 +4,7 @@ import json
 from xml.etree import ElementTree
 
 from examples.gallery.catalog import EXAMPLES
-from examples.gallery.models import AccountSequence
+from examples.portfolio.models import AccountSequence
 from modello import Index, InstanceDummy, Modello, component, model_recurrence, model_vector
 from modello.gui import Explorer, FieldInfo, ModelInfo, Scenario, create_app
 from tests.modello._gui_models import mathml_text, rows

@@ -1,25 +1,9 @@
-"""The vector and recurrent models used in the four-step feature walkthrough."""
+"""The calibration model and shared account declaration for the walkthrough."""
 
 from sympy import Derivative
 
-from examples.portfolio.models import Execution, HoldingState
-from modello import Index, InstanceDummy, Modello, Vector, model_recurrence, model_vector, vector
-
-
-class AccountSequence(Modello):
-    """Executions connect typed account states through relative field equations."""
-
-    N = InstanceDummy("N", integer=True, nonnegative=True)
-    fills = model_vector(Execution, size=N)
-    states = model_vector(HoldingState, size=N + 1)
-    n = Index("n")
-    law = model_recurrence(
-        states[n],
-        quantity=states[n - 1].quantity + fills[n - 1].quantity,
-        cash=states[n - 1].cash - fills[n - 1].notional - fills[n - 1].fee,
-    )
-    terminal = states[-1]
-    total_fees = fills.project(lambda fill: fill.fee).sum()
+from examples.portfolio.models import AccountSequence as AccountSequence
+from modello import Index, InstanceDummy, Modello, Vector, vector
 
 
 class LinearTrend(Modello):

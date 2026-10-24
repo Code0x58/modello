@@ -257,8 +257,7 @@ def check_solution_families() -> None:
 
 
 def check_model_vector_contracts() -> None:
-    from examples.gallery.models import AccountSequence
-    from examples.portfolio.models import Execution, HoldingState
+    from examples.portfolio.models import AccountSequence, Execution, HoldingState
 
     class Model(Modello):
         fills = model_vector(Execution, size=2)
@@ -284,8 +283,7 @@ def check_model_vector_contracts() -> None:
 
 
 def check_indexed_model_equations() -> None:
-    from examples.gallery.models import AccountSequence
-    from examples.portfolio.models import HoldingState
+    from examples.portfolio.models import AccountSequence, HoldingState
 
     initial: ModelObservations[HoldingState] = ModelObservations({0: HoldingState("initial", cash=1000)})
     case = AccountSequence("typed", N=2, states=initial)

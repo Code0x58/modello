@@ -48,7 +48,7 @@ from modello._operators import (
 from modello._symbols import Index, _minimal_assumptions
 from modello._values import ScalarValue, SymbolicScalar
 from modello.errors import ModelInputError
-from modello.vectors import Vector, _invalid_index, _VectorElement, vector
+from modello.vectors import Vector, _integer_index, _invalid_index, _VectorElement, vector
 
 __all__ = ["Recurrence", "Series"]
 
@@ -471,9 +471,7 @@ class _RecurrenceValue(_ScopedOperator):
     is_commutative = True
 
     def __new__(cls, recurrence: Recurrence, index: ScalarValue) -> _RecurrenceValue:
-        point = _scalar_expression(index, "A recurrence position must be an integer")
-        if _invalid_index(point):
-            raise ModelInputError("A recurrence position must be an integer")
+        point = _integer_index(index, "A recurrence position must be an integer")
         return Expr.__new__(cls, recurrence, point)
 
     @property

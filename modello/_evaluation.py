@@ -94,20 +94,20 @@ def _evaluate(expression: Basic) -> Basic:
     args = tuple(_evaluate(arg) for arg in expression.args)
     if not isinstance(expression, Expr):
         return expression.func(*args) if args != expression.args else expression
-    condition = And(
-        _denominator_condition(expression),
-        *(_denominator_condition(arg) for arg in args if isinstance(arg, Expr)),
-    )
-    values = tuple(_defined_part(arg) if isinstance(arg, Expr) else arg for arg in args)
-    result = _rebuild(expression, values)
-    return _conditioned(result, condition)
+    return _rebuild(expression, args, _denominator_condition(expression))
 
 
-def _rebuild(expression: Expr, args: tuple[Basic, ...]) -> Expr:
-    """Do not cancel an operation whose domain is still unresolved."""
+def _rebuild(expression: Expr, args: tuple[Basic, ...], condition: Basic) -> Expr:
+    """Rebuild resolved arguments without dropping domains or pending operations."""
+    condition = And(condition, *(_denominator_condition(arg) for arg in args if isinstance(arg, Expr)))
+    if condition is S.false:
+        return S.NaN
+    args = tuple(_defined_part(arg) if isinstance(arg, Expr) else arg for arg in args)
     if isinstance(expression, (Add, Mul)) and any(_pending(arg) for arg in args):
-        return expression.func(*args, evaluate=False)
-    return expression.func(*args) if args != expression.args else expression
+        value = expression.func(*args, evaluate=False)
+    else:
+        value = expression.func(*args) if args != expression.args else expression
+    return _conditioned(value, condition)
 
 
 def _pending(expression: Basic) -> bool:

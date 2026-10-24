@@ -21,7 +21,6 @@ from sympy import (
     diff,
     exp,
     simplify,
-    sympify,
 )
 
 from modello._evaluation import _ConditionalValue, _evaluate_scalar, _pending, _substitute
@@ -31,6 +30,7 @@ from modello._operators import (
     _conditioned,
     _DeclarationSymbol,
     _scalar_atoms,
+    _scalar_expression,
     _ScopedOperator,
     _SymbolicTemplate,
     _value_condition,
@@ -142,11 +142,11 @@ class ItoProcess(_SymbolicTemplate):
         _state_domain: _StateDomain | None = None,
         _context: _ProcessContext | Basic | None = None,
     ) -> ItoProcess:
-        drift, diffusion = sympify(drift), sympify(diffusion)
+        message = "An Itô law needs a real scalar state, continuous time, drift, and diffusion"
+        coefficients = tuple(_scalar_expression(value, message) for value in (drift, diffusion))
         if isinstance(time, Symbol):
-            for value in (drift, diffusion):
-                if isinstance(value, Expr):
-                    _check_point_expression(value, state, time)
+            for value in coefficients:
+                _check_point_expression(value, state, time)
         if (
             not isinstance(state, (Symbol, _SeriesTerm))
             or state.is_real is False
@@ -155,15 +155,9 @@ class ItoProcess(_SymbolicTemplate):
             or time.is_real is False
             or time.is_integer is True
             or state == time
-            or any(
-                not isinstance(value, Expr)
-                or value.is_Matrix
-                or value.is_commutative is not True
-                or value.is_real is False
-                for value in (drift, diffusion)
-            )
+            or any(value.is_commutative is not True or value.is_real is False for value in coefficients)
         ):
-            raise ModelInputError("An Itô law needs a real scalar state, continuous time, drift, and diffusion")
+            raise ModelInputError(message)
         if isinstance(state, _SeriesTerm) and (state.series.discrete or state.index != time):
             raise ModelInputError("A process state must use this law's continuous time coordinate")
         driver = Series("W", time, real=True) if driver is None else driver
@@ -176,7 +170,7 @@ class ItoProcess(_SymbolicTemplate):
         context = S.EmptySet if _context is None else _context
         if context is not S.EmptySet and not isinstance(context, _ProcessContext):
             raise ModelInputError("An Itô law needs its process dependency context")
-        return Basic.__new__(cls, state, drift, diffusion, time, driver, _state_domain, context)
+        return Basic.__new__(cls, state, *coefficients, time, driver, _state_domain, context)
 
     @property
     def state(self) -> Expr:
@@ -392,26 +386,24 @@ class _ItoQuantity(_ScopedOperator):
         operation: int | Integer,
         _coordinates: Tuple | None = None,
     ) -> _ItoQuantity:
-        expression = sympify(expression)
+        value = _scalar_expression(expression, "An Itô transformation needs a scalar expression")
         _coordinates = Tuple(*law.bound_symbols) if _coordinates is None else _coordinates
         if not isinstance(_coordinates, Tuple) or len(_coordinates) != 2:
             raise ModelInputError("An Itô transformation needs its state and time coordinates")
-        if isinstance(expression, Expr):
-            _check_point_expression(expression, _coordinates[0], _coordinates[1])
-        if not isinstance(expression, Expr) or expression.is_Matrix or expression.is_commutative is not True:
+        _check_point_expression(value, _coordinates[0], _coordinates[1])
+        if value.is_commutative is not True:
             raise ModelInputError("An Itô transformation needs a scalar expression")
+        terms = _scalar_atoms(value, _SeriesTerm)
         if any(
             term != _coordinates[0] and (not term.series.discrete or _coordinates[1] in term.index.free_symbols)
-            for term in _scalar_atoms(expression, _SeriesTerm)
+            for term in terms
         ):
             raise ModelInputError("A one-state Itô transformation cannot differentiate another unmodelled process")
-        if law._context is not None and (
-            expression.free_symbols | _scalar_atoms(expression, _SeriesTerm)
-        ) & law._context.others(law):
+        if law._context is not None and (value.free_symbols | terms) & law._context.others(law):
             raise ModelInputError(
                 "A one-state Itô transformation cannot differentiate another registered process state"
             )
-        return Expr.__new__(cls, law, expression, Integer(operation), _coordinates)
+        return Expr.__new__(cls, law, value, Integer(operation), _coordinates)
 
     @property
     def protected_symbols(self) -> tuple[Basic, ...]:
@@ -509,12 +501,10 @@ class _ItoSolution(_ScopedOperator):
         increment: ScalarValue,
         operation: int | Integer,
     ) -> _ItoSolution:
-        values = tuple(sympify(value) for value in (initial, elapsed, increment))
-        if any(
-            not isinstance(value, Expr) or value.is_Matrix or value.is_commutative is not True or value.is_real is False
-            for value in values
-        ):
-            raise ModelInputError("Initial state, elapsed time, and Wiener increment must be scalar")
+        message = "Initial state, elapsed time, and Wiener increment must be scalar"
+        values = tuple(_scalar_expression(value, message) for value in (initial, elapsed, increment))
+        if any(value.is_commutative is not True or value.is_real is False for value in values):
+            raise ModelInputError(message)
         return Expr.__new__(cls, law, *values, Integer(operation))
 
     @property

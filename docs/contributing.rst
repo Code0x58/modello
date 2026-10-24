@@ -25,7 +25,9 @@ Follow a model from its class body to its populated instances:
    ``_expressions.py`` resolves directed definitions within local binder scopes,
    evaluates SymPy operators, and leaves ordinary algebraic cycles for the joint
    solver. This view is shared by construction, audits, and solution families;
-   the original snapshot remains unchanged. A per-problem memo prevents repeated
+   the original snapshot remains unchanged. Both the resolver and evaluator use
+   one argument-rebuilding path to retain denominator domains and pending
+   operators. A per-problem memo prevents repeated
    expansion of shared dependency graphs. Limits remain unevaluated until their
    free quantities are substituted, preserving exceptional parameter values
    that generic limit evaluation can discard.
@@ -63,7 +65,8 @@ scalar containers and finite comprehensions without importing model or GUI
 machinery. Its shared container reader checks native array rank and matrix
 orientation for construction and observations. ``_scalar_expression`` sympifies
 scalar inputs without evaluating them; ``_rebind`` preserves source denominator
-domains while renaming declarations. Vector coordinates use normal scalar field
+domains while renaming declarations. Scalar and model vectors share size and
+integer-position validation. Vector coordinates use normal scalar field
 records. ``_paths.py``
 shares coordinate traversal and bracketed display paths across consumers.
 The GUI separates layout and permissions, MathML printing, bounded input parsing,
@@ -109,8 +112,10 @@ once and connects their views. Structural shape/index binding precedes scalar
 solving. The GUI's ``_gui/collections.py`` summarizes nested model members and
 observation origins; its labels preserve canonical API paths for navigation.
 
-Keep the four-step feature walkthrough small. Reuse the existing geometry models;
-``examples/gallery/models.py`` holds the other equations. ``catalog.py`` separates
+Keep the four-step feature walkthrough small. Reuse the existing geometry and
+portfolio models; ``examples/gallery/models.py`` holds the calibration equations.
+The portfolio guide and gallery share ``AccountSequence`` from
+``examples/portfolio/models.py``. ``catalog.py`` separates
 tutorial steps from domain extensions and supplies one shared question progression.
 ``extensions.py`` holds specialist models; ``examples/series.py`` supports the
 scalar-series guide independently of the GUI. ``app.py``

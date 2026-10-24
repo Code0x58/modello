@@ -42,13 +42,10 @@ class Vector(Basic):
         if size is not None:
             if len(values) != 1 or not isinstance(values[0], str) or not values[0]:
                 raise ModelInputError("A declared vector needs a name and size")
-            if isinstance(size, Expr) and not isinstance(size, Integer):
-                if size.is_integer is not True or size.is_nonnegative is False:
-                    raise ModelInputError("Vector size must be a nonnegative integer expression")
-                return _VectorSymbol(_FunctionSymbol(values[0], **assumptions), size)
-            if isinstance(size, bool) or not isinstance(size, (int, Integer)) or size < 0:
-                raise ModelInputError("Vector size must be a nonnegative integer")
-            entries = tuple(InstanceDummy(f"{values[0]}[{i}]", **assumptions) for i in range(size))
+            count = _vector_size(size)
+            if not isinstance(count, Integer):
+                return _VectorSymbol(_FunctionSymbol(values[0], **assumptions), count)
+            entries = tuple(InstanceDummy(f"{values[0]}[{i}]", **assumptions) for i in range(count))
         else:
             if assumptions:
                 raise ModelInputError("Assumptions apply to declared vectors; supply a name and size")
@@ -114,11 +111,7 @@ class Vector(Basic):
     def __getitem__(self, index: object) -> Expr | Vector:
         if isinstance(index, slice):
             return Vector(*(self._at(i) for i in range(len(self))[index]))
-        if isinstance(index, bool):
-            raise ModelInputError("A vector index must be an integer")
-        position = _scalar_expression(index, "A vector index must be an integer")
-        if _invalid_index(position):
-            raise ModelInputError("A vector index must be an integer")
+        position = _integer_index(index, "A vector index must be an integer")
         if isinstance(position, Integer):
             return self._at(int(position))
         return _VectorElement(self, position)
@@ -425,6 +418,25 @@ def _invalid_index(index: Expr) -> bool:
     return (
         bool(index.is_Matrix) or index.is_integer is False or (index.is_number is True and index.is_integer is not True)
     )
+
+
+def _integer_index(value: object, message: str) -> Expr:
+    """Accept unresolved integer positions without admitting known nonintegers."""
+    index = _scalar_expression(value, message)
+    if _invalid_index(index):
+        raise ModelInputError(message)
+    return index
+
+
+def _vector_size(value: object) -> Expr:
+    """A finite axis can stay symbolic until observations determine its length."""
+    message = "Vector size must be a nonnegative integer expression"
+    if isinstance(value, (str, bytes)):
+        raise ModelInputError(message)
+    size = _scalar_expression(value, message)
+    if size.is_integer is not True or size.is_nonnegative is False:
+        raise ModelInputError(message)
+    return size
 
 
 def _factor(scalar: ScalarValue) -> Expr:

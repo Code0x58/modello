@@ -8,7 +8,7 @@ from dataclasses import replace
 from functools import lru_cache, partial
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast, overload
 
-from sympy import Basic, Eq, Expr, Integer, Symbol, SympifyError, Tuple, sympify
+from sympy import Basic, Eq, Expr, Integer, Symbol, Tuple, sympify
 
 from modello._collections import (
     ModelObservations,
@@ -20,12 +20,12 @@ from modello._collections import (
 from modello._evaluation import _indexed_value, _relative_expression, _substitute
 from modello._model import ModelloMeta, ModelloMetaNamespace, _has_symbolic_shape, _known_integers, _ModelReference
 from modello._model_laws import ModelRecurrence, _ModelLawSpec
-from modello._operators import _definitely_undefined
+from modello._operators import _definitely_undefined, _scalar_expression
 from modello._paths import FieldPath, _path_label, _path_value
 from modello._symbols import Index
 from modello._values import ScalarValue, SymbolicScalar
 from modello.errors import ModelDefinitionError, ModelInputError
-from modello.vectors import Vector, _invalid_index, _VectorElement, vector
+from modello.vectors import Vector, _integer_index, _vector_size, _VectorElement, vector
 
 if TYPE_CHECKING:
     from modello import Modello
@@ -99,14 +99,7 @@ def _collection_columns(value: Any) -> dict[FieldPath, Vector]:
 def _collection_item(value: Any, index: object) -> Any:
     if isinstance(index, slice):
         return tuple(_collection_item(value, i) for i in range(len(value))[index])
-    if isinstance(index, bool):
-        raise ModelInputError("A model vector index must be an integer")
-    try:
-        point = sympify(index)
-    except (TypeError, ValueError, SympifyError) as error:
-        raise ModelInputError("A model vector index must be an integer") from error
-    if not isinstance(point, Expr) or _invalid_index(point):
-        raise ModelInputError("A model vector index must be an integer")
+    point = _integer_index(index, "A model vector index must be an integer")
     size = _collection_size(value)
     if isinstance(size, Integer) and isinstance(point, Integer):
         position = int(point) if point >= 0 else int(size + point)
@@ -125,25 +118,10 @@ def _collection_project(value: Any, project: Callable[[Any], ScalarValue]) -> Ve
     i = Index("i")
     columns = _collection_columns(value)
     proxy = _Selection(_model_type(value)._modello_collection_element, _Location((), i), columns)
-    expression = sympify(project(proxy))
+    expression = _scalar_expression(project(proxy), "A model projection must return a scalar expression")
     if isinstance(expression, _VectorElement) and expression.index == i:
         return expression.vector
     return vector(expression, (i, 0, _collection_size(value) - 1))
-
-
-def _size(value: int | SymbolicScalar) -> Expr:
-    try:
-        result = sympify(value)
-    except (TypeError, ValueError, SympifyError) as error:
-        raise ModelInputError("A model vector size must be a nonnegative integer expression") from error
-    if (
-        isinstance(value, bool)
-        or not isinstance(result, Expr)
-        or result.is_integer is not True
-        or result.is_nonnegative is False
-    ):
-        raise ModelInputError("A model vector size must be a nonnegative integer expression")
-    return result
 
 
 def _root_model(model: type[Any]) -> type[Any]:
@@ -194,7 +172,7 @@ def _vector_model(model: type[Modello], size: Expr) -> type[Any]:
 def model_vector(model: type[_Model], *, size: int | SymbolicScalar) -> ModelVector[_Model]:
     """Declare a homogeneous vector of independently scoped model components."""
     _root_model(model)
-    return cast(ModelVector[_Model], _ModelVectorSpec(model, _size(size), partial(_vector_model, model)))
+    return cast(ModelVector[_Model], _ModelVectorSpec(model, _vector_size(size), partial(_vector_model, model)))
 
 
 def model_recurrence(target: _Model, *, start: int = 1, **updates: ScalarValue) -> ModelRecurrence:
@@ -219,12 +197,7 @@ def model_recurrence(target: _Model, *, start: int = 1, **updates: ScalarValue) 
         path = next((path for path in target.columns if _path_label(path) == name), None)
         if path is None:
             raise ModelInputError(f"{target.model.__name__} has no scalar field {name!r}")
-        try:
-            expression = sympify(value)
-        except (TypeError, ValueError, SympifyError) as error:
-            raise ModelInputError("Recurrent field definitions must be scalar expressions") from error
-        if not isinstance(expression, Expr) or expression.is_Matrix:
-            raise ModelInputError("Recurrent field definitions must be scalar expressions")
+        expression = _scalar_expression(value, "Recurrent field definitions must be scalar expressions")
         fields.append((path, expression))
     equations = Tuple(*(Eq(target.columns[path][index], expression, evaluate=False) for path, expression in fields))
     size = next(iter(target.columns.values())).shape[0]

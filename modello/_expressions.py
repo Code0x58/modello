@@ -6,7 +6,6 @@ from functools import cached_property
 from typing import Iterable, Mapping
 
 from sympy import (
-    And,
     Basic,
     Derivative,
     Expr,
@@ -25,7 +24,6 @@ from sympy import (
 from modello._evaluation import _OPERATORS, _evaluate as _evaluate, _rebuild, _substitute as _substitute
 from modello._operators import (
     _conditioned,
-    _defined_part,
     _denominator_condition,
     _ScopedExpression,
     _ScopedOperator,
@@ -202,15 +200,7 @@ class _DefinitionResolver:
             args = tuple(self(arg, protected) for arg in expression.args)
             if not isinstance(expression, Expr):
                 return expression.func(*args) if args != expression.args else expression
-            condition = And(
-                self(_denominator_condition(expression), protected),
-                *(_denominator_condition(arg) for arg in args if isinstance(arg, Expr)),
-            )
-            if condition is S.false:
-                return S.NaN
-            values = tuple(_defined_part(arg) if isinstance(arg, Expr) else arg for arg in args)
-            value = _rebuild(expression, values)
-            return _conditioned(value, condition)
+            return _rebuild(expression, args, self(_denominator_condition(expression), protected))
         evaluated = _evaluate(operator) if self.evaluate_operators else operator
         return self(evaluated, protected) if evaluated != operator else operator
 

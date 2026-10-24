@@ -55,9 +55,9 @@ unsupported symbolic queries stay unevaluated.
 An account across executions
 ----------------------------
 
-.. literalinclude:: ../examples/gallery/models.py
+.. literalinclude:: ../examples/portfolio/models.py
    :start-at: class AccountSequence
-   :end-before: class LinearTrend
+   :end-before: class FillPosting
    :language: python
 
 .. math::
@@ -72,8 +72,7 @@ Supply typed observations and let execution count determine the horizon:
 
 .. code-block:: pycon
 
-   >>> from examples.gallery.models import AccountSequence
-   >>> from examples.portfolio.models import Execution, HoldingState
+   >>> from examples.portfolio.models import AccountSequence, Execution, HoldingState
    >>> from modello import ModelObservations
    >>> opening = HoldingState("opening", quantity=3, cash=1000)
    >>> fills = [Execution("buy", quantity=2, price=100, fee=1),

@@ -26,7 +26,7 @@ from sympy import (
     simplify,
 )
 
-from modello import Index, InstanceDummy, Modello, Vector, component, inspect_model, vector
+from modello import Index, InstanceDummy, Modello, Vector, component, inspect_model, model_vector, vector
 from modello.errors import ModelDefinitionError, ModelInputError, SolutionCountError
 
 
@@ -468,9 +468,13 @@ def test_invalid_vector_observations_report_owned_input_errors(raw):
 
 
 @pytest.mark.parametrize("size", [-1, True, 1.5, "3"])
-def test_invalid_shapes_fail_at_declaration(size):
+@pytest.mark.parametrize("model_members", [False, True], ids=["scalars", "models"])
+def test_invalid_shapes_fail_at_declaration(size, model_members):
     with pytest.raises(ModelInputError, match="size"):
-        Vector("x", size=size)
+        if model_members:
+            model_vector(Window, size=size)
+        else:
+            Vector("x", size=size)
 
 
 @pytest.mark.parametrize(

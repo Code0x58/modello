@@ -1,10 +1,27 @@
 """Itô corrections, conditional Brownian moments, and flat parameter inference."""
 
 import pytest
-from sympy import Abs, Piecewise, Rational, S, Symbol, conjugate, exp, log, simplify
+from sympy import Abs, Lambda, MatrixSymbol, Piecewise, Rational, S, Symbol, conjugate, exp, log, simplify
 
 from modello import Coordinate, InstanceDummy, Modello, Series
 from modello.contrib.stochastic import ItoProcess
+from modello.errors import ModelInputError
+
+
+@pytest.mark.parametrize("expression", [MatrixSymbol("A", 2, 2), Lambda(Symbol("u"), Symbol("u") ** 2)])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        pytest.param(lambda x, t, f: ItoProcess(x, f, 1, t), id="drift"),
+        pytest.param(lambda x, t, f: ItoProcess(x, 0, f, t), id="diffusion"),
+        pytest.param(lambda x, t, f: ItoProcess(x, 0, 1, t).drift(f), id="transform"),
+        pytest.param(lambda x, t, f: ItoProcess(x, 0, 1, t).mean(f, 1), id="initial-state"),
+    ],
+)
+def test_process_inputs_require_scalar_expressions(expression, operation):
+    x, t = Coordinate("x", real=True), Coordinate("t", real=True)
+    with pytest.raises(ModelInputError, match="scalar"):
+        operation(x, t, expression)
 
 
 def test_brownian_chain_rule_and_explicit_time_dependence():

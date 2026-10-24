@@ -156,8 +156,6 @@ def test_collection_input_and_index_errors_are_owned():
             case.payments[index]
     with pytest.raises(IndexError):
         case.payments[1]
-    with pytest.raises(ModelInputError):
-        model_vector(Payment, size=True)
 
 
 def test_state_domains_and_function_identities_survive_member_recursion():

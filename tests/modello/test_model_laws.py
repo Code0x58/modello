@@ -3,7 +3,7 @@
 from copy import deepcopy
 
 import pytest
-from sympy import Derivative, Integral, Limit, MatrixSymbol, Product, Rational, Sum
+from sympy import Derivative, Integral, Lambda, Limit, MatrixSymbol, Product, Rational, Sum, Symbol
 
 from modello import (
     Index,
@@ -194,13 +194,18 @@ def test_other_declarations_cannot_capture_same_named_target_members():
             law = model_recurrence(Other.states[n], value=Other.states[n - 1].value + 1)
 
 
-def test_model_field_updates_reject_matrix_values():
+@pytest.mark.parametrize("expression", [MatrixSymbol("A", 2, 2), Lambda(Symbol("u"), Symbol("u") ** 2)])
+@pytest.mark.parametrize("operation", ["law", "projection"])
+def test_model_vector_operations_require_scalar_results(expression, operation):
     with pytest.raises(ModelInputError, match="scalar"):
 
         class Invalid(Modello):
             states = model_vector(State, size=2)
             n = Index("n")
-            law = model_recurrence(states[n], value=MatrixSymbol("A", 2, 2))
+            if operation == "law":
+                law = model_recurrence(states[n], value=expression)
+            else:
+                values = states.project(lambda _: expression)
 
 
 def test_nested_reductions_keep_distinct_local_indices(initial_state):
