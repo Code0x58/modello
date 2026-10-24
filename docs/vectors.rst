@@ -1,8 +1,9 @@
 Vectors and indexed formulas
 ============================
 
-Use ``Vector`` for an ordered collection of scalar quantities. Its entries use
-the same equations, observations, and domains as other model fields. Use
+Use ``Vector`` for measurements, predictions, or other ordered scalar quantities.
+The :doc:`calibration walkthrough <getting-started>` shows how vector expressions
+define a fitting objective. This guide covers the individual operations. Use
 :doc:`model-vectors` when each entry should contain a complete model, or
 :doc:`series` for a relative law independent of its observation window.
 
@@ -28,11 +29,12 @@ Let the data determine the size instead of building a class for every length:
 without that observation it stays symbolic. Vector assumptions apply to every
 entry, including inferred values.
 
-Observed lengths and supplied size fields are solved together before scalar
-equations. All lengths must agree. ``N=3`` also prepares three unknown entries
-without supplying a vector. A literal ``size=3`` fixes the declaration's size.
+Observed lengths must agree with the declared sizes: two vectors of size ``N``
+need matching lengths; a vector of size ``N+1`` needs one more entry. ``N=3``
+also requests three unknown entries without supplying a vector. A literal
+``size=3`` fixes the size.
 Use ``v.shape[0]`` for an unresolved size; ``len(v)`` needs a finite integer.
-Prepare the original class again for a different horizon.
+Construct another case for a different observation window.
 
 Operations
 ----------
@@ -50,8 +52,8 @@ negative indices. Addition and subtraction require equal shapes; multiplication
 and division scale by a scalar. ``dot`` and ``@`` give a bilinear contraction
 without complex conjugation. Empty vectors have sum zero and product one.
 
-The reduction helpers return ordinary unevaluated SymPy ``Sum`` and ``Product``
-objects. Model solving evaluates them; outside a model, call ``.doit()``.
+Inside a model, reductions are evaluated as part of answering the question.
+For standalone calculations like these, call ``.doit()``.
 Native sums, products, integrals, derivatives, and limits can also be declared
 directly. Their formulas remain intact for inspection and rendering.
 
@@ -92,27 +94,15 @@ Inspection and solution families
 .. code-block:: pycon
 
    >>> problem = inspect_model(Window, "window", samples=[1, None, 3])
-   >>> problem.vector("samples") == problem.symbols.samples
-   True
-   >>> problem.field("samples", 1).symbol == problem.symbols.samples[1]
-   True
    >>> family = problem.solutions().observe(total=6)
    >>> family.one().samples
    [1, 2, 3]
-   >>> total = next(c for c in problem.constraints if c.path == ("total",))
-   >>> "\\sum" in problem.latex(total.right)
-   True
 
-The read-only ``problem.vectors`` mapping contains complete vectors by field
-path. ``problem.vector_definitions`` contains their declared formulas, and
-``problem.fields`` includes individual coordinates. Nested paths work in the
-same way. ``problem.latex`` and ``family.latex`` export named mathematical
-formulas; ``symbol_names`` and ``vector_names`` can supply report notation.
-
-Aliases share coordinate identities. Copied components keep their own scopes
-and observation provenance. ``problem.without("samples")`` releases the whole
-observation group while retaining its equations. Family observations accumulate:
-``None`` adds no constraint and does not release an earlier observation.
+Use ``family.expression(...)`` to obtain a SymPy expression for further analysis,
+or ``problem.latex(...)`` to export a named formula. See :doc:`solutions` for
+adding conditions and selecting outputs, and :doc:`diagnostics` for field lookup.
+Family observations accumulate: ``None`` adds no constraint and does not release
+an earlier observation. Construct a new case to replace a dataset.
 
 Exact families require remaining indices and bound operators to resolve. Supply
 finite bounds and valid coordinates before requesting one. Direct invalid
@@ -147,14 +137,13 @@ Referenced formulas are expanded before differentiation; differentiation
 variables stay independent until their derivatives are taken. To differentiate
 along a constrained family, first obtain its reduced expression with
 ``family.expression``. Calculus through cyclic or multiply defined quantities
-is unsupported. Parameterized limits wait for the necessary observations so
-exceptional values are preserved. Parameterized integrals with possible poles
-in their interval also wait for observations or a SymPy domain proof. Explicit
-denominator exclusions survive substitution and finite reductions, including
-when observed zeros cancel the resulting expression.
+needs an explicit parametrization. Some limits and integrals remain symbolic
+until the relevant observations are supplied. See :doc:`generality` for the
+supported calculus and domain checks.
 
 See the native `SymPy concrete mathematics
 <https://docs.sympy.org/latest/modules/concrete.html>`_ and
 `calculus <https://docs.sympy.org/latest/tutorials/intro-tutorial/calculus.html>`_
-APIs for operator syntax. The :doc:`example gallery <examples/gallery/index>`
-shows these operations, relative sequences, and typed account models in one app.
+APIs for operator syntax. Continue with :doc:`model-vectors` to relate typed
+states across a sequence, or try line fitting in the
+:doc:`gallery <examples/gallery/index>`.

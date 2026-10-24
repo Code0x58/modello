@@ -4,7 +4,8 @@ Vectors of models and relative equations
 Use ``model_vector(Model, size=N)`` when each position contains related
 quantities. A vector of executions keeps quantity, price, and fee together;
 a vector of account states keeps inventory and cash together. Their relative
-field equations use the ordinary joint solver.
+field equations describe how the states relate. The fourth step of
+:doc:`getting-started` gives a complete declaration using only core imports.
 
 An account across executions
 ----------------------------
@@ -36,14 +37,9 @@ Supply typed observations and let execution count determine the horizon:
    ...                        states=ModelObservations({0: opening}))
    >>> case.N, tuple((state.quantity, state.cash) for state in case.states)
    (2, ((3, 1000), (5, 799), (4, 908)))
-   >>> isinstance(case.states[1], HoldingState)
-   True
-   >>> case.terminal is case.states[-1]
-   True
 
-There are ``N`` executions and ``N+1`` account boundaries. ``terminal`` is a
-view of the final member, with the same object and symbolic identities. With
-no executions, it is the initial state.
+There are ``N`` executions and ``N+1`` account boundaries. ``terminal`` refers
+to the final member. With no executions, it is the initial state.
 
 Partial observations and inverse solving
 ----------------------------------------
@@ -64,10 +60,9 @@ The same model infers an execution price from terminal cash:
    >>> inverse.fills[1].price
    110
 
-Copied quantities retain supplied or inferred provenance. Observations from
-one constructor argument form a group: ``problem.without("states")`` releases
-that group's observations while retaining the equations. Solution families
-accept the same typed inputs.
+Leave out the terminal observation to retain a cash formula in the unknown
+price. Add or remove fills to ask about a different window. Solution families
+accept the same typed observations; see :doc:`solutions` for adding conditions.
 
 History and formulas
 --------------------
@@ -96,11 +91,9 @@ when a calculation needs one. It can select nested fields or fixed inner
 positions. Use a projection directly inside an aggregate, as ``total_fees``
 does, instead of declaring extra vectors solely for storage.
 
-Model-valued laws materialize finite windows and require concrete member schemas.
-An inherited collection keeps its shape expression; refine its size parameter's
-domain or prepare the original class with different observations. Source
-``ModelRecurrence`` templates are read-only inspection values. Redeclare an
-active law through ``model_recurrence`` when changing its equations.
+Each member needs a declared model type and each case needs a finite window.
+Use another construction for different observations, and declare another law
+when the relationships themselves change. See :doc:`generality` for solver scope.
 
 Exploring the model
 -------------------
@@ -110,14 +103,7 @@ under its vector. Add or remove executions, inspect members, and edit their
 quantities. The source recurrence appears once; calculated fields link back
 to it. Symbols retain full API paths for editing and navigation.
 
-``ModelInfo.fields`` patterns such as ``fills[]`` and ``fills[].price`` label
-every member. A field symbol ``p`` becomes ``p_i``; a model symbol ``F`` becomes
-``F_i``. Fields inside nested collections keep qualified public paths unless
-given distinct symbols, for example ``rows[].holdings[0].quantity``.
-
-The Python GUI API accepts ``ModelVectorInput`` records such as
-``{"fills": [{"quantity": 2, "price": 100, "fee": 1}]}`` alongside scalar
-observations like ``"states[0].cash": 1000``.
+The :doc:`GUI guide <gui>` describes labels and browser inputs for your own model.
 
 API
 ---

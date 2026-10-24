@@ -5,6 +5,10 @@ Relative series and recurrence laws
 positions. Their queries are scalar formulas in an ordinary Modello model, so
 the same solver can calculate results or infer parameters from observations.
 
+Use this representation for a single quantity such as ``T[n]`` when you want to
+query positions without choosing a finite horizon. For typed states containing
+several quantities, start with :doc:`model-vectors` or :doc:`getting-started`.
+
 One relative law, many queries
 ------------------------------
 
@@ -58,8 +62,8 @@ Its fixed positive lags must be covered by that history:
 
 History may start at a negative or shifted position. Fixed references to initial
 positions, such as ``T[0]``, can also appear in the transition. Queries before
-the history are undefined. Series domains apply to intermediate states as well as exposed
-outputs. For example, a positive terminal value cannot excuse a negative
+the history are undefined. Series domains apply to intermediate states as well
+as outputs. For example, a positive terminal value cannot excuse a negative
 predecessor in a positive series.
 
 Finite causal queries support nonlinear laws. Verified closed forms support
@@ -87,8 +91,8 @@ The guide's autoregression declares ``N`` once. State observations have
 
 Either vector's length, or an explicit ``N``, determines the finite window.
 ``None`` entries still count toward its length. Observing states and innovations
-constrains the same equation; contradictory observations are rejected. The GUI's
-innovation-driven question releases the original state observations first.
+constrains the same equation; contradictory observations are rejected. To change
+the driving data, construct a new case with innovations instead of observed states.
 
 History and observation length are separate. A recurrence of order ``p`` needs
 ``p`` history positions, but those quantities may be observed separately or

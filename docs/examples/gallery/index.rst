@@ -1,136 +1,67 @@
-A feature walkthrough
-=====================
+Explore the fundamentals
+========================
 
-One app introduces the library through four progressively composed models:
+The gallery is the interactive companion to :doc:`../../getting-started`.
+It follows the same four concepts and uses the same kinds of questions.
 
 .. code-block:: console
 
-   $ uv run --extra gui python -m examples.gallery
+   $ pip install 'modello[gui]'
+   $ python -m examples.gallery
 
-Open http://127.0.0.1:5070. Inspect **Equations**, edit an observation, or select
-**Explore a question**. Follow the next concept in the navigation, or return to
-**Features**.
+From a checkout, use ``uv run --extra gui python -m examples.gallery``.
+Open http://127.0.0.1:5070. Choose a model, inspect **Equations**, and select
+**Explore a question**. The navigation leads to the next concept.
 
 .. list-table:: Four fundamentals
    :header-rows: 1
    :widths: 25 40 35
 
    * - Concept
-     - Introduces
-     - Practical story
+     - Question to express
+     - Starting result
    * - Scalar models
-     - Named quantities, domains, and forward/inverse solving
-     - Size a diagonal brace
+     - Size a brace or infer a missing side.
+     - A 3 cm run and 4 cm rise give a 5 cm brace.
    * - Component models
-     - Typed children and joint equations across component boundaries
-     - Check a parcel's diagonal clearance
+     - Determine a quantity inside a parcel's base from its full clearance.
+     - A 3 × 4 cm base and 12 cm height give 13 cm clearance.
    * - Vector models
-     - Observation-sized vectors, reductions, and derivatives
-     - Evaluate and fit a sensor calibration line
+     - Evaluate or fit a line against sensor readings.
+     - The proposed line has squared error 1; fitting reduces it to 0.7.
    * - Recurrent models
-     - Typed state vectors, relative indices, and boundaries
-     - Post fills and reconcile an account
+     - Post fills or infer a sale price from a closing balance.
+     - The account closes with 4 shares and USD 908.
 
-The same questions, progressively richer models
------------------------------------------------
+The same five questions
+-----------------------
 
-Every fundamental starts with enough observations for a numeric result and
-provides the same five questions:
+Every model starts with a numeric result and offers:
 
-1. **Calculate results** follows the supplied inputs to their consequences.
-2. **Infer missing inputs** releases inputs and supplies a result or fitting
+1. **Calculate results**: follow the known inputs to their consequences.
+2. **Infer missing inputs**: release inputs and supply an outcome or fitting
    condition to determine them.
-3. **Try different inputs** changes the measurements or collection length while
-   retaining the model's equations.
-4. **Leave inputs unknown** keeps a meaningful relationship symbolic.
-5. **Check the observations** deliberately supplies a conflicting claim. The
-   explorer rejects it and highlights the proposal; choose **Calculate results**
-   to return to the starting case.
+3. **Try different inputs**: change measurements or collection length while
+   keeping the same equations.
+4. **Leave inputs unknown**: retain a formula in the missing quantities.
+5. **Check the observations**: try a deliberately conflicting claim.
 
-Each question starts from the example's original observations. Questions do not
-accumulate constraints from earlier questions. An inverse question releases the
-input it is inferring, so an old observation cannot accidentally fix its answer.
+Each question starts from the original observations. Questions do not accumulate
+constraints from earlier questions. An inverse question releases the quantity
+it is inferring.
 
-Scalar models
--------------
+A rejected question keeps its explanation visible and preserves the last
+successful results. Choose **Calculate results** to return to the starting case.
+Use **Reset inputs** to discard custom changes.
 
-.. literalinclude:: ../../../examples/geometry.py
-   :start-at:     a = InstanceDummy
-   :language: python
+Apply the ideas to your own problem
+-----------------------------------
 
-A 3 cm run and 4 cm rise need a 5 cm brace. Observing an 8 cm rise and a 10 cm
-brace instead determines a 6 cm run. Leave the run undecided to retain the
-brace-length formula, or supply a conflicting length to inspect the rejection.
-Positive domains exclude invalid side lengths.
+The :doc:`Python walkthrough <../../getting-started>` shows the declarations
+behind each concept. Use :doc:`components <../../nesting>` to reuse a model,
+:doc:`vectors <../../vectors>` for measurements and objectives, and
+:doc:`model vectors <../../model-vectors>` for related states.
 
-:doc:`Solution families <../../solutions>` explore those unknowns in Python:
-
-.. code-block:: pycon
-
-   >>> from examples.geometry import RightAngleTriangle
-   >>> from modello import inspect_model
-   >>> family = inspect_model(RightAngleTriangle, "triangle", a=3).solutions()
-   >>> len(family.parameters)
-   1
-   >>> family.observe(c=5).one().b
-   4
-
-:doc:`Inspection and diagnostics <../../diagnostics>` apply throughout the
-walkthrough, including conflicts and unresolved states.
-
-Component models
-----------------
-
-.. literalinclude:: ../../../examples/nested_geometry.py
-   :start-at:     base = component
-   :language: python
-
-A parcel with a 3 × 4 cm base and 12 cm height has 13 cm diagonal clearance.
-Observing that clearance can determine a width inside its triangle component.
-An undecided width propagates into both diagonals; a conflicting base diagonal
-is rejected by the child's own equation. The :doc:`composition guide
-<../../nesting>` develops typed observations, scopes, aliases, and refinement.
-
-Vector models
--------------
-
-.. literalinclude:: ../../../examples/gallery/models.py
-   :start-at: class LinearTrend
-   :language: python
-
-The initial line ``y = 1 + t`` has squared error 1 against four sensor readings.
-**Infer missing inputs** releases its coefficients and sets both objective
-gradients to zero: slope and intercept become 0.9, with error 0.7. Least squares
-minimises error rather than requiring noisy measurements to lie on a line.
-
-Six new calibration readings determine N = 6 and fit ``y = 1 + 2t`` without
-changing the declaration. Leaving the slope open retains predictions and error
-as formulas. Claiming zero error for the original proposed line conflicts with
-its residuals. See :doc:`../../vectors` for operations and calculus.
-
-Recurrent models
-----------------
-
-The account starts with 3 shares and USD 1,000. Buying 2 shares at USD 100 and
-selling 1 at USD 110, with a USD 1 fee per fill, leaves 4 shares and USD 908.
-
-The inverse question omits the sale price and observes closing cash to infer
-USD 110. Without that closing observation, cash remains a formula in the
-unreported price. Appending a purchase changes the state-vector length; an
-inconsistent statement balance demonstrates reconciliation. The
-:doc:`model-vector guide <../../model-vectors>` shows the declaration and typed
-Python inputs.
-
-Extensions and further reading
-------------------------------
-
-**Extensions** contains the opt-in :doc:`Itô example
-<../../contrib/stochastic>`. Ordinary vector reductions and scalar recurrences
-are covered by the fundamentals and their :doc:`vector <../../vectors>` and
-:doc:`series <../../series>` guides. Inheritance and :ref:`extension annotations
-<extension-annotations>` remain in the API guides.
-
-The equations reuse existing geometry/component examples and
-``examples/gallery/models.py``. ``catalog.py`` defines observations and the
-shared question progression; ``extensions.py`` holds the specialist model.
-The app mounts the ordinary ``modello.gui.create_app`` explorer for each entry.
+The separate **Extensions** page contains the opt-in
+:doc:`Itô example <../../contrib/stochastic>`. The :doc:`GUI guide <../../gui>`
+shows how to open your own model in the same explorer.
