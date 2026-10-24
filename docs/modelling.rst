@@ -25,14 +25,22 @@ Declare lengths and their relationship, then supply the known measurements:
    >>> Triangle("brace", a=3, b=4).c
    5
 
-Reuse that relationship as a typed part:
+Reuse that relationship in typed components, then join their shared quantity:
 
 .. code-block:: pycon
 
-   >>> class Assembly(Modello):
-   ...     base = component(Triangle)
-   >>> Assembly("assembly", base=Triangle("base", a=3, b=4)).base.c
-   5
+   >>> class LinkedBraces(Modello):
+   ...     first = component(Triangle)
+   ...     second = component(Triangle)
+   ...
+   ...     length = first.c
+   ...     length = second.c
+   >>> LinkedBraces("shared", first=Triangle("first", a=3, b=4),
+   ...              second=Triangle("second", b=3)).second.a
+   4
+
+The repeated assignments mean ``length = first.c`` **AND** ``length = second.c``;
+both components retain their own equations. See :ref:`joining-components`.
 
 See :doc:`getting-started` for inverse questions and :doc:`nesting` for
 connecting quantities across components.

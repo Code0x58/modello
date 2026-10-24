@@ -11,6 +11,10 @@ API reference
    The model and its components are solved together; omitted inputs remain
    symbolic unless the supplied equations determine them.
 
+   Join child quantities by assigning a common scalar member to both component
+   paths. The links and both components' equations must hold together; see
+   :ref:`joining-components` for the repeated-assignment notation.
+
    ``name`` labels an instance's symbols. Separate constructions and separate
    components have independent unknowns, even when their names are the same.
    Solved quantities are exposed as normal Python attributes. Create a new

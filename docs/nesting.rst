@@ -52,24 +52,40 @@ in several components gives each its own unknowns unless you connect them.
 Connect quantities in different children
 ----------------------------------------
 
-Suppose two braces share a horizontal run. A parent can declare that equality
-while each child keeps its own diagonal relationship:
+Suppose two openings need braces of the same length. A parent can equate their
+diagonals while each child keeps its own relationship between sides and length:
 
 >>> class LinkedBraces(Modello):
 ...     first = component(Triangle)
 ...     second = component(Triangle)
-...     run = second.a
-...     run = first.a
+...
+...     length = first.c
+...     length = second.c
 >>> linked = LinkedBraces(
-...     "shared", first=Triangle("first", a=3, b=4), second=Triangle("second", b=8)
+...     "shared", first=Triangle("first", a=3, b=4), second=Triangle("second", b=3)
 ... )
->>> linked.first.a, linked.second.a
-(3, 3)
+>>> linked.first.c, linked.second.c, linked.second.a
+(5, 5, 4)
 
-The first ``run`` assignment names the existing ``second.a`` quantity. The
-second relates it to ``first.a``. An observation of ``run`` can therefore
-constrain either child. Components can contain further components; the same
-attribute-path syntax works at each level.
+The first ``length`` assignment names the existing ``first.c`` quantity.
+Assigning ``length`` again adds the link to ``second.c``:
+``length = first.c`` **AND** ``length = second.c``. Both component equations
+remain in the joint model. An observation of ``length`` can therefore constrain
+either child.
+
+Openings that require different brace lengths give an empty solution family:
+
+>>> from modello import inspect_model
+>>> conflict = inspect_model(
+...     LinkedBraces, "different_lengths", first=Triangle("first", a=3, b=4),
+...     second=Triangle("second", a=6, b=8),
+... )
+>>> conflict.solutions().is_empty
+True
+
+Components can contain further components; the same attribute-path syntax works
+at each level. These assignments belong in the model class body; assigning an
+attribute on a solved instance does not add a relationship or recalculate it.
 
 Use the same model for new observations
 ---------------------------------------

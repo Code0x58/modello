@@ -75,8 +75,31 @@ A parent observation can determine an unknown inside a child. Specify exactly
 3
 
 The parent and children are one system of relationships. ``parcel.base`` is
-still a ``Triangle``. See :doc:`nesting` for connecting several components and
-reusing partial observations.
+still a ``Triangle``.
+
+.. _joining-components:
+
+Join components with a shared quantity
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Suppose two openings need braces of the same length. Declare the components
+first, then the equations joining their diagonals:
+
+>>> class LinkedBraces(Modello):
+...     first = component(Triangle)
+...     second = component(Triangle)
+...
+...     length = first.c
+...     length = second.c
+>>> linked = LinkedBraces("shared", first=Triangle("first", a=3, b=4),
+...                       second=Triangle("second", b=3))
+>>> linked.length, linked.second.a
+(5, 4)
+
+The repeated ``length`` assignments express ``length = first.c`` **AND**
+``length = second.c``. Both links and each component's own equations must hold
+together. This lets a measurement in one component determine a quantity in
+another. See :doc:`nesting` for partial observations and conflicting claims.
 
 3. Model collections and fit parameters
 ---------------------------------------
