@@ -19,8 +19,6 @@ from sympy import (
     Subs,
     Sum,
     Symbol,
-    Tuple,
-    default_sort_key,
     simplify,
 )
 
@@ -29,14 +27,11 @@ from modello._operators import (
     _conditioned,
     _defined_part,
     _denominator_condition,
-    _scalar_atoms,
     _ScopedExpression,
     _ScopedOperator,
     _SymbolicTemplate,
 )
-from modello.errors import ModelInputError
 from modello.series import _project_series, _RecurrenceValue, _SeriesTerm
-from modello.stochastic import ItoProcess, _ItoQuantity, _ProcessContext
 from modello.vectors import _VectorFormula
 
 
@@ -62,7 +57,7 @@ class _DefinitionResolver:
         templates: Iterable[_SymbolicTemplate] = (),
         *,
         evaluate_operators: bool = True,
-        attach_process_context: bool = True,
+        attach_context: bool = True,
     ) -> None:
         self.definitions = definitions
         self.cyclic = cyclic
@@ -70,7 +65,7 @@ class _DefinitionResolver:
         self.observations = observations
         self.templates = tuple(templates)
         self.evaluate_operators = evaluate_operators
-        self.attach_process_context = attach_process_context
+        self.attach_context = attach_context
         self._memo: dict[tuple[Basic, frozenset[Basic]], Basic] = {}
         self._active: set[tuple[Basic, frozenset[Basic]]] = set()
         self._series_points: dict[tuple[Basic, Basic], list[Integer]] = {}
@@ -90,7 +85,7 @@ class _DefinitionResolver:
             {},
             self.templates,
             evaluate_operators=False,
-            attach_process_context=False,
+            attach_context=False,
         )
 
     def __call__(self, expression: Basic, protected: frozenset[Basic] = frozenset()) -> Basic:
@@ -147,14 +142,11 @@ class _DefinitionResolver:
                     break
             return Piecewise(*branches)
         if isinstance(expression, _ScopedExpression):
-            if self.evaluate_operators and isinstance(expression, _ItoQuantity):
-                self._check_stochastic(expression, protected)
-            if isinstance(expression, _SymbolicTemplate) and not (
-                isinstance(expression, ItoProcess) and expression._context is not None
-            ):
+            if isinstance(expression, _SymbolicTemplate) and not expression._has_context:
                 expression = next(
                     (template for template in self.templates if template._same_declaration(expression)), expression
                 )
+            expression = expression._in_context(self, protected)
             scoped = protected | frozenset(expression.protected_symbols)
             if expression.calculus_expression is not None:
                 self._check_calculus(expression.calculus_expression, scoped)
@@ -163,8 +155,6 @@ class _DefinitionResolver:
                 for i, arg in enumerate(expression.args)
             )
             operator = expression.func(*args) if args != expression.args else expression
-            if isinstance(operator, ItoProcess) and self.attach_process_context and operator._context is None:
-                operator = operator._with_context(self._process_context(expression, protected))
             if not isinstance(operator, _ScopedOperator) or not self.evaluate_operators:
                 return operator
             evaluated = _evaluate(operator)
@@ -219,40 +209,6 @@ class _DefinitionResolver:
             return _conditioned(value, condition)
         evaluated = _evaluate(operator) if self.evaluate_operators else operator
         return self(evaluated, protected) if evaluated != operator else operator
-
-    def _process_context(self, law: ItoProcess, protected: frozenset[Basic]) -> _ProcessContext:
-        processes = tuple(template for template in self.templates if isinstance(template, ItoProcess))
-        dynamic = frozenset(process.state for process in processes)
-        unresolved = self.cyclic | self.ambiguous
-        source = self._raw_symbolic(law, protected | dynamic | unresolved)
-        declarations = Tuple(
-            *sorted({Tuple(process._state_domain, process.state) for process in processes}, key=default_sort_key)
-        )
-        context = _ProcessContext(
-            declarations,
-            Tuple(*source.bound_symbols),
-            Tuple(source.drift_expression, source.diffusion_expression),
-            Tuple(*sorted(unresolved, key=default_sort_key)),
-        )
-        return _substitute(context, self.observations)
-
-    def _check_stochastic(self, operator: _ItoQuantity, protected: frozenset[Basic]) -> None:
-        """One-state queries must not silently freeze another declared process."""
-        processes = tuple(template for template in self.templates if isinstance(template, ItoProcess))
-        if not processes:
-            return
-        dynamic = frozenset(process.state for process in processes)
-        resolved = self._raw_symbolic(operator, protected | dynamic)
-        law = resolved.args[0]
-        state, time = resolved.args[3]
-        expression = resolved.args[1].xreplace({state: law.state, time: law.time})
-        expression = self(expression, protected | dynamic | frozenset(law.bound_symbols))
-        others = dynamic - {law.state}
-        states = expression.free_symbols | _scalar_atoms(expression, _SeriesTerm)
-        if states & others:
-            raise ModelInputError(
-                "A one-state Itô transformation cannot differentiate another registered process state"
-            )
 
     def _check_calculus(self, body: Basic, protected: frozenset[Basic]) -> None:
         pending = set(body.free_symbols - protected)

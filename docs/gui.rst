@@ -11,7 +11,8 @@ Install its separate extra; the base library still depends only on SymPy:
 
 From a checkout, use ``uv run --extra gui python -m examples.gallery``. Open
 http://127.0.0.1:5070. The :doc:`gallery <examples/gallery/index>` introduces
-vectors, relative sequences, typed account models, calculus, and an Itô process.
+scalar models, composition, vectors, and recurrent model states. A separate
+demos page explores additional operations and domain extensions.
 
 Quickstart: your own explorer
 ------------------------------

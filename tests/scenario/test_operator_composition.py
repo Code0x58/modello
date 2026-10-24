@@ -5,7 +5,8 @@ from math import prod
 import pytest
 from sympy import Derivative, Eq, Integral, Piecewise, Product, Rational, S, Sum, exp, pi, simplify, sqrt
 
-from modello import Coordinate, Index, InstanceDummy, ItoProcess, Modello, Vector, inspect_model, vector
+from modello import Coordinate, Index, InstanceDummy, Modello, Vector, inspect_model, vector
+from modello.contrib.stochastic import ItoProcess
 from modello.errors import ModelInputError
 
 

@@ -1,5 +1,6 @@
 """Mounted explorers share navigation while keeping proposals independent."""
 
+import re
 from xml.etree import ElementTree
 
 import pytest
@@ -8,7 +9,7 @@ from werkzeug.test import Client
 from werkzeug.wrappers import Response
 
 from examples.gallery.app import create_gallery
-from examples.gallery.catalog import EXAMPLES
+from examples.gallery.catalog import DEMOS, EXAMPLES, TUTORIAL
 
 
 @pytest.fixture(scope="module")
@@ -25,13 +26,24 @@ def test_one_gallery_serves_every_explorer_and_its_local_assets(gallery_client, 
     )
     home = client.get(prefix + "/")
     assert home.status_code == 200
+    assert re.findall(rb'class="gallery-card" href="([^"]+)"', home.data) == [
+        f"{prefix}/{slug}/".encode() for slug in ("simple", "components", "trend", "sequence")
+    ]
+    assert f'href="{prefix}/demos/"'.encode() in home.data
+    demos = client.get(prefix + "/demos/")
+    assert demos.status_code == 200
+    assert re.findall(rb'class="gallery-card" href="([^"]+)"', demos.data) == [
+        f"{prefix}/{slug}/".encode() for slug in DEMOS
+    ]
     for slug in EXAMPLES:
-        assert f'href="{prefix}/{slug}/"'.encode() in home.data
         page = client.get(f"{prefix}/{slug}/")
         assert page.status_code == 200
         assert f'data-explore-url="{prefix}/{slug}/api/explore"'.encode() in page.data
         assert f'src="{prefix}/{slug}/assets/explorer.js"'.encode() in page.data
         assert b'aria-label="Example gallery"' in page.data
+        if slug in TUTORIAL:
+            assert b"Step " in page.data
+            assert b'class="gallery-next"' in page.data
     assert client.get(prefix + "/assets/gallery.css").status_code == 200
     assert client.get(prefix + "/vectors/assets/fonts/STIXTwoMath-Regular.woff2").data.startswith(b"wOF2")
     assert client.get(prefix + "/missing/").status_code == 404

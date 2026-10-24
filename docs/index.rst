@@ -73,6 +73,12 @@ illustrate symbolic modeling with fixed historical rates.
    gui
 
 .. toctree::
+   :caption: Extensions
+   :maxdepth: 1
+
+   contrib/stochastic
+
+.. toctree::
    :caption: Examples
    :maxdepth: 1
 

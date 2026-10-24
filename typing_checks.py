@@ -15,7 +15,6 @@ from modello import (
     Coordinate,
     Index,
     InstanceDummy,
-    ItoProcess,
     Modello,
     ModelObservations,
     ModelProblem,
@@ -41,6 +40,7 @@ from modello import (
     model_vector,
     vector,
 )
+from modello.contrib.stochastic import ItoProcess
 from modello.diagnostics import ComponentView, FieldValue, ModelField, ProblemAnalysis, SolutionSet
 from modello.gui import FieldInfo, ModelInfo, Scenario, gui
 

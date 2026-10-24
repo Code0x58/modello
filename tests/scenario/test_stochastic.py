@@ -3,7 +3,8 @@
 import pytest
 from sympy import Rational, S, Sum, exp, log, simplify
 
-from modello import Coordinate, Index, InstanceDummy, ItoProcess, Modello, Series, Vector
+from modello import Coordinate, Index, InstanceDummy, Modello, Series, Vector
+from modello.contrib.stochastic import ItoProcess
 from modello.errors import ModelInputError
 
 

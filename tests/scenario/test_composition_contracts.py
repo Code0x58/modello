@@ -7,7 +7,6 @@ from modello import (
     Coordinate,
     Index,
     InstanceDummy,
-    ItoProcess,
     Modello,
     Recurrence,
     Series,
@@ -16,6 +15,7 @@ from modello import (
     model_recurrence,
     model_vector,
 )
+from modello.contrib.stochastic import ItoProcess
 from modello.errors import ModelInputError
 
 

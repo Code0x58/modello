@@ -212,8 +212,10 @@ Install `modello[gui]` and run `python -m examples.gallery`, or from a checkout:
 uv run --extra gui python -m examples.gallery
 ```
 
-Open <http://127.0.0.1:5070> for six small models in one app. Inspect the MathML
-equations, edit or release inputs, and use a calculated result as a target.
+Open <http://127.0.0.1:5070> for a four-step feature walkthrough: scalar models,
+components, vectors, and recurrent model states. A separate demos page includes
+specialist examples such as the `modello.contrib.stochastic` Itô extension.
+Inspect the MathML equations, edit or release inputs, and use a calculated result as a target.
 The [gallery guide](docs/examples/gallery/index.rst) explains each model's idea;
 the [GUI quickstart](docs/gui.rst#quickstart-your-own-explorer) shows how to build
 your own explorer. Presentation metadata uses the core annotation registry,

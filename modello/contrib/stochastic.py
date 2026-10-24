@@ -3,11 +3,28 @@
 from __future__ import annotations
 
 from functools import cached_property
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from sympy import And, Basic, Dummy, Eq, Expr, Integer, Or, Piecewise, S, Symbol, Tuple, diff, exp, simplify, sympify
+from sympy import (
+    And,
+    Basic,
+    Dummy,
+    Eq,
+    Expr,
+    Integer,
+    Or,
+    Piecewise,
+    S,
+    Symbol,
+    Tuple,
+    default_sort_key,
+    diff,
+    exp,
+    simplify,
+    sympify,
+)
 
-from modello._evaluation import _ConditionalValue, _evaluate_scalar, _pending
+from modello._evaluation import _ConditionalValue, _evaluate_scalar, _pending, _substitute
 from modello._operators import (
     _affine_coefficients,
     _bound_coordinates,
@@ -24,6 +41,9 @@ from modello.errors import ModelInputError
 from modello.series import Series, _SeriesTerm
 
 __all__ = ["ItoProcess"]
+
+if TYPE_CHECKING:
+    from modello._expressions import _DefinitionResolver
 
 
 def _check_point_expression(expression: Expr, state: Expr, time: Symbol) -> None:
@@ -188,6 +208,28 @@ class ItoProcess(_SymbolicTemplate):
 
     def _with_context(self, context: _ProcessContext) -> ItoProcess:
         return self.func(*self.args[:6], context)
+
+    @property
+    def _has_context(self) -> bool:
+        return self._context is not None
+
+    def _in_context(self, resolver: _DefinitionResolver, protected: frozenset[Basic]) -> ItoProcess:
+        if not resolver.attach_context or self._has_context:
+            return self
+        processes = tuple(template for template in resolver.templates if isinstance(template, ItoProcess))
+        dynamic = frozenset(process.state for process in processes)
+        unresolved = resolver.cyclic | resolver.ambiguous
+        source = resolver._raw_symbolic(self, protected | dynamic | unresolved)
+        declarations = Tuple(
+            *sorted({Tuple(process._state_domain, process.state) for process in processes}, key=default_sort_key)
+        )
+        context = _ProcessContext(
+            declarations,
+            Tuple(*source.bound_symbols),
+            Tuple(source.drift_expression, source.diffusion_expression),
+            Tuple(*sorted(unresolved, key=default_sort_key)),
+        )
+        return self._with_context(_substitute(context, resolver.observations))
 
     @property
     def _state_requirements(self) -> dict[str, bool]:
@@ -394,6 +436,26 @@ class _ItoQuantity(_ScopedOperator):
     @property
     def calculus_expression(self) -> Expr:
         return self.args[1]
+
+    def _in_context(self, resolver: _DefinitionResolver, protected: frozenset[Basic]) -> _ItoQuantity:
+        """One-state queries must not freeze another declared process."""
+        if not resolver.evaluate_operators:
+            return self
+        processes = tuple(template for template in resolver.templates if isinstance(template, ItoProcess))
+        if not processes:
+            return self
+        dynamic = frozenset(process.state for process in processes)
+        resolved = resolver._raw_symbolic(self, protected | dynamic)
+        law = resolved.args[0]
+        state, time = resolved.args[3]
+        expression = resolved.args[1].xreplace({state: law.state, time: law.time})
+        expression = resolver(expression, protected | dynamic | frozenset(law.bound_symbols))
+        states = expression.free_symbols | _scalar_atoms(expression, _SeriesTerm)
+        if states & (dynamic - {law.state}):
+            raise ModelInputError(
+                "A one-state Itô transformation cannot differentiate another registered process state"
+            )
+        return self
 
     def _eval_subs(self, old: Basic, new: Basic) -> Basic | None:
         if old in self.protected_symbols:

@@ -23,7 +23,6 @@ def test_core_imports_follow_the_dependency_layers(pytestconfig: pytest.Config) 
                 "modello._model_laws",
                 "modello._shapes",
                 "modello.series",
-                "modello.stochastic",
                 "modello._expressions",
                 "modello._problem",
                 "modello._model",
@@ -67,6 +66,8 @@ import examples.data
 assert not {'modello', 'sympy', 'examples.portfolio'} & sys.modules.keys()
 
 import modello
+assert not any(name == 'modello.contrib' or name.startswith('modello.contrib.') for name in sys.modules)
+assert not hasattr(modello, 'ItoProcess')
 assert get_type_hints(modello.inspect_model)["value_map"] == (
     modello.ScalarValue | modello.VectorValue | modello.Modello | modello.ModelVectorValue[modello.Modello]
 )
@@ -82,6 +83,11 @@ import examples.portfolio.reporting
 assert not {
     'examples.portfolio.demo', 'examples.portfolio.report_html',
 } & sys.modules.keys()
+
+from modello.contrib.stochastic import ItoProcess
+x = modello.Coordinate('x', real=True)
+t = modello.Coordinate('t', real=True)
+assert ItoProcess(x, 0, 1, t).drift(x**2).doit() == 1
 """
     result = subprocess.run(
         [sys.executable, "-c", program], cwd=pytestconfig.rootpath, capture_output=True, text=True, timeout=30

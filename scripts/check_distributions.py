@@ -114,7 +114,8 @@ assert Relative("inverse", closing=16).opening == 1
 assert ("law",) in modello.inspect_model(Relative, "law").templates
 t = modello.Coordinate("t", real=True)
 x = modello.Coordinate("x", real=True)
-assert modello.ItoProcess(x,0,1,t).drift(x**2).doit() == 1
+from modello.contrib.stochastic import ItoProcess
+assert ItoProcess(x,0,1,t).drift(x**2).doit() == 1
 class Sized(modello.Modello):
     N = modello.InstanceDummy("N", integer=True, nonnegative=True)
     samples = modello.Vector("x", size=N, real=True)

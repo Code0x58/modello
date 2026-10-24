@@ -118,7 +118,8 @@ def test_renamed_laws_expand_named_coefficients_in_the_original_declaration_cont
 ):
     from sympy import E
 
-    from modello import Coordinate, ItoProcess
+    from modello import Coordinate
+    from modello.contrib.stochastic import ItoProcess
 
     class Base(Modello):
         x = InstanceDummy("x", positive=True)
@@ -150,7 +151,8 @@ def test_renamed_laws_expand_named_coefficients_in_the_original_declaration_cont
 
 
 def test_distinct_process_declarations_keep_their_state_dependencies_even_with_a_shared_driver(solve_model):
-    from modello import Coordinate, ItoProcess, Series
+    from modello import Coordinate, Series
+    from modello.contrib.stochastic import ItoProcess
 
     class Coupled(Modello):
         x = InstanceDummy("x", positive=True)
@@ -171,7 +173,8 @@ def test_distinct_process_declarations_keep_their_state_dependencies_even_with_a
 
 @pytest.mark.parametrize("with_first", [False, True], ids=["alone", "with-unrelated-law"])
 def test_adding_an_unrelated_declaration_cannot_change_the_supported_exact_class(with_first):
-    from modello import Coordinate, ItoProcess, Series
+    from modello import Coordinate, Series
+    from modello.contrib.stochastic import ItoProcess
 
     class Coupled(Modello):
         x = Coordinate("x", positive=True)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from sympy import (
     And,
@@ -31,6 +31,9 @@ from sympy import (
 )
 
 from modello.errors import ModelInputError
+
+if TYPE_CHECKING:
+    from modello._expressions import _DefinitionResolver
 
 _Atom = TypeVar("_Atom", bound=Basic)
 
@@ -91,6 +94,10 @@ class _ScopedExpression:
     args: tuple[Basic, ...]
     func: Any
 
+    def _in_context(self, resolver: _DefinitionResolver, protected: frozenset[Basic]) -> Basic:
+        """Let an extension retain or validate its declaration context."""
+        return cast(Basic, self)
+
     @property
     def bound_symbols(self) -> tuple[Basic, ...]:
         return ()
@@ -112,6 +119,10 @@ class _ScopedExpression:
 
 class _SymbolicTemplate(_ScopedExpression, Basic):
     """A declaration whose identity is retained in its canonical arguments."""
+
+    @property
+    def _has_context(self) -> bool:
+        return False
 
     @property
     def equations(self) -> tuple[Basic, ...]:

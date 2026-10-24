@@ -1,106 +1,116 @@
-An example gallery
-==================
+A feature walkthrough
+=====================
 
-One local app presents six small models. Each introduces a different kind of
-relationship; all use the same observations, inverse solving, and explorer:
+One app introduces the library through four progressively composed models:
 
 .. code-block:: console
 
    $ uv run --extra gui python -m examples.gallery
 
-Open http://127.0.0.1:5070. Choose an example, inspect **Equations**, and edit a
-quantity or try its guided question. **All examples** returns to the gallery;
-**Change example** switches models. Each browser proposal starts from that
-example's original observations.
+Open http://127.0.0.1:5070. Each step uses the same explorer: inspect
+**Equations**, edit an observation, or try a guided question. Follow the next
+concept in the navigation, or return to **Features**. Browser proposals start
+from each model's original observations.
 
-.. list-table:: Choose the relationship you need
+.. list-table:: Four core concepts
    :header-rows: 1
-   :widths: 25 40 35
+   :widths: 25 45 30
 
-   * - Example
+   * - Concept
      - Introduces
-     - Try
-   * - Vector summaries
-     - Sums, products, and dot products
-     - Infer an observation from a total
-   * - Relative sequences
-     - A law independent of its sample window
-     - Replace states with innovations
-   * - An account across executions
-     - Vectors whose members are typed models
-     - Infer a price from terminal cash
-   * - Continuous exposure
-     - A native SymPy integral
-     - Infer a closing level from exposure
-   * - Fitting a line
-     - Vector residuals and objective derivatives
-     - Set gradients to zero to select a fit
-   * - An Itô diffusion
-     - Transformed coefficients and conditional moments
-     - Infer process parameters from log coefficients
+     - Example
+   * - Scalar models
+     - Named quantities, domains, and forward/inverse solving
+     - Right-angle triangle
+   * - Component models
+     - Typed children and joint equations across component boundaries
+     - Box with a triangle component
+   * - Vector models
+     - Observation-sized vectors, indexed formulas, reductions, and derivatives
+     - Line fitting
+   * - Recurrent models
+     - Vectors of typed states, relative indices, and boundary observations
+     - Account balances and fills
 
-The equations live in ``examples/gallery/models.py``. Display labels, initial
-observations, and guided questions live in ``catalog.py``. The app mounts the
-ordinary ``modello.gui.create_app`` explorer for each entry; the gallery adds
-navigation rather than another solver.
+Scalar models
+-------------
 
-Vector summaries
+.. literalinclude:: ../../../examples/geometry.py
+   :start-at:     a = InstanceDummy
+   :language: python
+
+Observe two sides to determine the third. The same equation calculates the
+hypotenuse or infers a leg; positive domains exclude invalid side lengths.
+Leaving observations unspecified retains a symbolic relationship.
+
+:doc:`Solution families <../../solutions>` make those alternatives explicit in
+Python. Additional observations narrow the same model:
+
+.. code-block:: pycon
+
+   >>> from examples.geometry import RightAngleTriangle
+   >>> from modello import inspect_model
+   >>> family = inspect_model(RightAngleTriangle, "triangle", a=3).solutions()
+   >>> len(family.parameters)
+   1
+   >>> family.observe(c=5).one().b
+   4
+
+Use :doc:`inspection and diagnostics <../../diagnostics>` to investigate
+conflicting observations or unresolved states. These tools apply throughout
+the walkthrough.
+
+Component models
 ----------------
 
-.. literalinclude:: ../../../examples/gallery/models.py
-   :start-at: class VectorSummary
-   :end-before: class ObservedAutoregression
+.. literalinclude:: ../../../examples/nested_geometry.py
+   :start-at:     base = component
    :language: python
 
-The observation length determines N, including an empty vector. ``None`` keeps
-an entry unknown. See :doc:`../../vectors` for operations and inspection.
+The box reuses the triangle's equations and domains. Observing the box diagonal
+can determine a quantity inside the base; the parent and its children form one
+system. The :doc:`composition guide <../../nesting>` develops typed observations,
+independent scopes, aliases, and model refinement.
 
-Relative sequences
-------------------
-
-The :doc:`series guide <../../series>` develops the recurrence and its boundary.
-State and innovation vectors observe the same equation, so the guided question
-releases one before supplying the other. Innovations have no declared distribution.
-
-Typed account states
---------------------
-
-The :doc:`model-vector guide <../../model-vectors>` shows the account declaration
-and typed Python inputs. Executions reuse the portfolio's quantity, price, fee,
-and trade-value model. The account vector contains the initial state and one
-state per execution. Adding observations determines N; it does not rewrite the law.
-
-Continuous exposure
--------------------
-
-.. literalinclude:: ../../../examples/gallery/models.py
-   :start-at: class LinearExposure
-   :end-before: class LinearTrend
-   :language: python
-
-This model explicitly assumes linear interpolation over a positive duration.
-The integral is exposure in level-times-duration units.
-
-Fitting a line
---------------
+Vector models
+-------------
 
 .. literalinclude:: ../../../examples/gallery/models.py
    :start-at: class LinearTrend
    :end-before: class GeometricDiffusion
    :language: python
 
-Observing both gradients as zero selects an unweighted least-squares line.
-Distinct times determine a unique fit; repeated times may leave a family.
-Supplying slope and intercept instead evaluates any chosen line. A noise model
-or uncertainty estimate would require additional relationships.
+Observation lengths determine N. Vector residuals define a scalar objective;
+observing both gradients as zero selects an unweighted least-squares line.
+Distinct times give a unique fit; repeated times may leave a family. Supplying
+slope and intercept instead evaluates a chosen line. No noise distribution or
+uncertainty estimate is implied. See :doc:`../../vectors` for the vector API.
 
-An Itô diffusion
+Recurrent models
 ----------------
 
-.. literalinclude:: ../../../examples/gallery/models.py
-   :start-at: class GeometricDiffusion
-   :language: python
+The :doc:`model-vector guide <../../model-vectors>` shows the account declaration
+and typed Python inputs. Each execution connects two account boundaries.
+Observing terminal cash can infer a missing execution price. Adding or removing
+executions changes N while retaining the relative law.
 
-The logarithm exposes the Itô correction. ``closing`` conditions on a realised
-Wiener increment; ``mean`` and ``variance`` are conditional moments. The
-:doc:`series guide <../../series>` describes supported process classes and limits.
+Further topics
+--------------
+
+The app's **Demos and extensions** page separates specialist examples from the
+core sequence:
+
+* Vector reductions: sums, products, dot products, and partial observations.
+* Scalar series: a recurrence independent of its observation window; see
+  :doc:`../../series`.
+* Continuous calculus: a native SymPy integral used in forward and inverse solves.
+* Itô diffusion: local transforms and conditional moments from the opt-in
+  :doc:`stochastic extension <../../contrib/stochastic>`.
+
+Inheritance and :ref:`extension annotations <extension-annotations>` are covered
+in the API guides rather than adding introductory cards.
+
+The equations reuse existing geometry/component examples and
+``examples/gallery/models.py``. ``catalog.py`` defines the four tutorial steps,
+additional demos, labels, observations, and guided questions. The app mounts the
+ordinary ``modello.gui.create_app`` explorer for every entry.

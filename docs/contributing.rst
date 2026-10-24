@@ -66,7 +66,9 @@ The GUI separates layout and permissions, MathML printing, bounded input parsing
 and vector summaries under ``_gui/``. Finance and time-series examples stay above
 these layers.
 
-``series.py`` and ``stochastic.py`` declare relative recurrences and Itô laws.
+``series.py`` declares relative recurrences. ``contrib/stochastic.py`` provides
+the opt-in Itô extension; the core resolver uses scoped declaration hooks without
+importing domain extensions.
 ``_shapes.py`` solves symbolic finite axes from observation lengths before scalar
 coordinates are compiled. Shape specialization produces a cached subclass; it
 does not mutate the reusable declaration. The GUI creates a fresh finite context
@@ -113,8 +115,9 @@ once and connects their views. Structural shape/index binding precedes scalar
 solving. The GUI's ``_gui/collections.py`` summarizes nested model members and
 observation origins; its labels preserve canonical API paths for navigation.
 
-Keep the gallery small. ``examples/gallery/models.py`` contains the equations;
-``catalog.py`` supplies labels, observations, and guided questions. ``app.py``
+Keep the four-step feature walkthrough small. Reuse the existing geometry models;
+``examples/gallery/models.py`` holds the other equations. ``catalog.py`` separates
+tutorial steps from additional demos and supplies display metadata. ``app.py``
 mounts the existing explorer through Werkzeug, preserving URL prefixes for
 assets and API requests. Add an example when it demonstrates a distinct idea,
 and derive scenario smoke tests from the catalog. Keep mathematical regressions

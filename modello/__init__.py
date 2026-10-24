@@ -55,7 +55,6 @@ from modello.model_vectors import (
 )
 from modello.series import Recurrence as Recurrence, Series as Series
 from modello.solutions import SolutionFamily as SolutionFamily, SolutionIssue as SolutionIssue
-from modello.stochastic import ItoProcess as ItoProcess
 from modello.vectors import Vector as Vector, vector as vector
 
 

@@ -6,7 +6,8 @@ from pickle import dumps, loads
 import pytest
 from sympy import Abs, E, Integral, S, Sum, Symbol, simplify
 
-from modello import Coordinate, Index, ItoProcess, Modello, Recurrence, Series, Vector, inspect_model, vector
+from modello import Coordinate, Index, Modello, Recurrence, Series, Vector, inspect_model, vector
+from modello.contrib.stochastic import ItoProcess
 from modello.errors import ModelInputError
 
 

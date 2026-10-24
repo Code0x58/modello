@@ -65,11 +65,12 @@ symbolic and depend on external parameters. Attribute assignment after
 construction does not recompute the model; construct another state or add
 observations to a solution family.
 
-One-state Itô calculations
---------------------------
+One-state Itô extension
+-----------------------
 
-:class:`~modello.ItoProcess` provides local drift, diffusion, spatial generators,
-and quadratic variation for a smooth function of one state and time. Its
+:class:`~modello.contrib.stochastic.ItoProcess` provides local drift, diffusion,
+spatial generators, and quadratic variation for a smooth function of one state
+and time. This opt-in extension lives in ``modello.contrib.stochastic``. Its
 coefficients may be nonlinear, time-dependent, or adapted to another declared
 state for these local calculations.
 

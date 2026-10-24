@@ -4,7 +4,8 @@ from xml.etree import ElementTree
 
 from sympy import log
 
-from modello import Coordinate, InstanceDummy, ItoProcess, Modello, Series
+from modello import Coordinate, InstanceDummy, Modello, Series
+from modello.contrib.stochastic import ItoProcess
 from modello.gui import Explorer, FieldInfo
 from tests.modello._gui_models import NS, mathml_text, rows
 from tests.modello._models import DrivenSequence

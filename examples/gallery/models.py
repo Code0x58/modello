@@ -1,4 +1,4 @@
-"""Six independent examples; each adds one kind of relationship."""
+"""Equations for the feature walkthrough and additional modelling demos."""
 
 from sympy import Derivative, Integral, log
 
@@ -7,7 +7,6 @@ from modello import (
     Coordinate,
     Index,
     InstanceDummy,
-    ItoProcess,
     Modello,
     Recurrence,
     Series,
@@ -16,6 +15,7 @@ from modello import (
     model_vector,
     vector,
 )
+from modello.contrib.stochastic import ItoProcess
 
 
 class VectorSummary(Modello):

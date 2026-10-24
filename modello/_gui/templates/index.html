@@ -24,15 +24,18 @@
     <main>
       {% if gallery_links %}
       <nav class="gallery-navigation" aria-label="Example gallery">
-        <a href="{{ gallery_home }}">← All examples</a>
+        <a href="{{ gallery_home }}">← Features</a>
+        {% if gallery_step %}<span class="gallery-step">{{ gallery_step }}</span>{% endif %}
         <details>
           <summary>Change example</summary>
           <ul>
             {% for link in gallery_links %}
+            {% if loop.changed(link.group) %}<li class="gallery-group">{{ link.group }}</li>{% endif %}
             <li><a href="{{ link.url }}"{% if link.selected %} aria-current="page"{% endif %}>{{ link.title }}</a></li>
             {% endfor %}
           </ul>
         </details>
+        {% if gallery_next %}<a class="gallery-next" href="{{ gallery_next.url }}">{{ gallery_next.title }} →</a>{% endif %}
       </nav>
       {% endif %}
       <div class="eyebrow">INTERACTIVE MODELLING</div>

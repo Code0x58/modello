@@ -3,7 +3,8 @@
 import pytest
 from sympy import Abs, Piecewise, Rational, S, Symbol, conjugate, exp, log, simplify
 
-from modello import Coordinate, InstanceDummy, ItoProcess, Modello, Series
+from modello import Coordinate, InstanceDummy, Modello, Series
+from modello.contrib.stochastic import ItoProcess
 
 
 def test_brownian_chain_rule_and_explicit_time_dependence():
