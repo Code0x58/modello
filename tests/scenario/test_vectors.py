@@ -3,9 +3,9 @@
 from math import prod
 
 import pytest
-from sympy import I, Rational, Symbol, conjugate, simplify
+from sympy import I, Lambda, Rational, Symbol, conjugate, simplify
 
-from modello import Index, InstanceDummy, Modello, Vector, inspect_model, vector
+from modello import Coordinate, Index, InstanceDummy, Modello, Vector, inspect_model, vector
 from modello.errors import ModelInputError
 
 
@@ -21,10 +21,12 @@ def test_vector_algebra_agrees_with_scalar_arithmetic_for_empty_real_and_complex
     assert (-values).doit() == Vector([-entry for entry in entries])
 
 
-def test_complex_dot_is_bilinear_and_hermitian_contraction_is_explicit():
+@pytest.mark.parametrize("mapped", [False, True], ids=["indexed", "applyfunc"])
+def test_complex_dot_is_bilinear_and_hermitian_contraction_is_explicit(mapped):
     values = Vector(1 + I, 2 - I)
     i = Index("i")
-    hermitian = vector(conjugate(values[i]), (i, 0, 1)).dot(values)
+    conjugated = values.applyfunc(conjugate) if mapped else vector(conjugate(values[i]), (i, 0, 1))
+    hermitian = conjugated.dot(values)
     assert simplify(values.dot(values).doit() - (3 - 2 * I)) == 0
     assert simplify(hermitian.doit() - 7) == 0
 
@@ -118,3 +120,46 @@ def test_noncommutative_vector_products_preserve_the_declared_entry_order():
     assert Vector(*reversed(values)).product().doit() == B * A
     assert (values * A).doit() == Vector(A**2, B * A)
     assert (A * values).doit() == Vector(A**2, A * B)
+
+
+@pytest.fixture(params=["applyfunc", "indexed"])
+def transformed_window(request):
+    def declare(function):
+        class Window(Modello):
+            N = InstanceDummy("N", integer=True, nonnegative=True)
+            scale = InstanceDummy("scale", real=True)
+            samples = Vector("x", size=N, real=True)
+            if request.param == "applyfunc":
+                u = Coordinate("u", real=True)
+                transformed = samples.applyfunc(Lambda(u, function(u, scale)))
+            else:
+                i = Index("i")
+                transformed = vector(function(samples[i], scale), (i, 0, N - 1))
+            total = transformed.sum()
+
+        return Window
+
+    return declare
+
+
+@pytest.mark.parametrize("entries", [[], [2], [1, 2, 3]])
+def test_custom_pointwise_operations_use_the_same_joint_equations(transformed_window, solve_model, entries):
+    model = transformed_window(lambda value, scale: scale * value + 1)
+    case = solve_model(model, samples=entries, scale=3)
+    expected = [3 * value + 1 for value in entries]
+    assert case.N == len(entries)
+    assert case.transformed == Vector(expected)
+    assert case.total == sum(expected)
+
+
+def test_a_custom_pointwise_operation_can_infer_its_parameter(transformed_window, solve_model):
+    model = transformed_window(lambda value, scale: scale * value + 1)
+    case = solve_model(model, samples=[1, 2, 3], total=21)
+    assert case.scale == 3
+    assert case.transformed == Vector(4, 7, 10)
+
+
+def test_custom_reciprocals_preserve_their_domains(transformed_window):
+    model = transformed_window(lambda value, scale: 1 / value)
+    family = inspect_model(model, "undefined", samples=[1, 0, 2], scale=1).solutions()
+    assert family.is_empty is True

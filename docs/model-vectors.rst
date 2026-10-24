@@ -139,6 +139,10 @@ read. Nested field updates use canonical paths, for example
 when a calculation needs one. It can select nested fields or fixed inner
 positions. Use a projection directly inside an aggregate, as ``total_fees``
 does, instead of declaring extra vectors solely for storage.
+If a Python lambda uses another quantity from its class body, capture that
+quantity in a default argument, such as
+``project(lambda fill, rate=rate: rate * fill.notional)``. Alternatively, use an
+indexed comprehension. Python lambdas do not close over a class namespace.
 
 Each member needs a declared model type and each case needs a finite window.
 Use another construction for different observations, and declare another law

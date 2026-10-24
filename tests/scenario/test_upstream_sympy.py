@@ -2,7 +2,7 @@
 
 import pytest
 import sympy
-from sympy import Function, Subs, Sum, Symbol, diff, srepr
+from sympy import Array, Function, Subs, Sum, Symbol, diff, srepr
 from sympy.series.sequences import RecursiveSeq
 
 
@@ -127,3 +127,40 @@ def test_ordered_compound_substitutions_with_different_values_have_distinct_iden
         f"SymPy {sympy.__version__}: first={srepr(first)}; second={srepr(second)}; "
         f"values={(first.doit(), second.doit())}; hashes={(hash(first), hash(second))}"
     )
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        (1,),
+        pytest.param(
+            (),
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=TypeError,
+                reason="SymPy Array.applyfunc cannot reconstruct an empty array from map; diagnostics in docstring",
+            ),
+        ),
+    ],
+)
+def test_array_applyfunc_preserves_empty_and_nonempty_shapes(entries):
+    """SymPy 1.14.0 raises TypeError for Array([]).applyfunc, before calling f.
+
+    Standalone reproducer, with no Modello imports::
+
+        from sympy import Array
+        Array([]).applyfunc(lambda value: value**2 + 1)
+        # TypeError: object of type 'map' has no len()
+        # expected an empty array with shape (0,)
+
+    NDimArray.applyfunc in sympy/tensor/array/ndim_array.py passes a map object
+    to the array constructor. The empty-array reconstruction path requires a
+    length and rejects that iterator. Materializing the transformed entries
+    before construction avoids the error; the nonempty control passes.
+    No upstream issue number is established. Remove the strict xfail after
+    an upgrade repairs empty-array reconstruction.
+    """
+    source = Array(entries)
+    result = source.applyfunc(lambda value: value**2 + 1)
+    assert result.shape == source.shape
+    assert list(result) == [value**2 + 1 for value in entries], f"SymPy {sympy.__version__}: {srepr(source)}"

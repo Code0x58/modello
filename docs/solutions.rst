@@ -37,6 +37,25 @@ values. Both accept model symbols or expressions built from them. For example:
 >>> family.expression(check.total - check.reading.squared)
 1
 
+Continue with SymPy
+-------------------
+
+The returned expression uses the family's actual symbols. Pass it directly to
+SymPy for calculus or numerical compilation:
+
+>>> from sympy import diff, lambdify
+>>> response = family.expression(check.total)
+>>> diff(response, check.reading.x) == 2 * check.reading.x
+True
+>>> calculate = lambdify(check.reading.x, response, modules="math")
+>>> calculate(2)
+5
+
+Use ``expression`` before differentiating to include dependencies resolved by
+the model. The family retains admissibility conditions; a compiled numerical
+function evaluates the formula without checking those conditions. For finite
+vector outputs, :ref:`export their elements <custom-vector-operations>`.
+
 Refine observations and select a state
 ---------------------------------------
 

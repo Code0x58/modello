@@ -99,6 +99,25 @@ Compact operations and native SymPy notation give the same finite reductions
    >>> x.dot(y).doit(), Sum(x[i]*y[i], (i, 0, N-1)).doit()
    (34, 34)
 
+For your own pointwise operation :math:`f(x_i)`, use ``applyfunc`` with a
+Python function or SymPy ``Lambda``. It uses the same name as SymPy arrays:
+
+.. code-block:: pycon
+
+   >>> from sympy import Array, Lambda, Symbol
+   >>> z = Symbol("z")
+   >>> operation = Lambda(z, z**2 + 1)
+   >>> x.applyfunc(operation).doit(), Array(x).applyfunc(operation)
+   ([2, 5, 10], [2, 5, 10])
+   >>> x.applyfunc(lambda value: value**2 + 1).sum().doit()
+   17
+   >>> Sum(operation(x[i]), (i, 0, N-1)).doit()
+   17
+
+Use an indexed comprehension when the operation needs positions or several
+vectors. See :ref:`custom-vector-operations` for composition and export to
+SymPy arrays or numerical functions.
+
 See :doc:`vectors` for partial data, domains, and fitting with these formulas.
 For a collection of complete models, use :doc:`model_vector <model-vectors>`.
 For an infinite bound, such as :math:`\sum_{i=0}^{\infty} q^i`, use native
@@ -167,6 +186,8 @@ Solve a finite window of model states
    (15, [1, 3, 7, 15])
    >>> StateWindow("inverse", N=3, a=2, b=1, closing=15).opening
    1
+   >>> case.states.project(lambda state: state.value**2).sum().doit()
+   284
 
 The equations apply for :math:`n\in\{1,\ldots,N\}`. Observing ``opening``
 gives the same finite initial-value path as the scalar law. Observing ``closing``
@@ -174,9 +195,12 @@ instead asks an inverse question.
 
 Use this form when each state has related quantities, or the equations need
 implicit updates, forward references, or terminal boundaries. It solves the
-whole declared window jointly. See :doc:`model-vectors` and the
+whole declared window jointly. ``project`` can combine a member's fields into
+any scalar formula, ready for reductions and ``applyfunc``. See
+:doc:`model-vectors` and the
 :ref:`comparison of sequence semantics <sequence-representations>`.
 
 In every form, observations choose the question: calculate results, infer
 missing inputs, or retain formulas. Use :doc:`solutions` to keep alternatives
-and add conditions, and :doc:`debugging` to check conflicting observations.
+and obtain SymPy expressions with ``family.expression(...)``, and
+:doc:`debugging` to check conflicting observations.

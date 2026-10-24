@@ -19,7 +19,8 @@ Module                           Contracts
                                  data; bilinear/Hermitian contraction; partial
                                  observations; several shape parameters;
                                  equivalent shapes; observed/negative indices;
-                                 zero-product nonidentifiability.
+                                 zero-product nonidentifiability; callable and
+                                 indexed transforms with forward/inverse solves.
 ``test_calculus``                Gradients, Hessians, mixed partials; named
                                  dependencies; integral/sum composition; moving
                                  endpoints; exceptional limits; implicit Euler;

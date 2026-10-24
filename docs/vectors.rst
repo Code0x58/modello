@@ -34,6 +34,8 @@ need matching lengths; a vector of size ``N+1`` needs one more entry. ``N=3``
 also requests three unknown entries without supplying a vector. A literal
 ``size=3`` fixes the size.
 Use ``v.shape[0]`` for an unresolved size; ``len(v)`` needs a finite integer.
+``doit()`` leaves an unresolved length symbolic, so native SymPy transformations
+can compose before the size is known. Iteration and export need a finite length.
 Construct another case for a different observation window.
 
 Operations
@@ -87,6 +89,76 @@ assigning the formula:
 This requires every gross return to be positive. Inheritance can refine domains
 or formulas while keeping the declared shape; use a new model shape to change
 its size expression.
+
+.. _custom-vector-operations:
+
+Custom operations and SymPy interoperability
+--------------------------------------------
+
+``applyfunc(f)`` preserves the vector's length and order while applying a scalar
+expression builder. It accepts ordinary functions, Python lambdas, native SymPy
+functions, and SymPy ``Lambda`` expressions:
+
+.. code-block:: pycon
+
+   >>> from sympy import Array, Lambda, Piecewise, Symbol, conjugate
+   >>> u = Symbol("u")
+   >>> operation = Lambda(u, u**2 + 1)
+   >>> x.applyfunc(operation).doit(), Array(x).applyfunc(operation)
+   ([2, 5, 10], [2, 5, 10])
+   >>> x.applyfunc(lambda value: Piecewise((value, value > 1), (0, True))).doit()
+   [0, 2, 3]
+   >>> x.applyfunc(conjugate).dot(x).doit()
+   14
+
+Known entries are transformed directly. A symbolic length retains an indexed
+formula, so the callable must accept symbolic scalar arguments. Use
+``Piecewise`` for value-dependent branches. For positions, moving windows, or
+several input vectors, keep the indices explicit with ``vector(...)``.
+For model members, ``states.project(lambda state: ...)`` first produces a scalar
+vector; it can combine fields and use the same operations.
+
+.. code-block:: pycon
+
+   >>> v = Symbol("v")
+   >>> combine = Lambda((u, v), u*v + 1)
+   >>> vector(combine(x[i], y[i]), (i, 0, x.shape[0]-1)).doit()
+   [4, 5, 4]
+
+Inside a model class, use ``Lambda`` to capture model quantities in the
+expression. Python lambdas do not close over a class namespace:
+
+.. code-block:: pycon
+
+   >>> from modello import Coordinate
+   >>> class Calibration(Modello):
+   ...     N = InstanceDummy("N", integer=True, nonnegative=True)
+   ...     readings = Vector("x", size=N, real=True)
+   ...     scale = InstanceDummy("scale", real=True)
+   ...     u = Coordinate("u", real=True)
+   ...     adjusted = readings.applyfunc(Lambda(u, scale*u + 1))
+   >>> Calibration("forward", readings=[1, 2, 3], scale=2).adjusted
+   [3, 5, 7]
+
+Finite vectors pass directly to SymPy's ``Array`` and ``Matrix`` constructors.
+Their ``elements`` tuple supplies scalar outputs to ``lambdify``:
+
+.. code-block:: pycon
+
+   >>> from sympy import Matrix, lambdify
+   >>> gain = Symbol("gain", real=True)
+   >>> response = x.applyfunc(lambda value: gain * value)
+   >>> Array(response).shape, Matrix(response).shape
+   ((3,), (3, 1))
+   >>> calculate = lambdify(gain, response.elements, modules="math")
+   >>> calculate(2)
+   (2, 4, 6)
+
+Specialize the size before exporting individual entries. Scalar results are
+ordinary SymPy expressions, ready for substitution, simplification, calculus,
+or numerical compilation. Within a solution family, use ``family.expression``
+to express outputs in its remaining coordinates first. Conditions remain on the
+family; numerical compilation alone does not check them.
 
 Inspection and solution families
 --------------------------------

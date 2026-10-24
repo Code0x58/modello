@@ -113,7 +113,7 @@ Coordinates and indexed formulas
 .. autoclass:: Index
 
 .. autoclass:: Vector
-   :members: shape, elements, sum, product, dot, doit
+   :members: shape, elements, applyfunc, sum, product, dot, doit
 
 .. autofunction:: vector
 

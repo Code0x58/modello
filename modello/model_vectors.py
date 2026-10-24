@@ -66,7 +66,11 @@ class ModelVector(Sequence[_Model], Generic[_Model]):
         return (self[i] for i in range(len(self)))
 
     def project(self, project: Callable[[_Model], ScalarValue]) -> Vector:
-        """Project typed member expressions without losing their shared scope."""
+        """Build a scalar vector from expressions on symbolic typed members.
+
+        For example, ``project(lambda fill: fill.quantity * fill.price)``
+        combines fields while preserving their model scope and equations.
+        """
         return _collection_project(self, project)
 
 

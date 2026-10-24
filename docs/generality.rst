@@ -10,6 +10,8 @@ Representations and composition
 
 * :class:`~modello.Vector` contains scalar coordinates. Observed lengths and
   explicit size fields determine its finite shape before scalar solving.
+  ``applyfunc`` accepts symbolic scalar functions and preserves shape; indexed
+  comprehensions also express operations involving positions or several vectors.
   :func:`~modello.model_vector` retains a typed model at each position,
   including its component equations and fixed inner vectors.
 * :func:`~modello.model_recurrence` generates joint equations over a finite

@@ -7,7 +7,7 @@ that was declared instead of an expanded list of scalar operations.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from functools import cached_property
 from typing import Any, TypeAlias, overload
 
@@ -82,8 +82,25 @@ class Vector(Basic):
         return iter(self.elements)
 
     def doit(self, **hints: Any) -> Vector:
-        """Materialize a comprehension and evaluate its scalar entries."""
-        return Vector(*(entry.doit(**hints) for entry in self))
+        """Evaluate finite entries, leaving an unresolved length symbolic."""
+        if not self._finite:
+            return self
+        return self.applyfunc(lambda entry: entry.doit(**hints))
+
+    def applyfunc(self, f: Callable[[Expr], ScalarValue]) -> Vector:
+        """Apply a scalar expression builder to each entry, preserving shape.
+
+        Accept Python functions, SymPy functions, and ``Lambda`` expressions.
+        Known entries are transformed directly; a symbolic size retains an
+        indexed formula. The function must accept symbolic scalar arguments.
+        Use ``Lambda`` to capture model quantities inside a class body.
+        """
+        if not callable(f):
+            raise ModelInputError("applyfunc requires a callable returning a scalar expression")
+        if self._finite:
+            return Vector(tuple(f(entry) for entry in self))
+        i = _local_index(self)
+        return vector(f(self[i]), (i, 0, self.shape[0] - 1))
 
     @overload
     def __getitem__(self, index: slice) -> Vector: ...

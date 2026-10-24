@@ -4,9 +4,14 @@ from copy import deepcopy
 
 import pytest
 from sympy import (
+    Abs,
+    Array,
     Eq,
     FiniteSet,
+    I,
     Interval,
+    Lambda,
+    Matrix,
     MatrixSymbol,
     Piecewise,
     Product,
@@ -15,6 +20,10 @@ from sympy import (
     Sum,
     Symbol,
     Tuple,
+    conjugate,
+    expand,
+    factor,
+    simplify,
 )
 
 from modello import Index, InstanceDummy, Modello, Vector, component, inspect_model, vector
@@ -211,6 +220,75 @@ def test_vector_arithmetic_and_contractions_have_explicit_shapes():
         x @ Vector(1)
 
 
+@pytest.mark.parametrize("entries", [(), (0,), (-2, 0, 3), (Rational(1, 2), -3, 4), (1 + I, 2 - I)])
+@pytest.mark.parametrize(
+    "function", [lambda value: value**2 + 1, lambda value: 0, Abs, Lambda(Symbol("u"), Symbol("u") / 2)]
+)
+def test_applyfunc_agrees_with_native_array_and_scalar_mapping(entries, function):
+    values = Vector(entries)
+    result = values.applyfunc(function)
+    expected = tuple(function(value) for value in values)
+    assert result.shape == values.shape
+    assert tuple(result) == expected
+    if entries:
+        assert tuple(Array(entries).applyfunc(function)) == expected
+    # The native empty-array failure is isolated in test_upstream_sympy.
+    assert tuple(Matrix(len(entries), 1, entries).applyfunc(function)) == expected
+
+
+def test_applyfunc_transforms_existing_scalar_expressions():
+    a = Symbol("a")
+    values = Vector(a**2 - 1, a**2 + 2 * a + 1)
+    assert values.applyfunc(factor) == Vector((a - 1) * (a + 1), (a + 1) ** 2)
+    assert Vector(-2).applyfunc(f=Abs) == Vector(2)
+
+
+def test_applyfunc_keeps_symbolic_shapes_and_free_coordinates():
+    N = Symbol("N", integer=True, nonnegative=True)
+    i = Index("i")
+    source = vector(i**2, (i, 0, N - 1))
+    mapped = source.applyfunc(lambda value: value + i)
+    assert mapped.shape == (N,)
+    assert mapped.free_symbols == {N, i}
+    assert mapped.subs(N, 3).doit() == Vector(i, i + 1, i + 4)
+    assert mapped.subs(N, 0).doit() == Vector()
+
+
+@pytest.mark.parametrize("formula", [False, True], ids=["declared", "computed"])
+@pytest.mark.parametrize("function", [simplify, expand, factor, conjugate])
+def test_native_transforms_leave_unresolved_lengths_symbolic(formula, function):
+    N = Symbol("N", integer=True, nonnegative=True)
+    a, i = Symbol("a", real=True), Index("i")
+    source = vector(a * i + a, (i, 0, N - 1)) if formula else Vector("x", size=N, real=True)
+    assert source.doit() == source
+    mapped = source.applyfunc(function)
+    assert mapped.shape == (N,)
+    expected = source.subs(N, 3).applyfunc(function)
+    assert all(simplify(left - right) == 0 for left, right in zip(mapped.subs(N, 3).doit(), expected))
+    assert mapped.subs(N, 0).doit() == Vector()
+
+
+def test_applyfunc_does_not_call_an_unused_function_for_a_known_empty_vector():
+    def unused(value):
+        raise AssertionError("There are no entries to transform")
+
+    assert Vector().applyfunc(unused) == Vector()
+
+
+@pytest.mark.parametrize("function", [None, 3, Symbol("f")])
+@pytest.mark.parametrize("values", [Vector(), Vector(1)])
+def test_applyfunc_requires_a_callable(function, values):
+    with pytest.raises(ModelInputError, match="callable"):
+        values.applyfunc(function)
+
+
+@pytest.mark.parametrize("count", [1, 2, Symbol("N", integer=True, positive=True)])
+@pytest.mark.parametrize("result", [None, [1, 2], Vector(1, 2), Matrix([1, 2]), S.true])
+def test_applyfunc_cannot_change_shape_or_return_nonscalar_entries(count, result):
+    with pytest.raises(ModelInputError):
+        Vector("x", size=count).applyfunc(lambda value: result)
+
+
 def test_noncommutative_entries_keep_their_product_order():
     a, b = Symbol("a", commutative=False), Symbol("b", commutative=False)
     values = Vector(a, b)
@@ -220,6 +298,8 @@ def test_noncommutative_entries_keep_their_product_order():
     c = Symbol("c", commutative=False)
     assert (c * values).doit() == Vector(c * a, c * b)
     assert (values * c).doit() == Vector(a * c, b * c)
+    assert values.applyfunc(lambda value: c * value) == Vector(c * a, c * b)
+    assert values.applyfunc(lambda value: value * c) == Vector(a * c, b * c)
 
 
 def test_index_substitution_also_updates_coordinates_when_they_depend_on_it():
