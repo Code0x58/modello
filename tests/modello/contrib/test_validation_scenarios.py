@@ -50,15 +50,49 @@ def test_current_row_cycles_need_no_dependency_scheduler():
     assert WindowValidator(History, "rows").audit(((2, 2), (4, 3), (6, 4))).valid is True
 
 
+def test_laws_share_observations_with_independent_indices_and_starts():
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rows = model_vector(CashRow, size=N)
+        n, m = Index("n"), Index("m")
+        first = model_recurrence(rows[n], cash=rows[n - 1].cash - n)
+        second = model_recurrence(rows[m], start=2, debit=rows[m - 2].debit + m)
+
+    validator = WindowValidator(History, "rows")
+    rows = ((40, 0), (39, 0), (37, 2), (34, 3))
+    results = list(validator.iter_results(rows))
+    assert [result.valid for result in results] == [None, None, True, True]
+    for position, result in enumerate(results):
+        window = rows[max(0, position + 1 - validator.window_size) : position + 1]
+        assert validator(window, position=position) == result
+    assert not results[1].assumed and not results[1].complete
+
+
 def test_an_inactive_branch_can_ignore_a_missing_predecessor():
     class History(Modello):
         N = InstanceDummy("N", integer=True, nonnegative=True)
         rows = model_vector(CashRow, size=N)
         n = Index("n")
-        law = model_recurrence(rows[n], cash=Piecewise((0, Eq(rows[n].debit, 0)), (rows[n - 1].cash, True)))
+        law = model_recurrence(
+            rows[n],
+            cash=Piecewise((0, Eq(rows[n].debit, 0)), (rows[n - 1].cash, True)),
+            debit=rows[n - 1].debit,
+        )
 
     result = WindowValidator(History, "rows")(((None, 0), (0, 0)), position=1)
     assert result.valid is True and result.complete
+
+
+def test_distinct_missing_cells_cannot_cancel_each_other():
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rows = model_vector(CashRow, size=N)
+        n = Index("n")
+        law = model_recurrence(rows[n], cash=rows[n - 1].cash - rows[n - 1].debit)
+
+    result = WindowValidator(History, "rows")(((None, None), (0, 0)), position=1)
+    assert result.valid is None and not result.invalid
+    assert result.checks[-1].expected is None
 
 
 @pytest.mark.parametrize(
@@ -103,6 +137,24 @@ def test_symbolic_cells_do_not_prove_numeric_validity():
     assert result.valid is None and not result.invalid
 
 
+@pytest.mark.parametrize("assumptions", [{"even": True}, {"prime": True}])
+def test_domain_checks_retain_assumptions_beyond_the_expected_set(assumptions):
+    class Row(Modello):
+        value = InstanceDummy("value", **assumptions)
+
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rows = model_vector(Row, size=N)
+        n = Index("n")
+        law = model_recurrence(rows[n], start=0, value=rows[n].value)
+
+    result = next(WindowValidator(History, "rows").iter_results(((9,),)))
+    domain, equation = result.checks
+    assert domain.expected.contains(9) is S.true
+    assert domain.invalid and equation.valid
+    assert result.invalid and result.complete
+
+
 def test_source_poles_are_retained_when_the_numerator_is_zero():
     class Row(Modello):
         numerator = InstanceDummy("numerator", real=True)
@@ -135,6 +187,43 @@ def test_parameter_definitions_expand_without_inference():
         WindowValidator(History, "rows")
     with pytest.raises(ModelInputError, match="Parameter"):
         WindowValidator(History, "rows", parameters={"retention": -1})
+
+
+@pytest.mark.parametrize(
+    "rate,alias,consistent",
+    [(1, 1.0, True), (Decimal("1"), Fraction(1), True), (1, 2, False), (2, 1, False)],
+)
+def test_parameter_aliases_must_agree(rate, alias, consistent):
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rate = InstanceDummy("rate", positive=True)
+        alias = rate
+        rows = model_vector(CashRow, size=N)
+        n = Index("n")
+        law = model_recurrence(rows[n], cash=rate * rows[n - 1].cash)
+
+    if consistent:
+        validator = WindowValidator(History, "rows", parameters={"rate": rate, "alias": alias})
+        assert [result.valid for result in validator.iter_results(((20, 0), (20, 0)))] == [None, True]
+    else:
+        with pytest.raises(ModelInputError, match="Conflicting values for parameter"):
+            WindowValidator(History, "rows", parameters={"rate": rate, "alias": alias})
+
+
+@pytest.mark.parametrize("parameters,problem", [({}, "Unbound"), ({"rate": 0}, "domain")])
+def test_derived_parameters_require_numeric_dependencies_with_valid_domains(parameters, problem):
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rate = InstanceDummy("rate", real=True)
+        intermediate = InstanceDummy("intermediate", positive=True)
+        intermediate = -(rate**2) - 1
+        multiplier = intermediate + rate**2 + 2
+        rows = model_vector(CashRow, size=N)
+        n = Index("n")
+        law = model_recurrence(rows[n], cash=multiplier * rows[n - 1].cash)
+
+    with pytest.raises(ModelInputError, match=problem):
+        WindowValidator(History, "rows", parameters=parameters)
 
 
 @pytest.mark.parametrize(

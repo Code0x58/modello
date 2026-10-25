@@ -124,8 +124,8 @@ values and parameters are never inferred or filled.
 Integers, ``Decimal``, ``Fraction``, and SymPy numbers retain exact arithmetic.
 Equation tolerances use ``abs(observed-expected) <= atol + rtol*abs(expected)``;
 domains remain strict. Independent constants supplied through ``parameters``
-must satisfy their field assumptions. Results retain SymPy values for exact
-evidence.
+must satisfy their field assumptions, and parameter aliases must agree.
+Results retain SymPy values for exact evidence.
 
 Streams and manual windows
 ---------------------------

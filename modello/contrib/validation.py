@@ -10,6 +10,7 @@ from itertools import count
 from typing import Literal, TypeAlias
 
 from sympy import Abs, Basic, Dummy, Expr, Integer, Rational, S, Symbol, check_assumptions, simplify, sympify
+from sympy.core.logic import fuzzy_and
 
 from modello import Modello, ScalarValue
 from modello._evaluation import _evaluate, _expand_finite_indexed, _substitute
@@ -86,9 +87,7 @@ class ValidationResult:
     @property
     def valid(self) -> bool | None:
         """False for a proven violation, True for complete success, otherwise None."""
-        if self.invalid:
-            return False
-        return True if self.complete else None
+        return fuzzy_and(check.valid for check in self.checks) if self.checks else None
 
 
 @dataclass(frozen=True)
@@ -129,9 +128,10 @@ class ValidationSummary:
                     f"Audit results require every position from {start_position} in order; expected {position}"
                 )
             complete = complete and result.complete
-            if result.valid:
+            valid = result.valid
+            if valid:
                 valid_rows += 1
-            elif result.invalid:
+            elif valid is not None:
                 invalid_rows += 1
                 if first is None:
                     first = result
@@ -183,20 +183,11 @@ class _Observation:
 
 
 @dataclass(frozen=True)
-class _Reference:
-    symbol: Symbol
-    field: int
-    lag: int
-
-
-@dataclass(frozen=True)
 class _Rule:
     name: str
     field: int
     start: int
-    expression: Expr | None = None
-    references: tuple[_Reference, ...] = ()
-    index: Symbol | None = None
+    expression: Basic
     kind: CheckKind = "recurrence"
 
 
@@ -228,34 +219,41 @@ class WindowValidator:
         row_definition = namespace.collections[rows].model._modello_definition
         self._fields = tuple(row_definition.fields.items())
         self._field_names = tuple(_path_label(path) for path, _ in self._fields)
-        self._positions = {path: i for i, (path, _) in enumerate(self._fields)}
+        positions = {path: i for i, (path, _) in enumerate(self._fields)}
         self._atol, self._rtol = (_tolerance(value) for value in (atol, rtol))
         known = _parameters(model, rows, parameters or {})
         columns = _collection_columns(namespace.nested_models[rows])
         # Resolve aliases through their first declared field, then check each copy.
-        self._columns = {column: self._positions[path] for path, column in reversed(tuple(columns.items()))}
-        self._symbols = {symbol: self._positions[path] for path, symbol in reversed(self._fields)}
+        self._sources = {symbol: positions[path] for path, symbol in reversed(self._fields)}
+        self._sources.update({column: positions[path] for path, column in reversed(tuple(columns.items()))})
+        self._coordinates: dict[tuple[int, int], Symbol] = {}
+        self._index = Dummy("position")
         laws = [(name, law) for name, law in namespace.model_laws.items() if law.target.path == (rows,)]
         if not laws:
             raise ModelInputError(f"No model_recurrence targets {rows!r}")
         self._start = min(int(law.template.start) for _, law in laws)
         self._complete_start = max(int(law.template.start) for _, law in laws)
-        rules = [_Rule("domain", i, self._start, kind="domain") for i in range(len(self._fields))]
+        rules = [
+            _Rule("domain", i, self._start, _domain(symbol), kind="domain")
+            for i, (_, symbol) in enumerate(self._fields)
+        ]
         rules.extend(
-            self._compile("definition", item.path, item.right, self._start, kind="definition")
+            self._compile("definition", positions[item.path], item.right, self._start, kind="definition")
             for item in row_definition.constraints
         )
         for path, symbol in self._fields:
-            if self._positions[path] != self._symbols[symbol]:
-                rules.append(self._compile("alias", path, symbol, self._start, kind="alias"))
+            if positions[path] != self._sources[symbol]:
+                rules.append(self._compile("alias", positions[path], symbol, self._start, kind="alias"))
         for name, law in laws:
             for path, expression in law.updates:
                 body = _substitute(_conditioned(expression, _denominator_condition(expression)), known)
                 rules.append(
-                    self._compile(name, (*law.target.suffix, *path), body, int(law.template.start), law.template.index)
+                    self._compile(
+                        name, positions[law.target.suffix + path], body, int(law.template.start), law.template.index
+                    )
                 )
         self._rules = tuple(rules)
-        self._window_size = 1 + max((ref.lag for rule in rules for ref in rule.references), default=0)
+        self._window_size = 1 + max((lag for lag, _ in self._coordinates), default=0)
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -341,8 +339,16 @@ class WindowValidator:
         label = position if index is _UNLABELLED else index
         if not isinstance(label, Hashable):
             raise ModelInputError("A row label must be hashable")
+        values = {self._index: Integer(position)}
+        for (lag, field), symbol in self._coordinates.items():
+            if lag < len(window):
+                observation = window[-1 - lag][field]
+                if not observation.problem:
+                    values[symbol] = observation.value
         return ValidationResult(
-            position, label, tuple(self._check(rule, position, label, window) for rule in self._rules)
+            position,
+            label,
+            tuple(self._check(rule, position, label, window[-1][rule.field], values) for rule in self._rules),
         )
 
     def _observe_row(self, row: Row) -> tuple[_Observation, ...]:
@@ -365,7 +371,7 @@ class WindowValidator:
     def _compile(
         self,
         name: str,
-        path: FieldPath,
+        field: int,
         body: Expr,
         start: int,
         index: Symbol | None = None,
@@ -373,32 +379,39 @@ class WindowValidator:
     ) -> _Rule:
         body = _expand_finite_indexed(body)
         condition = _denominator_condition(body)
-        bindings = {}
+        locations = {}
         for term in sorted(_scalar_atoms(body, _VectorElement), key=str):
-            if index is None or term.vector not in self._columns:
+            if index is None or term.vector not in self._sources:
                 raise ModelInputError("Window laws must reference only the selected row vector")
             delay = simplify(index - term.index)
             if not isinstance(delay, Integer) or not 0 <= delay <= start:
                 raise ModelInputError(
                     "Window laws require fixed past lags covered by start; future and fixed rows are unsupported"
                 )
-            bindings[term] = _Reference(Dummy("observed"), self._columns[term.vector], int(delay))
-        for symbol in body.free_symbols & self._symbols.keys():
-            bindings[symbol] = _Reference(Dummy("observed"), self._symbols[symbol], 0)
-        replacements = {source: ref.symbol for source, ref in bindings.items()}
-        references = tuple(bindings.values())
+            locations[term] = (int(delay), self._sources[term.vector])
+        for symbol in body.free_symbols & self._sources.keys():
+            locations[symbol] = (0, self._sources[symbol])
+        replacements = {
+            source: self._coordinates.setdefault(location, Dummy("observed")) for source, location in locations.items()
+        }
+        if index is not None:
+            replacements[index] = self._index
         # Capture source denominator requirements before substitution can cancel them.
         expression = _conditioned(_substitute(body, replacements), _substitute(condition, replacements))
-        unexpected = expression.free_symbols - {ref.symbol for ref in references} - {index}
+        unexpected = expression.free_symbols.difference(replacements.values())
         if unexpected or _scalar_atoms(expression, _VectorElement):
             names = ", ".join(sorted(str(symbol) for symbol in unexpected))
             raise ModelInputError(f"Unbound window-law quantities: {names}. Supply scalar parameters or row fields.")
-        return _Rule(name, self._positions[path], start, expression, references, index, kind)
+        return _Rule(name, field, start, expression, kind)
 
     def _check(
-        self, rule: _Rule, position: int, label: Hashable, window: Sequence[tuple[_Observation, ...]]
+        self,
+        rule: _Rule,
+        position: int,
+        label: Hashable,
+        observation: _Observation,
+        values: Mapping[Symbol, Expr],
     ) -> CheckResult:
-        observation = window[-1][rule.field]
         expected: Basic | None = None
         residual = None
         valid: bool | None = None
@@ -406,36 +419,29 @@ class WindowValidator:
             reason = f"Initial history; first test position is {rule.start}"
         elif rule.kind == "domain":
             symbol = self._fields[rule.field][1]
-            expected = _domain(symbol)
+            expected = rule.expression
             reason = observation.problem or "unresolved numeric value"
             if observation.problem == "not a scalar number":
                 valid = False
             elif not observation.problem and observation.value.is_number is True:
-                result = check_assumptions(observation.value, against=symbol)
-                if observation.value.is_finite is False or result is False:
-                    valid, reason = False, "value is outside the field domain"
-                elif observation.value.is_finite is True and result is True:
-                    valid, reason = True, ""
+                valid = fuzzy_and((observation.value.is_finite, check_assumptions(observation.value, against=symbol)))
+                if valid is not None:
+                    reason = "" if valid else "value is outside the field domain"
         else:
-            assert rule.expression is not None
-            dependencies = {ref.symbol: window[-1 - ref.lag][ref.field] for ref in rule.references}
-            values = {symbol: value.value for symbol, value in dependencies.items()}
-            if rule.index is not None:
-                values[rule.index] = Integer(position)
             expected = _evaluate(_substitute(rule.expression, values))
             reason = "unresolved or missing dependency"
             if _definitely_undefined(expected) or expected.is_finite is False:
                 valid, reason = False, "undefined expression"
             elif observation.problem:
                 reason = observation.problem
-            elif expected.is_number is True and expected.is_finite is True and observation.value.is_number is True:
+            elif _finite_number(expected) and observation.value.is_number is True:
                 residual = simplify(observation.value - expected)
                 within = Abs(residual) <= self._atol + self._rtol * Abs(expected)
                 if within is S.true:
                     valid, reason = True, ""
                 elif within is S.false:
                     valid, reason = False, "observed differs from expected"
-            if expected.free_symbols & {value.value for value in dependencies.values() if value.problem}:
+            if not expected.free_symbols.isdisjoint(self._coordinates.values()):
                 expected = None
         return CheckResult(
             position,
@@ -455,7 +461,7 @@ class WindowValidator:
 def _observe(value: object) -> _Observation:
     missing = value is None or isinstance(value, Decimal) and value.is_nan()
     if missing:
-        return _Observation(value, Dummy("missing"), "missing observation")
+        return _Observation(value, S.NaN, "missing observation")
     try:
         # Decimal amounts retain their exact decimal value. Text cells are never parsed.
         expression = (
@@ -466,22 +472,21 @@ def _observe(value: object) -> _Observation:
     except (TypeError, ValueError):
         expression = None
     if expression is S.NaN:
-        return _Observation(value, Dummy("missing"), "missing observation")
+        return _Observation(value, S.NaN, "missing observation")
     if not isinstance(expression, Expr) or expression.is_Matrix:
-        return _Observation(value, Dummy("invalid"), "not a scalar number")
+        return _Observation(value, S.NaN, "not a scalar number")
     return _Observation(value, expression)
 
 
+def _finite_number(value: Basic) -> bool:
+    return value.is_number is True and value.is_finite is True
+
+
 def _tolerance(value: ScalarValue) -> Expr:
-    observation = _observe(value)
-    if (
-        observation.problem
-        or observation.value.is_number is not True
-        or observation.value.is_finite is not True
-        or observation.value.is_nonnegative is not True
-    ):
+    number = _observe(value).value
+    if not _finite_number(number) or number.is_nonnegative is not True:
         raise ModelInputError("Equation tolerances must be finite nonnegative numbers")
-    return observation.value
+    return number
 
 
 def _parameters(model: type[Modello], rows: str, parameters: Mapping[str, ScalarValue]) -> dict[Symbol, Expr]:
@@ -492,34 +497,34 @@ def _parameters(model: type[Modello], rows: str, parameters: Mapping[str, Scalar
         for constraint in definition.constraints
         if constraint.left in external.values()
     }
-    known = {}
+    known: dict[Symbol, Expr] = {}
     for name, raw in parameters.items():
-        if name not in external or external[name] in pending:
+        symbol = external.get(name)
+        if symbol is None or symbol in pending:
             raise ModelInputError(f"Parameter {name!r} must be an independent scalar model field")
-        if external[name] in model._modello_namespace.collections[rows].size.free_symbols:
+        if symbol in model._modello_namespace.collections[rows].size.free_symbols:
             raise ModelInputError("The input stream supplies the row vector's size; omit size parameters")
-        observation = _observe(raw)
-        if observation.problem or observation.value.is_number is not True or observation.value.is_finite is not True:
+        value = _observe(raw).value
+        if not _finite_number(value):
             raise ModelInputError(f"Parameter {name!r} must be a finite scalar number")
-        if check_assumptions(observation.value, against=external[name]) is not True:
+        if check_assumptions(value, against=symbol) is not True:
             raise ModelInputError(f"Parameter {name!r} violates its field domain")
-        known[external[name]] = observation.value
+        if symbol in known and simplify(known[symbol] - value).is_zero is not True:
+            raise ModelInputError(f"Conflicting values for parameter {name!r}")
+        known.setdefault(symbol, value)
     while pending:
-        ready = {
-            symbol: _evaluate(_substitute(_conditioned(expression, _denominator_condition(expression)), known))
-            for symbol, expression in pending.items()
-            if expression.free_symbols <= known.keys() and not _scalar_atoms(expression, _VectorElement)
-        }
-        ready = {
-            symbol: value for symbol, value in ready.items() if value.is_number is True and value.is_finite is True
-        }
-        if not ready:
-            break
-        for symbol, value in ready.items():
+        remaining = len(pending)
+        for symbol, expression in tuple(pending.items()):
+            if not expression.free_symbols <= known.keys() or _scalar_atoms(expression, _VectorElement):
+                continue
+            value = _evaluate(_substitute(_conditioned(expression, _denominator_condition(expression)), known))
+            if not _finite_number(value):
+                continue
             if check_assumptions(value, against=symbol) is not True:
                 name = next(name for name, field in external.items() if field == symbol)
                 raise ModelInputError(f"Defined parameter {name!r} violates its field domain")
-        known.update(ready)
-        for symbol in ready:
+            known[symbol] = value
             del pending[symbol]
+        if len(pending) == remaining:
+            break
     return known
