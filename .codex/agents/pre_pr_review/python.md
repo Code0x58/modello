@@ -11,11 +11,24 @@ base readability suggestions on a specific difficulty for a competent reader.
   decoding abbreviations, distant state, or unnecessary indirection.
 - Keep related responsibilities together. Look for duplicated representations
   or operations on the same concept, including duplication across nearby APIs.
+  Keep inputs from the same source together so parallel names or records
+  cannot silently drift apart.
   Prefer one natural class or container that owns the concept and its related
   members, properties, and behavior when that makes the code simpler.
 - Recommend consolidation around a shared meaning or invariant. Do not merge
   merely similar syntax when the contracts differ, or introduce an abstraction
   that makes ordinary use harder to understand.
+
+## Public interfaces
+
+- Keep public modelling interfaces typed and idiomatic with the existing API.
+  Prefer model/component instances for declared schemas and relationships;
+  mappings can still be appropriate for named collections and data adapters.
+- Use named or keyword-only options when positional arguments hide their roles.
+  Check that signatures, annotations, and actual accepted values agree.
+- For metadata intended to be unique, check that duplicate annotations have an
+  explicit policy that catches accidental ambiguity. Preserve the separate
+  semantics of repeated equations that intentionally add constraints.
 
 ## Docstrings and comments
 
@@ -43,12 +56,10 @@ base readability suggestions on a specific difficulty for a competent reader.
   assumptions made about upstream behavior. For symbolic operations, consider
   unresolved values, exceptional parameter values, and assumptions rather than
   relying only on a generic happy path.
-- Look for behavioral coverage of changed contracts, boundaries, and important
-  compositions. Favor minimal regressions with an independent expected result
-  over tests that mirror implementation or only exercise isolated methods.
-- Preserve Python 3.10+ library support and optional dependency boundaries.
-  Follow `AGENTS.md` and CI for relevant validation; distinguish observed passes
-  from recommended checks and report gaps explicitly.
+- Use the separately routed test, architecture, and diagnostics references for
+  coverage, dependency boundaries, and result/error semantics. Keep supported
+  Python versions and validation aligned with `AGENTS.md` and CI; distinguish
+  observed passes from recommended checks and report gaps explicitly.
 
 Return reproducible correctness findings first, followed by concrete contract
 or readability issues. Explain the affected scenario and expected behavior.

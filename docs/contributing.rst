@@ -257,10 +257,12 @@ origin/master before updating its PR." For an existing PR, use its actual base
 branch; the feature branch's tracking upstream is not its review target.
 
 The custom Codex agent is defined in ``.codex/agents/pre_pr_review.toml``. Its
-main prompt links three documents under ``.codex/agents/pre_pr_review/`` for
-Sphinx documentation, Python code with docstrings and comments, and PR
-descriptions. If custom agent roles are unavailable, ``AGENTS.md`` instructs the
-coding agent to pass the same prompt to a general subagent.
+main prompt selects focused documents under ``.codex/agents/pre_pr_review/``
+after inspecting the branch. They cover Sphinx documentation, Python code with
+docstrings and comments, modelling architecture, tests, diagnostic contracts,
+visual examples, and PR descriptions. Load only the areas relevant to the
+change. If custom agent roles are unavailable, ``AGENTS.md`` instructs the coding
+agent to pass the same prompt to a general subagent.
 
 Install the Git reminders in this checkout:
 
