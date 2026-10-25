@@ -9,7 +9,7 @@ from __future__ import annotations
 import pandas as pd
 
 from modello import Index, InstanceDummy, Modello, component, model_recurrence, model_vector
-from modello.contrib.pandas import FrameValidation, FrameValidator
+from modello.contrib.pandas import FrameValidator
 
 
 class Holding(Modello):
@@ -61,11 +61,12 @@ def accounting_frame() -> pd.DataFrame:
     )
 
 
-def find_breaks(frame: pd.DataFrame) -> FrameValidation:
+def find_breaks(frame: pd.DataFrame) -> pd.DataFrame:
     """Check the same declared law against each pair of observed account rows."""
-    return FrameValidator(Ledger, "rows").validate(frame)
+    report = FrameValidator(Ledger, "rows").report(frame)
+    return report.loc[report["verdict"].eq("violated")]
 
 
 if __name__ == "__main__":
     report = find_breaks(accounting_frame())
-    print(report.breaks[["position", "index", "field", "observed", "expected", "residual"]].to_string(index=False))
+    print(report[["position", "index", "field", "observed", "expected", "residual"]].to_string(index=False))

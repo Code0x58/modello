@@ -80,6 +80,8 @@ importing domain extensions.
 Its optional pandas dependency stays outside core imports. It checks scalar
 equations directly, preserving observed history and reporting unknowns for
 missing dependencies; it does not construct models or invoke the joint solver.
+The initial prefix is trusted. Its primary output is an aligned nullable boolean
+Series; detailed checks and a lazy first-violation lookup share the same iterator.
 ``_shapes.py`` solves symbolic finite axes from observation lengths before scalar
 coordinates are compiled. Shape specialization produces a cached subclass; it
 does not mutate the reusable declaration. The GUI creates a fresh finite context

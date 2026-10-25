@@ -6,7 +6,7 @@ from itertools import islice
 
 import pandas as pd
 import pytest
-from pandas.testing import assert_frame_equal
+from pandas.testing import assert_frame_equal, assert_series_equal
 from sympy import Eq, Mul, Piecewise, Pow, Rational, S, Sum, Symbol
 
 from modello import Index, InstanceDummy, Modello, Vector, component, model_recurrence, model_vector
@@ -33,14 +33,14 @@ def test_breaks_use_observed_history_and_keep_duplicate_unsorted_labels():
     )
     before = frame.copy(deep=True)
     validator = FrameValidator(CashLedger, "rows")
-    report = validator.validate(frame)
+    report = validator.report(frame)
     assert validator.window_size == 2
-    assert not report.valid
-    assert report.unknown.empty
-    assert report.breaks[["position", "index", "field", "expected", "observed", "residual"]].values.tolist() == [
-        [2, "a", "cash", 88, 85, -3]
-    ]
-    postings = report.checks.loc[report.checks["rule"].eq("posting")]
+    assert not report["verdict"].eq("satisfied").all()
+    assert report.loc[report["verdict"].eq("unknown")].empty
+    assert report.loc[report["verdict"].eq("violated")][
+        ["position", "index", "field", "expected", "observed", "residual"]
+    ].values.tolist() == [[2, "a", "cash", 88, 85, -3]]
+    postings = report.loc[report["rule"].eq("posting")]
     assert postings["position"].tolist() == [1, 2, 3]
     assert postings["verdict"].tolist() == ["satisfied", "violated", "satisfied"]
     assert_frame_equal(frame, before)
@@ -49,11 +49,11 @@ def test_breaks_use_observed_history_and_keep_duplicate_unsorted_labels():
 @pytest.mark.parametrize("count", [0, 1, 4])
 def test_empty_singleton_and_valid_frames(count):
     frame = pd.DataFrame({"cash": [100, 90, 88, 86][:count], "debit": [0, 10, 2, 2][:count]})
-    report = FrameValidator(CashLedger, "rows").validate(frame)
-    assert report.valid
-    assert report.breaks.empty
-    assert report.unknown.empty
-    assert list(report.checks.columns) == [
+    report = FrameValidator(CashLedger, "rows").report(frame)
+    assert report["verdict"].eq("satisfied").all()
+    assert report.loc[report["verdict"].eq("violated")].empty
+    assert report.loc[report["verdict"].eq("unknown")].empty
+    assert list(report.columns) == [
         "position",
         "index",
         "field",
@@ -64,17 +64,27 @@ def test_empty_singleton_and_valid_frames(count):
         "verdict",
         "reason",
     ]
-    assert len(report.checks.loc[report.checks["rule"].eq("posting")]) == max(0, count - 1)
+    assert len(report.loc[report["rule"].eq("posting")]) == max(0, count - 1)
 
 
 def test_the_adapter_checks_the_same_law_as_the_joint_model_solver():
     rows = [CashRow("opening", cash=100, debit=0), CashRow("purchase", cash=90, debit=10)]
     joint = CashLedger("whole", rows=rows)
     assert joint.rows[-1].cash == 90
-    assert FrameValidator(CashLedger, "rows").validate(pd.DataFrame({"cash": [100, 90], "debit": [0, 10]})).valid
+    assert (
+        FrameValidator(CashLedger, "rows")
+        .report(pd.DataFrame({"cash": [100, 90], "debit": [0, 10]}))["verdict"]
+        .eq("satisfied")
+        .all()
+    )
     with pytest.raises(SolutionCountError):
         CashLedger("broken", rows=[rows[0], CashRow("bad", cash=89, debit=10)])
-    assert not FrameValidator(CashLedger, "rows").validate(pd.DataFrame({"cash": [100, 89], "debit": [0, 10]})).valid
+    assert (
+        not FrameValidator(CashLedger, "rows")
+        .report(pd.DataFrame({"cash": [100, 89], "debit": [0, 10]}))["verdict"]
+        .eq("satisfied")
+        .all()
+    )
 
 
 def test_the_source_window_can_be_replaced_without_changing_its_relative_law():
@@ -83,9 +93,9 @@ def test_the_source_window_can_be_replaced_without_changing_its_relative_law():
         n = Index("n")
         posting = model_recurrence(rows[n], cash=rows[n - 1].cash - rows[n].debit)
 
-    report = FrameValidator(ShortLedger, "rows").validate(pd.DataFrame({"cash": [100, 90, 88], "debit": [0, 10, 2]}))
-    assert report.valid
-    assert report.checks.loc[report.checks["rule"].eq("posting"), "position"].tolist() == [1, 2]
+    report = FrameValidator(ShortLedger, "rows").report(pd.DataFrame({"cash": [100, 90, 88], "debit": [0, 10, 2]}))
+    assert report["verdict"].eq("satisfied").all()
+    assert report.loc[report["rule"].eq("posting"), "position"].tolist() == [1, 2]
 
 
 def test_second_order_laws_and_moving_sums_share_a_three_row_window():
@@ -102,10 +112,12 @@ def test_second_order_laws_and_moving_sums_share_a_three_row_window():
 
     frame = pd.DataFrame({"level": [1, 3, 5, 8, 11], "rolling": [0, 0, 9, 16, 24]})
     validator = FrameValidator(History, "rows")
-    report = validator.validate(frame)
+    report = validator.report(frame)
     assert validator.window_size == 3
-    assert report.breaks[["position", "rule", "expected", "residual"]].values.tolist() == [[3, "evolution", 7, 1]]
-    assert report.checks.loc[report.checks["rule"].eq("evolution"), "position"].tolist() == [2, 3, 4]
+    assert report.loc[report["verdict"].eq("violated")][
+        ["position", "rule", "expected", "residual"]
+    ].values.tolist() == [[3, "evolution", 7, 1]]
+    assert report.loc[report["rule"].eq("evolution"), "position"].tolist() == [2, 3, 4]
 
 
 def test_laws_keep_separate_starts_and_current_row_dependencies():
@@ -122,10 +134,10 @@ def test_laws_keep_separate_starts_and_current_row_dependencies():
 
     validator = FrameValidator(History, "rows")
     assert validator.window_size == 3
-    report = validator.validate(pd.DataFrame({"a": [0, 1, 3, 6], "b": [1, 1, 2, 3]}))
-    assert report.valid
-    assert report.checks.loc[report.checks["rule"].eq("first"), "position"].tolist() == [1, 2, 3]
-    assert report.checks.loc[report.checks["rule"].eq("second"), "position"].tolist() == [2, 3]
+    report = validator.report(pd.DataFrame({"a": [0, 1, 3, 6], "b": [1, 1, 2, 3]}))
+    assert report["verdict"].eq("satisfied").all()
+    assert report.loc[report["rule"].eq("first"), "position"].tolist() == [1, 2, 3]
+    assert report.loc[report["rule"].eq("second"), "position"].tolist() == [2, 3]
 
 
 def test_zero_order_and_implicit_current_row_equations_need_no_schedule():
@@ -142,7 +154,7 @@ def test_zero_order_and_implicit_current_row_equations_need_no_schedule():
 
     validator = FrameValidator(History, "rows")
     assert validator.window_size == 1
-    assert validator.validate(pd.DataFrame({"a": [2, 4, 6], "b": [2, 3, 4]})).valid
+    assert validator.report(pd.DataFrame({"a": [2, 4, 6], "b": [2, 3, 4]}))["verdict"].eq("satisfied").all()
 
 
 @pytest.mark.parametrize("padding", ["", None])
@@ -164,17 +176,19 @@ def test_nested_multiindex_columns_row_equations_and_nested_law_targets(padding)
         holding = model_recurrence(rows[n].holding, quantity=rows[n - 1].holding.quantity + 1)
 
     frame = pd.DataFrame(
-        [[0, 10, 0, 100, 99], [1, 10, 10, 90, 100], [2, 10, 20, 80, 100]],
+        [[0, 10, 0, 100, 99], [1, 10, 10, 90, 99], [2, 10, 20, 80, 100]],
         columns=pd.MultiIndex.from_tuples(
             [("holding", "quantity"), ("holding", "price"), ("holding", "value"), ("cash", padding), ("nav", padding)]
         ),
     )
-    report = FrameValidator(Ledger, "rows").validate(frame)
-    assert report.unknown.empty
-    assert report.breaks[["position", "field", "rule", "expected"]].values.tolist() == [[0, "nav", "definition", 100]]
+    report = FrameValidator(Ledger, "rows").report(frame)
+    assert report.loc[report["verdict"].eq("unknown")].empty
+    assert report.loc[report["verdict"].eq("violated")][["position", "field", "rule", "expected"]].values.tolist() == [
+        [1, "nav", "definition", 100]
+    ]
     dotted = frame.copy()
     dotted.columns = ["holding.quantity", "holding.price", "holding.value", "cash", "nav"]
-    assert_frame_equal(FrameValidator(Ledger, "rows").validate(dotted).checks, report.checks)
+    assert_frame_equal(FrameValidator(Ledger, "rows").report(dotted), report)
 
 
 def test_fixed_vector_fields_and_aliases_are_observations_too():
@@ -189,22 +203,28 @@ def test_fixed_vector_fields_and_aliases_are_observations_too():
         n = Index("n")
         posting = model_recurrence(rows[n], amount=rows[n - 1].amount + rows[n].quantities[0])
 
-    frame = pd.DataFrame({"amount": [1, 3], "alias": [2, 3], "quantities.0": [0, 2], "quantities.1": [10, 20]})
-    report = FrameValidator(History, "rows").validate(frame)
-    assert report.breaks[["position", "field", "rule", "expected"]].values.tolist() == [[0, "alias", "alias", 1]]
+    frame = pd.DataFrame({"amount": [1, 3], "alias": [2, 4], "quantities.0": [0, 2], "quantities.1": [10, 20]})
+    report = FrameValidator(History, "rows").report(frame)
+    assert report.loc[report["verdict"].eq("violated")][["position", "field", "rule", "expected"]].values.tolist() == [
+        [1, "alias", "alias", 3]
+    ]
     frame["alias"] = frame["amount"]
     frame = frame.rename(columns={"quantities.0": "quantities[0]", "quantities.1": "quantities[1]"})
-    assert FrameValidator(History, "rows").validate(frame).valid
+    assert FrameValidator(History, "rows").report(frame)["verdict"].eq("satisfied").all()
 
 
 @pytest.mark.parametrize("missing", [None, float("nan"), pd.NA, pd.NaT, S.NaN, Decimal("NaN"), Decimal("sNaN")])
 def test_missing_cells_are_unknown_without_filling_or_long_term_propagation(missing):
     frame = pd.DataFrame({"cash": [100, missing, 90, 88], "debit": [0, 10, 2, 2]}, dtype=object)
-    report = FrameValidator(CashLedger, "rows").validate(frame)
-    assert not report.valid
-    assert report.breaks.empty
-    assert report.unknown[["position", "rule"]].values.tolist() == [[1, "domain"], [1, "posting"], [2, "posting"]]
-    postings = report.checks.loc[report.checks["rule"].eq("posting")]
+    report = FrameValidator(CashLedger, "rows").report(frame)
+    assert not report["verdict"].eq("satisfied").all()
+    assert report.loc[report["verdict"].eq("violated")].empty
+    assert report.loc[report["verdict"].eq("unknown")][["position", "rule"]].values.tolist() == [
+        [1, "domain"],
+        [1, "posting"],
+        [2, "posting"],
+    ]
+    postings = report.loc[report["rule"].eq("posting")]
     assert postings["verdict"].tolist() == ["unknown", "unknown", "satisfied"]
     assert postings.iloc[0]["expected"] == 90
     assert postings.iloc[1]["expected"] is None
@@ -218,9 +238,9 @@ def test_an_inactive_branch_does_not_need_its_missing_input():
         posting = model_recurrence(rows[n], cash=Piecewise((0, Eq(rows[n].debit, 0)), (rows[n - 1].cash, True)))
 
     frame = pd.DataFrame({"cash": [None, 0], "debit": [0, 0]})
-    report = FrameValidator(Branched, "rows").validate(frame)
-    assert report.checks.loc[report.checks["rule"].eq("posting"), "verdict"].tolist() == ["satisfied"]
-    assert not report.valid  # The missing seed is still an unknown domain check.
+    report = FrameValidator(Branched, "rows").report(frame)
+    assert report.loc[report["rule"].eq("posting"), "verdict"].tolist() == ["satisfied"]
+    assert report["verdict"].eq("satisfied").all()
 
 
 def test_exact_decimal_fraction_and_large_integer_inputs_keep_their_precision():
@@ -232,18 +252,16 @@ def test_exact_decimal_fraction_and_large_integer_inputs_keep_their_precision():
     ):
         cash, debit = amounts
         frame = pd.DataFrame({"cash": cash, "debit": debit})
-        assert validator.validate(frame).valid
-    checks = validator.validate(
-        pd.DataFrame({"cash": [Decimal("0.30"), Decimal("0.20")], "debit": [0, Decimal("0.10")]})
-    )
-    assert checks.checks.iloc[-1]["expected"] == Rational(1, 5)
+        assert validator.report(frame)["verdict"].eq("satisfied").all()
+    checks = validator.report(pd.DataFrame({"cash": [Decimal("0.30"), Decimal("0.20")], "debit": [0, Decimal("0.10")]}))
+    assert checks.iloc[-1]["expected"] == Rational(1, 5)
 
 
 def test_float_tolerances_apply_only_to_equations():
     frame = pd.DataFrame({"cash": [0.3, 0.2, 0.100001], "debit": [0, 0.1, 0.1]})
-    assert len(FrameValidator(CashLedger, "rows").validate(frame).breaks) == 2
-    assert FrameValidator(CashLedger, "rows", atol=Decimal("0.00001")).validate(frame).valid
-    assert FrameValidator(CashLedger, "rows", rtol=Decimal("0.0001")).validate(frame).valid
+    assert FrameValidator(CashLedger, "rows").report(frame)["verdict"].eq("violated").sum() == 2
+    assert FrameValidator(CashLedger, "rows", atol=Decimal("0.00001")).report(frame)["verdict"].eq("satisfied").all()
+    assert FrameValidator(CashLedger, "rows", rtol=Decimal("0.0001")).report(frame)["verdict"].eq("satisfied").all()
 
 
 @pytest.mark.parametrize("raw", [-1, float("inf"), float("nan"), 1j, Symbol("t", positive=True), "0.01"])
@@ -254,17 +272,20 @@ def test_tolerances_must_be_finite_nonnegative_numbers(raw):
 
 @pytest.mark.parametrize("bad", ["100", True, [100], {"amount": 100}, S.Infinity, 1j, Decimal("Infinity")])
 def test_bad_numeric_cells_report_domain_breaks_without_evaluating_text(bad):
-    frame = pd.DataFrame({"cash": [bad], "debit": [0]}, dtype=object)
-    report = FrameValidator(CashLedger, "rows").validate(frame)
-    assert not report.valid
-    assert report.breaks[["position", "field", "rule"]].values.tolist() == [[0, "cash", "domain"]]
+    frame = pd.DataFrame({"cash": [100, bad], "debit": [0, 0]}, dtype=object)
+    report = FrameValidator(CashLedger, "rows").report(frame)
+    assert not report["verdict"].eq("satisfied").all()
+    domains = report.loc[report["rule"].eq("domain") & report["verdict"].eq("violated")]
+    assert domains[["position", "field"]].values.tolist() == [[1, "cash"]]
 
 
 def test_symbolic_cells_remain_unknown():
-    report = FrameValidator(CashLedger, "rows").validate(pd.DataFrame({"cash": [Symbol("x", real=True)], "debit": [0]}))
-    assert not report.valid
-    assert report.breaks.empty
-    assert len(report.unknown) == 1
+    report = FrameValidator(CashLedger, "rows").report(
+        pd.DataFrame({"cash": [100, Symbol("x", real=True)], "debit": [0, 0]})
+    )
+    assert not report["verdict"].eq("satisfied").all()
+    assert report.loc[report["verdict"].eq("violated")].empty
+    assert len(report.loc[report["verdict"].eq("unknown")]) == 2
 
 
 def test_source_poles_are_not_hidden_by_a_zero_numerator():
@@ -279,9 +300,9 @@ def test_source_poles_are_not_hidden_by_a_zero_numerator():
         n = Index("n")
         law = model_recurrence(rows[n], quotient=rows[n - 1].quotient)
 
-    frame = pd.DataFrame({"numerator": [0], "denominator": [0], "quotient": [0]})
-    report = FrameValidator(History, "rows").validate(frame)
-    assert report.breaks["reason"].tolist() == ["undefined expression"]
+    frame = pd.DataFrame({"numerator": [1, 0], "denominator": [1, 0], "quotient": [1, 0]})
+    report = FrameValidator(History, "rows").report(frame)
+    assert report.loc[report["rule"].eq("definition"), "reason"].tolist() == ["undefined expression"]
 
 
 def test_scalar_parameters_and_named_constant_definitions():
@@ -294,7 +315,7 @@ def test_scalar_parameters_and_named_constant_definitions():
         law = model_recurrence(rows[n], cash=multiplier * rows[n - 1].cash - rows[n].debit)
 
     validator = FrameValidator(Interest, "rows", parameters={"retention": Fraction(1, 2)})
-    assert validator.validate(pd.DataFrame({"cash": [100, 90], "debit": [0, 10]})).valid
+    assert validator.report(pd.DataFrame({"cash": [100, 90], "debit": [0, 10]}))["verdict"].eq("satisfied").all()
     with pytest.raises(ModelInputError, match="Unbound"):
         FrameValidator(Interest, "rows")
     for parameters in ({"retention": -1}, {"retention": None}, {"retention": "0.5"}, {"multiplier": 1}, {"unknown": 1}):
@@ -306,16 +327,16 @@ def test_scalar_parameters_and_named_constant_definitions():
 
 def test_explicit_column_mapping_ignores_unmapped_metadata():
     frame = pd.DataFrame({"Cash Balance": [100, 90], "Cash Debit": [0, 10], "comment": ["seed", "posting"]})
-    report = FrameValidator(CashLedger, "rows").validate(frame, columns={"cash": "Cash Balance", "debit": "Cash Debit"})
-    assert report.valid
+    report = FrameValidator(CashLedger, "rows").report(frame, columns={"cash": "Cash Balance", "debit": "Cash Debit"})
+    assert report["verdict"].eq("satisfied").all()
 
 
 def test_explicit_column_mapping_can_disambiguate_normalized_paths():
     frame = pd.DataFrame([[100, 1, 0], [90, 1, 10]], columns=pd.Index(["cash", ("cash", ""), "debit"]))
     validator = FrameValidator(CashLedger, "rows")
     with pytest.raises(ModelInputError, match="Ambiguous columns"):
-        validator.validate(frame)
-    assert validator.validate(frame, columns={"cash": "cash"}).valid
+        validator.report(frame)
+    assert validator.report(frame, columns={"cash": "cash"})["verdict"].eq("satisfied").all()
 
 
 def test_multiindex_row_labels_and_column_mapping_require_complete_labels():
@@ -325,11 +346,11 @@ def test_multiindex_row_labels_and_column_mapping_require_complete_labels():
         columns=pd.MultiIndex.from_tuples([("cash", "observed"), ("debit", "observed")]),
     )
     validator = FrameValidator(CashLedger, "rows")
-    report = validator.validate(frame, columns={"cash": ("cash", "observed"), "debit": ("debit", "observed")})
-    assert report.valid
-    assert report.checks.iloc[-1]["index"] == ("account", "purchase")
+    report = validator.report(frame, columns={"cash": ("cash", "observed"), "debit": ("debit", "observed")})
+    assert report["verdict"].eq("satisfied").all()
+    assert report.iloc[-1]["index"] == ("account", "purchase")
     with pytest.raises(ModelInputError, match="complete column label"):
-        validator.validate(frame, columns={"cash": "cash", "debit": "debit"})
+        validator.report(frame, columns={"cash": "cash", "debit": "debit"})
 
 
 def test_field_assumptions_are_checked_even_when_equations_pass_with_tolerance():
@@ -342,9 +363,11 @@ def test_field_assumptions_are_checked_even_when_equations_pass_with_tolerance()
         n = Index("n")
         law = model_recurrence(rows[n], cash=rows[n - 1].cash - rows[n].debit)
 
-    report = FrameValidator(Ledger, "rows", atol=1).validate(pd.DataFrame({"cash": [1, -0.1], "debit": [0, 1]}))
-    assert report.breaks[["position", "field", "rule"]].values.tolist() == [[1, "cash", "domain"]]
-    assert report.checks.iloc[-1]["verdict"] == "satisfied"
+    report = FrameValidator(Ledger, "rows", atol=1).report(pd.DataFrame({"cash": [1, -0.1], "debit": [0, 1]}))
+    assert report.loc[report["verdict"].eq("violated")][["position", "field", "rule"]].values.tolist() == [
+        [1, "cash", "domain"]
+    ]
+    assert report.iloc[-1]["verdict"] == "satisfied"
 
 
 def test_invalid_bindings_raise_input_errors():
@@ -356,9 +379,9 @@ def test_invalid_bindings_raise_input_errors():
         (pd.DataFrame({"cash": [1], "debit": [0]}), {"cash": "missing"}, "Missing frame column"),
     ):
         with pytest.raises(ModelInputError, match=match):
-            validator.validate(frame, columns=columns)
+            validator.report(frame, columns=columns)
     with pytest.raises(ModelInputError, match="DataFrame"):
-        validator.validate([{"cash": 1, "debit": 0}])
+        validator.report([{"cash": 1, "debit": 0}])
     with pytest.raises(ModelInputError, match="Modello class"):
         FrameValidator(object, "rows")
     with pytest.raises(ModelInputError, match="model_vector"):
@@ -419,8 +442,180 @@ def test_iterating_checks_is_lazy_and_never_constructs_or_solves_models(monkeypa
     monkeypatch.setattr("modello.solve", forbidden)
     checks = validator.iter_checks(frame)
     assert all(check.verdict == "satisfied" for check in islice(checks, 2))
-    assert len(consumed) == 1
+    assert len(consumed) == 2
     remainder = list(checks)
     assert next(check for check in remainder if check.rule == "posting").observed == 89
     # Reusing a plan starts a fresh independent history.
-    assert validator.validate(pd.DataFrame({"cash": [5, 4], "debit": [0, 1]})).valid
+    assert validator.report(pd.DataFrame({"cash": [5, 4], "debit": [0, 1]}))["verdict"].eq("satisfied").all()
+
+
+@pytest.mark.parametrize(
+    "index",
+    [
+        pd.Index([10, 3, 3, 27], name="event"),
+        pd.DatetimeIndex(["2026-01-01", "2026-01-03", "2026-01-08", "2026-01-20"], tz="Europe/London", name="at"),
+        pd.MultiIndex.from_tuples([("a", 2), ("b", 5), ("b", 5), ("a", 9)], names=["source", "event"]),
+    ],
+)
+def test_boolean_validation_preserves_every_position_and_index_metadata(index):
+    frame = pd.DataFrame({"cash": [100, 90, 85, 83], "debit": [0, 10, 2, 2]}, index=index)
+    before = frame.copy(deep=True)
+    expected = pd.Series([pd.NA, True, False, True], index=index, dtype="boolean", name="valid")
+    assert_series_equal(FrameValidator(CashLedger, "rows").validate(frame), expected)
+    assert_frame_equal(frame, before)
+
+
+@pytest.mark.parametrize("count", [0, 1, 2, 3, 4])
+def test_second_order_short_frames_keep_assumed_history_as_missing(count):
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rows = model_vector(CashRow, size=N)
+        n = Index("n")
+        law = model_recurrence(rows[n], start=2, cash=2 * rows[n - 1].cash - rows[n - 2].cash)
+
+    frame = pd.DataFrame({"cash": [1, 3, 5, 7][:count], "debit": [0] * count}, index=pd.RangeIndex(0, count * 3, 3))
+    validator = FrameValidator(History, "rows")
+    assert validator.window_size == 3
+    expected = pd.Series(([pd.NA] * 2 + [True] * 2)[:count], index=frame.index, dtype="boolean", name="valid")
+    assert_series_equal(validator.validate(frame), expected)
+    assert validator.first_invalid(frame) is None
+    assert validator.report(frame)["position"].tolist() == [position for position in range(2, count) for _ in range(3)]
+
+
+def test_initial_values_are_assumed_and_do_not_emit_domain_checks():
+    frame = pd.DataFrame({"cash": ["assumed"], "debit": [None]})
+    validator = FrameValidator(CashLedger, "rows")
+    assert validator.first_invalid(frame) is None
+    assert validator.report(frame).empty
+    assert_series_equal(validator.validate(frame), pd.Series([pd.NA], dtype="boolean", name="valid"))
+
+
+def test_missing_dependencies_can_interrupt_and_then_restore_validation():
+    frame = pd.DataFrame({"cash": [100, 90, None, 86, 84], "debit": [0, 10, 2, 2, 2]}, index=[0, 3, 7, 10, 20])
+    validator = FrameValidator(CashLedger, "rows")
+    expected = pd.Series([pd.NA, True, pd.NA, pd.NA, True], index=frame.index, dtype="boolean", name="valid")
+    assert_series_equal(validator.validate(frame), expected)
+    assert validator.first_invalid(frame) is None
+    assert validator.report(frame)["verdict"].eq("unknown").any()
+
+
+def test_first_invalid_continues_past_unknowns_to_a_later_proven_break():
+    frame = pd.DataFrame(
+        {"cash": [100, None, 90, 87], "debit": [0, 10, 2, 2]}, index=["seed", "gap", "a", "b"], dtype=object
+    )
+    validator = FrameValidator(CashLedger, "rows")
+    first = validator.first_invalid(frame)
+    assert first is not None
+    assert (first.position, first.index, first.field, first.observed, first.expected, first.residual) == (
+        3,
+        "b",
+        "cash",
+        87,
+        88,
+        -1,
+    )
+    expected = pd.Series([pd.NA, pd.NA, pd.NA, False], index=frame.index, dtype="boolean", name="valid")
+    assert_series_equal(validator.validate(frame), expected)
+
+
+def test_first_invalid_stops_before_reading_any_later_row(monkeypatch):
+    frame = pd.DataFrame({"cash": [100, 90, 85, 83], "debit": [0, 10, 2, 2]}, index=[0, 10, 10, 40])
+    original = frame.itertuples
+    consumed = []
+
+    def read_rows(*args, **kwargs):
+        for row in original(*args, **kwargs):
+            if len(consumed) == 3:
+                raise AssertionError("The first violation has already been found")
+            consumed.append(row)
+            yield row
+
+    monkeypatch.setattr(frame, "itertuples", read_rows)
+    first = FrameValidator(CashLedger, "rows").first_invalid(frame)
+    assert first is not None
+    assert (first.position, first.index, first.expected, first.residual) == (2, 10, 88, -3)
+    assert len(consumed) == 3
+
+
+def test_multiple_laws_preserve_incomplete_coverage_but_still_report_known_breaks():
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rows = model_vector(CashRow, size=N)
+        n = Index("n")
+        cash_law = model_recurrence(rows[n], cash=rows[n - 1].cash - rows[n].debit)
+        debit_law = model_recurrence(rows[n], start=3, debit=2 * rows[n - 1].debit)
+
+    frame = pd.DataFrame({"cash": [100, 99, 97, 93], "debit": [0, 1, 2, 4]})
+    validator = FrameValidator(History, "rows")
+    assert_series_equal(
+        validator.validate(frame), pd.Series([pd.NA, pd.NA, pd.NA, True], dtype="boolean", name="valid")
+    )
+    assert validator.first_invalid(frame) is None
+    frame["cash"] = [100, 98, 96, 92]
+    assert_series_equal(
+        validator.validate(frame), pd.Series([pd.NA, False, pd.NA, True], dtype="boolean", name="valid")
+    )
+    first = validator.first_invalid(frame)
+    assert first is not None
+    assert (first.position, first.rule, first.expected) == (1, "cash_law", 99)
+
+
+@pytest.mark.parametrize("cash,debit", [(None, "bad"), (S.Infinity, None)])
+def test_a_proven_violation_takes_precedence_over_unknown_checks(cash, debit):
+    frame = pd.DataFrame({"cash": [100, cash], "debit": [0, debit]}, dtype=object)
+    validator = FrameValidator(CashLedger, "rows")
+    assert_series_equal(validator.validate(frame), pd.Series([pd.NA, False], dtype="boolean", name="valid"))
+    first = validator.first_invalid(frame)
+    assert first is not None
+    assert (first.position, first.rule) == (1, "domain")
+
+
+def test_a_zero_order_law_can_validate_the_first_row():
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rows = model_vector(CashRow, size=N)
+        n = Index("n")
+        law = model_recurrence(rows[n], start=0, cash=rows[n].debit + n)
+
+    frame = pd.DataFrame({"cash": [0, 2, 4], "debit": [0, 1, 2]}, index=[0, 10, 40])
+    validator = FrameValidator(History, "rows")
+    expected = pd.Series([True, True, True], index=frame.index, dtype="boolean", name="valid")
+    assert_series_equal(validator.validate(frame), expected)
+    frame.loc[0, "cash"] = 1
+    first = validator.first_invalid(frame)
+    assert first is not None
+    assert (first.position, first.expected, first.residual) == (0, 0, 1)
+
+
+def test_a_later_start_is_distinct_from_the_required_window_size():
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rows = model_vector(CashRow, size=N)
+        n = Index("n")
+        law = model_recurrence(rows[n], start=4, cash=rows[n - 1].cash - rows[n].debit)
+
+    frame = pd.DataFrame({"cash": [100, -999, 1, 10, 9], "debit": [0, "trusted", 0, 0, 1]})
+    validator = FrameValidator(History, "rows")
+    assert validator.window_size == 2
+    assert_series_equal(
+        validator.validate(frame), pd.Series([pd.NA, pd.NA, pd.NA, pd.NA, True], dtype="boolean", name="valid")
+    )
+    assert validator.first_invalid(frame) is None
+
+
+@pytest.mark.parametrize("method", ["validate", "report", "first_invalid"])
+def test_native_apis_bind_the_schema_even_when_no_transition_is_available(method):
+    operation = getattr(FrameValidator(CashLedger, "rows"), method)
+    with pytest.raises(ModelInputError, match="Missing frame columns"):
+        operation(pd.DataFrame({"cash": []}))
+    with pytest.raises(ModelInputError, match="DataFrame"):
+        operation([])
+    frame = pd.DataFrame({"Cash": [100, 90], "Debit": [0, 10]})
+    columns = {"cash": "Cash", "debit": "Debit"}
+    result = operation(frame, columns=columns)
+    if method == "validate":
+        assert_series_equal(result, pd.Series([pd.NA, True], dtype="boolean", name="valid"))
+    elif method == "report":
+        assert result["verdict"].eq("satisfied").all()
+    else:
+        assert result is None

@@ -6,6 +6,7 @@ from collections import deque
 from collections.abc import Hashable, Iterator, Mapping
 from dataclasses import dataclass, fields
 from decimal import Decimal
+from itertools import groupby
 from typing import Literal
 
 import pandas as pd
@@ -21,7 +22,7 @@ from modello.errors import ModelInputError
 from modello.model_vectors import _collection_columns
 from modello.vectors import _VectorElement
 
-__all__ = ["FrameCheck", "FrameValidation", "FrameValidator"]
+__all__ = ["FrameCheck", "FrameValidator"]
 
 
 @dataclass(frozen=True)
@@ -42,28 +43,6 @@ class FrameCheck:
     residual: Expr | None
     verdict: Verdict
     reason: str = ""
-
-
-@dataclass(frozen=True)
-class FrameValidation:
-    """A pandas report containing all checks, including satisfied checks."""
-
-    checks: pd.DataFrame
-
-    @property
-    def valid(self) -> bool:
-        """Whether every emitted check is satisfied (also true for no checks)."""
-        return bool(self.checks["verdict"].eq("satisfied").all())
-
-    @property
-    def breaks(self) -> pd.DataFrame:
-        """Select proven equation or domain violations."""
-        return self.checks.loc[self.checks["verdict"].eq("violated")].copy()
-
-    @property
-    def unknown(self) -> pd.DataFrame:
-        """Select checks that could not establish a result."""
-        return self.checks.loc[self.checks["verdict"].eq("unknown")].copy()
 
 
 @dataclass(frozen=True)
@@ -99,8 +78,10 @@ class FrameValidator:
     window and initial history. All row scalar fields must have columns.
 
     No model instances are constructed and no solver runs. Every equation uses
-    observed predecessors, including after a break. ``iter_checks`` retains at
-    most ``window_size`` rows; ``validate`` also collects the complete report.
+    observed predecessors, including after a break. Initial history is assumed
+    correct. ``first_invalid`` stops at the first proven violation; ``validate``
+    returns an index-aligned nullable boolean Series. ``report`` collects all
+    checks. ``iter_checks`` retains at most ``window_size`` rows.
     Independent scalar model parameters can be supplied once in ``parameters``.
     Equation tolerance is ``atol + rtol * abs(expected)``, zero by default.
     """
@@ -138,6 +119,8 @@ class FrameValidator:
         laws = [(name, law) for name, law in namespace.model_laws.items() if law.target.path == (rows,)]
         if not laws:
             raise ModelInputError(f"No model_recurrence targets {rows!r}")
+        self._start = min(int(law.template.start) for _, law in laws)
+        self._complete_start = max(int(law.template.start) for _, law in laws)
         for name, law in laws:
             for path, expression in law.updates:
                 body = _substitute(_conditioned(expression, _denominator_condition(expression)), known)
@@ -152,17 +135,49 @@ class FrameValidator:
         """Largest referenced lag plus one, including the current row."""
         return self._window_size
 
-    def validate(self, frame: pd.DataFrame, *, columns: Mapping[str, Hashable] | None = None) -> FrameValidation:
-        """Collect checks without modifying, sorting, or filling the input frame.
+    def first_invalid(self, frame: pd.DataFrame, *, columns: Mapping[str, Hashable] | None = None) -> FrameCheck | None:
+        """Return the first proven violation, stopping without reading later rows.
+
+        ``None`` means no violation was established. Initial history is trusted,
+        and missing dependencies can prevent proof: this is not a guarantee that
+        every row was validated. Use ``validate`` or ``report`` to see coverage.
+        """
+        return next((check for check in self.iter_checks(frame, columns=columns) if check.verdict == "violated"), None)
+
+    def validate(self, frame: pd.DataFrame, *, columns: Mapping[str, Hashable] | None = None) -> pd.Series:
+        """Return True, False, or pd.NA at every original index position.
+
+        False means at least one check is violated. True requires all laws to
+        have started and all row checks to pass. Assumed history, incomplete law
+        coverage, and unresolved checks yield pd.NA unless a violation is known.
+        Duplicate and gappy labels, order, and index metadata are preserved.
+        """
+        states: list[bool | None] = []
+        for position, checks in groupby(self.iter_checks(frame, columns=columns), key=lambda check: check.position):
+            states.extend([None] * (position - len(states)))
+            state: bool | None = True if position >= self._complete_start else None
+            for check in checks:
+                if check.verdict == "violated":
+                    state = False
+                elif check.verdict == "unknown" and state is not False:
+                    state = None
+            states.append(state)
+        states.extend([None] * (len(frame) - len(states)))
+        return pd.Series(states, index=frame.index.copy(), dtype="boolean", name="valid")
+
+    def report(self, frame: pd.DataFrame, *, columns: Mapping[str, Hashable] | None = None) -> pd.DataFrame:
+        """Collect detailed checks without modifying, sorting, or filling the frame.
 
         Columns normally use dotted field names or MultiIndex field paths.
         ``columns`` maps model field paths to alternative pandas column labels.
         Extra columns are ignored. Missing columns are an input error; missing
-        cells yield unknown checks. Initial rows still receive row-schema checks.
+        cells yield unknown checks. Initial history is assumed correct and emits
+        no checks until the earliest recurrence starts. Checks are in positional
+        order, with domains first, then row definitions, then recurrent equations.
         """
         names = tuple(field.name for field in fields(FrameCheck))
         records = (tuple(getattr(check, name) for name in names) for check in self.iter_checks(frame, columns=columns))
-        return FrameValidation(pd.DataFrame(records, columns=names, dtype=object))
+        return pd.DataFrame(records, columns=names, dtype=object)
 
     def iter_checks(
         self, frame: pd.DataFrame, *, columns: Mapping[str, Hashable] | None = None
@@ -171,6 +186,9 @@ class FrameValidator:
 
         Each call starts a fresh history. Split independent accounts before
         calling; the index labels do not imply grouping or a sampling interval.
+        Rows before the earliest recurrence starts are trusted history. Later
+        laws retain their own starts; row definitions and domains are checked
+        from the earliest start, even while another law still needs history.
         """
         positions = self._bind_columns(frame, columns or {})
         window: deque[tuple[_Observation, ...]] = deque(maxlen=self.window_size)
@@ -179,6 +197,8 @@ class FrameValidator:
         ):
             observations = tuple(_observe(row[column]) for column in positions)
             window.append(observations)
+            if position < self._start:
+                continue
             for (path, symbol), observation in zip(self._fields, observations, strict=True):
                 yield _domain_check(position, label, path, symbol, observation)
             for rule in self._rules:

@@ -209,13 +209,22 @@ import modello
 assert "pandas" not in sys.modules
 from modello.contrib.pandas import FrameValidator
 from examples.accounting_breaks import Ledger, accounting_frame
+import pandas as pd
 
 validator = FrameValidator(Ledger, "rows")
 assert validator.window_size == 2
-report = validator.validate(accounting_frame())
-assert not report.valid
-assert report.unknown.empty
-assert report.breaks[["position", "index", "field", "expected", "residual"]].values.tolist() == [
+frame = accounting_frame()
+validity = validator.validate(frame)
+assert validity.iloc[0] is pd.NA
+assert validity.iloc[1:].tolist() == [True, False, True]
+assert validity.index.equals(frame.index)
+first = validator.first_invalid(frame)
+assert first is not None
+assert (first.position, first.index, first.field, first.expected, first.residual) == (2, "sale", "cash", 90998, -8)
+report = validator.report(frame)
+assert not report["verdict"].eq("unknown").any()
+breaks = report.loc[report["verdict"].eq("violated")]
+assert breaks[["position", "index", "field", "expected", "residual"]].values.tolist() == [
     [2, "sale", "cash", 90998, -8]
 ]
 print("Validated installed pandas extension and nested accounting example")
