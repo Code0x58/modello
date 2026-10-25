@@ -210,7 +210,7 @@ assert ledger_audit.first_invalid.position == 2
 assert ledger_audit.assumed_rows == 1 and ledger_audit.checked_rows == 3
 breaks = list(find_breaks(accounting_rows(), labels=EVENTS))
 assert len(breaks) == 1
-assert (breaks[0].index, breaks[0].field, breaks[0].residual) == ("sale", "cash", -8)
+assert (breaks[0].index, breaks[0].field, breaks[0].residual) == ("sale", "cash", -1)
 assert not {"pandas", "polars", "numpy"} & sys.modules.keys()
 print("Validated installed example modules, type marker, and portfolio fixtures")
 """

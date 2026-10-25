@@ -11,7 +11,7 @@ def test_accounting_break_and_input_preservation():
     original = deepcopy(rows)
     problems = list(find_breaks(rows, labels=EVENTS))
     assert [(p.position, p.index, p.field, p.rule, p.observed, p.expected, p.residual) for p in problems] == [
-        (2, "sale", "cash", "posting", 75, 83, -8)
+        (2, "sale", "cash", "posting", 29, 30, -1)
     ]
     assert rows == original
     validator = WindowValidator(Ledger, "rows")
@@ -26,7 +26,7 @@ def test_correcting_the_break_and_subsequent_balances_validates_the_ledger():
     rows = accounting_rows()
     for position in (2, 3):
         for field in ("cash", "nav"):
-            rows[position][field] += 8
+            rows[position][field] += 1
     assert list(find_breaks(rows)) == []
     audit = WindowValidator(Ledger, "rows").audit(rows)
     assert audit.first_invalid is None

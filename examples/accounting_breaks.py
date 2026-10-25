@@ -1,7 +1,7 @@
-"""Find an eight-cent cash shortfall in a ledger of trades.
+"""Find a cash shortfall in a ledger of trades.
 
-Run ``uv run python -m examples.accounting_breaks``. Amounts use integer USD
-cents, prices are cents per share, and quantities count shares.
+Run ``uv run python -m examples.accounting_breaks``. Prices are per share;
+all observations use whole numbers.
 """
 
 from __future__ import annotations
@@ -44,10 +44,10 @@ def accounting_rows() -> tuple[dict[str, int], ...]:
     """Return ledger rows with a sale cash shortfall; later balances use recorded cash."""
     fields = ("holding.quantity", "holding.price", "holding.value", "cash", "cash_change", "quantity_change", "nav")
     values = (
-        (0, 10, 0, 90, 0, 0, 90),
-        (2, 10, 20, 69, -21, 2, 89),
-        (1, 15, 15, 75, 14, -1, 90),
-        (2, 10, 20, 64, -11, 1, 84),
+        (0, 10, 0, 40, 0, 0, 40),
+        (2, 10, 20, 20, -20, 2, 40),
+        (1, 10, 10, 29, 10, -1, 39),
+        (2, 10, 20, 19, -10, 1, 39),
     )
     return tuple(dict(zip(fields, row, strict=True)) for row in values)
 

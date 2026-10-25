@@ -2,196 +2,173 @@ Observed recurrence windows
 ===========================
 
 The :doc:`account walkthrough <../model-vectors>` calculates balances from
-trades. When a statement already contains those balances, check that each
-posting agrees with the preceding balance and the recorded cash movement.
-``WindowValidator`` reports the accounting breaks while keeping the supplied
-observations intact.
+trades. When a statement already contains those balances, use
+``WindowValidator.iter_results`` to check each posting against its recorded
+predecessor.
 
-The nested ledger in ``examples.accounting_breaks`` follows a purchase, sale,
-and repurchase. Cash amounts and residuals use integer cents; the table displays
-USD to two decimal places. Cash and share balances obey
+The ledger in ``examples.accounting_breaks`` starts with 40, buys two shares at
+10 each, then sells one for 10. The sale should leave 30 in cash, but the
+statement records 29. Its cash and share balances obey
 
 .. math::
 
    \widehat C_n = C_{n-1} + \Delta C_n, \qquad
    \widehat Q_n = Q_{n-1} + \Delta Q_n.
 
-For cash, the residual is :math:`e_n=C_n-\widehat C_n`. In USD, the sale records
-0.75 against an expected :math:`0.69+0.14=0.83`: an eight-cent break.
+The cash residual is :math:`e_n=C_n-\widehat C_n`: here :math:`29-30=-1`.
 
 .. list-table:: Cash columns from the ledger
    :header-rows: 1
 
    * - Event
-     - Cash (USD)
-     - Cash movement (USD)
+     - Cash
+     - Cash movement
      - Valid
      - Why
    * - opening
-     - 0.90
+     - 40.00
      - 0.00
      - Assumed
      - Opening balance is assumed.
    * - purchase
-     - 0.69
-     - -0.21
+     - 20.00
+     - -20.00
      - Yes
      -
    * - sale
-     - 0.75
-     - 0.14
+     - 29.00
+     - 10.00
      - No
-     - Expected 0.83; shortfall 0.08.
+     - Expected 30.00; shortfall 1.00.
    * - repurchase
-     - 0.64
-     - -0.11
+     - 19.00
+     - -10.00
      - Yes
      - Uses the recorded sale balance.
 
 Find an accounting break
 ------------------------
 
-Reuse the ledger's row schema and recurrence laws:
+``iter_results`` maintains the rolling history and yields one result per row.
+Collect the results to inspect the full sequence:
 
 .. doctest::
 
-   >>> from collections import deque
    >>> from examples.accounting_breaks import EVENTS, Ledger, accounting_rows
    >>> from modello.contrib.validation import WindowValidator
    >>> rows = accounting_rows()
    >>> validator = WindowValidator(Ledger, "rows")
-   >>> validator.order, validator.window_size
-   (1, 2)
-   >>> history = deque(maxlen=validator.window_size)
-   >>> for position, (label, row) in enumerate(zip(EVENTS, rows, strict=True)):
-   ...     history.append(tuple(row[field] for field in validator.fields))
-   ...     result = validator(tuple(history), position=position, index=label)
+   >>> results = list(validator.iter_results(rows, labels=EVENTS))
+   >>> [result.valid for result in results]
+   [None, True, False, True]
+   >>> for result in results:
    ...     if result.first_invalid is not None:
    ...         problem = result.first_invalid
    ...         print(problem.index, problem.field, problem.expected, problem.residual)
    ...         break
-   sale cash 83 -8
+   sale cash 30 -1
 
-The callable checks the final row of an oldest-first window; ``check_window``
-is the equivalent named method. Each transition uses recorded predecessors,
-so a later row can pass even after an earlier break. The ledger also checks
-share movements, holding values, and net asset values from its row schema.
+``valid`` is ``True`` when all current-row checks pass, ``False`` for a proven
+violation, and ``None`` for assumed history or insufficient evidence.
+Checks before a law's declared start are assumed; an order-:math:`p` law
+normally starts at position :math:`p`, using the preceding :math:`p` rows.
 
-For a law of order :math:`p`, the window contains :math:`p+1` observations.
-The first test is normally at zero-based position :math:`p`; the first
-:math:`p` rows supply assumed history. Each law retains its declared start:
-``first_test_position`` is the earliest start and ``fully_testable_position``
-is when all laws have started.
-
-Read the results
------------------
-
-Scan an ordered iterable to obtain one result per observation:
-
-.. doctest::
-
-   >>> results = list(validator.iter_results(rows, labels=EVENTS))
-   >>> [result.valid for result in results]
-   [None, True, False, True]
-
-``valid`` is ``False`` for a proven violation, ``True`` when all current-row
-checks pass, and ``None`` for assumed history or insufficient evidence.
-``complete`` means every current-row check ran and was decided, including
-violations. It describes that row, not the validation of its predecessors.
-
-Each ``CheckResult`` records the field, rule, first applicable ``start``,
-observed and expected values, residual, and reason. Its verdict is
-``assumed``, ``satisfied``, ``violated``, or ``unknown``; ``assumed`` means the
-check has not started, while ``unknown`` means it ran without a decided outcome.
-``first_invalid is None`` alone does not establish complete validation.
-The :doc:`DataFrame recipes <../recipes/dataframe-validation>` show nullable
-validity columns and first/all-error selection with pandas and Polars.
-
-Supply windows or streams
---------------------------
-
-* Supply flat mappings keyed by ``validator.fields``, as above, or row tuples
-  in that exact order. ``field_paths`` exposes nested paths for selecting
-  source columns. Extra mapping keys are ignored.
-* A window must contain exactly ``min(position+1, validator.window_size)`` rows.
-  Include short initial windows: laws with earlier starts can already find
-  breaks there. ``position`` is a required absolute nonnegative Python integer.
-* Labels are hashable reporting metadata. Windows follow row order; gaps in
-  timestamp labels do not insert observations. Keep independent accounts in
-  separate partitions with their own positions and history.
-* Use ``None`` for framework-specific nulls. Numeric NaN also means missing;
-  parse numeric text before validation. Wrong row/window sizes, missing fields,
-  and invalid positions raise ``ModelInputError``. Malformed scalar cells
-  produce domain violations when their checks apply.
-
-``iter_results`` retains at most ``window_size`` rows. Each call starts fresh
-at position zero; chain batches into one call to preserve continuity. On Python
-3.12+, :func:`itertools.batched` splits a source iterable into batches:
-
-.. testcode::
-
-   from itertools import batched, chain
-
-   batch_size = validator.window_size
-   batches = batched(rows, batch_size)
-   batch_results = validator.iter_results(chain.from_iterable(batches))
-   print([result.valid for result in batch_results])
-
-.. testoutput::
-
-   [None, True, False, True]
-
-Batch size is a source setting; it need not equal ``window_size``. Python
-3.10–3.11 can use the equivalent :func:`itertools.islice` recipe in the
-`Python batching documentation <https://docs.python.org/3/library/itertools.html#itertools.batched>`_.
-
-If your stream processor supplies windows, call ``validator(window, position=n)``
-directly. Keep the overlapping :math:`p` rows and absolute position across
-batches or restarts. The validator stores no history between these calls.
+Each result retains individual checks, including their rule, observations,
+expected value, residual, and verdict. ``complete`` means all checks for that
+row ran and were decided, including violations. ``first_invalid is None``
+alone does not establish coverage. Later rows use recorded predecessors, so
+the repurchase can pass even though the sale failed.
 
 Audit coverage
 ---------------
 
-``audit`` scans a finite input completely and reports coverage plus the first
-violation. Audit through the first position where all laws apply; this example
-has a passing transition but still retains its assumed prefix:
+For a finite job, ``audit`` scans all rows and summarises their coverage:
 
 .. doctest::
 
-   >>> prefix = rows[:validator.fully_testable_position + 1]
-   >>> audit = validator.audit(prefix)
-   >>> audit.row_count, audit.checked_rows, audit.assumed_rows, audit.unknown_rows
-   (2, 1, 1, 0)
-   >>> audit.first_invalid, audit.valid, audit.complete
-   (None, None, False)
+   >>> audit = validator.audit(rows, labels=EVENTS)
+   >>> audit.row_count, audit.checked_rows, audit.assumed_rows, audit.unknown_rows, audit.violated_rows
+   (4, 3, 1, 0, 1)
+   >>> audit.valid
+   False
 
 ``checked_rows`` counts fully decided rows, ``assumed_rows`` counts wholly
-assumed history, and ``violated_rows`` counts rows with a proven break.
-``unknown_rows`` counts remaining rows whose validity is undecidable. A violated
-row may also be fully checked or contain undecided checks.
-For strict acceptance require ``audit.valid is True``. A policy that trusts
-initial history can instead require no violated or unknown rows and at least
-one fully checked transition. Empty and history-only inputs provide no such
-transition.
+assumed history, and ``unknown_rows`` counts other rows whose validity is
+undecidable. ``violated_rows`` counts proven breaks, including rows with
+incomplete checks, so it can overlap with ``checked_rows``.
 
-``ValidationSummary.from_results(results)`` audits an existing result iterator.
-It requires every position from zero in order, rejecting gaps, duplicates,
-and omitted prefixes. To audit another contiguous interval, supply an explicit
-``start_position``; ``[start_position, stop_position)`` then names its coverage.
+For strict acceptance, require ``audit.valid is True``. Even with no breaks,
+assumed or undecidable rows keep that verdict at ``None``. A policy that trusts
+initial history can require no violated or unknown rows and at least one fully
+checked transition. Empty and history-only inputs provide no such transition.
 
-Scope and numerical values
+``ValidationSummary.from_results(results)`` reuses collected results. It requires
+contiguous positions from zero; supply ``start_position`` explicitly to audit
+another interval. Its ``[start_position, stop_position)`` names that coverage.
+
+Input and numerical values
 ---------------------------
 
+Supply flat mappings keyed by ``validator.fields``, or row tuples in that order.
+Use ``None`` for framework-specific nulls; numeric NaN also means missing.
+Parse numeric text before validation. The :doc:`DataFrame recipes
+<../recipes/dataframe-validation>` show column selection, nested MultiIndex
+fields, nullable validity columns, and error selection in pandas and Polars.
+
 Validation covers the selected row schema's domains, definitions, aliases,
-and fixed causal laws. Put per-row inputs in that schema; other vectors and
+and fixed causal laws. Put per-event inputs in that schema; other vectors and
 parent aggregate or boundary constraints are outside this scope. Missing
 values and parameters are never inferred or filled.
 
 Integers, ``Decimal``, ``Fraction``, and SymPy numbers retain exact arithmetic.
 Equation tolerances use ``abs(observed-expected) <= atol + rtol*abs(expected)``;
-domains remain strict. Supply independent constants through ``parameters``;
-they and their resolved definitions must satisfy their field assumptions.
-Results retain SymPy values for exact evidence.
+domains remain strict. Independent constants supplied through ``parameters``
+must satisfy their field assumptions. Results retain SymPy values for exact
+evidence.
+
+Streams and manual windows
+---------------------------
+
+For a stream, iterate over ``iter_results`` directly without collecting a list.
+Each call starts fresh at position zero, so chain batches into one call to keep
+history across them. On Python 3.12+:
+
+.. testcode::
+
+   from itertools import batched, chain
+
+   batches = batched(rows, validator.window_size)
+   print([result.valid for result in validator.iter_results(chain.from_iterable(batches))])
+
+.. testoutput::
+
+   [None, True, False, True]
+
+Batch length is a source choice; it need not match ``window_size``. For Python
+3.10–3.11, the `Python batching recipe
+<https://docs.python.org/3/library/itertools.html#itertools.batched>`_ uses
+:func:`itertools.islice`.
+
+If a DataFrame or stream processor already supplies row windows, call the
+validator directly. The equivalent manual loop is:
+
+.. doctest::
+
+   >>> from collections import deque
+   >>> history = deque(maxlen=validator.window_size)
+   >>> manual_results = []
+   >>> for position, (label, row) in enumerate(zip(EVENTS, rows, strict=True)):
+   ...     history.append(tuple(row[field] for field in validator.fields))
+   ...     manual_results.append(validator(tuple(history), position=position, index=label))
+   >>> manual_results == list(validator.iter_results(rows, labels=EVENTS))
+   True
+
+Each call checks the final row of an oldest-first window containing exactly
+``min(position+1, validator.window_size)`` rows. Include short initial windows;
+laws with earlier starts can already find breaks there. ``position`` is an
+absolute nonnegative Python integer; labels are hashable metadata and do not insert missing
+observations between gaps. Keep separate histories for independent accounts,
+and restore overlapping history and positions across batches or restarts.
 
 
 API

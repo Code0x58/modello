@@ -10,8 +10,8 @@ pandas`` or ``pip install modello polars``.
 
 The accounting example in :doc:`../contrib/validation` checks
 :math:`C_n=C_{n-1}+\Delta C_n`, where :math:`C_n` is the recorded cash balance
-and :math:`\Delta C_n` is the cash movement at row :math:`n`. Cash values and
-residuals use integer cents. ``True`` means the row passes, ``False``
+and :math:`\Delta C_n` is the cash movement at row :math:`n`. ``True`` means
+the row passes, ``False``
 identifies a break, and ``None`` means validity is assumed or undecidable.
 
 Validate pandas rows
@@ -48,9 +48,9 @@ to the validator.
    True
 
 The mask has one entry per input row and preserves the frame's index. The
-opening balance is assumed, so its entry is ``pd.NA``. The sale is eight cents
-short (USD 0.75 against USD 0.83), so that row is ``False``. The repurchase
-passes using the preceding recorded balance.
+opening balance is assumed, so its entry is ``pd.NA``. The sale records 29
+against an expected 30, so that row is ``False``. The repurchase passes using
+the preceding recorded balance.
 
 Include the short initial windows: a law of order :math:`p` first tests position
 :math:`p`, using :math:`p+1` observations. Pass the absolute row position to the
@@ -98,10 +98,10 @@ or collect the iterator to inspect every break:
    >>> first = next(errors(pandas_windows(projected, validator)), None)
    >>> if first is not None:
    ...     print((first.position, first.index, first.field, first.expected, first.residual))
-   (2, 'sale', 'cash', 83, -8)
+   (2, 'sale', 'cash', 30, -1)
    >>> all_errors = list(errors(pandas_windows(projected, validator)))
    >>> [(check.position, check.residual) for check in all_errors]
-   [(2, -8)]
+   [(2, -1)]
 
 An empty error iterator means no violation was proven. Initial assumptions and
 missing data can still prevent complete validation. Inspect per-row coverage,
@@ -132,7 +132,7 @@ selected rows to the same window helper:
    >>> [result.valid for result in account_results]
    [None, True, False, True]
    >>> [(check.index, check.field, check.residual) for check in errors(account_results)]
-   [('sale', 'cash', -8)]
+   [('sale', 'cash', -1)]
 
 For an existing MultiIndex frame, use its ``columns.nlevels`` as
 ``column_depth``. Map field paths to source labels when names differ, keeping
@@ -164,7 +164,7 @@ row. Attach the validity values as a nullable boolean column:
    >>> breaks = (
    ...     check for result in polars_results for check in result.checks if check.verdict == "violated")
    >>> [(check.index, check.residual) for check in breaks]
-   [('sale', -8)]
+   [('sale', -1)]
    >>> nullable = polars_frame.with_columns(
    ...     pl.when(pl.col("event") == "purchase").then(None).otherwise(pl.col("cash")).alias("cash"))
    >>> nullable_rows = nullable.select(list(validator.fields)).iter_rows()
