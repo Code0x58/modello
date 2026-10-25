@@ -210,46 +210,28 @@ Results retain SymPy values for exact evidence.
 Streams and manual windows
 ---------------------------
 
-For a stream, iterate over ``iter_results`` directly without collecting a list.
-Each call starts fresh at position zero, so chain batches into one call to keep
-history across them. On Python 3.12+:
+For a stream, iterate over ``iter_results`` without collecting a list; it
+maintains the rolling history. For a source that delivers non-overlapping
+batches of rows, flatten those batches into one row iterator and pass it to a
+single ``iter_results`` call. A new call resets history and starts at position
+zero. Delivery batch sizes are independent of ``window_size``.
 
-.. testcode::
-
-   from itertools import batched, chain
-
-   batches = batched(rows, validator.window_size)
-   print([result.valid for result in validator.iter_results(chain.from_iterable(batches))])
-
-.. testoutput::
-
-   [None, True, False, True]
-
-Batch length is a source choice; it need not match ``window_size``. For Python
-3.10–3.11, the `Python batching recipe
-<https://docs.python.org/3/library/itertools.html#itertools.batched>`_ uses
-:func:`itertools.islice`.
-
-If a DataFrame or stream processor already supplies row windows, call the
-validator directly. The equivalent manual loop is:
+If a DataFrame or stream processor already supplies overlapping windows, pass
+each window directly to the validator. For example, recheck the sale:
 
 .. doctest::
 
-   >>> from collections import deque
-   >>> history = deque(maxlen=validator.window_size)
-   >>> manual_results = []
-   >>> for position, (label, row) in enumerate(zip(EVENTS, rows, strict=True)):
-   ...     history.append(tuple(row[field] for field in validator.fields))
-   ...     manual_results.append(validator(tuple(history), position=position, index=label))
-   >>> manual_results == list(validator.iter_results(rows, labels=EVENTS))
+   >>> position = sale.position
+   >>> window = rows[max(0, position + 1 - validator.window_size):position + 1]
+   >>> validator(window, position=position, index=sale.index) == sale
    True
 
 Each call checks the final row of an oldest-first window containing exactly
 ``min(position+1, validator.window_size)`` rows. Include short initial windows;
 laws with earlier starts can already find breaks there. ``position`` is an
-absolute nonnegative Python integer; labels are hashable metadata and do not
-insert missing observations between gaps. Keep separate histories for independent accounts,
-and restore overlapping history and positions across batches or restarts.
+absolute nonnegative Python integer; gaps in labels do not insert rows.
+Use separate histories for independent accounts. To resume from a checkpoint,
+pass the required window and absolute position to the callable.
 
 
 API
