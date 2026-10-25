@@ -81,7 +81,9 @@ the opt-in Itô extension; the core resolver uses scoped declaration hooks witho
 importing domain extensions.
 ``contrib/validation.py`` compiles model-vector laws into a stateless window
 function. Each call checks its final row at an absolute position, returning
-evidence and coverage. Its stream iterator retains ``window_size`` rows.
+evidence and coverage. Domain and equation checks share history handling and
+result construction. The stream iterator projects and converts each incoming
+row once, retaining at most ``window_size`` rows of observations.
 Audits require contiguous results from zero by default; other intervals need an
 explicit start. DataFrame projection and windowing live in documentation
 recipes. Validation constructs no model instances and performs no joint solve;

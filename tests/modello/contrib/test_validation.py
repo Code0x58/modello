@@ -8,7 +8,7 @@ from decimal import Decimal
 from itertools import chain
 
 import pytest
-from sympy import S
+from sympy import Integer, S
 
 from modello import Index, InstanceDummy, Modello, component, model_recurrence, model_vector
 from modello.contrib.validation import ValidationResult, ValidationSummary, WindowValidator
@@ -195,6 +195,38 @@ def test_stream_scan_snapshots_reused_mutable_row_containers():
         yield row
 
     assert [result.valid for result in WindowValidator(CashLedger, "rows").iter_results(stream())] == [None, True, True]
+
+
+def test_stream_history_keeps_numeric_values_as_observed_when_read():
+    class Cell:
+        value = 0
+        conversions = 0
+
+        def _sympy_(self):
+            self.conversions += 1
+            return Integer(self.value)
+
+    cash = Cell()
+
+    def stream():
+        for balance, debit in ((40, 0), (30, 10), (25, 5)):
+            cash.value = balance
+            yield {"cash": cash, "debit": debit}
+
+    results = list(WindowValidator(CashLedger, "rows").iter_results(stream()))
+    assert [result.valid for result in results] == [None, True, True]
+    assert [result.checks[-1].expected for result in results] == [None, 30, 25]
+    assert cash.conversions == len(results)
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_window_and_stream_reject_unhashable_labels(streaming):
+    validator = WindowValidator(CashLedger, "rows")
+    with pytest.raises(ModelInputError, match="label must be hashable"):
+        if streaming:
+            list(validator.iter_results(((40, 0),), labels=[[]]))
+        else:
+            validator(((40, 0),), position=0, index=[])
 
 
 def test_batch_chaining_and_external_window_management_preserve_history():
