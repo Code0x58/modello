@@ -27,9 +27,17 @@ Only after inspecting the delta, load the relevant reference prompts:
 - Sphinx documentation and examples, including documentation missing for a
   changed public behavior:
   [Sphinx review](.codex/agents/pre_pr_review/sphinx.md).
-- Python implementation, tests, docstrings, and comments, including callers
+- Python implementation, docstrings, and comments, including callers
   whose contracts or explanations may have become stale:
   [Python review](.codex/agents/pre_pr_review/python.md).
+- Modelling abstractions, core reuse, module dependencies, or optional layers:
+  [Architecture review](.codex/agents/pre_pr_review/architecture.md).
+- Changed tests or implementation contracts that need coverage, even when no
+  tests changed: [Test review](.codex/agents/pre_pr_review/tests.md).
+- Exceptions, validation results, provenance, or inspection behavior:
+  [Diagnostics review](.codex/agents/pre_pr_review/diagnostics.md).
+- GUI, gallery, mathematical rendering, or solution plots:
+  [Visual review](.codex/agents/pre_pr_review/visuals.md).
 - Always, after the substantive review, assess the supplied PR draft or suggest
   a title and body from the final branch state:
   [PR suggestions](.codex/agents/pre_pr_review/pr-body.md).
@@ -38,6 +46,9 @@ Also inspect changed workflow/configuration files for behavior and consistency
 with their callers. Select relevant checks from AGENTS.md and CI. Use supplied
 validation evidence where it covers this state, and run focused checks when
 needed and available. Report unavailable or unrun checks accurately.
+Apply each reference to the affected contracts; do not expand a small change
+into an unrelated architecture, scenario, or gallery overhaul. Keep each
+issue in one finding with the relevant evidence.
 
 Return:
 - Reviewed target ref/commit, merge base, HEAD, local-change scope, and loaded

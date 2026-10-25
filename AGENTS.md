@@ -29,11 +29,11 @@ not its PR target.
 
 Use the named custom agent when supported; otherwise spawn a general subagent
 with that file's `developer_instructions`. Request fresh context when supported.
-Review the full branch and relevant local changes, loading the linked Sphinx,
-Python/docstring/comment, and PR-body prompts as appropriate. Wait for findings,
-address actionable issues, and reassess affected areas after changes to the
-target, branch, local files, or PR draft. When acting as the review subagent,
-review directly and return findings; do not spawn another reviewer.
+Review the full branch and relevant local changes, loading the linked review
+references relevant to the changes and finishing with PR wording. Wait for
+findings, address actionable issues, and reassess affected areas after changes
+to the target, branch, local files, or PR draft. When acting as the review
+subagent, review directly and return findings; do not spawn another reviewer.
 
 At commit time, check whether the changes need that review. The versioned
 `.githooks/pre-commit` and `.githooks/pre-push` print reminders for the coding
