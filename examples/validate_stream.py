@@ -7,7 +7,7 @@ can instead call ``validator.check_window(window, position=n)`` directly.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from itertools import chain
+from itertools import chain, islice
 
 from modello import Index, InstanceDummy, Modello, model_recurrence, model_vector
 from modello.contrib.validation import ValidationSummary, WindowResult, WindowValidator
@@ -26,9 +26,11 @@ class CashLedger(Modello):
 
 
 def scan_batches() -> Iterator[WindowResult]:
-    """One row iterator preserves history and absolute positions across batches."""
-    batches = (((100, 0), (90, 10)), ((85, 2),), ((83, 2),))
+    """Preserve history across batches, using an islice recipe for Python 3.10+."""
+    rows = iter(((100, 0), (90, 10), (85, 2), (83, 2)))
     validator = WindowValidator(CashLedger, "rows")
+    batch_size = validator.window_size
+    batches = iter(lambda: tuple(islice(rows, batch_size)), ())
     return validator.iter_results(chain.from_iterable(batches))
 
 

@@ -25,36 +25,52 @@ break.
    * - Event
      - Cash
      - Cash movement
+     - Valid
+     - Why
    * - opening
      - 100,000
      - 0
+     - Unknown
+     - Opening balance is assumed.
    * - purchase
      - 79,999
      - -20,001
+     - Yes
+     -
    * - sale
      - 90,990
      - 10,999
+     - No
+     - Expected 90,998; eight-cent shortfall.
    * - repurchase
      - 80,489
      - -10,501
+     - Yes
+     - Uses the recorded sale balance.
 
 Find an accounting break
 ------------------------
 
 Reuse the ledger's row schema and recurrence laws:
 
-.. code-block:: pycon
+.. doctest::
 
+   >>> from collections import deque
    >>> from examples.accounting_breaks import EVENTS, Ledger, accounting_rows
    >>> from modello.contrib.validation import WindowValidator
    >>> rows = accounting_rows()
    >>> validator = WindowValidator(Ledger, "rows")
    >>> validator.order, validator.window_size
    (1, 2)
-   >>> result = validator(rows[1:3], position=2, index=EVENTS[2])
-   >>> problem = result.first_invalid
-   >>> result.valid, problem.index, problem.field, problem.expected, problem.residual
-   (False, 'sale', 'cash', 90998, -8)
+   >>> history = deque(maxlen=validator.window_size)
+   >>> for position, (label, row) in enumerate(zip(EVENTS, rows, strict=True)):
+   ...     history.append(tuple(row[field] for field in validator.fields))
+   ...     result = validator(tuple(history), position=position, index=label)
+   ...     if result.first_invalid is not None:
+   ...         problem = result.first_invalid
+   ...         print(problem.index, problem.field, problem.expected, problem.residual)
+   ...         break
+   sale cash 90998 -8
 
 The callable checks the final row of an oldest-first window; ``check_window``
 is the equivalent named method. Each transition uses recorded predecessors,
@@ -72,7 +88,7 @@ Read the results
 
 Scan an ordered iterable to obtain one result per observation:
 
-.. code-block:: pycon
+.. doctest::
 
    >>> results = list(validator.iter_results(rows, labels=EVENTS))
    >>> [result.valid for result in results]
@@ -109,14 +125,25 @@ Supply windows or streams
   produce domain violations when their checks apply.
 
 ``iter_results`` retains at most ``window_size`` rows. Each call starts fresh
-at position zero; chain batches into one call to preserve continuity:
+at position zero; chain batches into one call to preserve continuity. On Python
+3.12+, :func:`itertools.batched` splits a source iterable into batches:
 
-.. code-block:: pycon
+.. testcode::
 
-   >>> from itertools import chain
-   >>> batches = (rows[:2], rows[2:])
-   >>> [result.valid for result in validator.iter_results(chain.from_iterable(batches))]
+   from itertools import batched, chain
+
+   batch_size = validator.window_size
+   batches = batched(rows, batch_size)
+   batch_results = validator.iter_results(chain.from_iterable(batches))
+   print([result.valid for result in batch_results])
+
+.. testoutput::
+
    [None, True, False, True]
+
+Batch size is a source setting; it need not equal ``window_size``. Python
+3.10–3.11 can use the equivalent :func:`itertools.islice` recipe in the
+`Python batching documentation <https://docs.python.org/3/library/itertools.html#itertools.batched>`_.
 
 If your stream processor supplies windows, call ``validator(window, position=n)``
 directly. Keep the overlapping :math:`p` rows and absolute position across
@@ -126,11 +153,13 @@ Audit coverage
 ---------------
 
 ``audit`` scans a finite input completely and reports coverage plus the first
-violation. Even a sequence of passing transitions retains its assumed prefix:
+violation. Audit through the first position where all laws apply; this example
+has a passing transition but still retains its assumed prefix:
 
-.. code-block:: pycon
+.. doctest::
 
-   >>> audit = validator.audit(rows[:2])
+   >>> prefix = rows[:validator.fully_testable_position + 1]
+   >>> audit = validator.audit(prefix)
    >>> audit.row_count, audit.checked_rows, audit.assumed_rows, audit.unknown_rows
    (2, 1, 1, 0)
    >>> audit.first_invalid, audit.valid, audit.complete

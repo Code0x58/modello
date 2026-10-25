@@ -67,7 +67,7 @@ balance can leave both its own row and the next transition undecidable:
 .. doctest:: pandas
 
    >>> missing = projected.copy()
-   >>> missing.loc["purchase", "cash"] = pd.NA
+   >>> missing["cash"] = missing["cash"].mask(missing.index == "purchase", pd.NA)
    >>> [result.valid for result in pandas_windows(missing, validator)]
    [None, None, None, True]
 
@@ -76,7 +76,9 @@ frame's row order:
 
 .. doctest:: pandas
 
-   >>> gappy = projected.set_axis(pd.Index([0, 3, 3, 20], name="event"))
+   >>> events_per_label, label_spacing = 2, 10
+   >>> labels = pd.Index((position // events_per_label * label_spacing for position in range(len(projected))), name="event")
+   >>> gappy = projected.set_axis(labels)
    >>> labelled = list(pandas_windows(gappy, validator))
    >>> [result.index for result in labelled] == gappy.index.tolist()
    True
@@ -92,7 +94,8 @@ or collect the iterator to inspect every break:
    >>> def errors(results):
    ...     return (check for result in results for check in result.checks if check.verdict == "violated")
    >>> first = next(errors(pandas_windows(projected, validator)), None)
-   >>> first.position, first.index, first.field, first.expected, first.residual
+   >>> if first is not None:
+   ...     print((first.position, first.index, first.field, first.expected, first.residual))
    (2, 'sale', 'cash', 90998, -8)
    >>> all_errors = list(errors(pandas_windows(projected, validator)))
    >>> [(check.position, check.residual) for check in all_errors]
@@ -118,10 +121,10 @@ column depth, then pass the selected rows to the same window helper:
 
 .. doctest:: pandas
 
-   >>> accounts = frame.copy()
-   >>> accounts.columns = pd.MultiIndex.from_tuples(
-   ...     tuple(name.split(".")) if "." in name else (name, "") for name in accounts.columns)
-   >>> keys = [path + ("",) * (accounts.columns.nlevels - len(path)) for path in validator.field_paths]
+   >>> column_depth = max(map(len, validator.field_paths))
+   >>> keys = [path + ("",) * (column_depth - len(path)) for path in validator.field_paths]
+   >>> accounts = projected.copy()
+   >>> accounts.columns = pd.MultiIndex.from_tuples(keys)
    >>> selected = accounts.loc[:, keys]
    >>> account_results = list(pandas_windows(selected, validator))
    >>> [result.valid for result in account_results]
@@ -158,7 +161,8 @@ row. Attach the validity values as a nullable boolean column:
    >>> breaks = (check for result in polars_results for check in result.checks if check.verdict == "violated")
    >>> [(check.index, check.residual) for check in breaks]
    [('sale', -8)]
-   >>> nullable = polars_frame.with_columns(pl.Series("cash", [100_000, None, 90_990, 80_489]))
+   >>> nullable = polars_frame.with_columns(
+   ...     pl.when(pl.col("event") == "purchase").then(None).otherwise(pl.col("cash")).alias("cash"))
    >>> [result.valid for result in validator.iter_results(nullable.select(list(validator.fields)).iter_rows())]
    [None, None, None, True]
 
