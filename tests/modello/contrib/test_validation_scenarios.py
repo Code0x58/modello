@@ -289,6 +289,58 @@ def test_parameter_definitions_expand_without_inference():
 
 
 @pytest.mark.parametrize(
+    "query,rate,cash,valid",
+    [
+        (lambda squared, rate: Derivative(squared, rate, evaluate=False), 2, 24, True),
+        (lambda squared, rate: Derivative(squared, rate, evaluate=False), 2, 20, False),
+        (lambda squared, rate: 1 / Derivative(squared, rate, evaluate=False), 2, Rational(81, 4), True),
+        (lambda squared, rate: 1 / Derivative(squared, rate, evaluate=False), 2, 20, False),
+        (lambda squared, rate: 1 / Derivative(squared, rate, evaluate=False), 0, 20, False),
+        (lambda squared, rate: Integral(squared, (rate, 0, rate)), 2, Rational(68, 3), True),
+        (lambda squared, rate: Integral(squared, (rate, 0, rate)), 2, 28, False),
+    ],
+)
+def test_recurrence_operators_resolve_parent_definitions_before_parameters(query, rate, cash, valid):
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rate = InstanceDummy("rate", real=True)
+        squared = rate**2
+        rows = model_vector(CashRow, size=N)
+        n = Index("n")
+        law = model_recurrence(rows[n], cash=rows[n - 1].cash + query(squared, rate))
+
+    rows = ((20, 0), (cash, 0))
+    validator = WindowValidator(History, "rows", parameters={"rate": rate})
+    result = list(validator.iter_results(rows))[-1]
+    problem = inspect_model(History, "comparison", N=len(rows))
+    values = {("N",): len(rows), ("rate",): rate, ("squared",): rate**2}
+    values.update(
+        (("rows", str(position), name), value)
+        for position, row in enumerate(rows)
+        for name, value in zip(validator.fields, row, strict=True)
+    )
+    candidate = Candidate(tuple(FieldValue(problem.field(*path), value) for path, value in values.items()))
+    assert (problem.check(candidate).verdict == "satisfied") == result.valid == valid
+
+
+def test_recurrence_queries_use_the_parent_template_context():
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rate = InstanceDummy("rate", real=True)
+        squared = rate**2
+        j = Index("j", nonnegative=True)
+        trace = Series("trace", j, real=True)
+        growth = Recurrence(trace[j], trace[j - 1] + squared, initial={0: 0})
+        rows = model_vector(CashRow, size=N)
+        n = Index("n")
+        law = model_recurrence(rows[n], cash=rows[n - 1].cash + trace[1])
+
+    validator = WindowValidator(History, "rows", parameters={"rate": 2})
+    assert validator(((20, 0), (24, 0)), position=1).valid
+    assert validator(((20, 0), (20, 0)), position=1).invalid
+
+
+@pytest.mark.parametrize(
     "rate,alias,consistent",
     [(1, 1.0, True), (Decimal("1"), Fraction(1), True), (1, 2, False), (2, 1, False)],
 )

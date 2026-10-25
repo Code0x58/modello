@@ -24,7 +24,7 @@ from sympy import (
 
 from modello import ConstraintKind, Modello, ScalarValue, inspect_model
 from modello._evaluation import _evaluate, _expand_finite_indexed, _substitute
-from modello._expressions import _expand_definitions
+from modello._expressions import _DefinitionResolver, _expand_definitions
 from modello._operators import (
     _conditioned,
     _definitely_undefined,
@@ -230,7 +230,7 @@ class WindowValidator:
         self._field_names = tuple(_path_label(field.path) for field in self._problem.fields)
         positions = {field.path: i for i, field in enumerate(self._problem.fields)}
         self._atol, self._rtol = _tolerances(atol, rtol)
-        known = _parameters(model, rows, parameters or {})
+        known, resolve_parameters = _parameters(model, rows, parameters or {})
         columns = _collection_columns(namespace.nested_models[rows])
         # Resolve aliases through their first declared field, then check each copy.
         self._sources = {symbol: positions[path] for path, symbol in reversed(tuple(declared.items()))}
@@ -259,7 +259,8 @@ class WindowValidator:
                 rules.append(self._compile("alias", positions[path], symbol, self._start, kind="alias"))
         for name, law in laws:
             for path, expression in law.updates:
-                body = _substitute(_conditioned(expression, _denominator_condition(expression)), known)
+                body = resolve_parameters.operators(expression)
+                body = _substitute(_conditioned(body, _denominator_condition(body)), known)
                 rules.append(
                     self._compile(
                         name, positions[law.target.suffix + path], body, int(law.template.start), law.template.index
@@ -506,7 +507,9 @@ def _finite_number(value: Basic) -> bool:
     return value.is_number is True and value.is_finite is True
 
 
-def _parameters(model: type[Modello], rows: str, parameters: Mapping[str, ScalarValue]) -> dict[Symbol, Expr]:
+def _parameters(
+    model: type[Modello], rows: str, parameters: Mapping[str, ScalarValue]
+) -> tuple[dict[Symbol, Expr], _DefinitionResolver]:
     definition = model._modello_definition
     external = {_path_label(path): symbol for path, symbol in definition.fields.items() if path[0] != rows}
     pending: dict[Symbol, Expr] = {}
@@ -532,7 +535,7 @@ def _parameters(model: type[Modello], rows: str, parameters: Mapping[str, Scalar
         if symbol in known and simplify(known[symbol] - value).is_zero is not True:
             raise ModelInputError(f"Conflicting values for parameter {name!r}")
         known.setdefault(symbol, value)
-    resolved, _, _ = _expand_definitions(pending, observations=known)
+    resolved, _, resolve = _expand_definitions(pending, observations=known, templates=definition.templates.values())
     for symbol, value in resolved.items():
         assumptions = check_assumptions(value, against=symbol)
         if (
@@ -546,4 +549,4 @@ def _parameters(model: type[Modello], rows: str, parameters: Mapping[str, Scalar
             raise ModelInputError(f"Defined parameter {name!r} violates its field domain")
         if _finite_number(value):
             known[symbol] = value
-    return known
+    return known, resolve
