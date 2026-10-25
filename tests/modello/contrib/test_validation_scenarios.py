@@ -248,6 +248,22 @@ def test_symbolic_cells_do_not_prove_numeric_validity(validator, rows):
     assert result.valid is None and not result.invalid
 
 
+@pytest.mark.parametrize(
+    "field,value,valid",
+    [
+        ("holding.price", Symbol("negative_price", negative=True), False),
+        ("cash", Symbol("nonreal_cash", real=False), False),
+        ("holding.price", Symbol("positive_price", positive=True), None),
+    ],
+)
+def test_symbolic_domains_preserve_proven_violations(validator, rows, field, value, valid):
+    rows[1][field] = value
+    result = validator(rows[:2], position=1)
+    check = next(check for check in result.checks if check.kind == "domain" and check.field == field)
+    assert check.valid == valid
+    assert result.valid == valid
+
+
 @pytest.mark.parametrize("assumptions", [{"even": True}, {"prime": True}])
 def test_domain_checks_retain_assumptions_beyond_the_expected_set(assumptions):
     class Row(Modello):

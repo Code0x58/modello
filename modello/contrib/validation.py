@@ -426,7 +426,7 @@ class WindowValidator:
             valid = {"satisfied": True, "violated": False, "unknown": None}[verdict]
             if is_domain:
                 reason = observation.problem or "unresolved numeric value"
-                if observation.problem or observation.value.is_number is not True:
+                if observation.problem:
                     valid = False if observation.problem == "not a scalar number" else None
                 elif valid is not None:
                     reason = "" if valid else "value is outside the field domain"

@@ -147,7 +147,9 @@ Input and numerical values
 
 Supply flat mappings keyed by ``validator.fields``, or row tuples in that order.
 Convert framework-specific nulls to ``None``; numeric NaN also means missing.
-Parse numeric text before validation. See the :doc:`DataFrame recipes
+Parse numeric text before validation. Symbolic values cannot prove numeric
+validity, but their assumptions can prove a domain violation. See the
+:doc:`DataFrame recipes
 <../recipes/dataframe-validation>` for pandas, Polars, and MultiIndex columns.
 
 Validation checks the row schema's domains, definitions, aliases, and fixed
