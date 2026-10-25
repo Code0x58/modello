@@ -17,6 +17,9 @@ reviewed.
 - Summarize the validation actually performed and any meaningful gaps. Match
   each claim to the reviewed branch state; do not present planned checks as
   passing or imply coverage broader than the evidence supports.
+- If the branch records an upstream failure, explain the affected capability
+  and link the verified upstream issue or fix when available. Distinguish that
+  limitation from a Modello defect, and verify any claim that it is resolved.
 - On PR updates, rewrite the title and body around the final implementation.
   Remove abandoned approaches, superseded APIs, intermediate fixes, and a diary
   of commits or review rounds unless they explain a surviving tradeoff.

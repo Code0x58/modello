@@ -4,7 +4,7 @@ Pre-PR review reminder for the coding agent:
 Does this branch need a fresh pre_pr_review subagent pass?
 Before pushing for a PR or creating/updating one, spawn the subagent defined in
 .codex/agents/pre_pr_review.toml and compare the full branch with its PR target.
-Load its relevant Sphinx and Python/docstring/comment guidance, then PR suggestions.
+Load its relevant linked review guidance, then PR suggestions.
 Reassess affected areas if the target, branch, local changes, or PR draft changed.
 AGENTS.md requires the review; this Git hook is a non-blocking reminder.
 PROMPT
