@@ -4,9 +4,8 @@ Contributing and releases
 Use uv 0.13.1 or newer. The library and CI support Python 3.10 through 3.15.
 Documentation tooling requires Python 3.12 or newer; notebook tooling has its
 own optional Python 3.11+ group. All environments share the root ``uv.lock``.
-The ``docs`` group includes pandas and Polars for executable DataFrame recipes.
-Documentation CI tests those recipes with Sphinx before building HTML; the
-ordinary pytest suite excludes that page.
+The ``docs`` group includes pandas and Polars for Sphinx-tested recipes, which
+the ordinary pytest suite excludes.
 
 Reading the core
 ----------------
@@ -79,18 +78,12 @@ these layers.
 ``series.py`` declares relative recurrences. ``contrib/stochastic.py`` provides
 the opt-in Itô extension; the core resolver uses scoped declaration hooks without
 importing domain extensions.
-``contrib/validation.py`` compiles model-vector laws into a stateless window
-function. Each call checks its final row at an absolute position, returning
-evidence and coverage. SymPy indexed expressions represent the observed window;
-the adapter delegates equations and domains to ``ModelProblem.check`` and
-constant expansion to the core definition resolver. Results add row labels,
-rule names, and history coverage to the core evidence.
-The stream iterator projects and converts each incoming row once, retaining at
-most ``window_size`` rows of observations.
-Audits require contiguous results from zero by default; other intervals need an
-explicit start. DataFrame projection and windowing live in documentation
-recipes. Validation constructs no model instances and performs no joint solve;
-core imports load neither this extension nor frame libraries.
+``contrib/validation.py`` compiles causal model-vector laws over indexed
+observations, reusing the core definition resolver and ``ModelProblem.check``.
+Its stateless callable checks a window's final row; ``iter_results`` manages
+bounded history. Results add row labels, rule names, and coverage. DataFrame
+projection lives in documentation recipes. Core imports load neither the
+extension nor DataFrame libraries.
 ``_shapes.py`` solves symbolic finite axes from observation lengths before scalar
 coordinates are compiled. Shape specialization produces a cached subclass; it
 does not mutate the reusable declaration. The GUI creates a fresh finite context
@@ -199,13 +192,11 @@ including doctests:
    $ uv run --locked --group docs sphinx-build --fail-on-warning --keep-going --builder=doctest docs docs/_build/doctest
    $ uv run --locked --group docs sphinx-build --fail-on-warning --keep-going --builder=html docs docs/_build/html
 
-Use ``.. doctest::`` for executable examples, including imports, setup, and
-expected results. Name groups when examples need independent namespaces, as in
-the pandas and Polars recipes. Sphinx tests these blocks with the documentation
-dependencies installed. For examples that require Python 3.12+, use
-``.. testcode::`` and ``.. testoutput::`` blocks; they run in this docs job.
-The configured pytest ``--doctest-glob=*.rst`` also executes interactive prompts
-outside the frame recipe page.
+Use ``.. doctest::`` with imports, setup, and expected results. Named groups give
+examples independent namespaces, as in the DataFrame recipes. Use
+``.. testcode::`` and ``.. testoutput::`` for non-interactive examples.
+Sphinx runs these blocks with the docs dependencies; pytest's
+``--doctest-glob=*.rst`` also runs interactive prompts outside the recipe page.
 For a focused check, run ``uv run --locked --dev pytest --no-cov docs/modelling.rst``.
 
 Unset ``PYTEST_DISABLE_PLUGIN_AUTOLOAD`` before running pytest if your shell

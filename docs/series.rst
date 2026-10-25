@@ -117,11 +117,8 @@ Fixed finite sums can express a law's relative lags, for example
 The nested sum uses its own index. Multiple declared series can drive each
 other; finite query cycles must decrease towards their initial boundaries.
 
-For validation of existing histories, the :doc:`window validator
-<contrib/validation>` reuses typed ``model_recurrence`` laws and checks observed
-predecessors instead of generating a series path. The
-:doc:`DataFrame recipes <recipes/dataframe-validation>` show how to use column
-projection and windowing for pandas and Polars.
+To check existing histories with typed ``model_recurrence`` laws, see the
+:doc:`window validator <contrib/validation>`.
 
 
 API

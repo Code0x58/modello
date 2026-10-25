@@ -50,12 +50,11 @@ _UNLABELLED = object()
 
 @dataclass(frozen=True)
 class CheckResult:
-    """One declared check, including checks skipped as initial history.
+    """One row's check of a field domain, definition, alias, or recurrence.
 
-    ``valid`` is True for a passing check, False for a proven violation, and
-    None for assumed history or an undecidable outcome. ``start`` is the first
-    applicable row position; ``assumed`` distinguishes history from uncertainty.
-    Equation residuals are observed minus expected; ``index`` is only a label.
+    ``valid`` is True for a pass, False for a proven violation, otherwise None.
+    ``assumed`` means the row precedes ``start``. Equation residuals are observed
+    minus expected; domain checks have no residual. ``index`` is a row label.
     """
 
     position: int
@@ -72,18 +71,18 @@ class CheckResult:
 
     @property
     def invalid(self) -> bool:
-        """Whether this check proves a violation; uncertainty is not a violation."""
+        """Whether the check proves a violation."""
         return self.valid is not None and not self.valid
 
     @property
     def assumed(self) -> bool:
-        """Whether this check has not started at the current row position."""
+        """Whether the row precedes this check's first applicable position."""
         return self.position < self.start
 
 
 @dataclass(frozen=True)
 class ValidationResult:
-    """Validation outcome and check details for one row."""
+    """Row position, index label, and checks, including assumed or undecided ones."""
 
     position: int
     index: Hashable
@@ -96,12 +95,12 @@ class ValidationResult:
 
     @property
     def complete(self) -> bool:
-        """Whether every current-row check ran and reached a decided outcome."""
+        """Whether the row has checks and each reached a decision."""
         return bool(self.checks) and all(check.valid is not None for check in self.checks)
 
     @property
     def assumed(self) -> bool:
-        """Whether all checks are initial-history assumptions at this position."""
+        """Whether the row contains only initial-history assumptions."""
         return bool(self.checks) and all(check.assumed for check in self.checks)
 
     @property
@@ -112,13 +111,11 @@ class ValidationResult:
 
 @dataclass(frozen=True)
 class ValidationSummary:
-    """Row counts, coverage, and the first invalid row in a finite interval.
+    """Disjoint row counts, coverage, and the first invalid row of an interval.
 
-    The valid, invalid, assumed, and unknown row counts partition the input.
-    Assumed rows contain only initial-history checks; unknown rows are other
-    rows whose validity is undecidable.
-    An invalid row may still contain undecidable checks; ``complete`` records
-    whether every check in the nonempty interval reached a decision.
+    Assumed rows contain only initial-history checks. Unknown rows have no
+    proven failure but remain undecided. Invalid rows can have undecided checks
+    too; ``complete`` requires a nonempty interval with every check decided.
     """
 
     valid_rows: int
@@ -131,11 +128,10 @@ class ValidationSummary:
 
     @classmethod
     def from_results(cls, results: Iterable[ValidationResult], *, start_position: int = 0) -> ValidationSummary:
-        """Summarise a contiguous interval, starting from zero by default.
+        """Summarise every position from start_position in order; default zero.
 
-        Gaps, duplicates, or reordered results raise ModelInputError. Supply
-        another start_position explicitly to audit a later interval; earlier
-        observations are outside its coverage.
+        Gaps, duplicates, or reordering raise ModelInputError. Preceding history
+        is outside the audited interval.
         """
         if isinstance(start_position, bool) or not isinstance(start_position, int) or start_position < 0:
             raise ModelInputError("Audit start_position must be an absolute nonnegative integer")
@@ -176,7 +172,7 @@ class ValidationSummary:
 
     @property
     def stop_position(self) -> int:
-        """Exclusive end of the audited interval; preceding history is outside it."""
+        """Exclusive end of the audited interval."""
         return self.start_position + self.row_count
 
     @property
@@ -186,10 +182,7 @@ class ValidationSummary:
 
     @property
     def valid(self) -> bool | None:
-        """False for a proven violation; True only for a nonempty interval of passing rows.
-
-        Assumed or undecidable rows otherwise yield None, as does empty input.
-        """
+        """False for any violation, True for nonempty all-valid input, otherwise None."""
         if self.invalid:
             return False
         return True if self.row_count and self.valid_rows == self.row_count else None
@@ -212,14 +205,12 @@ class _Rule:
 
 
 class WindowValidator:
-    """Compile a row schema and causal laws into a stateless window function.
+    """Check a model's observed row vector against its schema and causal laws.
 
-    Rows are flat mappings keyed by ``fields`` or sequences in exactly that
-    order. A window is oldest first and ends at the row being checked. Its size
-    must be ``min(position + 1, window_size)``; only true stream prefixes may be
-    short. ``position`` is required, absolute, zero based, and independent of
-    labels, batches, or the current window's length. Convert framework-specific
-    null sentinels to ``None``.
+    ``rows`` names a model_vector on ``model``. Use ``iter_results`` for a stream
+    or call the validator for one window. Rows are mappings keyed by ``fields``
+    or sequences in that order. Convert framework-specific nulls to ``None``;
+    numeric NaN also means missing.
     """
 
     def __init__(
@@ -320,13 +311,14 @@ class WindowValidator:
         position: int,
         index: Hashable = _UNLABELLED,
     ) -> ValidationResult:
-        """Check only the last row, retaining explicit assumptions and unknowns.
+        """Check the final row of an oldest-first window, without storing history.
 
-        No history is stored between calls. Wrong window/row sizes, missing
-        mapping keys, invalid positions, and unhashable labels raise
-        ModelInputError. Malformed scalars produce domain violations when their
-        checks apply. Preceding rows supply observations for the current checks;
-        their own validation requires separate calls.
+        ``position`` is a nonnegative Python integer counting rows from zero.
+        Supply exactly ``min(position + 1, window_size)`` rows; preceding rows
+        supply observations but are not checked. ``index`` defaults to position.
+
+        Bad row/window sizes, missing keys, invalid positions, and unhashable
+        labels raise ModelInputError. Malformed scalars fail applicable domains.
         """
         if isinstance(position, bool) or not isinstance(position, int) or position < 0:
             raise ModelInputError("Window position must be an absolute nonnegative integer")
@@ -345,13 +337,12 @@ class WindowValidator:
         *,
         labels: Iterable[Hashable] | None = None,
     ) -> Iterator[ValidationResult]:
-        """Scan one ordered stream with at most window_size retained rows.
+        """Yield one result per row, retaining at most window_size rows.
 
-        Each call starts at position zero. To span batches, chain their row
-        iterators into one call; alternatively retain your own overlap and call
-        this validator with absolute positions. Labels are reporting metadata;
-        their count must match the rows (ValueError on mismatch).
-        Each row is projected and converted once when read.
+        Each call starts at position zero; chain non-overlapping batches to keep
+        history. Rows are converted once when read. Labels default to positions;
+        supplied labels must be hashable and match the row count (ValueError on
+        count mismatch).
         """
         window: deque[tuple[_Observation, ...]] = deque(maxlen=self.window_size)
         labelled = zip(rows, count() if labels is None else labels, strict=labels is not None)
@@ -494,7 +485,7 @@ class WindowValidator:
             replacements[symbol] = self._observed[0, self._sources[symbol]]
         if index is not None:
             replacements[index] = self._index
-        # Capture source denominator requirements before substitution can cancel them.
+        # Preserve source poles before substitution can cancel them.
         expression = _conditioned(_substitute(body, replacements), _substitute(condition, replacements))
         unexpected = expression.free_symbols - _scalar_atoms(expression, Indexed) - {self._observed.label, self._index}
         if unexpected or _scalar_atoms(expression, _VectorElement):
@@ -508,7 +499,7 @@ def _observe(value: object) -> _Observation:
     if missing:
         return _Observation(value, S.NaN, "missing observation")
     try:
-        # Decimal amounts retain their exact decimal value. Text cells are never parsed.
+        # Keep Decimal exact; reject text rather than parsing it.
         expression = (
             Rational(*value.as_integer_ratio())
             if isinstance(value, Decimal) and value.is_finite()

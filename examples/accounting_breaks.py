@@ -1,8 +1,4 @@
-"""Find a cash shortfall in a ledger of trades.
-
-Run ``uv run python -m examples.accounting_breaks``. Prices are per share;
-all observations use whole numbers.
-"""
+"""Find a cash shortfall: ``uv run python -m examples.accounting_breaks``."""
 
 from __future__ import annotations
 
@@ -41,7 +37,7 @@ EVENTS = ("opening", "purchase", "sale", "repurchase")
 
 
 def accounting_rows() -> tuple[dict[str, int], ...]:
-    """Return ledger rows with a sale cash shortfall; later balances use recorded cash."""
+    """Return ledger observations with an incorrect sale balance."""
     fields = ("holding.quantity", "holding.price", "holding.value", "cash", "cash_change", "quantity_change", "nav")
     values = (
         (0, 10, 0, 40, 0, 0, 40),

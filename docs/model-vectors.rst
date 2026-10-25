@@ -148,9 +148,8 @@ Use another construction for different observations, and declare another law
 when the relationships themselves change. See :doc:`generality` for solver scope.
 
 To validate existing histories, use the :doc:`window validator
-<contrib/validation>` with causal laws whose per-event inputs belong to the row
-schema. The :doc:`DataFrame recipes <recipes/dataframe-validation>` show how to
-select pandas and Polars rows, including nested fields in MultiIndex columns.
+<contrib/validation>`. Its :doc:`DataFrame recipes <recipes/dataframe-validation>`
+cover pandas, Polars, and nested columns.
 
 ``ModelRecurrence.equations`` retains the source formulas for inspection and
 rendering. The model compiler applies them across the window; this template is
