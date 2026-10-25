@@ -98,8 +98,9 @@ prevent a satisfied verdict; a proven violation still takes precedence.
 By default this requires exact evidence, so float equations remain unknown.
 Pass ``atol`` or ``rtol`` explicitly for numerical acceptance using
 ``abs(observed-expected) <= atol + rtol*abs(expected)``; the omitted tolerance
-is zero. Domains remain strict. Such a result establishes acceptance within
-the supplied tolerances, rather than an exact consistency witness.
+is zero. Tolerances must be finite, nonnegative numbers. Domains remain strict.
+Such a result establishes acceptance within the supplied tolerances, rather than
+an exact consistency witness.
 ``analyse()`` continues to use exact checks.
 
 Conflicts, probes, and costs

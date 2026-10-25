@@ -76,7 +76,9 @@ def test_numeric_checks_preserve_domains_and_exact_decimal_tolerances():
     assert problem.check(boundary, atol=Decimal("0.3")).verdict == "satisfied"
 
 
-@pytest.mark.parametrize("tolerance", [-1, True, S.Infinity, S.NaN, Symbol("t"), "0.1"])
+@pytest.mark.parametrize(
+    "tolerance", [-1, True, S.Infinity, S.NaN, Symbol("t"), "0.1", pytest.param(S.IdentityFunction, id="function")]
+)
 def test_candidate_check_rejects_invalid_tolerances(tolerance):
     problem = inspect_model(Scalar, "invalid_tolerance")
     with pytest.raises(modello.ModelInputError, match="finite nonnegative"):

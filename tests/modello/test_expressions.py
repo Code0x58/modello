@@ -119,8 +119,14 @@ def test_family_queries_and_conditions_differentiate_model_formulas_before_obser
     gradient = Derivative(symbols.square, symbols.x)
     assert family.expression(gradient) == 2 * symbols.x
     assert family.where(Eq(gradient, 6)).one().x == 3
-    assert family.observe(x=3).expression(gradient) == 6
-    assert family.observe(x=3).values(gradient) == FiniteSet(6)
+    observed = family.observe(x=3)
+    assert observed.expression(gradient) == 6
+    assert observed.values(gradient) == FiniteSet(6)
+    reciprocal = 1 / gradient
+    assert observed.expression(reciprocal) == Rational(1, 6)
+    assert observed.values(reciprocal) == FiniteSet(Rational(1, 6))
+    assert observed.where(Eq(reciprocal, Rational(1, 6))).one().x == 3
+    assert family.observe(x=0).expression(reciprocal) is S.NaN
     preferred = problem.solutions(symbols.square)
     assert preferred.expression(symbols.square + gradient) == symbols.square + 2 * symbols.x
 

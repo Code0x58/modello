@@ -16,7 +16,6 @@ from sympy import (
     Indexed,
     IndexedBase,
     Integer,
-    Rational,
     S,
     Symbol,
     check_assumptions,
@@ -495,12 +494,7 @@ def _observe(value: object) -> _Observation:
     if missing:
         return _Observation(value, S.NaN, "missing observation")
     try:
-        # Keep Decimal exact; reject text rather than parsing it.
-        expression = (
-            Rational(*value.as_integer_ratio())
-            if isinstance(value, Decimal) and value.is_finite()
-            else _scalar_expression(value, strict=True)
-        )
+        expression = _scalar_expression(value, strict=True)
     except (TypeError, ValueError):
         return _Observation(value, S.NaN, "not a scalar number")
     if expression is S.NaN:

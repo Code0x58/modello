@@ -122,7 +122,7 @@ class _DefinitionResolver:
         args = tuple(self.operators(arg) for arg in expression.args)
         if not isinstance(expression, Expr):
             return expression.func(*args) if args != expression.args else expression
-        return _rebuild(expression, args, _denominator_condition(expression))
+        return _rebuild(expression, args, self.operators(_denominator_condition(expression)))
 
     def _resolve(self, expression: Basic, protected: frozenset[Basic]) -> Basic:
         if expression in protected:

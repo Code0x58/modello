@@ -92,6 +92,7 @@ def test_named_operator_definitions_use_core_semantics_without_fitting_observati
         x = InstanceDummy("x", real=True)
         squared = x**2
         gradient = Derivative(squared, x, evaluate=False)
+        reciprocal = 1 / Derivative(squared, x, evaluate=False)
         integral = Integral(squared, (x, 0, x))
         after = squared + 1
 
@@ -101,7 +102,14 @@ def test_named_operator_definitions_use_core_semantics_without_fitting_observati
         n = Index("n")
         identity = model_recurrence(rows[n], start=0, x=rows[n].x)
 
-    values = {"x": 2, "squared": squared, "gradient": gradient, "integral": integral, "after": after}
+    values = {
+        "x": 2,
+        "squared": squared,
+        "gradient": gradient,
+        "reciprocal": Rational(1, 4),
+        "integral": integral,
+        "after": after,
+    }
     problem = inspect_model(Row, "comparison")
     candidate = Candidate(tuple(FieldValue(problem.field(name), value) for name, value in values.items()))
     core = problem.check(candidate).verdict
@@ -109,6 +117,7 @@ def test_named_operator_definitions_use_core_semantics_without_fitting_observati
     assert (core == "satisfied") == result.valid == valid
     checks = {check.field: check for check in result.checks if check.kind == "definition"}
     assert checks["gradient"].expected == 4
+    assert checks["reciprocal"].expected == Rational(1, 4)
     assert checks["integral"].expected == Rational(8, 3)
     assert checks["after"].expected == squared + 1
 

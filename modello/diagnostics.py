@@ -7,7 +7,6 @@ contradiction. Solver failure alone establishes neither.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from decimal import Decimal
 from functools import cached_property
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Generic, Mapping, cast
@@ -25,7 +24,6 @@ from sympy import (
     Integral,
     Limit,
     Matrix,
-    Rational,
     S,
     Set,
     Symbol,
@@ -34,7 +32,6 @@ from sympy import (
     solve,
     solveset,
     sqrt,
-    sympify,
 )
 from sympy.core.function import AppliedUndef
 from sympy.solvers.solveset import NonlinearError
@@ -43,7 +40,7 @@ from modello._evaluation import _rebind
 from modello._expressions import _evaluate, _substitute
 from modello._inputs import _InputCapture
 from modello._model import ModelloMeta, _ModelReference
-from modello._operators import _definitely_undefined, _SymbolicTemplate
+from modello._operators import _definitely_undefined, _scalar_expression, _SymbolicTemplate
 from modello._paths import _path_label
 from modello._problem import (
     AssumptionCheck,
@@ -499,23 +496,13 @@ def _candidate(problem: ModelProblem, values: dict[Symbol, Expr]) -> Candidate:
 
 
 def _tolerances(atol: ScalarValue, rtol: ScalarValue) -> tuple[Expr, Expr]:
-    try:
-        values = tuple(
-            Rational(*value.as_integer_ratio())
-            if isinstance(value, Decimal) and value.is_finite()
-            else sympify(value, strict=True)
-            for value in (atol, rtol)
-        )
-    except (TypeError, ValueError) as error:
-        raise ModelInputError("Equation tolerances must be finite nonnegative numbers") from error
+    message = "Equation tolerances must be finite nonnegative numbers"
+    values = tuple(_scalar_expression(value, message, strict=True) for value in (atol, rtol))
     if any(
-        not isinstance(value, Expr)
-        or value.is_number is not True
-        or value.is_finite is not True
-        or value.is_nonnegative is not True
+        value.is_number is not True or value.is_finite is not True or value.is_nonnegative is not True
         for value in values
     ):
-        raise ModelInputError("Equation tolerances must be finite nonnegative numbers")
+        raise ModelInputError(message)
     return values
 
 
