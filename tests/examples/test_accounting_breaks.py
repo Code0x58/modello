@@ -11,10 +11,13 @@ def test_accounting_break_and_input_preservation():
     original = deepcopy(rows)
     validator = WindowValidator(Ledger, "rows")
     results = list(validator.iter_results(rows, labels=EVENTS))
-    problems = [check for result in results for check in result.checks if check.invalid]
-    assert [(p.position, p.index, p.field, p.rule, p.observed, p.expected, p.residual) for p in problems] == [
-        (2, "sale", "cash", "posting", 29, 30, -1)
+    problems = [
+        (result.position, result.index, check.field, check.rule, check.observed, check.expected, check.residual)
+        for result in results
+        for check in result.checks
+        if check.invalid
     ]
+    assert problems == [(2, "sale", "cash", "posting", 29, 30, -1)]
     assert rows == original
     assert [result.valid for result in results] == [None, True, False, True]
     assert results[-1].complete

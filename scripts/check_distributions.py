@@ -210,7 +210,7 @@ assert ledger_audit.first_invalid.position == 2
 assert ledger_audit.assumed_rows == 1 and ledger_audit.valid_rows == 2
 breaks = [check for check in ledger_audit.first_invalid.checks if check.invalid]
 assert len(breaks) == 1
-assert (breaks[0].index, breaks[0].field, breaks[0].residual) == ("sale", "cash", -1)
+assert (ledger_audit.first_invalid.index, breaks[0].field, breaks[0].residual) == ("sale", "cash", -1)
 assert not {"pandas", "polars", "numpy"} & sys.modules.keys()
 print("Validated installed example modules, type marker, and portfolio fixtures")
 """

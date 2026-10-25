@@ -1,4 +1,4 @@
-"""Validation of observed recurrence windows and row streams."""
+"""Check recorded rows with :class:`WindowValidator`, without solving missing values."""
 
 from __future__ import annotations
 
@@ -51,39 +51,45 @@ class CheckResult:
     """One row's check of a field domain, definition, alias, or recurrence.
 
     ``valid`` is True for a pass, False for a proven violation, otherwise None.
-    ``assumed`` means the row precedes ``start``. Equation residuals are observed
-    minus expected; domain checks have no residual. ``index`` is a row label.
+    Row position and label belong to the containing :class:`ValidationResult`.
     """
 
-    position: int
-    index: Hashable
+    #: Flat field name, matching a key in :attr:`WindowValidator.fields`.
     field: str
+    #: Declared recurrence name, or ``domain``, ``definition``, or ``alias``.
     rule: str
+    #: Recorded SymPy scalar, or the original cell when conversion failed.
     observed: object
+    #: Expected expression or domain set; None for assumed or missing dependencies.
     expected: Basic | None
+    #: Observed minus expected; None for domains, assumptions, or unresolved values.
     residual: Expr | None
+    #: True for a pass, False for a proven violation, otherwise None.
     valid: bool | None
+    #: Explanation of a failure, assumption, or undecided check; empty for a pass.
     reason: str = ""
+    #: First absolute row position where this check applies.
     start: int = 0
+    #: Whether this checks a domain, definition, alias, or recurrence.
     kind: CheckKind = "recurrence"
+    #: True when the row precedes start and this check was skipped.
+    assumed: bool = False
 
     @property
     def invalid(self) -> bool:
         """Whether the check proves a violation."""
         return self.valid is not None and not self.valid
 
-    @property
-    def assumed(self) -> bool:
-        """Whether the row precedes this check's first applicable position."""
-        return self.position < self.start
-
 
 @dataclass(frozen=True)
 class ValidationResult:
     """Row position, index label, and checks, including assumed or undecided ones."""
 
+    #: Absolute row position, counting from zero regardless of labels.
     position: int
+    #: Supplied row label, or position when no label was supplied.
     index: Hashable
+    #: All field checks, including passing, failing, assumed, and undecided ones.
     checks: tuple[CheckResult, ...]
 
     @property
@@ -116,12 +122,19 @@ class ValidationSummary:
     too; ``complete`` requires a nonempty interval with every check decided.
     """
 
+    #: Rows whose checks all passed.
     valid_rows: int
+    #: Rows with at least one proven violation, including otherwise undecided rows.
     invalid_rows: int
+    #: Rows containing only initial-history assumptions.
     assumed_rows: int
+    #: Other undecided rows without a proven violation.
     unknown_rows: int
+    #: Whether the interval is nonempty and every check reached a decision.
     complete: bool
+    #: First row proving a violation, or None when none was proven.
     first_invalid: ValidationResult | None
+    #: Inclusive start of the audited interval, counting from zero.
     start_position: int = 0
 
     @classmethod
@@ -209,6 +222,15 @@ class WindowValidator:
     or call the validator for one window. Rows are mappings keyed by ``fields``
     or sequences in that order. Convert framework-specific nulls to ``None``;
     numeric NaN also means missing.
+
+    :param model: Model class declaring the row vector and its causal laws.
+    :param rows: Name of the model_vector to validate.
+    :param parameters: Independent scalar model fields needed by the laws,
+        keyed by flat field name. Omit the vector size; input supplies it.
+    :param atol: Finite, nonnegative absolute equation tolerance; default zero.
+    :param rtol: Finite, nonnegative relative equation tolerance; default zero.
+    :raises ModelInputError: The model, parameters, tolerances, or causal laws
+        cannot be prepared for window validation.
     """
 
     def __init__(
@@ -369,21 +391,21 @@ class WindowValidator:
         return ValidationResult(
             position,
             label,
-            tuple(self._check(rule, position, label, window[-1][rule.field], values) for rule in self._rules),
+            tuple(self._check(rule, position, window[-1][rule.field], values) for rule in self._rules),
         )
 
     def _check(
         self,
         rule: _Rule,
         position: int,
-        label: Hashable,
         observation: _Observation,
         values: Mapping[Basic, Expr],
     ) -> CheckResult:
         expected: Basic | None = None
         residual = None
         valid: bool | None = None
-        if position < rule.start:
+        assumed = position < rule.start
+        if assumed:
             reason = f"Initial history; first test position is {rule.start}"
         else:
             field = self._problem.fields[rule.field]
@@ -426,17 +448,16 @@ class WindowValidator:
                 if expected.has(self._observed):
                     expected = None
         return CheckResult(
-            position,
-            label,
-            self.fields[rule.field],
-            rule.name,
-            observation.raw if observation.problem else observation.value,
-            expected,
-            residual,
-            valid,
-            reason,
-            rule.start,
-            rule.kind,
+            field=self.fields[rule.field],
+            rule=rule.name,
+            observed=observation.raw if observation.problem else observation.value,
+            expected=expected,
+            residual=residual,
+            valid=valid,
+            reason=reason,
+            start=rule.start,
+            kind=rule.kind,
+            assumed=assumed,
         )
 
     def _observe_row(self, row: Row) -> tuple[_Observation, ...]:

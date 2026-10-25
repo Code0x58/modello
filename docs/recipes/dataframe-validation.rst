@@ -1,9 +1,9 @@
 Validate pandas and Polars DataFrames
 =====================================
 
-Use the ledger from :doc:`../contrib/validation` to add a nullable validity
-column. Select ``validator.fields`` in order and pass the rows to
-``iter_results``, which maintains the rolling history.
+Use the ledger from :doc:`../contrib/validation` to validate a pandas frame or
+stream a Polars lazy query. Select ``validator.fields`` in order and pass the
+rows to ``iter_results``, which maintains the rolling history.
 
 .. doctest:: pandas, polars
 
@@ -63,20 +63,53 @@ or padding differ, preserving field order.
 
    assert [result.valid for result in validator.iter_results(rows)] == [None, True, False, True]
 
-Validate Polars rows
---------------------
+Stream a Polars lazy query
+--------------------------
 
-Polars supplies tuples directly, with nulls represented by ``None``:
+Scan a Parquet ledger at ``ledger_path``. `collect_batches
+<https://docs.pola.rs/api/python/stable/reference/lazyframe/api/polars.LazyFrame.collect_batches.html>`_
+streams ordered batches without collecting the whole result. Flatten their
+rows into one iterator so validation retains history across batches:
+
+.. testsetup:: polars
+
+   from pathlib import Path
+   from tempfile import TemporaryDirectory
+   import polars as pl
+   from examples.accounting_breaks import accounting_rows
+
+   directory = TemporaryDirectory()
+   ledger_path = Path(directory.name) / "ledger.parquet"
+   pl.DataFrame(accounting_rows()).write_parquet(ledger_path)
 
 .. doctest:: polars
 
    >>> import polars as pl
-   >>> frame = pl.DataFrame(accounting_rows()).with_columns(pl.Series("event", EVENTS))
-   >>> rows = frame.select(list(validator.fields)).iter_rows()
-   >>> frame = frame.with_columns(
-   ...     pl.Series("valid", [result.valid for result in validator.iter_results(rows)], dtype=pl.Boolean))
-   >>> frame["valid"].to_list()
+   >>> from itertools import chain
+   >>> query = pl.scan_parquet(ledger_path).select(list(validator.fields))
+   >>> batches = query.collect_batches(engine="streaming", maintain_order=True)
+   >>> rows = chain.from_iterable(batch.iter_rows() for batch in batches)
+   >>> results = validator.iter_results(rows)
+   >>> [result.valid for result in results]
    [None, True, False, True]
 
-Both recipes check rows in Python/SymPy. To inspect failures or process a stream,
-see :doc:`../contrib/validation`.
+Polars supplies nulls as ``None``. Consume ``results`` incrementally for large
+inputs; the list above only displays this small example. Keep one scan in
+event order for each independent history.
+Batch size is independent of ``validator.window_size``. Polars currently marks
+``collect_batches`` as unstable.
+
+.. testcode:: polars
+   :hide:
+
+   for chunk_size in range(1, len(EVENTS) + 1):
+       batches = query.collect_batches(chunk_size=chunk_size, engine="streaming", maintain_order=True)
+       rows = chain.from_iterable(batch.iter_rows() for batch in batches)
+       assert [result.valid for result in validator.iter_results(rows)] == [None, True, False, True]
+
+.. testcleanup:: polars
+
+   directory.cleanup()
+
+Both recipes check rows in Python/SymPy. See :doc:`../contrib/validation` for
+inspecting failures and summarising coverage.

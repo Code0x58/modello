@@ -48,8 +48,10 @@ def accounting_rows() -> tuple[dict[str, int], ...]:
 
 if __name__ == "__main__":
     results = WindowValidator(Ledger, "rows").iter_results(accounting_rows(), labels=EVENTS)
-    for problem in (check for result in results for check in result.checks if check.invalid):
-        print(
-            f"{problem.index}: {problem.field} observed {problem.observed}, "
-            f"expected {problem.expected}, residual {problem.residual}"
-        )
+    for result in results:
+        for check in result.checks:
+            if check.invalid:
+                print(
+                    f"{result.index}: {check.field} observed {check.observed}, "
+                    f"expected {check.expected}, residual {check.residual}"
+                )

@@ -103,9 +103,9 @@ objects in ``checks``. Inspect the sale's failing check:
    Undecided with no failure, ``None``, ``False``, ``False``, ``False``
 
 Each ``CheckResult`` identifies its ``field``, named ``rule``, and ``kind``
-(``domain``, ``definition``, ``alias``, or ``recurrence``), along with the row's
-position and label. ``valid``, ``invalid``, and ``assumed`` describe the individual
-check; ``start`` is its first applicable position.
+(``domain``, ``definition``, ``alias``, or ``recurrence``). ``valid``, ``invalid``,
+and ``assumed`` describe that check; ``start`` is its first applicable position.
+The containing result supplies the row's position and label.
 
 Equation residuals are observed minus expected. Assumed checks have no expected
 value or residual; unresolved dependencies can also leave them unknown.
@@ -192,6 +192,8 @@ start; index labels and gaps do not change it.
 API
 ---
 
+.. automodule:: modello.contrib.validation
+
 .. currentmodule:: modello.contrib.validation
 
 .. autoclass:: WindowValidator(model, rows, *, parameters=None, atol=0, rtol=0)
@@ -199,10 +201,10 @@ API
    :special-members: __call__
 
 .. autoclass:: ValidationResult
-   :members: valid, invalid, complete, assumed
+   :members:
 
 .. autoclass:: CheckResult
-   :members: invalid, assumed
+   :members:
 
 .. autoclass:: ValidationSummary
-   :members: valid, invalid, complete, row_count, from_results, stop_position
+   :members:
