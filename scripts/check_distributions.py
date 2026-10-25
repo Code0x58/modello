@@ -160,7 +160,7 @@ validator = WindowValidator(ObservedLedger, "rows")
 assert (validator.window_size, validator.first_test_position) == (2, 1)
 assert validator(((100, 0), (90, 10)), position=1).valid is True
 audit = validator.audit(((100, 0), (90, 10)))
-assert (audit.row_count, audit.checked_rows, audit.assumed_rows) == (2, 1, 1)
+assert (audit.row_count, audit.valid_rows, audit.assumed_rows) == (2, 1, 1)
 assert audit.valid is None and audit.first_invalid is None
 assert not {"pandas", "polars", "numpy"} & sys.modules.keys()
 vector_snapshot = Explorer(window).snapshot()
@@ -207,7 +207,7 @@ for name in ("market.csv", "transactions.csv", "benchmark.csv"):
     assert data.joinpath(name).is_file(), name
 ledger_audit = WindowValidator(Ledger, "rows").audit(accounting_rows(), labels=EVENTS)
 assert ledger_audit.first_invalid.position == 2
-assert ledger_audit.assumed_rows == 1 and ledger_audit.checked_rows == 3
+assert ledger_audit.assumed_rows == 1 and ledger_audit.valid_rows == 2
 breaks = list(find_breaks(accounting_rows(), labels=EVENTS))
 assert len(breaks) == 1
 assert (breaks[0].index, breaks[0].field, breaks[0].residual) == ("sale", "cash", -1)

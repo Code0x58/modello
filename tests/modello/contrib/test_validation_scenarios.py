@@ -29,7 +29,7 @@ def test_second_order_evolution_and_moving_sums_use_observed_history():
     results = list(validator.iter_results(((1, 0), (3, 0), (5, 9), (8, 16), (11, 24))))
     assert validator.window_size == 3
     assert [result.valid for result in results] == [None, None, True, False, True]
-    errors = [check for result in results for check in result.checks if check.verdict == "violated"]
+    errors = [check for result in results for check in result.checks if check.invalid]
     assert [(check.position, check.rule, check.expected, check.residual) for check in errors] == [
         (3, "evolution", 7, 1)
     ]
@@ -94,12 +94,13 @@ def test_invalid_tolerance_configuration_is_rejected(value):
 def test_invalid_numeric_cells_are_proven_domain_violations(bad):
     result = WindowValidator(CashLedger, "rows")(((100, 0), (bad, 0)), position=1)
     assert result.valid is False
-    assert result.first_invalid.field == "cash" and result.first_invalid.kind == "domain"
+    problem = next(check for check in result.checks if check.invalid)
+    assert problem.field == "cash" and problem.kind == "domain"
 
 
 def test_symbolic_cells_do_not_prove_numeric_validity():
     result = WindowValidator(CashLedger, "rows")(((100, 0), (Symbol("x", real=True), 0)), position=1)
-    assert result.valid is None and result.first_invalid is None
+    assert result.valid is None and not result.invalid
 
 
 def test_source_poles_are_retained_when_the_numerator_is_zero():
@@ -116,7 +117,7 @@ def test_source_poles_are_retained_when_the_numerator_is_zero():
 
     result = WindowValidator(History, "rows")(((1, 1, 1), (0, 0, 0)), position=1)
     assert result.valid is False
-    assert result.first_invalid.reason == "undefined expression"
+    assert next(check for check in result.checks if check.invalid).reason == "undefined expression"
 
 
 def test_parameter_definitions_expand_without_inference():

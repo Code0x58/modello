@@ -26,23 +26,23 @@ The cash residual is :math:`e_n=C_n-\widehat C_n`: here :math:`29-30=-1`.
      - Valid
      - Why
    * - opening
-     - 40.00
-     - 0.00
+     - 40
+     - 0
      - Assumed
      - Opening balance is assumed.
    * - purchase
-     - 20.00
-     - -20.00
+     - 20
+     - -20
      - Yes
      -
    * - sale
-     - 29.00
-     - 10.00
+     - 29
+     - 10
      - No
-     - Expected 30.00; shortfall 1.00.
+     - Expected 30; shortfall 1.
    * - repurchase
-     - 19.00
-     - -10.00
+     - 19
+     - -10
      - Yes
      - Uses the recorded sale balance.
 
@@ -62,22 +62,23 @@ Collect the results to inspect the full sequence:
    >>> [result.valid for result in results]
    [None, True, False, True]
    >>> for result in results:
-   ...     if result.first_invalid is not None:
-   ...         problem = result.first_invalid
-   ...         print(problem.index, problem.field, problem.expected, problem.residual)
+   ...     if result.invalid:
+   ...         print(result.index)
    ...         break
-   sale cash 30 -1
+   sale
 
 ``valid`` is ``True`` when all current-row checks pass, ``False`` for a proven
 violation, and ``None`` for assumed history or insufficient evidence.
 Checks before a law's declared start are assumed; an order-:math:`p` law
 normally starts at position :math:`p`, using the preceding :math:`p` rows.
 
-Each result retains individual checks, including their rule, observations,
-expected value, residual, and verdict. ``complete`` means all checks for that
-row ran and were decided, including violations. ``first_invalid is None``
-alone does not establish coverage. Later rows use recorded predecessors, so
-the repurchase can pass even though the sale failed.
+Use ``result.invalid`` to identify proven failures; ``not result.valid`` also
+includes assumed or undecidable rows. ``result.checks`` retains each check's
+field, rule, observations, expected value, and residual. Checks use the same
+``valid``, ``invalid``, and ``assumed`` attributes as row results.
+``complete`` means all current-row checks were decided, including violations.
+Later rows use recorded predecessors, so the repurchase can pass after the sale
+failed.
 
 Audit coverage
 ---------------
@@ -87,20 +88,20 @@ For a finite job, ``audit`` scans all rows and summarises their coverage:
 .. doctest::
 
    >>> audit = validator.audit(rows, labels=EVENTS)
-   >>> audit.row_count, audit.checked_rows, audit.assumed_rows, audit.unknown_rows, audit.violated_rows
-   (4, 3, 1, 0, 1)
+   >>> audit.row_count, audit.valid_rows, audit.invalid_rows, audit.assumed_rows, audit.unknown_rows
+   (4, 2, 1, 1, 0)
    >>> audit.valid
    False
 
-``checked_rows`` counts fully decided rows, ``assumed_rows`` counts wholly
-assumed history, and ``unknown_rows`` counts other rows whose validity is
-undecidable. ``violated_rows`` counts proven breaks, including rows with
-incomplete checks, so it can overlap with ``checked_rows``.
+The valid, invalid, assumed, and unknown row counts partition the input;
+``row_count`` is their sum. ``first_invalid`` is the first invalid row result,
+or ``None`` if no row was proven invalid. An invalid row may still contain
+undecidable checks; ``complete`` describes coverage of all checks.
 
-For strict acceptance, require ``audit.valid is True``. Even with no breaks,
-assumed or undecidable rows keep that verdict at ``None``. A policy that trusts
-initial history can require no violated or unknown rows and at least one fully
-checked transition. Empty and history-only inputs provide no such transition.
+For strict acceptance, require ``audit.valid``. Even with no breaks,
+assumed or undecidable rows keep that outcome at ``None``. A policy that trusts
+initial history can require no invalid or unknown rows and at least one valid
+row. Empty and history-only inputs provide no such row.
 
 ``ValidationSummary.from_results(results)`` reuses collected results. It requires
 contiguous positions from zero; supply ``start_position`` explicitly to audit
@@ -166,8 +167,8 @@ validator directly. The equivalent manual loop is:
 Each call checks the final row of an oldest-first window containing exactly
 ``min(position+1, validator.window_size)`` rows. Include short initial windows;
 laws with earlier starts can already find breaks there. ``position`` is an
-absolute nonnegative Python integer; labels are hashable metadata and do not insert missing
-observations between gaps. Keep separate histories for independent accounts,
+absolute nonnegative Python integer; labels are hashable metadata and do not
+insert missing observations between gaps. Keep separate histories for independent accounts,
 and restore overlapping history and positions across batches or restarts.
 
 
@@ -177,13 +178,14 @@ API
 .. currentmodule:: modello.contrib.validation
 
 .. autoclass:: WindowValidator(model, rows, *, parameters=None, atol=0, rtol=0)
-   :members: fields, field_paths, order, window_size, first_test_position, fully_testable_position, check_window, iter_results, audit
+   :members: fields, field_paths, order, window_size, first_test_position, fully_testable_position, iter_results, audit
    :special-members: __call__
 
-.. autoclass:: WindowResult
-   :members: valid, complete, assumed, first_invalid
+.. autoclass:: ValidationResult
+   :members: valid, invalid, complete, assumed
 
 .. autoclass:: CheckResult
+   :members: invalid, assumed
 
 .. autoclass:: ValidationSummary
-   :members: valid, complete, from_results, stop_position
+   :members: valid, invalid, complete, row_count, from_results, stop_position

@@ -20,9 +20,8 @@ from modello.errors import ModelInputError
 from modello.model_vectors import _collection_columns
 from modello.vectors import _VectorElement
 
-__all__ = ["CheckResult", "ValidationSummary", "WindowResult", "WindowValidator"]
+__all__ = ["CheckResult", "ValidationResult", "ValidationSummary", "WindowValidator"]
 
-CheckVerdict: TypeAlias = Literal["satisfied", "violated", "unknown", "assumed"]
 CheckKind: TypeAlias = Literal["domain", "definition", "alias", "recurrence"]
 Row: TypeAlias = Mapping[str, object] | Sequence[object]
 _UNLABELLED = object()
@@ -32,8 +31,9 @@ _UNLABELLED = object()
 class CheckResult:
     """One declared check, including checks skipped as initial history.
 
-    ``start`` is the first absolute row position where this check applies.
-    ``assumed`` means it has not run; ``unknown`` means its outcome is undecided.
+    ``valid`` is True for a passing check, False for a proven violation, and
+    None for assumed history or an undecidable outcome. ``start`` is the first
+    applicable row position; ``assumed`` distinguishes history from uncertainty.
     Equation residuals are observed minus expected; ``index`` is only a label.
     """
 
@@ -44,64 +44,74 @@ class CheckResult:
     observed: object
     expected: Basic | None
     residual: Expr | None
-    verdict: CheckVerdict
+    valid: bool | None
     reason: str = ""
     start: int = 0
     kind: CheckKind = "recurrence"
 
+    @property
+    def invalid(self) -> bool:
+        """Whether this check proves a violation; uncertainty is not a violation."""
+        return self.valid is not None and not self.valid
+
+    @property
+    def assumed(self) -> bool:
+        """Whether this check has not started at the current row position."""
+        return self.position < self.start
+
 
 @dataclass(frozen=True)
-class WindowResult:
-    """Checks and coverage for the final row of a window."""
+class ValidationResult:
+    """Validation outcome and check details for one row."""
 
     position: int
     index: Hashable
     checks: tuple[CheckResult, ...]
 
     @property
-    def first_invalid(self) -> CheckResult | None:
-        """First proven violation; None alone does not establish complete coverage."""
-        return next((check for check in self.checks if check.verdict == "violated"), None)
+    def invalid(self) -> bool:
+        """Whether any check proves this row invalid."""
+        return any(check.invalid for check in self.checks)
 
     @property
     def complete(self) -> bool:
         """Whether every current-row check ran and reached a decided outcome."""
-        return bool(self.checks) and all(check.verdict in ("satisfied", "violated") for check in self.checks)
+        return bool(self.checks) and all(check.valid is not None for check in self.checks)
 
     @property
     def assumed(self) -> bool:
         """Whether all checks are initial-history assumptions at this position."""
-        return bool(self.checks) and all(check.verdict == "assumed" for check in self.checks)
+        return bool(self.checks) and all(check.assumed for check in self.checks)
 
     @property
     def valid(self) -> bool | None:
         """False for a proven violation, True for complete success, otherwise None."""
-        if self.first_invalid is not None:
+        if self.invalid:
             return False
         return True if self.complete else None
 
 
 @dataclass(frozen=True)
 class ValidationSummary:
-    """Coverage and first proven violation for a finite interval.
+    """Row counts, coverage, and the first invalid row in a finite interval.
 
-    ``checked_rows`` counts rows where every check ran and was decided, including
-    fully checked invalid rows. ``assumed_rows`` counts wholly assumed history;
-    ``unknown_rows`` counts other rows whose validity is undecidable.
-    ``violated_rows`` counts rows with a proven violation, including those with
-    incomplete coverage; it can overlap with ``checked_rows``.
+    The valid, invalid, assumed, and unknown row counts partition the input.
+    Assumed rows contain only initial-history checks; unknown rows are other
+    rows whose validity is undecidable.
+    An invalid row may still contain undecidable checks; ``complete`` records
+    whether every check in the nonempty interval reached a decision.
     """
 
-    row_count: int
-    checked_rows: int
+    valid_rows: int
+    invalid_rows: int
     assumed_rows: int
     unknown_rows: int
-    violated_rows: int
-    first_invalid: CheckResult | None
+    complete: bool
+    first_invalid: ValidationResult | None
     start_position: int = 0
 
     @classmethod
-    def from_results(cls, results: Iterable[WindowResult], *, start_position: int = 0) -> ValidationSummary:
+    def from_results(cls, results: Iterable[ValidationResult], *, start_position: int = 0) -> ValidationSummary:
         """Summarise a contiguous interval, starting from zero by default.
 
         Gaps, duplicates, or reordered results raise ModelInputError. Supply
@@ -110,25 +120,39 @@ class ValidationSummary:
         """
         if isinstance(start_position, bool) or not isinstance(start_position, int) or start_position < 0:
             raise ModelInputError("Audit start_position must be an absolute nonnegative integer")
-        rows = checked = assumed = unknown = violated = 0
+        valid_rows = invalid_rows = assumed_rows = unknown_rows = 0
+        complete = True
         first = None
-        for result in results:
-            if result.position != start_position + rows:
+        for position, result in enumerate(results, start=start_position):
+            if result.position != position:
                 raise ModelInputError(
-                    f"Audit results require every position from {start_position} in order; "
-                    f"expected {start_position + rows}"
+                    f"Audit results require every position from {start_position} in order; expected {position}"
                 )
-            rows += 1
-            checked += result.complete
-            assumed += result.assumed
-            invalid = result.first_invalid
-            if invalid is not None:
-                violated += 1
+            complete = complete and result.complete
+            if result.valid:
+                valid_rows += 1
+            elif result.invalid:
+                invalid_rows += 1
                 if first is None:
-                    first = invalid
-            elif not result.assumed and result.valid is None:
-                unknown += 1
-        return cls(rows, checked, assumed, unknown, violated, first, start_position)
+                    first = result
+            elif result.assumed:
+                assumed_rows += 1
+            else:
+                unknown_rows += 1
+        return cls(
+            valid_rows=valid_rows,
+            invalid_rows=invalid_rows,
+            assumed_rows=assumed_rows,
+            unknown_rows=unknown_rows,
+            complete=bool(valid_rows + invalid_rows + assumed_rows + unknown_rows) and complete,
+            first_invalid=first,
+            start_position=start_position,
+        )
+
+    @property
+    def row_count(self) -> int:
+        """Total rows in the audited interval."""
+        return self.valid_rows + self.invalid_rows + self.assumed_rows + self.unknown_rows
 
     @property
     def stop_position(self) -> int:
@@ -136,9 +160,9 @@ class ValidationSummary:
         return self.start_position + self.row_count
 
     @property
-    def complete(self) -> bool:
-        """Whether every row in the nonempty audited interval was fully checked."""
-        return self.row_count > 0 and self.checked_rows == self.row_count
+    def invalid(self) -> bool:
+        """Whether the audited interval contains a proven invalid row."""
+        return bool(self.invalid_rows)
 
     @property
     def valid(self) -> bool | None:
@@ -146,9 +170,9 @@ class ValidationSummary:
 
         Assumed or undecidable rows otherwise yield None, as does empty input.
         """
-        if self.first_invalid is not None:
+        if self.invalid:
             return False
-        return True if self.complete else None
+        return True if self.row_count and self.valid_rows == self.row_count else None
 
 
 @dataclass(frozen=True)
@@ -201,8 +225,6 @@ class WindowValidator:
         namespace = model._modello_namespace
         if rows not in namespace.collections:
             raise ModelInputError(f"{rows!r} must name a declared model_vector on {model.__name__}")
-        self.model = model
-        self.rows = rows
         self._row_model = namespace.collections[rows].model
         self._fields = tuple(self._row_model._modello_definition.fields.items())
         self._positions = {path: i for i, (path, _) in enumerate(self._fields)}
@@ -262,13 +284,13 @@ class WindowValidator:
         """Earliest position where all laws apply; values may still be undecidable."""
         return self._complete_start
 
-    def check_window(
+    def __call__(
         self,
         window: Sequence[Row],
         *,
         position: int,
         index: Hashable = _UNLABELLED,
-    ) -> WindowResult:
+    ) -> ValidationResult:
         """Check only the last row, retaining explicit assumptions and unknowns.
 
         No history is stored between calls. Wrong window/row sizes, missing
@@ -296,21 +318,19 @@ class WindowValidator:
             for (path, symbol), value in zip(self._fields, current, strict=True)
         )
         checks += tuple(self._check(rule, position, label, observed) for rule in self._rules)
-        return WindowResult(position, label, checks)
-
-    __call__ = check_window
+        return ValidationResult(position, label, checks)
 
     def iter_results(
         self,
         rows: Iterable[Row],
         *,
         labels: Iterable[Hashable] | None = None,
-    ) -> Iterator[WindowResult]:
+    ) -> Iterator[ValidationResult]:
         """Scan one ordered stream with at most window_size retained rows.
 
         Each call starts at position zero. To span batches, chain their row
         iterators into one call; alternatively retain your own overlap and call
-        check_window with absolute positions. Labels are reporting metadata;
+        this validator with absolute positions. Labels are reporting metadata;
         their count must match the rows (ValueError on mismatch).
         """
         window: deque[tuple[object, ...]] = deque(maxlen=self.window_size)
@@ -320,7 +340,7 @@ class WindowValidator:
             yield self(tuple(window), position=position, index=label)
 
     def audit(self, rows: Iterable[Row], *, labels: Iterable[Hashable] | None = None) -> ValidationSummary:
-        """Scan the entire finite input and return coverage plus the first proven violation."""
+        """Summarise the finite input, including its first invalid row and coverage."""
         return ValidationSummary.from_results(self.iter_results(rows, labels=labels))
 
     def _project(self, row: Row) -> tuple[object, ...]:
@@ -388,19 +408,19 @@ class WindowValidator:
             values[rule.index] = Integer(position)
         expected = _evaluate(_substitute(rule.expression, values))
         residual = None
-        verdict: CheckVerdict = "unknown"
+        valid: bool | None = None
         reason = "unresolved or missing dependency"
         if _definitely_undefined(expected) or expected.is_finite is False:
-            verdict, reason = "violated", "undefined expression"
+            valid, reason = False, "undefined expression"
         elif observation.problem:
             reason = observation.problem
         elif expected.is_number is True and expected.is_finite is True and observation.value.is_number is True:
             residual = simplify(observation.value - expected)
             within = Abs(residual) <= self._atol + self._rtol * Abs(expected)
             if within is S.true:
-                verdict, reason = "satisfied", ""
+                valid, reason = True, ""
             elif within is S.false:
-                verdict, reason = "violated", "observed differs from expected"
+                valid, reason = False, "observed differs from expected"
         unavailable = {
             window[-1 - ref.lag][ref.field].value for ref in rule.references if window[-1 - ref.lag][ref.field].problem
         }
@@ -412,7 +432,7 @@ class WindowValidator:
             observation.raw,
             None if expected.free_symbols & unavailable else expected,
             residual,
-            verdict,
+            valid,
             reason,
             rule.start,
             rule.kind,
@@ -436,7 +456,7 @@ def _assumed(
         observed,
         None,
         None,
-        "assumed",
+        None,
         f"Initial history; first test position is {start}",
         start,
         kind,
@@ -468,18 +488,18 @@ def _domain_check(
 ) -> CheckResult:
     if position < start:
         return _assumed(position, label, path, "domain", value.raw, start, "domain")
-    verdict: CheckVerdict = "unknown"
+    valid: bool | None = None
     reason: str = value.problem or "unresolved numeric value"
     if value.problem == "not a scalar number":
-        verdict = "violated"
+        valid = False
     elif not value.problem and value.value.is_number is True:
         result = check_assumptions(value.value, against=symbol)
         if value.value.is_finite is False or result is False:
-            verdict, reason = "violated", "value is outside the field domain"
+            valid, reason = False, "value is outside the field domain"
         elif value.value.is_finite is True and result is True:
-            verdict, reason = "satisfied", ""
+            valid, reason = True, ""
     return CheckResult(
-        position, label, _path_label(path), "domain", value.raw, _domain(symbol), None, verdict, reason, start, "domain"
+        position, label, _path_label(path), "domain", value.raw, _domain(symbol), None, valid, reason, start, "domain"
     )
 
 

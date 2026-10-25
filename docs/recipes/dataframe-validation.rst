@@ -94,7 +94,7 @@ or collect the iterator to inspect every break:
 .. doctest:: pandas
 
    >>> def errors(results):
-   ...     return (check for result in results for check in result.checks if check.verdict == "violated")
+   ...     return (check for result in results for check in result.checks if check.invalid)
    >>> first = next(errors(pandas_windows(projected, validator)), None)
    >>> if first is not None:
    ...     print((first.position, first.index, first.field, first.expected, first.residual))
@@ -111,8 +111,8 @@ or audit the full sequence before deciding whether to accept the data:
 
    >>> from modello.contrib.validation import ValidationSummary
    >>> audit = ValidationSummary.from_results(pandas_windows(projected, validator))
-   >>> audit.row_count, audit.assumed_rows, audit.checked_rows, audit.violated_rows
-   (4, 1, 3, 1)
+   >>> audit.row_count, audit.valid_rows, audit.invalid_rows, audit.assumed_rows, audit.unknown_rows
+   (4, 2, 1, 1, 0)
 
 Select nested fields from MultiIndex columns
 --------------------------------------------
@@ -162,7 +162,7 @@ row. Attach the validity values as a nullable boolean column:
    >>> annotated["valid"].to_list()
    [None, True, False, True]
    >>> breaks = (
-   ...     check for result in polars_results for check in result.checks if check.verdict == "violated")
+   ...     check for result in polars_results for check in result.checks if check.invalid)
    >>> [(check.index, check.residual) for check in breaks]
    [('sale', -1)]
    >>> nullable = polars_frame.with_columns(

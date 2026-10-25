@@ -30,4 +30,4 @@ def test_correcting_the_break_and_subsequent_balances_validates_the_ledger():
     assert list(find_breaks(rows)) == []
     audit = WindowValidator(Ledger, "rows").audit(rows)
     assert audit.first_invalid is None
-    assert (audit.assumed_rows, audit.checked_rows, audit.unknown_rows) == (1, 3, 0)
+    assert (audit.assumed_rows, audit.valid_rows, audit.unknown_rows) == (1, 3, 0)

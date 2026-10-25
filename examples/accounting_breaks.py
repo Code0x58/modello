@@ -57,12 +57,7 @@ def find_breaks(
 ) -> Iterator[CheckResult]:
     """Yield proven ledger violations in row and check order."""
     validator = WindowValidator(Ledger, "rows")
-    return (
-        check
-        for result in validator.iter_results(rows, labels=labels)
-        for check in result.checks
-        if check.verdict == "violated"
-    )
+    return (check for result in validator.iter_results(rows, labels=labels) for check in result.checks if check.invalid)
 
 
 if __name__ == "__main__":
