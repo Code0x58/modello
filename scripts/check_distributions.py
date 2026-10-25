@@ -180,9 +180,8 @@ from examples.geometry import RightAngleTriangle
 from examples.data import NamedMap
 from examples.gui_quickstart import ReturnModel
 from examples.gallery.models import AccountSequence, LinearTrend
-from examples.accounting_breaks import EVENTS, accounting_rows, find_breaks
-from examples.validate_stream import scan_batches
-from modello.contrib.validation import ValidationSummary
+from examples.accounting_breaks import EVENTS, Ledger, accounting_rows, find_breaks
+from modello.contrib.validation import WindowValidator
 import modello
 from examples.portfolio.models import Execution, HoldingState
 from modello.gui import Explorer
@@ -206,9 +205,9 @@ assert gallery.joinpath("static/gallery.css").is_file()
 data = resources.files("examples.portfolio").joinpath("data")
 for name in ("market.csv", "transactions.csv", "benchmark.csv"):
     assert data.joinpath(name).is_file(), name
-stream_audit = ValidationSummary.from_results(scan_batches())
-assert stream_audit.first_invalid.position == 2
-assert stream_audit.assumed_rows == 1 and stream_audit.checked_rows == 3
+ledger_audit = WindowValidator(Ledger, "rows").audit(accounting_rows(), labels=EVENTS)
+assert ledger_audit.first_invalid.position == 2
+assert ledger_audit.assumed_rows == 1 and ledger_audit.checked_rows == 3
 breaks = list(find_breaks(accounting_rows(), labels=EVENTS))
 assert len(breaks) == 1
 assert (breaks[0].index, breaks[0].field, breaks[0].residual) == ("sale", "cash", -8)
@@ -257,7 +256,6 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
     subprocess.run([str(python), "-I", "-c", EXAMPLES_SMOKE_TEST], cwd=directory, check=True)
     for module in (
         "examples.accounting_breaks",
-        "examples.validate_stream",
         "examples.portfolio",
         "examples.portfolio.optimal_execution",
         "examples.solution_families",

@@ -8,43 +8,43 @@ posting agrees with the preceding balance and the recorded cash movement.
 observations intact.
 
 The nested ledger in ``examples.accounting_breaks`` follows a purchase, sale,
-and repurchase. Amounts are integer cents. Its cash and share balances obey
+and repurchase. Cash amounts and residuals use integer cents; the table displays
+USD to two decimal places. Cash and share balances obey
 
 .. math::
 
    \widehat C_n = C_{n-1} + \Delta C_n, \qquad
    \widehat Q_n = Q_{n-1} + \Delta Q_n.
 
-For cash, the residual is :math:`e_n=C_n-\widehat C_n`. The sale below records
-90,990 cents against an expected :math:`79{,}999+10{,}999=90{,}998`: an eight-cent
-break.
+For cash, the residual is :math:`e_n=C_n-\widehat C_n`. In USD, the sale records
+0.75 against an expected :math:`0.69+0.14=0.83`: an eight-cent break.
 
 .. list-table:: Cash columns from the ledger
    :header-rows: 1
 
    * - Event
-     - Cash
-     - Cash movement
+     - Cash (USD)
+     - Cash movement (USD)
      - Valid
      - Why
    * - opening
-     - 100,000
-     - 0
-     - Unknown
+     - 0.90
+     - 0.00
+     - Assumed
      - Opening balance is assumed.
    * - purchase
-     - 79,999
-     - -20,001
+     - 0.69
+     - -0.21
      - Yes
      -
    * - sale
-     - 90,990
-     - 10,999
+     - 0.75
+     - 0.14
      - No
-     - Expected 90,998; eight-cent shortfall.
+     - Expected 0.83; shortfall 0.08.
    * - repurchase
-     - 80,489
-     - -10,501
+     - 0.64
+     - -0.11
      - Yes
      - Uses the recorded sale balance.
 
@@ -70,7 +70,7 @@ Reuse the ledger's row schema and recurrence laws:
    ...         problem = result.first_invalid
    ...         print(problem.index, problem.field, problem.expected, problem.residual)
    ...         break
-   sale cash 90998 -8
+   sale cash 83 -8
 
 The callable checks the final row of an oldest-first window; ``check_window``
 is the equivalent named method. Each transition uses recorded predecessors,
@@ -94,7 +94,7 @@ Scan an ordered iterable to obtain one result per observation:
    >>> [result.valid for result in results]
    [None, True, False, True]
 
-``valid`` is ``False`` for a proved violation, ``True`` when all current-row
+``valid`` is ``False`` for a proven violation, ``True`` when all current-row
 checks pass, and ``None`` for assumed history or insufficient evidence.
 ``complete`` means every current-row check ran and was decided, including
 violations. It describes that row, not the validation of its predecessors.
@@ -166,8 +166,9 @@ has a passing transition but still retains its assumed prefix:
    (None, None, False)
 
 ``checked_rows`` counts fully decided rows, ``assumed_rows`` counts wholly
-assumed history, and ``violated_rows`` counts rows with a proved break.
-``unknown_rows`` counts remaining rows whose validity is undecidable.
+assumed history, and ``violated_rows`` counts rows with a proven break.
+``unknown_rows`` counts remaining rows whose validity is undecidable. A violated
+row may also be fully checked or contain undecided checks.
 For strict acceptance require ``audit.valid is True``. A policy that trusts
 initial history can instead require no violated or unknown rows and at least
 one fully checked transition. Empty and history-only inputs provide no such

@@ -1,7 +1,7 @@
-"""Find a cash roll-forward break in ordinary nested account observations.
+"""Find an eight-cent cash shortfall in a ledger of trades.
 
-Run ``uv run python -m examples.accounting_breaks``. Amounts are integer minor
-currency units; quantities count shares. No frame library is needed.
+Run ``uv run python -m examples.accounting_breaks``. Amounts use integer USD
+cents, prices are cents per share, and quantities count shares.
 """
 
 from __future__ import annotations
@@ -41,13 +41,13 @@ EVENTS = ("opening", "purchase", "sale", "repurchase")
 
 
 def accounting_rows() -> tuple[dict[str, int], ...]:
-    """Include an eight-cent cash break at the sale, then post locally correctly."""
+    """Return ledger rows with a sale cash shortfall; later balances use recorded cash."""
     fields = ("holding.quantity", "holding.price", "holding.value", "cash", "cash_change", "quantity_change", "nav")
     values = (
-        (0, 10_000, 0, 100_000, 0, 0, 100_000),
-        (2, 10_000, 20_000, 79_999, -20_001, 2, 99_999),
-        (1, 11_000, 11_000, 90_990, 10_999, -1, 101_990),
-        (2, 10_500, 21_000, 80_489, -10_501, 1, 101_489),
+        (0, 10, 0, 90, 0, 0, 90),
+        (2, 10, 20, 69, -21, 2, 89),
+        (1, 15, 15, 75, 14, -1, 90),
+        (2, 10, 20, 64, -11, 1, 84),
     )
     return tuple(dict(zip(fields, row, strict=True)) for row in values)
 
@@ -55,7 +55,7 @@ def accounting_rows() -> tuple[dict[str, int], ...]:
 def find_breaks(
     rows: Iterable[Mapping[str, object]], *, labels: Iterable[Hashable] | None = None
 ) -> Iterator[CheckResult]:
-    """An example of caller-owned error selection over generic validator results."""
+    """Yield proven ledger violations in row and check order."""
     validator = WindowValidator(Ledger, "rows")
     return (
         check

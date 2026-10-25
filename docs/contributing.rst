@@ -4,12 +4,9 @@ Contributing and releases
 Use uv 0.13.1 or newer. The library and CI support Python 3.10 through 3.15.
 Documentation tooling requires Python 3.12 or newer; notebook tooling has its
 own optional Python 3.11+ group. All environments share the root ``uv.lock``.
-The ``docs`` group includes pandas and Polars for executable integration recipes;
-neither library is a runtime or ordinary test dependency. Documentation CI runs
-``uv run --locked --group docs sphinx-build --fail-on-warning --keep-going
---builder=doctest docs docs/_build/doctest`` before the HTML build. The ordinary
-pytest suite excludes the frame recipe page because this separate docs job
-executes it with the documentation dependencies installed.
+The ``docs`` group includes pandas and Polars for executable DataFrame recipes.
+Documentation CI tests those recipes with Sphinx before building HTML; the
+ordinary pytest suite excludes that page.
 
 Reading the core
 ----------------
@@ -82,15 +79,13 @@ these layers.
 ``series.py`` declares relative recurrences. ``contrib/stochastic.py`` provides
 the opt-in Itô extension; the core resolver uses scoped declaration hooks without
 importing domain extensions.
-``contrib/validation.py`` compiles model-vector laws into a pandas-independent
-window function. Each call checks only its final row at an explicit absolute
-position, returning both evidence and coverage. Its stream iterator retains
-``order+1`` rows. Audits require every position from zero by default, including
-initial assumptions. Other intervals require an explicit start, so truncation
-cannot masquerade as complete validation.
-Frame-specific projection and windowing live in tested documentation recipes.
-The validator constructs no model instances and invokes no joint solve; core
-imports load neither this extension nor any optional frame library.
+``contrib/validation.py`` compiles model-vector laws into a stateless window
+function. Each call checks its final row at an absolute position, returning
+evidence and coverage. Its stream iterator retains ``window_size`` rows.
+Audits require contiguous results from zero by default; other intervals need an
+explicit start. DataFrame projection and windowing live in documentation
+recipes. Validation constructs no model instances and performs no joint solve;
+core imports load neither this extension nor frame libraries.
 ``_shapes.py`` solves symbolic finite axes from observation lengths before scalar
 coordinates are compiled. Shape specialization produces a cached subclass; it
 does not mutate the reusable declaration. The GUI creates a fresh finite context
@@ -196,10 +191,16 @@ including doctests:
 
    $ uv sync --locked --dev --group docs --python 3.12
    $ uv run --locked --dev pytest
+   $ uv run --locked --group docs sphinx-build --fail-on-warning --keep-going --builder=doctest docs docs/_build/doctest
+   $ uv run --locked --group docs sphinx-build --fail-on-warning --keep-going --builder=html docs docs/_build/html
 
-Use ``.. code-block:: pycon`` for executable documentation examples, including
-their imports, setup, and expected results. The configured
-``--doctest-glob=*.rst`` runs these examples directly from the displayed source.
+Use ``.. doctest::`` for executable examples, including imports, setup, and
+expected results. Name groups when examples need independent namespaces, as in
+the pandas and Polars recipes. Sphinx tests these blocks with the documentation
+dependencies installed. For examples that require Python 3.12+, use
+``.. testcode::`` and ``.. testoutput::`` blocks; they run in this docs job.
+The configured pytest ``--doctest-glob=*.rst`` also executes interactive prompts
+outside the frame recipe page.
 For a focused check, run ``uv run --locked --dev pytest --no-cov docs/modelling.rst``.
 
 Unset ``PYTEST_DISABLE_PLUGIN_AUTOLOAD`` before running pytest if your shell

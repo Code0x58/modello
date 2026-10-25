@@ -11,7 +11,7 @@ def test_accounting_break_and_input_preservation():
     original = deepcopy(rows)
     problems = list(find_breaks(rows, labels=EVENTS))
     assert [(p.position, p.index, p.field, p.rule, p.observed, p.expected, p.residual) for p in problems] == [
-        (2, "sale", "cash", "posting", 90_990, 90_998, -8)
+        (2, "sale", "cash", "posting", 75, 83, -8)
     ]
     assert rows == original
     validator = WindowValidator(Ledger, "rows")

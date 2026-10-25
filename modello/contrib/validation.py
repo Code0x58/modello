@@ -33,7 +33,7 @@ class CheckResult:
     """One declared check, including checks skipped as initial history.
 
     ``start`` is the first absolute row position where this check applies.
-    ``assumed`` means it has not run. Unknown dependencies are not violations.
+    ``assumed`` means it has not run; ``unknown`` means its outcome is undecided.
     Equation residuals are observed minus expected; ``index`` is only a label.
     """
 
@@ -52,7 +52,7 @@ class CheckResult:
 
 @dataclass(frozen=True)
 class WindowResult:
-    """All checks of the final row of one explicitly positioned window."""
+    """Checks and coverage for the final row of a window."""
 
     position: int
     index: Hashable
@@ -60,12 +60,12 @@ class WindowResult:
 
     @property
     def first_invalid(self) -> CheckResult | None:
-        """The first proven violation, without claiming coverage for other checks."""
+        """First proven violation; None alone does not establish complete coverage."""
         return next((check for check in self.checks if check.verdict == "violated"), None)
 
     @property
     def complete(self) -> bool:
-        """Whether every declared check ran and reached a decided outcome."""
+        """Whether every current-row check ran and reached a decided outcome."""
         return bool(self.checks) and all(check.verdict in ("satisfied", "violated") for check in self.checks)
 
     @property
@@ -75,7 +75,7 @@ class WindowResult:
 
     @property
     def valid(self) -> bool | None:
-        """False for a proved violation, True for complete success, otherwise None."""
+        """False for a proven violation, True for complete success, otherwise None."""
         if self.first_invalid is not None:
             return False
         return True if self.complete else None
@@ -83,12 +83,13 @@ class WindowResult:
 
 @dataclass(frozen=True)
 class ValidationSummary:
-    """Coverage and evidence from a complete scan, using constant working memory.
+    """Coverage and first proven violation for a finite interval.
 
     ``checked_rows`` counts rows where every check ran and was decided, including
     fully checked invalid rows. ``assumed_rows`` counts wholly assumed history;
-    ``unknown_rows`` counts other rows without a decided validity. A violated row
-    can still have incomplete coverage, so these counts are not interchangeable.
+    ``unknown_rows`` counts other rows whose validity is undecidable.
+    ``violated_rows`` counts rows with a proven violation, including those with
+    incomplete coverage; it can overlap with ``checked_rows``.
     """
 
     row_count: int
@@ -103,10 +104,9 @@ class ValidationSummary:
     def from_results(cls, results: Iterable[WindowResult], *, start_position: int = 0) -> ValidationSummary:
         """Summarise a contiguous interval, starting from zero by default.
 
-        Gaps, duplicate positions, and reordered results raise ModelInputError;
-        omitting a prefix must not turn partial coverage into a complete audit.
-        Periodic stream consumers may explicitly name another start position;
-        the returned interval then describes only that selected horizon.
+        Gaps, duplicates, or reordered results raise ModelInputError. Supply
+        another start_position explicitly to audit a later interval; earlier
+        observations are outside its coverage.
         """
         if isinstance(start_position, bool) or not isinstance(start_position, int) or start_position < 0:
             raise ModelInputError("Audit start_position must be an absolute nonnegative integer")
@@ -142,7 +142,10 @@ class ValidationSummary:
 
     @property
     def valid(self) -> bool | None:
-        """A strict interval verdict; assumed or unresolved rows prevent True."""
+        """False for a proven violation; True only for a nonempty interval of passing rows.
+
+        Assumed or undecidable rows otherwise yield None, as does empty input.
+        """
         if self.first_invalid is not None:
             return False
         return True if self.complete else None
@@ -180,7 +183,8 @@ class WindowValidator:
     order. A window is oldest first and ends at the row being checked. Its size
     must be ``min(position + 1, window_size)``; only true stream prefixes may be
     short. ``position`` is required, absolute, zero based, and independent of
-    labels, chunks, or the current window's length. Null adapters use ``None``.
+    labels, batches, or the current window's length. Convert framework-specific
+    null sentinels to ``None``.
     """
 
     def __init__(
@@ -230,12 +234,12 @@ class WindowValidator:
 
     @property
     def fields(self) -> tuple[str, ...]:
-        """Required flat mapping keys, also the exact order for projected row tuples."""
+        """Flat mapping keys, in the required order for row tuples."""
         return tuple(_path_label(path) for path, _ in self._fields)
 
     @property
     def field_paths(self) -> tuple[FieldPath, ...]:
-        """The same fields as nested attribute paths, for adapter column binding."""
+        """Nested paths for selecting source columns, in fields order."""
         return tuple(path for path, _ in self._fields)
 
     @property
@@ -250,12 +254,12 @@ class WindowValidator:
 
     @property
     def first_test_position(self) -> int:
-        """Earliest declared start; normally p for one order-p law."""
+        """Earliest declared law start; often equal to order."""
         return self._start
 
     @property
     def fully_testable_position(self) -> int:
-        """Earliest position where every law has started, before data checks."""
+        """Earliest position where all laws apply; values may still be undecidable."""
         return self._complete_start
 
     def check_window(
@@ -267,11 +271,11 @@ class WindowValidator:
     ) -> WindowResult:
         """Check only the last row, retaining explicit assumptions and unknowns.
 
-        No history is stored between calls. Missing or excess window rows, wrong
-        row widths, missing mapping keys, and invalid positions raise
-        ModelInputError. Malformed scalar cells instead produce domain violations.
-        Coverage describes the current row only; preceding window entries are
-        supplied observations and are not independently audited by this call.
+        No history is stored between calls. Wrong window/row sizes, missing
+        mapping keys, invalid positions, and unhashable labels raise
+        ModelInputError. Malformed scalars produce domain violations when their
+        checks apply. Preceding rows supply observations for the current checks;
+        their own validation requires separate calls.
         """
         if isinstance(position, bool) or not isinstance(position, int) or position < 0:
             raise ModelInputError("Window position must be an absolute nonnegative integer")
@@ -306,8 +310,8 @@ class WindowValidator:
 
         Each call starts at position zero. To span batches, chain their row
         iterators into one call; alternatively retain your own overlap and call
-        check_window with absolute positions. Labels must have exactly one entry
-        per row and never determine the mathematical coordinate.
+        check_window with absolute positions. Labels are reporting metadata;
+        their count must match the rows (ValueError on mismatch).
         """
         window: deque[tuple[object, ...]] = deque(maxlen=self.window_size)
         labelled = zip(rows, count() if labels is None else labels, strict=labels is not None)
@@ -316,7 +320,7 @@ class WindowValidator:
             yield self(tuple(window), position=position, index=label)
 
     def audit(self, rows: Iterable[Row], *, labels: Iterable[Hashable] | None = None) -> ValidationSummary:
-        """Scan the entire input and return coverage plus the first proved violation."""
+        """Scan the entire finite input and return coverage plus the first proven violation."""
         return ValidationSummary.from_results(self.iter_results(rows, labels=labels))
 
     def _project(self, row: Row) -> tuple[object, ...]:

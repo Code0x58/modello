@@ -6,10 +6,11 @@ from fractions import Fraction
 import pytest
 from sympy import Eq, Mul, Piecewise, Pow, Rational, S, Sum, Symbol
 
-from examples.validate_stream import CashLedger, CashRow
 from modello import Index, InstanceDummy, Modello, model_recurrence, model_vector
 from modello.contrib.validation import WindowValidator
 from modello.errors import ModelInputError
+
+from ._models import CashLedger, CashRow
 
 
 def test_second_order_evolution_and_moving_sums_use_observed_history():

@@ -17,7 +17,7 @@ The model declares :math:`dS_t=\mu S_t\,dt+\sigma S_t\,dW_t`. Its
 Reuse that example to calculate the log-price coefficients, a realised closing
 price, and the conditional mean:
 
-.. code-block:: pycon
+.. doctest::
 
    >>> from sympy import Rational
    >>> from examples.gallery.extensions import GeometricDiffusion
@@ -45,8 +45,8 @@ is ``f_t + a*f_x + b**2*f_xx/2`` and diffusion is ``b*f_x``.
 The example declares a positive state, making the logarithm's domain explicit.
 State and time remain independent during differentiation; named formulas expand
 first. Smoothness and adaptedness are hypotheses of the model. A one-state
-transform rejects another
-unmodelled process because its quadratic covariation would need a declaration.
+transform rejects another unmodelled process because its quadratic covariation
+would need a declaration.
 
 ``generator(f)`` returns the spatial drift without ``f_t``.
 ``quadratic_variation_rate(f)`` returns the coefficient of ``dt`` in the
@@ -67,7 +67,7 @@ nonzero-time closed form is supported.
 To recover the same coefficients from the log-process drift and diffusion,
 supply those observations to the same example:
 
-.. code-block:: pycon
+.. doctest::
 
    >>> fitted = GeometricDiffusion(
    ...     "coefficients", opening=100, duration=1, wiener_increment=0,

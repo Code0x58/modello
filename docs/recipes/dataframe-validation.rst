@@ -10,18 +10,18 @@ pandas`` or ``pip install modello polars``.
 
 The accounting example in :doc:`../contrib/validation` checks
 :math:`C_n=C_{n-1}+\Delta C_n`, where :math:`C_n` is the recorded cash balance
-and :math:`\Delta C_n` is the cash movement at row :math:`n`. Amounts are integer
-cents. A result of ``True`` means the row
-passes, ``False`` identifies a break, and ``None`` means the available
-observations do not establish validity.
+and :math:`\Delta C_n` is the cash movement at row :math:`n`. Cash values and
+residuals use integer cents. ``True`` means the row passes, ``False``
+identifies a break, and ``None`` means validity is assumed or undecidable.
 
 Validate pandas rows
 --------------------
 
 Select the model's fields in ``validator.fields`` order, then iterate over
 `DataFrame windows <https://pandas.pydata.org/docs/user_guide/window.html>`_.
-Each window contains all the columns needed by the law. Reading its rows with
-``itertuples`` preserves exact integers and decimal cells.
+Each window contains all the columns needed by the law. Object columns retain
+exact integer and ``Decimal`` inputs; ``itertuples`` passes their stored values
+to the validator.
 
 .. doctest:: pandas
 
@@ -40,16 +40,17 @@ Each window contains all the columns needed by the law. Reading its rows with
    ...         )
    ...         yield validator(rows, position=position, index=window.index[-1])
    >>> results = list(pandas_windows(projected, validator))
-   >>> mask = pd.Series([result.valid for result in results], index=frame.index, dtype="boolean", name="valid")
+   >>> mask = pd.Series(
+   ...     [result.valid for result in results], index=frame.index, dtype="boolean", name="valid")
    >>> mask.tolist()
    [<NA>, True, False, True]
    >>> mask.index.equals(frame.index)
    True
 
 The mask has one entry per input row and preserves the frame's index. The
-opening balance is assumed, so its entry is ``NA``. The sale records cash of
-90,990 cents against an expected balance of 90,998, so that row is ``False``.
-The repurchase passes using the preceding recorded balance.
+opening balance is assumed, so its entry is ``pd.NA``. The sale is eight cents
+short (USD 0.75 against USD 0.83), so that row is ``False``. The repurchase
+passes using the preceding recorded balance.
 
 Include the short initial windows: a law of order :math:`p` first tests position
 :math:`p`, using :math:`p+1` observations. Pass the absolute row position to the
@@ -61,8 +62,8 @@ Handle missing values and index labels
 --------------------------------------
 
 The validator accepts ``None`` and numeric NaN as missing observations. The
-helper also converts pandas' ``NA`` and ``NaT`` sentinels to ``None``. A missing
-balance can leave both its own row and the next transition undecidable:
+helper also converts pandas' ``pd.NA`` and ``pd.NaT`` sentinels to ``None``.
+A missing balance can leave both its own row and the next transition undecidable:
 
 .. doctest:: pandas
 
@@ -77,7 +78,8 @@ frame's row order:
 .. doctest:: pandas
 
    >>> events_per_label, label_spacing = 2, 10
-   >>> labels = pd.Index((position // events_per_label * label_spacing for position in range(len(projected))), name="event")
+   >>> labels = pd.Index(
+   ...     (position // events_per_label * label_spacing for position in range(len(projected))), name="event")
    >>> gappy = projected.set_axis(labels)
    >>> labelled = list(pandas_windows(gappy, validator))
    >>> [result.index for result in labelled] == gappy.index.tolist()
@@ -96,12 +98,12 @@ or collect the iterator to inspect every break:
    >>> first = next(errors(pandas_windows(projected, validator)), None)
    >>> if first is not None:
    ...     print((first.position, first.index, first.field, first.expected, first.residual))
-   (2, 'sale', 'cash', 90998, -8)
+   (2, 'sale', 'cash', 83, -8)
    >>> all_errors = list(errors(pandas_windows(projected, validator)))
    >>> [(check.position, check.residual) for check in all_errors]
    [(2, -8)]
 
-An empty error iterator means no violation was proved. Initial assumptions and
+An empty error iterator means no violation was proven. Initial assumptions and
 missing data can still prevent complete validation. Inspect per-row coverage,
 or audit the full sequence before deciding whether to accept the data:
 
@@ -115,9 +117,9 @@ or audit the full sequence before deciding whether to accept the data:
 Select nested fields from MultiIndex columns
 --------------------------------------------
 
-For a model with nested components, use ``validator.field_paths`` to select
-the corresponding MultiIndex columns. Pad shorter paths to match the frame's
-column depth, then pass the selected rows to the same window helper:
+For a model with nested components, build MultiIndex labels from
+``validator.field_paths``, padding shorter paths with empty strings. Pass the
+selected rows to the same window helper:
 
 .. doctest:: pandas
 
@@ -132,9 +134,9 @@ column depth, then pass the selected rows to the same window helper:
    >>> [(check.index, check.field, check.residual) for check in errors(account_results)]
    [('sale', 'cash', -8)]
 
-Keep the selected columns in ``validator.fields`` order. If the source uses
-different column names, map each field path to its source column when building
-``keys``.
+For an existing MultiIndex frame, use its ``columns.nlevels`` as
+``column_depth``. Map field paths to source labels when names differ, keeping
+the selected columns in ``validator.fields`` order.
 
 Validate Polars rows
 --------------------
@@ -155,15 +157,18 @@ row. Attach the validity values as a nullable boolean column:
    >>> polars_results = list(validator.iter_results(rows, labels=polars_frame["event"]))
    >>> [result.valid for result in polars_results]
    [None, True, False, True]
-   >>> annotated = polars_frame.with_columns(pl.Series("valid", [result.valid for result in polars_results], dtype=pl.Boolean))
+   >>> annotated = polars_frame.with_columns(
+   ...     pl.Series("valid", [result.valid for result in polars_results], dtype=pl.Boolean))
    >>> annotated["valid"].to_list()
    [None, True, False, True]
-   >>> breaks = (check for result in polars_results for check in result.checks if check.verdict == "violated")
+   >>> breaks = (
+   ...     check for result in polars_results for check in result.checks if check.verdict == "violated")
    >>> [(check.index, check.residual) for check in breaks]
    [('sale', -8)]
    >>> nullable = polars_frame.with_columns(
    ...     pl.when(pl.col("event") == "purchase").then(None).otherwise(pl.col("cash")).alias("cash"))
-   >>> [result.valid for result in validator.iter_results(nullable.select(list(validator.fields)).iter_rows())]
+   >>> nullable_rows = nullable.select(list(validator.fields)).iter_rows()
+   >>> [result.valid for result in validator.iter_results(nullable_rows)]
    [None, None, None, True]
 
 Polars nulls arrive as ``None``, so they need no additional conversion. Checks

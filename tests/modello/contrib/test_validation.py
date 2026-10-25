@@ -10,10 +10,11 @@ from itertools import chain
 import pytest
 from sympy import S
 
-from examples.validate_stream import CashLedger, CashRow
 from modello import Index, InstanceDummy, Modello, component, model_recurrence, model_vector
 from modello.contrib.validation import ValidationSummary, WindowValidator
 from modello.errors import ModelInputError
+
+from ._models import CashLedger, CashRow
 
 
 @pytest.mark.parametrize("order", [0, 1, 2, 3])
@@ -372,11 +373,11 @@ def test_nested_flat_mappings_and_aliases_need_no_frame_adapter():
 def test_import_and_execution_need_no_optional_frame_libraries():
     program = """
 import sys
-from examples.validate_stream import CashLedger
+from examples.accounting_breaks import Ledger, accounting_rows
 from modello.contrib.validation import WindowValidator
 assert not {"pandas", "polars", "numpy"} & sys.modules.keys()
-result = WindowValidator(CashLedger, "rows").check_window(((100, 0), (90, 10)), position=1)
-assert result.valid is True
+results = WindowValidator(Ledger, "rows").iter_results(accounting_rows())
+assert [result.valid for result in results] == [None, True, False, True]
 assert not {"pandas", "polars", "numpy"} & sys.modules.keys()
 """
     process = subprocess.run([sys.executable, "-I", "-c", program], capture_output=True, text=True)
