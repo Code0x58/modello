@@ -217,16 +217,24 @@ def test_stream_history_keeps_numeric_values_as_observed_when_read():
     assert [result.valid for result in results] == [None, True, True]
     assert [result.checks[-1].expected for result in results] == [None, 30, 25]
     assert cash.conversions == len(results)
+    cash.value = 99
+    assert all(
+        check.observed == balance
+        for result, balance in zip(results, (40, 30, 25), strict=True)
+        for check in result.checks
+        if check.field == "cash"
+    )
 
 
 @pytest.mark.parametrize("streaming", [False, True])
-def test_window_and_stream_reject_unhashable_labels(streaming):
+@pytest.mark.parametrize("label", [[], ([],)])
+def test_window_and_stream_reject_unhashable_labels(streaming, label):
     validator = WindowValidator(CashLedger, "rows")
     with pytest.raises(ModelInputError, match="label must be hashable"):
         if streaming:
-            list(validator.iter_results(((40, 0),), labels=[[]]))
+            list(validator.iter_results(((40, 0),), labels=[label]))
         else:
-            validator(((40, 0),), position=0, index=[])
+            validator(((40, 0),), position=0, index=label)
 
 
 def test_batch_chaining_and_external_window_management_preserve_history():

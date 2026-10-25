@@ -4,10 +4,11 @@ from decimal import Decimal
 from fractions import Fraction
 
 import pytest
-from sympy import Eq, Lambda, Mul, Piecewise, Pow, Rational, S, Sum, Symbol
+from sympy import Derivative, Eq, Integral, Lambda, Mul, Piecewise, Pow, Rational, S, Sum, Symbol
 
-from modello import Index, InstanceDummy, Modello, model_recurrence, model_vector
+from modello import Index, InstanceDummy, Modello, inspect_model, model_recurrence, model_vector
 from modello.contrib.validation import WindowValidator
+from modello.diagnostics import Candidate, FieldValue
 from modello.errors import ModelInputError
 
 from ._models import CashLedger, CashRow
@@ -48,6 +49,70 @@ def test_current_row_cycles_need_no_dependency_scheduler():
         second = model_recurrence(rows[n], start=0, b=rows[n].a - n)
 
     assert WindowValidator(History, "rows").audit(((2, 2), (4, 3), (6, 4))).valid is True
+
+
+@pytest.mark.parametrize(
+    "squared,gradient,integral,after,valid",
+    [
+        (4, 4, Rational(8, 3), 5, True),
+        (4, 0, Rational(8, 3), 5, False),
+        (4, 4, 0, 5, False),
+        (5, 4, Rational(8, 3), 6, False),
+    ],
+)
+def test_named_operator_definitions_use_core_semantics_without_fitting_observations(
+    squared, gradient, integral, after, valid
+):
+    class Row(Modello):
+        x = InstanceDummy("x", real=True)
+        squared = x**2
+        gradient = Derivative(squared, x, evaluate=False)
+        integral = Integral(squared, (x, 0, x))
+        after = squared + 1
+
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rows = model_vector(Row, size=N)
+        n = Index("n")
+        identity = model_recurrence(rows[n], start=0, x=rows[n].x)
+
+    values = {"x": 2, "squared": squared, "gradient": gradient, "integral": integral, "after": after}
+    problem = inspect_model(Row, "comparison")
+    candidate = Candidate(tuple(FieldValue(problem.field(name), value) for name, value in values.items()))
+    core = problem.check(candidate).verdict
+    result = WindowValidator(History, "rows")((values,), position=0)
+    assert (core == "satisfied") == result.valid == valid
+    checks = {check.field: check for check in result.checks if check.kind == "definition"}
+    assert checks["gradient"].expected == 4
+    assert checks["integral"].expected == Rational(8, 3)
+    assert checks["after"].expected == squared + 1
+
+
+@pytest.mark.parametrize(
+    "denominator,conditional,valid", [(0, False, False), (2, False, True), (0, True, True), (2, True, True)]
+)
+def test_operator_resolution_preserves_source_poles_and_inactive_branches(denominator, conditional, valid):
+    def formula(p, constant, x):
+        term = Mul(Pow(p, -1, evaluate=False), Derivative(constant, x, evaluate=False), evaluate=False)
+        return Piecewise((0, Eq(p, 0)), (term, True)) if conditional else term
+
+    class Row(Modello):
+        x = InstanceDummy("x", real=True)
+        p = InstanceDummy("p", real=True)
+        constant = S.One
+        term = formula(p, constant, x)
+
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rows = model_vector(Row, size=N)
+        n = Index("n")
+        identity = model_recurrence(rows[n], start=0, x=rows[n].x)
+
+    values = {"x": 2, "p": denominator, "constant": 1, "term": 0}
+    problem = inspect_model(Row, "pole")
+    candidate = Candidate(tuple(FieldValue(problem.field(name), value) for name, value in values.items()))
+    result = WindowValidator(History, "rows")((values,), position=0)
+    assert (problem.check(candidate).verdict == "satisfied") == result.valid == valid
 
 
 def test_laws_share_observations_with_independent_indices_and_starts():

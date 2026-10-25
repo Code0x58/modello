@@ -35,7 +35,7 @@ from modello._operators import (
     _scalar_expression,
 )
 from modello._paths import FieldPath, _path_label
-from modello._problem import Candidate, FieldValue, ModelConstraint, _domain
+from modello._problem import Candidate, FieldValue, ModelConstraint, _algebra, _domain
 from modello.diagnostics import _tolerances
 from modello.errors import ModelInputError
 from modello.model_vectors import _collection_columns
@@ -241,11 +241,13 @@ class WindowValidator:
         self._field_names = tuple(_path_label(path) for path, _ in self._fields)
         positions = {path: i for i, (path, _) in enumerate(self._fields)}
         self._atol, self._rtol = _tolerances(atol, rtol)
-        self._problem = inspect_model(namespace.collections[rows].model, "window")
+        problem = inspect_model(namespace.collections[rows].model, "window")
+        self._problem = replace(problem, constraints=())
         known = _parameters(model, rows, parameters or {})
         columns = _collection_columns(namespace.nested_models[rows])
         # Resolve aliases through their first declared field, then check each copy.
         self._sources = {symbol: positions[path] for path, symbol in reversed(self._fields)}
+        self._sources.update({field.symbol: positions[field.path] for field in reversed(self._problem.fields)})
         self._sources.update({column: positions[path] for path, column in reversed(tuple(columns.items()))})
         self._observed = IndexedBase(Dummy("observed"))
         self._index = Dummy("position")
@@ -258,9 +260,12 @@ class WindowValidator:
             _Rule("domain", i, self._start, _domain(symbol), kind="domain")
             for i, (_, symbol) in enumerate(self._fields)
         ]
+        resolve = _algebra(problem.constraints, problem.templates.values()).resolve
         rules.extend(
-            self._compile("definition", positions[item.path], item.right, self._start, kind="definition")
-            for item in row_definition.constraints
+            self._compile(
+                "definition", positions[item.path], resolve.operators(item.right), self._start, kind="definition"
+            )
+            for item in problem.constraints
         )
         for path, symbol in self._fields:
             if positions[path] != self._sources[symbol]:
@@ -360,8 +365,10 @@ class WindowValidator:
 
     def _validate(self, window: Sequence[tuple[_Observation, ...]], position: int, index: Hashable) -> ValidationResult:
         label = position if index is _UNLABELLED else index
-        if not isinstance(label, Hashable):
-            raise ModelInputError("A row label must be hashable")
+        try:
+            hash(label)
+        except TypeError as error:
+            raise ModelInputError("A row label must be hashable") from error
         values = {
             self._observed[lag, field]: value.value
             for lag, row in enumerate(reversed(window))
@@ -436,7 +443,7 @@ class WindowValidator:
             label,
             self.fields[rule.field],
             rule.name,
-            observation.raw,
+            observation.raw if observation.problem else observation.value,
             expected,
             residual,
             valid,

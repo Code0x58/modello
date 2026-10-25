@@ -140,6 +140,10 @@ an unresolved dependency can also leave ``expected`` unknown. Domain checks
 have a numeric set as ``expected`` and no residual; all declared field
 assumptions are checked, including restrictions not expressed by that set.
 
+For accepted scalars, ``observed`` retains the converted SymPy value captured
+when the row was read. Reusing a mutable source cell cannot change earlier
+numeric evidence. Malformed cells retain their supplied value for inspection.
+
 The core :class:`~modello.diagnostics.CandidateCheck` is a different record,
 returned by :meth:`~modello.diagnostics.ModelProblem.check`: it contains an
 assignment (``candidate``), equation ``residuals``, domain ``assumptions``, and
@@ -192,7 +196,10 @@ and fixed causal laws. Put per-event inputs in that schema; other vectors and
 parent aggregate or boundary constraints are outside this scope. Missing
 values and parameters are never inferred or filled.
 
-Integers, ``Decimal``, ``Fraction``, and SymPy numbers retain exact arithmetic.
+Named definitions inside derivatives and integrals use the core model's
+operator semantics. Ordinary equations continue to use recorded field values.
+
+Integers, ``Decimal``, ``Fraction``, and exact SymPy numbers retain exact arithmetic.
 Equation tolerances use ``abs(observed-expected) <= atol + rtol*abs(expected)``;
 domains remain strict. Independent constants supplied through ``parameters``
 must satisfy their field assumptions, and parameter aliases must agree.
