@@ -86,6 +86,22 @@ Constraint kinds are ``ConstraintKind`` string-enum members: ``DEFINITION``,
 ``INPUT``, and ``INFERRED``. They retain their lowercase string values in reports
 and JSON.
 
+Checking a supplied assignment
+-------------------------------
+
+``ModelProblem.check(candidate)`` checks the proposed field values without
+solving for missing values. Its ``CandidateCheck`` records the assignment,
+each equation residual, each domain predicate, and a ``verdict`` of
+``satisfied``, ``violated``, or ``unknown``. Missing values and undecided checks
+prevent a satisfied verdict; a proven violation still takes precedence.
+
+By default this requires exact evidence, so float equations remain unknown.
+Pass ``atol`` or ``rtol`` explicitly for numerical acceptance using
+``abs(observed-expected) <= atol + rtol*abs(expected)``; the omitted tolerance
+is zero. Domains remain strict. Such a result establishes acceptance within
+the supplied tolerances, rather than an exact consistency witness.
+``analyse()`` continues to use exact checks.
+
 Conflicts, probes, and costs
 ----------------------------
 

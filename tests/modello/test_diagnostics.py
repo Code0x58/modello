@@ -1,10 +1,11 @@
 """Problem inspection and diagnosis distinguish proofs, witnesses, and uncertainty."""
 
 from dataclasses import FrozenInstanceError, replace
+from decimal import Decimal
 from itertools import combinations
 
 import pytest
-from sympy import ConditionSet, FiniteSet, Function, ImageSet, S, Symbol, cos, expand, linsolve, pi, sqrt
+from sympy import ConditionSet, FiniteSet, Function, ImageSet, Rational, S, Symbol, cos, expand, linsolve, pi, sqrt
 
 import modello
 import modello.diagnostics as diagnostics
@@ -47,6 +48,45 @@ def test_candidate_audit_rejects_fields_from_another_problem(positive_problem):
     foreign = Candidate((FieldValue(other.field("x"), 1),))
     with pytest.raises(ModelValidationError, match="another problem"):
         p.check(foreign)
+
+
+def test_numeric_candidate_checks_are_explicit_and_do_not_infer_values():
+    problem = inspect_model(Sum, "rounded")
+    candidate = Candidate(
+        tuple(FieldValue(problem.field(name), value) for name, value in (("x", 0.1), ("y", 0.2), ("total", 0.3)))
+    )
+    assert problem.check(candidate).verdict == "unknown"
+    assert problem.check(candidate, atol=0).verdict == "violated"
+    assert problem.check(candidate, atol=1e-12).verdict == "satisfied"
+    assert problem.check(candidate, rtol=1e-12).verdict == "satisfied"
+    partial = Candidate(candidate.values[:-1])
+    assert problem.check(partial, atol=1).verdict == "unknown"
+    assert len(partial.values) == len(candidate.values) - 1
+
+
+def test_numeric_checks_preserve_domains_and_exact_decimal_tolerances():
+    class Positive(Modello):
+        x = InstanceDummy("x", positive=True)
+        squared = x**2
+
+    problem = inspect_model(Positive, "positive")
+    outside = Candidate((FieldValue(problem.field("x"), -1), FieldValue(problem.field("squared"), 1)))
+    assert problem.check(outside, atol=100).verdict == "violated"
+    boundary = Candidate((FieldValue(problem.field("x"), 1), FieldValue(problem.field("squared"), Rational(13, 10))))
+    assert problem.check(boundary, atol=Decimal("0.3")).verdict == "satisfied"
+
+
+@pytest.mark.parametrize("tolerance", [-1, True, S.Infinity, S.NaN, Symbol("t"), "0.1"])
+def test_candidate_check_rejects_invalid_tolerances(tolerance):
+    problem = inspect_model(Scalar, "invalid_tolerance")
+    with pytest.raises(modello.ModelInputError, match="finite nonnegative"):
+        problem.check(Candidate(()), atol=tolerance)
+
+
+def test_candidate_check_rejects_known_nonfinite_values_without_field_restrictions():
+    problem = inspect_model(Scalar, "infinite")
+    candidate = Candidate((FieldValue(problem.field("x"), S.Infinity),))
+    assert problem.check(candidate).verdict == "violated"
 
 
 def test_backend_failures_do_not_prove_inconsistency(monkeypatch, backend_error):

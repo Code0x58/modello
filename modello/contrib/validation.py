@@ -4,19 +4,39 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Hashable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from itertools import count
 from typing import Literal, TypeAlias
 
-from sympy import Abs, Basic, Dummy, Expr, Integer, Rational, S, Symbol, check_assumptions, simplify, sympify
+from sympy import (
+    Basic,
+    Dummy,
+    Expr,
+    Indexed,
+    IndexedBase,
+    Integer,
+    Rational,
+    S,
+    Symbol,
+    check_assumptions,
+    simplify,
+)
 from sympy.core.logic import fuzzy_and
 
-from modello import Modello, ScalarValue
+from modello import ConstraintKind, Modello, ScalarValue, inspect_model
 from modello._evaluation import _evaluate, _expand_finite_indexed, _substitute
-from modello._operators import _conditioned, _definitely_undefined, _denominator_condition, _scalar_atoms
+from modello._expressions import _expand_definitions
+from modello._operators import (
+    _conditioned,
+    _definitely_undefined,
+    _denominator_condition,
+    _scalar_atoms,
+    _scalar_expression,
+)
 from modello._paths import FieldPath, _path_label
-from modello._problem import _domain
+from modello._problem import Candidate, FieldValue, ModelConstraint, _domain
+from modello.diagnostics import _tolerances
 from modello.errors import ModelInputError
 from modello.model_vectors import _collection_columns
 from modello.vectors import _VectorElement
@@ -220,13 +240,14 @@ class WindowValidator:
         self._fields = tuple(row_definition.fields.items())
         self._field_names = tuple(_path_label(path) for path, _ in self._fields)
         positions = {path: i for i, (path, _) in enumerate(self._fields)}
-        self._atol, self._rtol = (_tolerance(value) for value in (atol, rtol))
+        self._atol, self._rtol = _tolerances(atol, rtol)
+        self._problem = inspect_model(namespace.collections[rows].model, "window")
         known = _parameters(model, rows, parameters or {})
         columns = _collection_columns(namespace.nested_models[rows])
         # Resolve aliases through their first declared field, then check each copy.
         self._sources = {symbol: positions[path] for path, symbol in reversed(self._fields)}
         self._sources.update({column: positions[path] for path, column in reversed(tuple(columns.items()))})
-        self._coordinates: dict[tuple[int, int], Symbol] = {}
+        self._observed = IndexedBase(Dummy("observed"))
         self._index = Dummy("position")
         laws = [(name, law) for name, law in namespace.model_laws.items() if law.target.path == (rows,)]
         if not laws:
@@ -253,7 +274,9 @@ class WindowValidator:
                     )
                 )
         self._rules = tuple(rules)
-        self._window_size = 1 + max((lag for lag, _ in self._coordinates), default=0)
+        self._window_size = 1 + max(
+            (int(cell.indices[0]) for rule in rules for cell in _scalar_atoms(rule.expression, Indexed)), default=0
+        )
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -339,16 +362,87 @@ class WindowValidator:
         label = position if index is _UNLABELLED else index
         if not isinstance(label, Hashable):
             raise ModelInputError("A row label must be hashable")
-        values = {self._index: Integer(position)}
-        for (lag, field), symbol in self._coordinates.items():
-            if lag < len(window):
-                observation = window[-1 - lag][field]
-                if not observation.problem:
-                    values[symbol] = observation.value
+        values = {
+            self._observed[lag, field]: value.value
+            for lag, row in enumerate(reversed(window))
+            for field, value in enumerate(row)
+            if not value.problem
+        }
+        values[self._index] = Integer(position)
         return ValidationResult(
             position,
             label,
             tuple(self._check(rule, position, label, window[-1][rule.field], values) for rule in self._rules),
+        )
+
+    def _check(
+        self,
+        rule: _Rule,
+        position: int,
+        label: Hashable,
+        observation: _Observation,
+        values: Mapping[Basic, Expr],
+    ) -> CheckResult:
+        expected: Basic | None = None
+        residual = None
+        valid: bool | None = None
+        if position < rule.start:
+            reason = f"Initial history; first test position is {rule.start}"
+        else:
+            field = self._problem.fields[rule.field]
+            candidate = Candidate(
+                (FieldValue(field, Dummy("unavailable") if observation.problem else observation.value),)
+            )
+            expected = rule.expression if rule.kind == "domain" else _evaluate(_substitute(rule.expression, values))
+            constraints = (
+                ()
+                if rule.kind == "domain"
+                else (ModelConstraint(0, field.path, ConstraintKind.DEFINITION, field.symbol, expected),)
+            )
+            evidence = replace(self._problem, constraints=constraints).check(
+                candidate, atol=self._atol, rtol=self._rtol
+            )
+            if rule.kind == "domain":
+                reason = observation.problem or "unresolved numeric value"
+                if observation.problem == "not a scalar number":
+                    valid = False
+                elif not observation.problem and observation.value.is_number is True:
+                    valid = fuzzy_and(
+                        None if check.actual is None else check.actual == check.expected
+                        for check in evidence.assumptions
+                    )
+                    if valid is not None:
+                        reason = "" if valid else "value is outside the field domain"
+            else:
+                valid = {"satisfied": True, "violated": False, "unknown": None}[evidence.residuals[0].verdict]
+                if _definitely_undefined(expected) or expected.is_finite is False:
+                    reason = "undefined expression"
+                elif observation.problem:
+                    reason = observation.problem
+                else:
+                    if _finite_number(expected) and observation.value.is_number is True:
+                        residual = evidence.residuals[0].residual
+                    reason = (
+                        "unresolved or missing dependency"
+                        if valid is None
+                        else ""
+                        if valid
+                        else "observed differs from expected"
+                    )
+                if expected.has(self._observed):
+                    expected = None
+        return CheckResult(
+            position,
+            label,
+            self.fields[rule.field],
+            rule.name,
+            observation.raw,
+            expected,
+            residual,
+            valid,
+            reason,
+            rule.start,
+            rule.kind,
         )
 
     def _observe_row(self, row: Row) -> tuple[_Observation, ...]:
@@ -379,7 +473,7 @@ class WindowValidator:
     ) -> _Rule:
         body = _expand_finite_indexed(body)
         condition = _denominator_condition(body)
-        locations = {}
+        replacements = {}
         for term in sorted(_scalar_atoms(body, _VectorElement), key=str):
             if index is None or term.vector not in self._sources:
                 raise ModelInputError("Window laws must reference only the selected row vector")
@@ -388,74 +482,18 @@ class WindowValidator:
                 raise ModelInputError(
                     "Window laws require fixed past lags covered by start; future and fixed rows are unsupported"
                 )
-            locations[term] = (int(delay), self._sources[term.vector])
+            replacements[term] = self._observed[int(delay), self._sources[term.vector]]
         for symbol in body.free_symbols & self._sources.keys():
-            locations[symbol] = (0, self._sources[symbol])
-        replacements = {
-            source: self._coordinates.setdefault(location, Dummy("observed")) for source, location in locations.items()
-        }
+            replacements[symbol] = self._observed[0, self._sources[symbol]]
         if index is not None:
             replacements[index] = self._index
         # Capture source denominator requirements before substitution can cancel them.
         expression = _conditioned(_substitute(body, replacements), _substitute(condition, replacements))
-        unexpected = expression.free_symbols.difference(replacements.values())
+        unexpected = expression.free_symbols - _scalar_atoms(expression, Indexed) - {self._observed.label, self._index}
         if unexpected or _scalar_atoms(expression, _VectorElement):
             names = ", ".join(sorted(str(symbol) for symbol in unexpected))
             raise ModelInputError(f"Unbound window-law quantities: {names}. Supply scalar parameters or row fields.")
         return _Rule(name, field, start, expression, kind)
-
-    def _check(
-        self,
-        rule: _Rule,
-        position: int,
-        label: Hashable,
-        observation: _Observation,
-        values: Mapping[Symbol, Expr],
-    ) -> CheckResult:
-        expected: Basic | None = None
-        residual = None
-        valid: bool | None = None
-        if position < rule.start:
-            reason = f"Initial history; first test position is {rule.start}"
-        elif rule.kind == "domain":
-            symbol = self._fields[rule.field][1]
-            expected = rule.expression
-            reason = observation.problem or "unresolved numeric value"
-            if observation.problem == "not a scalar number":
-                valid = False
-            elif not observation.problem and observation.value.is_number is True:
-                valid = fuzzy_and((observation.value.is_finite, check_assumptions(observation.value, against=symbol)))
-                if valid is not None:
-                    reason = "" if valid else "value is outside the field domain"
-        else:
-            expected = _evaluate(_substitute(rule.expression, values))
-            reason = "unresolved or missing dependency"
-            if _definitely_undefined(expected) or expected.is_finite is False:
-                valid, reason = False, "undefined expression"
-            elif observation.problem:
-                reason = observation.problem
-            elif _finite_number(expected) and observation.value.is_number is True:
-                residual = simplify(observation.value - expected)
-                within = Abs(residual) <= self._atol + self._rtol * Abs(expected)
-                if within is S.true:
-                    valid, reason = True, ""
-                elif within is S.false:
-                    valid, reason = False, "observed differs from expected"
-            if not expected.free_symbols.isdisjoint(self._coordinates.values()):
-                expected = None
-        return CheckResult(
-            position,
-            label,
-            self.fields[rule.field],
-            rule.name,
-            observation.raw,
-            expected,
-            residual,
-            valid,
-            reason,
-            rule.start,
-            rule.kind,
-        )
 
 
 def _observe(value: object) -> _Observation:
@@ -467,14 +505,12 @@ def _observe(value: object) -> _Observation:
         expression = (
             Rational(*value.as_integer_ratio())
             if isinstance(value, Decimal) and value.is_finite()
-            else sympify(value, strict=True)
+            else _scalar_expression(value, strict=True)
         )
     except (TypeError, ValueError):
-        expression = None
+        return _Observation(value, S.NaN, "not a scalar number")
     if expression is S.NaN:
         return _Observation(value, S.NaN, "missing observation")
-    if not isinstance(expression, Expr) or expression.is_Matrix:
-        return _Observation(value, S.NaN, "not a scalar number")
     return _Observation(value, expression)
 
 
@@ -482,21 +518,17 @@ def _finite_number(value: Basic) -> bool:
     return value.is_number is True and value.is_finite is True
 
 
-def _tolerance(value: ScalarValue) -> Expr:
-    number = _observe(value).value
-    if not _finite_number(number) or number.is_nonnegative is not True:
-        raise ModelInputError("Equation tolerances must be finite nonnegative numbers")
-    return number
-
-
 def _parameters(model: type[Modello], rows: str, parameters: Mapping[str, ScalarValue]) -> dict[Symbol, Expr]:
     definition = model._modello_definition
     external = {_path_label(path): symbol for path, symbol in definition.fields.items() if path[0] != rows}
-    pending = {
-        constraint.left: constraint.right
-        for constraint in definition.constraints
-        if constraint.left in external.values()
-    }
+    pending: dict[Symbol, Expr] = {}
+    for constraint in definition.constraints:
+        if constraint.left in external.values():
+            previous = pending.setdefault(constraint.left, constraint.right)
+            if simplify(previous - constraint.right).is_zero is not True:
+                raise ModelInputError(
+                    f"Parameter {_path_label(constraint.path)!r} has conflicting or undecidable definitions"
+                )
     known: dict[Symbol, Expr] = {}
     for name, raw in parameters.items():
         symbol = external.get(name)
@@ -512,19 +544,12 @@ def _parameters(model: type[Modello], rows: str, parameters: Mapping[str, Scalar
         if symbol in known and simplify(known[symbol] - value).is_zero is not True:
             raise ModelInputError(f"Conflicting values for parameter {name!r}")
         known.setdefault(symbol, value)
-    while pending:
-        remaining = len(pending)
-        for symbol, expression in tuple(pending.items()):
-            if not expression.free_symbols <= known.keys() or _scalar_atoms(expression, _VectorElement):
-                continue
-            value = _evaluate(_substitute(_conditioned(expression, _denominator_condition(expression)), known))
-            if not _finite_number(value):
-                continue
-            if check_assumptions(value, against=symbol) is not True:
-                name = next(name for name, field in external.items() if field == symbol)
-                raise ModelInputError(f"Defined parameter {name!r} violates its field domain")
+    resolved, _, _ = _expand_definitions(pending, observations=known)
+    for symbol, value in resolved.items():
+        assumptions = check_assumptions(value, against=symbol)
+        if assumptions is False or value.is_number is True and assumptions is not True:
+            name = next(name for name, field in external.items() if field == symbol)
+            raise ModelInputError(f"Defined parameter {name!r} violates its field domain")
+        if _finite_number(value):
             known[symbol] = value
-            del pending[symbol]
-        if len(pending) == remaining:
-            break
     return known

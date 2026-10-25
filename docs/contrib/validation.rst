@@ -73,12 +73,78 @@ Checks before a law's declared start are assumed; an order-:math:`p` law
 normally starts at position :math:`p`, using the preceding :math:`p` rows.
 
 Use ``result.invalid`` to identify proven failures; ``not result.valid`` also
-includes assumed or undecidable rows. ``result.checks`` retains each check's
-field, rule, observations, expected value, and residual. Checks use the same
-``valid``, ``invalid``, and ``assumed`` attributes as row results.
-``complete`` means all current-row checks were decided, including violations.
+includes assumed or undecidable rows.
 Later rows use recorded predecessors, so the repurchase can pass after the sale
 failed.
+
+What a result contains
+----------------------
+
+Each window call returns a ``ValidationResult``; ``iter_results`` yields one
+for every input row. It contains the row's zero-based ``position``, its supplied
+``index`` label, and a tuple of ``CheckResult`` objects in ``checks``.
+For example, inspect the sale's failing check:
+
+.. doctest::
+
+   >>> sale = next(result for result in results if result.invalid)
+   >>> sale.position, sale.index
+   (2, 'sale')
+   >>> problem = next(check for check in sale.checks if check.invalid)
+   >>> problem.field, problem.rule, problem.kind
+   ('cash', 'posting', 'recurrence')
+   >>> problem.observed, problem.expected, problem.residual
+   (29, 30, -1)
+   >>> problem.reason
+   'observed differs from expected'
+   >>> sale.valid, sale.invalid, sale.complete, sale.assumed
+   (False, True, True, False)
+
+Here ``complete`` is true because every check reached a decision, even though
+one failed. ``checks`` also includes passing checks and checks that could not
+run, so callers can inspect a failure without losing coverage information.
+
+.. list-table:: Result flags
+   :header-rows: 1
+
+   * - Row outcome
+     - ``valid``
+     - ``invalid``
+     - ``assumed``
+     - ``complete``
+   * - All checks pass
+     - ``True``
+     - ``False``
+     - ``False``
+     - ``True``
+   * - A check fails
+     - ``False``
+     - ``True``
+     - ``False``
+     - Varies
+   * - Assumed history
+     - ``None``
+     - ``False``
+     - ``True``
+     - ``False``
+   * - Undecided, no failure
+     - ``None``
+     - ``False``
+     - ``False``
+     - ``False``
+
+A ``CheckResult`` has the same ``valid``, ``invalid``, and ``assumed`` flags,
+plus its row position and label. ``start`` names the first position where that
+check applies. ``expected`` and ``residual`` are ``None`` for assumed checks;
+an unresolved dependency can also leave ``expected`` unknown. Domain checks
+have a numeric set as ``expected`` and no residual; all declared field
+assumptions are checked, including restrictions not expressed by that set.
+
+The core :class:`~modello.diagnostics.CandidateCheck` is a different record,
+returned by :meth:`~modello.diagnostics.ModelProblem.check`: it contains an
+assignment (``candidate``), equation ``residuals``, domain ``assumptions``, and
+an overall ``verdict``. The window API adds row labels, rule names, and explicit
+history markers to that checking machinery and returns the types shown above.
 
 Audit coverage
 ---------------
@@ -92,6 +158,8 @@ For a finite job, ``audit`` scans all rows and summarises their coverage:
    (4, 2, 1, 1, 0)
    >>> audit.valid
    False
+   >>> audit.first_invalid == sale
+   True
 
 The valid, invalid, assumed, and unknown row counts partition the input;
 ``row_count`` is their sum. ``first_invalid`` is the first invalid row result,
@@ -102,6 +170,9 @@ For strict acceptance, require ``audit.valid``. Even with no breaks,
 assumed or undecidable rows keep that outcome at ``None``. A policy that trusts
 initial history can require no invalid or unknown rows and at least one valid
 row. Empty and history-only inputs provide no such row.
+
+``ValidationSummary`` retains the counts and first invalid ``ValidationResult``
+without storing every row.
 
 ``ValidationSummary.from_results(results)`` reuses collected results. It requires
 contiguous positions from zero; supply ``start_position`` explicitly to audit
@@ -125,6 +196,8 @@ Integers, ``Decimal``, ``Fraction``, and SymPy numbers retain exact arithmetic.
 Equation tolerances use ``abs(observed-expected) <= atol + rtol*abs(expected)``;
 domains remain strict. Independent constants supplied through ``parameters``
 must satisfy their field assumptions, and parameter aliases must agree.
+Resolvable scalar definitions are also checked as configuration, including
+unused constants. Conflicting or undecidable alias definitions are rejected.
 Results retain SymPy values for exact evidence.
 
 Streams and manual windows

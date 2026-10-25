@@ -172,7 +172,7 @@ class AssumptionCheck:
 
 @dataclass(frozen=True)
 class CandidateCheck:
-    """An audit; only a satisfied, closed assignment is a consistency witness."""
+    """An audit; exact checks need a satisfied, closed assignment to prove consistency."""
 
     candidate: Candidate
     residuals: tuple[ResidualCheck, ...]

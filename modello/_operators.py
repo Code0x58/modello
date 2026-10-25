@@ -41,10 +41,12 @@ if TYPE_CHECKING:
 _Atom = TypeVar("_Atom", bound=Basic)
 
 
-def _scalar_expression(value: object, message: str = "Expected a SymPy-compatible scalar expression") -> Expr:
-    """Coerce scalar inputs without evaluating operators or cancelling poles."""
+def _scalar_expression(
+    value: object, message: str = "Expected a SymPy-compatible scalar expression", *, strict: bool = False
+) -> Expr:
+    """Coerce scalars without cancelling poles; strict mode disables text parsing."""
     try:
-        expression = sympify(value)
+        expression = sympify(value, strict=strict)
     except (SympifyError, TypeError, ValueError, AttributeError) as error:
         raise ModelInputError(message) from error
     if not isinstance(expression, Expr) or expression.is_Matrix or isinstance(expression, Lambda):

@@ -4,7 +4,7 @@ from decimal import Decimal
 from fractions import Fraction
 
 import pytest
-from sympy import Eq, Mul, Piecewise, Pow, Rational, S, Sum, Symbol
+from sympy import Eq, Lambda, Mul, Piecewise, Pow, Rational, S, Sum, Symbol
 
 from modello import Index, InstanceDummy, Modello, model_recurrence, model_vector
 from modello.contrib.validation import WindowValidator
@@ -124,7 +124,7 @@ def test_invalid_tolerance_configuration_is_rejected(value):
         WindowValidator(CashLedger, "rows", atol=value)
 
 
-@pytest.mark.parametrize("bad", ["100", True, [100], {"amount": 100}, S.Infinity, 1j])
+@pytest.mark.parametrize("bad", ["100", True, [100], {"amount": 100}, S.Infinity, 1j, Lambda(Symbol("x"), Symbol("x"))])
 def test_invalid_numeric_cells_are_proven_domain_violations(bad):
     result = WindowValidator(CashLedger, "rows")(((100, 0), (bad, 0)), position=1)
     assert result.valid is False
@@ -210,7 +210,39 @@ def test_parameter_aliases_must_agree(rate, alias, consistent):
             WindowValidator(History, "rows", parameters={"rate": rate, "alias": alias})
 
 
-@pytest.mark.parametrize("parameters,problem", [({}, "Unbound"), ({"rate": 0}, "domain")])
+@pytest.mark.parametrize("value", [1.0, 2])
+def test_declared_parameter_alias_definitions_must_agree(value):
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rate = InstanceDummy("rate", positive=True)
+        alias = rate
+        rate = S.One
+        alias = S(value)
+        rows = model_vector(CashRow, size=N)
+        n = Index("n")
+        law = model_recurrence(rows[n], cash=rate * rows[n - 1].cash)
+
+    if value == 1:
+        assert WindowValidator(History, "rows")(((20, 0), (20, 0)), position=1).valid
+    else:
+        with pytest.raises(ModelInputError, match="definitions"):
+            WindowValidator(History, "rows")
+
+
+def test_resolvable_scalar_constants_are_checked_as_configuration_even_when_unused():
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        unused = InstanceDummy("unused", positive=True)
+        unused = S.NegativeOne
+        rows = model_vector(CashRow, size=N)
+        n = Index("n")
+        law = model_recurrence(rows[n], cash=rows[n - 1].cash)
+
+    with pytest.raises(ModelInputError, match="Defined parameter 'unused'.*domain"):
+        WindowValidator(History, "rows")
+
+
+@pytest.mark.parametrize("parameters,problem", [({}, "domain"), ({"rate": 0}, "domain")])
 def test_derived_parameters_require_numeric_dependencies_with_valid_domains(parameters, problem):
     class History(Modello):
         N = InstanceDummy("N", integer=True, nonnegative=True)
@@ -224,6 +256,21 @@ def test_derived_parameters_require_numeric_dependencies_with_valid_domains(para
 
     with pytest.raises(ModelInputError, match=problem):
         WindowValidator(History, "rows", parameters=parameters)
+
+
+def test_core_definition_expansion_can_resolve_a_constant_without_fitting_parameters():
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rate = InstanceDummy("rate", positive=True)
+        intermediate = rate + 1
+        coefficient = intermediate - rate
+        rows = model_vector(CashRow, size=N)
+        n = Index("n")
+        law = model_recurrence(rows[n], cash=coefficient * rows[n - 1].cash - rows[n].debit)
+
+    validator = WindowValidator(History, "rows")
+    assert validator(((40, 0), (30, 10)), position=1).valid
+    assert validator(((40, 0), (31, 10)), position=1).invalid
 
 
 @pytest.mark.parametrize(

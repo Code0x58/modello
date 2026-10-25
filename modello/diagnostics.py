@@ -7,11 +7,13 @@ contradiction. Solver failure alone establishes neither.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from functools import cached_property
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Generic, Mapping, cast
 
 from sympy import (
+    Abs,
     Basic,
     ConditionSet,
     Derivative,
@@ -23,6 +25,7 @@ from sympy import (
     Integral,
     Limit,
     Matrix,
+    Rational,
     S,
     Set,
     Symbol,
@@ -31,6 +34,7 @@ from sympy import (
     solve,
     solveset,
     sqrt,
+    sympify,
 )
 from sympy.core.function import AppliedUndef
 from sympy.solvers.solveset import NonlinearError
@@ -343,9 +347,22 @@ class ModelProblem(Generic[ModelT]):
             raise KeyError("Unknown constructor input")
         return replace(self, constraints=tuple(c for c in self.constraints if c.input not in inputs), candidates=())
 
-    def check(self, candidate: Candidate) -> CandidateCheck:
-        """Audit a candidate against original equations and all declared domains."""
-        return _audit(self, self.constraints, candidate)
+    def check(
+        self, candidate: Candidate, *, atol: ScalarValue | None = None, rtol: ScalarValue | None = None
+    ) -> CandidateCheck:
+        """Check an assignment against equations and all declared domains.
+
+        By default, checks require exact evidence; float equations remain
+        undecided. Supplying either tolerance opts into numerical comparisons:
+        ``abs(observed-expected) <= atol + rtol*abs(expected)``. An omitted
+        tolerance is zero. Domains remain strict, and no values are inferred.
+        """
+        tolerances = (
+            None
+            if atol is None and rtol is None
+            else _tolerances(0 if atol is None else atol, 0 if rtol is None else rtol)
+        )
+        return _audit(self, self.constraints, candidate, tolerances=tolerances)
 
     def analyse(self, *, conflicts: bool = False, relaxations: bool = False, max_checks: int = 100) -> ProblemAnalysis:
         """Run explicit exact checks and bounded searches; unknown never means inconsistent.
@@ -480,7 +497,34 @@ def _candidate(problem: ModelProblem, values: dict[Symbol, Expr]) -> Candidate:
     )
 
 
-def _audit(problem: ModelProblem, constraints: tuple[ModelConstraint, ...], candidate: Candidate) -> CandidateCheck:
+def _tolerances(atol: ScalarValue, rtol: ScalarValue) -> tuple[Expr, Expr]:
+    try:
+        values = tuple(
+            Rational(*value.as_integer_ratio())
+            if isinstance(value, Decimal) and value.is_finite()
+            else sympify(value, strict=True)
+            for value in (atol, rtol)
+        )
+    except (TypeError, ValueError) as error:
+        raise ModelInputError("Equation tolerances must be finite nonnegative numbers") from error
+    if any(
+        not isinstance(value, Expr)
+        or value.is_number is not True
+        or value.is_finite is not True
+        or value.is_nonnegative is not True
+        for value in values
+    ):
+        raise ModelInputError("Equation tolerances must be finite nonnegative numbers")
+    return values
+
+
+def _audit(
+    problem: ModelProblem,
+    constraints: tuple[ModelConstraint, ...],
+    candidate: Candidate,
+    *,
+    tolerances: tuple[Expr, Expr] | None = None,
+) -> CandidateCheck:
     bindings: dict[Symbol, Expr] = {}
     for item in candidate.values:
         problem._require_field(item.field)
@@ -493,11 +537,17 @@ def _audit(problem: ModelProblem, constraints: tuple[ModelConstraint, ...], cand
         verdict: Verdict
         if not isinstance(left, Expr) or not isinstance(right, Expr):
             residual, verdict = right, "unknown"
-        elif _definitely_undefined(left) or _definitely_undefined(right):
+        elif _definitely_undefined(left) or _definitely_undefined(right) or right.is_finite is False:
             residual, verdict = S.NaN, "violated"
         else:
             residual = simplify(_evaluate(left - right))
-            if (
+            if tolerances is not None:
+                verdict = "unknown"
+                if left.is_number is True and right.is_number is True and right.is_finite is True:
+                    atol, rtol = tolerances
+                    within = Abs(residual) <= atol + rtol * Abs(right)
+                    verdict = "satisfied" if within is S.true else "violated" if within is S.false else "unknown"
+            elif (
                 c.right.has(Float)
                 or left.has(Float)
                 or right.has(Float)
@@ -519,7 +569,7 @@ def _audit(problem: ModelProblem, constraints: tuple[ModelConstraint, ...], cand
             "defined",
             True,
             False
-            if _definitely_undefined(item.value)
+            if _definitely_undefined(item.value) or item.value.is_finite is False
             else True
             if item.value.is_number is True and item.value.is_finite is True
             else None,
