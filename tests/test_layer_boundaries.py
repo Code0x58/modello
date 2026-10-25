@@ -66,6 +66,7 @@ import examples.data
 assert not {'modello', 'sympy', 'examples.portfolio'} & sys.modules.keys()
 
 import modello
+assert "pandas" not in sys.modules
 assert not any(name == 'modello.contrib' or name.startswith('modello.contrib.') for name in sys.modules)
 assert not hasattr(modello, 'ItoProcess')
 assert get_type_hints(modello.inspect_model)["value_map"] == (

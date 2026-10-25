@@ -147,6 +147,11 @@ Each member needs a declared model type and each case needs a finite window.
 Use another construction for different observations, and declare another law
 when the relationships themselves change. See :doc:`generality` for solver scope.
 
+To check existing observations without solving for a new history, use the
+optional :doc:`DataFrame validator <contrib/pandas>`. It applies the row schema
+and causal relative laws over observed rolling windows, including nested fields
+mapped to MultiIndex columns.
+
 ``ModelRecurrence.equations`` retains the source formulas for inspection and
 rendering. The model compiler applies them across the window; this template is
 not a standalone point-query evaluator.

@@ -74,6 +74,7 @@ the API and diagnostic guarantees are separate reference material.
    :maxdepth: 1
 
    contrib/stochastic
+   contrib/pandas
 
 .. toctree::
    :caption: Applications

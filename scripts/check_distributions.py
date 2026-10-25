@@ -30,6 +30,8 @@ assert distribution.metadata["Requires-Python"] == ">=3.10"
 assert Path(modello.__file__).with_name("py.typed").is_file()
 assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
 assert "gui" in distribution.metadata.get_all("Provides-Extra", ())
+assert "pandas" in distribution.metadata.get_all("Provides-Extra", ())
+assert "pandas" not in sys.modules
 assert "flask" not in sys.modules
 from modello.gui import Explorer, FieldInfo, ModelInfo, gui
 for name in ("templates/index.html", "static/explorer.css", "static/explorer.js",
@@ -200,6 +202,26 @@ print("Validated installed gallery, assets, and inverse account solve")
 """
 
 
+PANDAS_SMOKE_TEST = r"""
+import sys
+
+import modello
+assert "pandas" not in sys.modules
+from modello.contrib.pandas import FrameValidator
+from examples.accounting_breaks import Ledger, accounting_frame
+
+validator = FrameValidator(Ledger, "rows")
+assert validator.window_size == 2
+report = validator.validate(accounting_frame())
+assert not report.valid
+assert report.unknown.empty
+assert report.breaks[["position", "index", "field", "expected", "residual"]].values.tolist() == [
+    [2, "sale", "cash", 90998, -8]
+]
+print("Validated installed pandas extension and nested accounting example")
+"""
+
+
 def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], expected_version: str) -> None:
     """Exercise the base library, examples, and GUI outside the checkout."""
     environment = directory / "environment"
@@ -243,6 +265,8 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
     print(f"Validated all installed example runners from {wheel.name}", flush=True)
     install("gui")
     subprocess.run([str(python), "-I", "-c", GUI_SMOKE_TEST], cwd=directory, check=True)
+    install("pandas")
+    subprocess.run([str(python), "-I", "-c", PANDAS_SMOKE_TEST], cwd=directory, check=True)
     typing_checks = []
     for path in (
         "typing_checks.py",
@@ -294,7 +318,9 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="modello-distributions-") as temporary:
         scratch = Path(temporary)
-        requirements = {extra: scratch / f"{extra or 'runtime'}-requirements.txt" for extra in ("", "examples", "gui")}
+        requirements = {
+            extra: scratch / f"{extra or 'runtime'}-requirements.txt" for extra in ("", "examples", "gui", "pandas")
+        }
         for extra, target in requirements.items():
             options = ("--extra", extra) if extra else ()
             subprocess.run(
