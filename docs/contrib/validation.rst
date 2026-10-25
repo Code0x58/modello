@@ -1,11 +1,15 @@
-Observed recurrence windows (contrib)
-=====================================
+Observed recurrence windows
+===========================
 
-``modello.contrib.validation`` is independent of pandas, Polars, and stream
-frameworks. It prepares a reusable function over projected rows, with explicit
-coverage alongside each result. The base ``modello`` installation is sufficient.
-The :doc:`DataFrame recipes <validation-frames>` show caller-owned projection
-and windowing for pandas and Polars; neither library is a runtime dependency.
+Use ``WindowValidator`` to check recorded observations against a model's
+recurrence laws and row schema. Each result identifies broken equations and
+distinguishes validated observations from assumed history and missing data.
+
+Import the validator from ``modello.contrib.validation``. It accepts windows of
+ordinary Python rows. The
+:doc:`DataFrame recipes <../recipes/dataframe-validation>` show how to use it
+with pandas and Polars. The base ``modello`` installation is sufficient for
+Python row sequences.
 
 A law of order :math:`p` normally tests
 
@@ -13,9 +17,9 @@ A law of order :math:`p` normally tests
 
    x_n = f(n, x_{n-1}, \ldots, x_{n-p}, u_n), \qquad n \ge p.
 
-Its input window ends at the observation being tested. Positions are zero based:
-**the first test is at position p, not p+1**. The first ``p`` observations supply
-assumed history; the window contains ``p+1`` rows.
+Its input window ends at the observation being tested. With zero-based
+positions, the first test is at position :math:`p`. The first :math:`p`
+observations supply assumed history; the window contains :math:`p+1` rows.
 
 .. list-table:: History and first test
    :header-rows: 1
@@ -37,8 +41,8 @@ assumed history; the window contains ``p+1`` rows.
      - 2
      - 3
 
-Declare once, supply windows anywhere
--------------------------------------
+Check a window
+---------------
 
 The ordinary model-vector API supplies the schema and source law:
 
@@ -90,19 +94,18 @@ For this cash process, :math:`\widehat C_n=C_{n-1}-D_n` and the residual is
    >>> problem.position, problem.index, problem.field, problem.expected, problem.residual
    (2, 'sale', 'cash', 88, -3)
 
-The callable checks **only the final row**; ``check_window`` is its equivalent
+The callable checks the final row; ``check_window`` is its equivalent
 named method. A complete result means all of that row's declared checks ran and
-reached a decided outcome. It does not mean
-that preceding rows in the supplied window were independently validated.
-Those are observations used to evaluate the current equations.
+reached a decided outcome. Preceding rows supply the observations used to
+evaluate the current equations; their own results require separate checks.
 
 The function is stateless: it stores no incoming history between calls. Calls
 may be interleaved across accounts or dispatched to workers when each receives
 the correct window and position. Prepared validators can be pickled when their
 model classes live in an importable module.
 
-Input contract
---------------
+Prepare input rows
+-------------------
 
 * Project columns in exactly ``validator.fields`` order and pass row tuples,
   or supply flat mappings keyed by those field names. Extra mapping keys are
@@ -129,8 +132,8 @@ Missing mapping fields, wrong row/window sizes, and invalid positions raise
 when their checks apply. Schema binding is required even for assumed rows;
 initial scalar values themselves remain assumptions.
 
-Every check is visible
-----------------------
+Interpret validation results
+-----------------------------
 
 .. code-block:: pycon
 
@@ -194,11 +197,12 @@ For continuous streams consume individual results, rather than waiting for a
 finite audit to finish.
 
 For DataFrames, project fields and apply this same callable to row windows, or
-feed projected row tuples to ``iter_results``. The executable
-:doc:`pandas and Polars recipes <validation-frames>` demonstrate both patterns.
+feed projected row tuples to ``iter_results``. The
+:doc:`pandas and Polars recipes <../recipes/dataframe-validation>` demonstrate
+both patterns.
 
-Coverage before acceptance
---------------------------
+Audit a complete sequence
+-------------------------
 
 For a finite job, ``audit`` scans the complete input and retains counts plus the
 first violation. It never short-circuits, because later rows affect coverage:

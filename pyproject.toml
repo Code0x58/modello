@@ -90,7 +90,7 @@ examples = ["py.typed"]
 [tool.setuptools_scm]
 
 [tool.pytest.ini_options]
-addopts = "--doctest-modules --doctest-glob=*.rst --doctest-report=udiff --ignore=docs/contrib/validation-frames.rst --cov=modello --cov-report=html --cov-report=term"
+addopts = "--doctest-modules --doctest-glob=*.rst --doctest-report=udiff --ignore=docs/recipes/dataframe-validation.rst --cov=modello --cov-report=html --cov-report=term"
 python_files = ["test_*.py"]
 cache_dir = "artefacts/reports/.pytest_cache"
 

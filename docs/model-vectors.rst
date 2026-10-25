@@ -150,8 +150,9 @@ when the relationships themselves change. See :doc:`generality` for solver scope
 To check existing observations without solving for a new history, use the
 :doc:`window validator <contrib/validation>`. Its stateless function applies the
 row schema and causal laws to observed windows in a service or stream processor.
-The :doc:`DataFrame recipes <contrib/validation-frames>` apply that same callable
-to pandas and Polars data, including nested fields mapped to MultiIndex columns.
+The :doc:`DataFrame recipes <recipes/dataframe-validation>` apply that same
+callable to pandas and Polars data, including nested fields mapped to MultiIndex
+columns.
 
 ``ModelRecurrence.equations`` retains the source formulas for inspection and
 rendering. The model compiler applies them across the window; this template is

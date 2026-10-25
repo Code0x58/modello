@@ -79,5 +79,5 @@ formulas while using the same observations and modelling interface.
 - [Practical applications](docs/examples/applications/index.rst): invoices, production, and circuits.
 - [Research examples](docs/examples/portfolio/index.rst): portfolio reporting and calibration.
 - [Reconciliation](docs/examples/reconciliation/index.rst): compare source data and infer suspect inputs.
-- [Observed data validation](docs/contrib/validation.rst): generic window checks with explicit coverage and tested [pandas/Polars recipes](docs/contrib/validation-frames.rst).
+- [Observed data validation](docs/contrib/validation.rst): check recurrence histories and follow [pandas/Polars recipes](docs/recipes/dataframe-validation.rst).
 - [Contributing](docs/contributing.rst): setup, checks, documentation, and releases.

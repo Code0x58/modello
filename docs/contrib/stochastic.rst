@@ -1,8 +1,9 @@
-Stochastic processes (contrib)
-==============================
+Stochastic processes
+=====================
 
-Import this domain extension explicitly from ``modello.contrib.stochastic``.
-It builds on ordinary Modello declarations and the same flat equation solver.
+Use ``ItoProcess`` to declare stochastic processes and query their transformed
+drifts, diffusions, and conditional moments. Import it from
+``modello.contrib.stochastic`` and combine it with ordinary Modello declarations.
 
 For one standard Wiener driver, ``ItoProcess(X, a, b, t)`` declares
 ``dX = a*dt + b*dW``. For a sufficiently smooth deterministic function ``f``,

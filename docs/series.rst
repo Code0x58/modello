@@ -120,7 +120,7 @@ other; finite query cycles must decrease towards their initial boundaries.
 For validation of existing histories, the :doc:`window validator
 <contrib/validation>` reuses typed ``model_recurrence`` laws and checks observed
 predecessors instead of generating a series path. The tested
-:doc:`DataFrame recipes <contrib/validation-frames>` show caller-owned column
+:doc:`DataFrame recipes <recipes/dataframe-validation>` show how to use column
 projection and windowing for pandas and Polars.
 
 

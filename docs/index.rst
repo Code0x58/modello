@@ -75,7 +75,12 @@ the API and diagnostic guarantees are separate reference material.
 
    contrib/stochastic
    contrib/validation
-   contrib/validation-frames
+
+.. toctree::
+   :caption: Recipes
+   :maxdepth: 1
+
+   recipes/dataframe-validation
 
 .. toctree::
    :caption: Applications
