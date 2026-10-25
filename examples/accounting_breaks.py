@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Iterable, Iterator, Mapping
-
 from modello import Index, InstanceDummy, Modello, component, model_recurrence, model_vector
-from modello.contrib.validation import CheckResult, WindowValidator
+from modello.contrib.validation import WindowValidator
 
 
 class Holding(Modello):
@@ -48,16 +46,9 @@ def accounting_rows() -> tuple[dict[str, int], ...]:
     return tuple(dict(zip(fields, row, strict=True)) for row in values)
 
 
-def find_breaks(
-    rows: Iterable[Mapping[str, object]], *, labels: Iterable[Hashable] | None = None
-) -> Iterator[CheckResult]:
-    """Yield proven ledger violations in row and check order."""
-    validator = WindowValidator(Ledger, "rows")
-    return (check for result in validator.iter_results(rows, labels=labels) for check in result.checks if check.invalid)
-
-
 if __name__ == "__main__":
-    for problem in find_breaks(accounting_rows(), labels=EVENTS):
+    results = WindowValidator(Ledger, "rows").iter_results(accounting_rows(), labels=EVENTS)
+    for problem in (check for result in results for check in result.checks if check.invalid):
         print(
             f"{problem.index}: {problem.field} observed {problem.observed}, "
             f"expected {problem.expected}, residual {problem.residual}"

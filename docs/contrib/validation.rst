@@ -64,11 +64,9 @@ Collect the results to inspect the full sequence:
    >>> [result.index for result in results if result.invalid]
    ['sale']
 
-``valid`` is ``True`` when all current-row checks pass, ``False`` for a proven
-violation, and ``None`` for assumed history or insufficient evidence.
 Use ``invalid`` for proven failures; ``not result.valid`` also includes assumed
-or undecidable rows. Checks before a law's declared start are assumed. An
-order-:math:`p` law normally starts at position :math:`p`, using :math:`p+1`
+or undecidable rows, whose ``valid`` is ``None``. Checks before a law's start are
+assumed. An order-:math:`p` law normally starts at position :math:`p`, using :math:`p+1`
 rows. ``first_test_position`` and ``fully_testable_position`` expose the earliest
 and latest declared starts. Later checks use recorded predecessors, so the
 repurchase passes after the sale fails.

@@ -180,7 +180,7 @@ from examples.geometry import RightAngleTriangle
 from examples.data import NamedMap
 from examples.gui_quickstart import ReturnModel
 from examples.gallery.models import AccountSequence, LinearTrend
-from examples.accounting_breaks import EVENTS, Ledger, accounting_rows, find_breaks
+from examples.accounting_breaks import EVENTS, Ledger, accounting_rows
 from modello.contrib.validation import WindowValidator
 import modello
 from examples.portfolio.models import Execution, HoldingState
@@ -208,7 +208,7 @@ for name in ("market.csv", "transactions.csv", "benchmark.csv"):
 ledger_audit = WindowValidator(Ledger, "rows").audit(accounting_rows(), labels=EVENTS)
 assert ledger_audit.first_invalid.position == 2
 assert ledger_audit.assumed_rows == 1 and ledger_audit.valid_rows == 2
-breaks = list(find_breaks(accounting_rows(), labels=EVENTS))
+breaks = [check for check in ledger_audit.first_invalid.checks if check.invalid]
 assert len(breaks) == 1
 assert (breaks[0].index, breaks[0].field, breaks[0].residual) == ("sale", "cash", -1)
 assert not {"pandas", "polars", "numpy"} & sys.modules.keys()

@@ -22,7 +22,6 @@ from sympy import (
     check_assumptions,
     simplify,
 )
-from sympy.core.logic import fuzzy_and
 
 from modello import ConstraintKind, Modello, ScalarValue, inspect_model
 from modello._evaluation import _evaluate, _expand_finite_indexed, _substitute
@@ -106,7 +105,7 @@ class ValidationResult:
     @property
     def valid(self) -> bool | None:
         """False for a proven violation, True for complete success, otherwise None."""
-        return fuzzy_and(check.valid for check in self.checks) if self.checks else None
+        return False if self.invalid else True if self.complete else None
 
 
 @dataclass(frozen=True)
@@ -391,28 +390,26 @@ class WindowValidator:
             candidate = Candidate(
                 (FieldValue(field, Dummy("unavailable") if observation.problem else observation.value),)
             )
-            expected = rule.expression if rule.kind == "domain" else _evaluate(_substitute(rule.expression, values))
+            is_domain = rule.kind == "domain"
+            expected = rule.expression if is_domain else _evaluate(_substitute(rule.expression, values))
             constraints = (
                 ()
-                if rule.kind == "domain"
+                if is_domain
                 else (ModelConstraint(0, field.path, ConstraintKind.DEFINITION, field.symbol, expected),)
             )
-            evidence = replace(self._problem, constraints=constraints).check(
+            # Unrelated fields must not make this field's domain verdict unknown.
+            evidence = replace(self._problem, fields=(field,), constraints=constraints).check(
                 candidate, atol=self._atol, rtol=self._rtol
             )
-            if rule.kind == "domain":
+            verdict = evidence.verdict if is_domain else evidence.residuals[0].verdict
+            valid = {"satisfied": True, "violated": False, "unknown": None}[verdict]
+            if is_domain:
                 reason = observation.problem or "unresolved numeric value"
-                if observation.problem == "not a scalar number":
-                    valid = False
-                elif not observation.problem and observation.value.is_number is True:
-                    valid = fuzzy_and(
-                        None if check.actual is None else check.actual == check.expected
-                        for check in evidence.assumptions
-                    )
-                    if valid is not None:
-                        reason = "" if valid else "value is outside the field domain"
+                if observation.problem or observation.value.is_number is not True:
+                    valid = False if observation.problem == "not a scalar number" else None
+                elif valid is not None:
+                    reason = "" if valid else "value is outside the field domain"
             else:
-                valid = {"satisfied": True, "violated": False, "unknown": None}[evidence.residuals[0].verdict]
                 if _definitely_undefined(expected) or expected.is_finite is False:
                     reason = "undefined expression"
                 elif observation.problem:
