@@ -240,6 +240,43 @@ list is empty. Add future example-specific dependencies to this extra. Package
 selection and data files belong in the setuptools configuration, independently
 of dependency selection.
 
+Review before a PR
+------------------
+
+Before pushing changes for a PR or creating/updating one, ask the coding agent
+to spawn a fresh ``pre_pr_review`` subagent. It compares the complete branch
+with the PR's target branch, including relevant local changes. The reviewer
+checks documentation and Python changes, then suggests a concise PR title and
+body describing the final behavior. Address actionable findings and reassess
+affected areas after further edits or target changes.
+
+For example, ask: "Spawn pre_pr_review to review this branch against
+origin/master before updating its PR." For an existing PR, use its actual base
+branch; the feature branch's tracking upstream is not its review target.
+
+The custom Codex agent is defined in ``.codex/agents/pre_pr_review.toml``. Its
+main prompt links three documents under ``.codex/agents/pre_pr_review/`` for
+Sphinx documentation, Python code with docstrings and comments, and PR
+descriptions. If custom agent roles are unavailable, ``AGENTS.md`` instructs the
+coding agent to pass the same prompt to a general subagent.
+
+Install the Git reminders in this checkout:
+
+.. code-block:: console
+
+   $ git config extensions.worktreeConfig true
+   $ git config --worktree core.hooksPath .githooks
+
+The hook setting applies only to this checkout, including when working in a
+linked worktree. Check any existing ``core.hooksPath`` setting and hooks before
+replacing them. Repeat setup for new clones or worktrees as needed.
+
+The ``pre-commit`` and ``pre-push`` hooks print a short prompt asking the coding
+agent whether a fresh review is needed. They are non-blocking reminders: they
+do not start a model, read answers from the terminal, or verify that a review
+took place. ``AGENTS.md`` requires the coding agent to complete the review
+before a PR push or creation/update, including updates made without a Git push.
+
 Read the Docs
 -------------
 
