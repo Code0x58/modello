@@ -76,12 +76,16 @@ these layers.
 ``series.py`` declares relative recurrences. ``contrib/stochastic.py`` provides
 the opt-in Itô extension; the core resolver uses scoped declaration hooks without
 importing domain extensions.
-``contrib/pandas.py`` adapts source model-vector laws to observed row windows.
-Its optional pandas dependency stays outside core imports. It checks scalar
-equations directly, preserving observed history and reporting unknowns for
-missing dependencies; it does not construct models or invoke the joint solver.
-The initial prefix is trusted. Its primary output is an aligned nullable boolean
-Series; detailed checks and a lazy first-violation lookup share the same iterator.
+``contrib/validation.py`` compiles model-vector laws into a pandas-independent
+window function. Each call checks only its final row at an explicit absolute
+position, returning both evidence and coverage. Its stream iterator retains
+``order+1`` rows. Audits require every position from zero by default, including
+initial assumptions. Other intervals require an explicit start, so truncation
+cannot masquerade as complete validation.
+``contrib/pandas.py`` only binds columns, normalises pandas nulls, and feeds that
+same function. Nullable booleans, detailed reports, and finite audits share its
+results. Neither extension constructs models or invokes the joint solver; core
+imports load neither extension nor any optional frame library.
 ``_shapes.py`` solves symbolic finite axes from observation lengths before scalar
 coordinates are compiled. Shape specialization produces a cached subclass; it
 does not mutate the reusable declaration. The GUI creates a fresh finite context

@@ -8,6 +8,10 @@ model and its relative recurrence laws. Install the optional dependency:
 
    $ pip install 'modello[pandas]'
 
+For services, Polars, or a framework that supplies its own rolling windows,
+use the :doc:`pandas-independent validator <validation>`. This module only binds
+columns, normalises pandas nulls, and feeds that same window function.
+
 An order-:math:`p` process relates the current observation to earlier rows and
 current inputs:
 
@@ -121,6 +125,23 @@ then recurrence equations in declaration order. This defines which problem is
 returned if a row has several violations. Positions disambiguate duplicate
 index labels.
 
+For service acceptance decisions, use ``audit`` to expose coverage explicitly:
+
+.. code-block:: pycon
+
+   >>> good = frame.assign(cash=[100, 90, 88, 86])
+   >>> coverage = validator.audit(good)
+   >>> coverage.row_count, coverage.checked_rows, coverage.assumed_rows, coverage.unknown_rows
+   (4, 3, 1, 0)
+   >>> coverage.first_invalid, coverage.valid, coverage.complete
+   (None, None, False)
+
+The three transitions passed, but the opening row was assumed. The strict
+whole-input verdict therefore remains ``None``. ``audit`` scans the entire
+frame, including rows after a break; ``first_invalid`` is only a short-circuit
+search. Empty or history-only frames cannot claim complete success. See the
+:doc:`integration guide <validation>` for an explicit trusted-history policy.
+
 Aligned indicators and assumed history
 --------------------------------------
 
@@ -152,7 +173,7 @@ and have only missing indicators; an empty frame gives an empty Series.
 ``first_invalid`` returns ``None`` in both cases.
 
 Multiple laws retain their own starts. Domains and row-local definitions begin
-at the earliest law's start; earlier rows emit no checks. If a later law has
+at the earliest law's start; earlier records have an ``assumed`` verdict. If a later law has
 not started, the combined indicator stays missing unless another check already
 proves a violation. Setting a later start postpones checks without enlarging the
 largest-lag window. Initial history is trusted, including its row definitions
@@ -236,10 +257,18 @@ Detailed checks and precision
 
 ``report(frame)`` returns a DataFrame with ``position``, ``index``, ``field``,
 ``rule``, ``observed``, ``expected``, ``residual``, ``verdict``, and ``reason``.
-Verdicts are ``satisfied``, ``violated``, or ``unknown``. An equation's residual
+It also includes ``kind`` and the first applicable ``start`` position for each
+check. Verdicts are ``assumed``, ``satisfied``, ``violated``, or ``unknown``. An equation's residual
 is observed minus expected. Missing dependencies have no expected value; domain
 checks show a numeric search domain, with all declared assumptions checked
-separately. Assumed rows emit no records. The report does not establish what
+separately. Assumed checks remain visible with a reason and start metadata:
+
+.. code-block:: pycon
+
+   >>> checks.loc[checks["position"].eq(0), ["field", "kind", "verdict", "start"]].values.tolist()
+   [['cash', 'domain', 'assumed', 1], ['debit', 'domain', 'assumed', 1], ['cash', 'recurrence', 'assumed', 1]]
+
+The report does not establish what
 happened between observed rows.
 
 After the assumed prefix, missing cells (``None``, ``NaN``, ``pd.NA``, or
@@ -277,18 +306,24 @@ do not supply its size parameters.
 Execution and scope
 -------------------
 
-The adapter binds source ``model_recurrence`` field references to observation
-slots once. Each row then needs scalar substitution and comparison. Existing
-observations supply the quantities, so coupled current-row equations need no
-solve or topological ordering.
+``validator.window`` is the public
+:class:`~modello.contrib.validation.WindowValidator` used by all adapter methods.
+``FrameValidator.from_window(plan)`` wraps an existing prepared plan without
+recompiling or changing its parameters and tolerances.
+``iter_results(frame)`` projects columns in its required order, converts pandas
+nulls to ``None``, and feeds its rolling iterator. The same ``check_window``
+function is directly usable in another framework. Existing observations supply
+the quantities, so coupled current-row equations need no solve or topological
+ordering.
 
-``iter_checks(frame)`` yields individual ``FrameCheck`` records and retains at
-most ``window_size`` rows. ``first_invalid`` consumes only as far as a proven
-failure. ``validate`` collects one nullable boolean per input row, while
-``report`` collects every check. Both output sizes grow with the frame. All
-methods read row tuples without coercing mixed rows to a common numeric dtype;
-the input is unchanged. Each call starts fresh history; separate calls on
-chunks do not carry state.
+``iter_checks(frame)`` yields individual check records, including assumptions.
+``iter_results`` retains at most ``window_size`` rows; ``first_invalid`` consumes
+only as far as a proved violation. ``validate`` collects one nullable boolean per
+row, ``report`` collects all checks, and ``audit`` retains coverage counts plus
+the first violation. All methods read tuples without coercing mixed rows to a
+common numeric dtype. Each call starts fresh history; separate calls on chunks
+do not carry state. Use the independent iterator over chained batches or keep
+the overlap and absolute position in the consuming framework.
 
 Supported laws use current rows and fixed past lags of the selected vector.
 Nonlinear equations, current-row cycles, fixed-width indexed sums, nested
@@ -310,6 +345,7 @@ API
 .. currentmodule:: modello.contrib.pandas
 
 .. autoclass:: FrameValidator(model, rows, *, parameters=None, atol=0, rtol=0)
-   :members: first_invalid, validate, report, iter_checks, window_size
+   :members: from_window, window, first_invalid, validate, report, audit, iter_results, iter_checks, window_size, first_test_position
 
-.. autoclass:: FrameCheck
+``FrameCheck`` is an alias of
+:class:`modello.contrib.validation.CheckResult` for pandas consumers.

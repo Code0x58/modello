@@ -89,6 +89,9 @@ from modello.contrib.stochastic import ItoProcess
 x = modello.Coordinate('x', real=True)
 t = modello.Coordinate('t', real=True)
 assert ItoProcess(x, 0, 1, t).drift(x**2).doit() == 1
+
+from modello.contrib.validation import WindowValidator
+assert not {'pandas', 'polars', 'numpy'} & sys.modules.keys()
 """
     result = subprocess.run(
         [sys.executable, "-c", program], cwd=pytestconfig.rootpath, capture_output=True, text=True, timeout=30

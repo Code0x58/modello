@@ -143,6 +143,23 @@ assert accounts.N == 2
 assert accounts.balances == modello.Vector(100, 90, 70)
 assert accounts.terminal is accounts.states[-1]
 assert Accounts("empty", opening=AccountState("opening", cash=100), fills=[]).terminal.cash == 100
+
+from modello.contrib.validation import WindowValidator
+class ObservedCash(modello.Modello):
+    cash = modello.InstanceDummy("cash", real=True)
+    debit = modello.InstanceDummy("debit", real=True)
+class ObservedLedger(modello.Modello):
+    N = modello.InstanceDummy("N", integer=True, nonnegative=True)
+    rows = modello.model_vector(ObservedCash, size=N)
+    n = modello.Index("n")
+    law = modello.model_recurrence(rows[n], cash=rows[n-1].cash-rows[n].debit)
+validator = WindowValidator(ObservedLedger, "rows")
+assert (validator.window_size, validator.first_test_position) == (2, 1)
+assert validator.check_window(((100, 0), (90, 10)), position=1).valid is True
+audit = validator.audit(((100, 0), (90, 10)))
+assert (audit.row_count, audit.checked_rows, audit.assumed_rows) == (2, 1, 1)
+assert audit.valid is None and audit.first_invalid is None
+assert not {"pandas", "polars", "numpy"} & sys.modules.keys()
 vector_snapshot = Explorer(window).snapshot()
 assert vector_snapshot["vectors"][0]["shape"] == [3]
 assert "mover" in vector_snapshot["vectors"][0]["symbol_mathml"]
@@ -160,6 +177,8 @@ from examples.geometry import RightAngleTriangle
 from examples.data import NamedMap
 from examples.gui_quickstart import ReturnModel
 from examples.gallery.models import AccountSequence, LinearTrend
+from examples.validate_stream import scan_batches
+from modello.contrib.validation import ValidationSummary
 import modello
 from examples.portfolio.models import Execution, HoldingState
 from modello.gui import Explorer
@@ -183,6 +202,10 @@ assert gallery.joinpath("static/gallery.css").is_file()
 data = resources.files("examples.portfolio").joinpath("data")
 for name in ("market.csv", "transactions.csv", "benchmark.csv"):
     assert data.joinpath(name).is_file(), name
+stream_audit = ValidationSummary.from_results(scan_batches())
+assert stream_audit.first_invalid.position == 2
+assert stream_audit.assumed_rows == 1 and stream_audit.checked_rows == 3
+assert "pandas" not in sys.modules
 print("Validated installed example modules, type marker, and portfolio fixtures")
 """
 
@@ -218,6 +241,10 @@ validity = validator.validate(frame)
 assert validity.iloc[0] is pd.NA
 assert validity.iloc[1:].tolist() == [True, False, True]
 assert validity.index.equals(frame.index)
+audit = validator.audit(frame)
+assert (audit.row_count, audit.checked_rows, audit.assumed_rows, audit.unknown_rows) == (4, 3, 1, 0)
+assert audit.violated_rows == 1
+assert audit.valid is False and not audit.complete
 first = validator.first_invalid(frame)
 assert first is not None
 assert (first.position, first.index, first.field, first.expected, first.residual) == (2, "sale", "cash", 90998, -8)
@@ -255,6 +282,7 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
     install("examples")
     subprocess.run([str(python), "-I", "-c", EXAMPLES_SMOKE_TEST], cwd=directory, check=True)
     for module in (
+        "examples.validate_stream",
         "examples.portfolio",
         "examples.portfolio.optimal_execution",
         "examples.solution_families",
