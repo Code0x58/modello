@@ -498,8 +498,10 @@ class WindowValidator:
                     "Window laws require fixed past lags covered by start; future and fixed rows are unsupported"
                 )
             replacements[term] = self._observed[int(delay), self._sources[term.vector]]
-        for symbol in body.free_symbols & self._sources.keys():
-            replacements[symbol] = self._observed[0, self._sources[symbol]]
+        if index is None:
+            # Only schema rules may bind unindexed field declarations.
+            for symbol in body.free_symbols & self._sources.keys():
+                replacements[symbol] = self._observed[0, self._sources[symbol]]
         if index is not None:
             replacements[index] = self._index
         # Preserve source poles before substitution can cancel them.

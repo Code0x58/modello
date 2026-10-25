@@ -316,6 +316,37 @@ def test_parameter_definitions_expand_without_inference():
         WindowValidator(History, "rows", parameters={"retention": -1})
 
 
+@pytest.mark.parametrize("inherited", [False, True])
+def test_parent_parameters_do_not_bind_to_reused_row_declarations(inherited):
+    class History(HoldingState if inherited else Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        if not inherited:
+            rate = HoldingState.quantity
+        rows = model_vector(HoldingState, size=N)
+        n = Index("n")
+        law = model_recurrence(rows[n], quantity=HoldingState.quantity * rows[n - 1].quantity)
+
+    with pytest.raises(ModelInputError, match="Unbound"):
+        WindowValidator(History, "rows")
+
+    parameter = "quantity" if inherited else "rate"
+    validator = WindowValidator(History, "rows", parameters={parameter: 2})
+    assert validator(((1, 0), (2, 0)), position=1).valid
+    result = validator(((1, 0), (3, 0)), position=1)
+    assert result.invalid and result.checks[-1].expected == 2
+    problem = inspect_model(History, "comparison", N=2)
+    values = {("N",): 2, (parameter,): 2}
+    if inherited:
+        values[("cash",)] = 0
+    values.update(
+        (("rows", str(position), field), value)
+        for position, row in enumerate(((1, 0), (3, 0)))
+        for field, value in zip(validator.fields, row, strict=True)
+    )
+    candidate = Candidate(tuple(FieldValue(problem.field(*path), value) for path, value in values.items()))
+    assert problem.check(candidate).verdict == "violated"
+
+
 @pytest.mark.parametrize(
     "query,rate,quantity,valid",
     [
