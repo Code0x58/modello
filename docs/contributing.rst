@@ -4,6 +4,12 @@ Contributing and releases
 Use uv 0.13.1 or newer. The library and CI support Python 3.10 through 3.15.
 Documentation tooling requires Python 3.12 or newer; notebook tooling has its
 own optional Python 3.11+ group. All environments share the root ``uv.lock``.
+The ``docs`` group includes pandas and Polars for executable integration recipes;
+neither library is a runtime or ordinary test dependency. Documentation CI runs
+``uv run --locked --group docs sphinx-build --fail-on-warning --keep-going
+--builder=doctest docs docs/_build/doctest`` before the HTML build. The ordinary
+pytest suite excludes the frame recipe page because this separate docs job
+executes it with the documentation dependencies installed.
 
 Reading the core
 ----------------
@@ -82,10 +88,9 @@ position, returning both evidence and coverage. Its stream iterator retains
 ``order+1`` rows. Audits require every position from zero by default, including
 initial assumptions. Other intervals require an explicit start, so truncation
 cannot masquerade as complete validation.
-``contrib/pandas.py`` only binds columns, normalises pandas nulls, and feeds that
-same function. Nullable booleans, detailed reports, and finite audits share its
-results. Neither extension constructs models or invokes the joint solver; core
-imports load neither extension nor any optional frame library.
+Frame-specific projection and windowing live in tested documentation recipes.
+The validator constructs no model instances and invokes no joint solve; core
+imports load neither this extension nor any optional frame library.
 ``_shapes.py`` solves symbolic finite axes from observation lengths before scalar
 coordinates are compiled. Shape specialization produces a cached subclass; it
 does not mutate the reusable declaration. The GUI creates a fresh finite context

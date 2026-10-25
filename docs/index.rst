@@ -75,7 +75,7 @@ the API and diagnostic guarantees are separate reference material.
 
    contrib/stochastic
    contrib/validation
-   contrib/pandas
+   contrib/validation-frames
 
 .. toctree::
    :caption: Applications

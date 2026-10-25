@@ -1,4 +1,4 @@
-"""Pandas-independent validation of observed recurrence windows and row streams."""
+"""Validation of observed recurrence windows and row streams."""
 
 from __future__ import annotations
 
@@ -294,6 +294,8 @@ class WindowValidator:
         checks += tuple(self._check(rule, position, label, observed) for rule in self._rules)
         return WindowResult(position, label, checks)
 
+    __call__ = check_window
+
     def iter_results(
         self,
         rows: Iterable[Row],
@@ -311,7 +313,7 @@ class WindowValidator:
         labelled = zip(rows, count() if labels is None else labels, strict=labels is not None)
         for position, (row, label) in enumerate(labelled):
             window.append(self._project(row))
-            yield self.check_window(tuple(window), position=position, index=label)
+            yield self(tuple(window), position=position, index=label)
 
     def audit(self, rows: Iterable[Row], *, labels: Iterable[Hashable] | None = None) -> ValidationSummary:
         """Scan the entire input and return coverage plus the first proved violation."""

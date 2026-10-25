@@ -58,6 +58,34 @@ def test_plain_mappings_and_projected_sequences_have_the_same_results():
     )
 
 
+def test_validator_is_a_callable_window_function():
+    validator = WindowValidator(CashLedger, "rows")
+    window = ((100, 0), (90, 10))
+    assert validator(window, position=1) == validator.check_window(window, position=1)
+    with pytest.raises(TypeError, match="position"):
+        validator(window)
+
+
+def test_callers_can_select_the_first_error_lazily_or_collect_all_errors():
+    validator = WindowValidator(CashLedger, "rows")
+    rows = ((100, 0), (90, 10), (85, 2), (80, 2))
+
+    def stream():
+        for position, row in enumerate(rows):
+            if position == 3:
+                raise AssertionError("A first-error search should stop before this row")
+            yield row
+
+    first = next(
+        check for result in validator.iter_results(stream()) for check in result.checks if check.verdict == "violated"
+    )
+    assert (first.position, first.expected, first.residual) == (2, 88, -3)
+    errors = [
+        check for result in validator.iter_results(rows) for check in result.checks if check.verdict == "violated"
+    ]
+    assert [(check.position, check.expected, check.residual) for check in errors] == [(2, 88, -3), (3, 83, -3)]
+
+
 def test_windows_are_stateless_reentrant_and_keep_observed_predecessors():
     validator = WindowValidator(CashLedger, "rows")
     final = validator.check_window(((85, 2), (83, 2)), position=3)

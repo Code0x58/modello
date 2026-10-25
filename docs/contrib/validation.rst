@@ -4,7 +4,8 @@ Observed recurrence windows (contrib)
 ``modello.contrib.validation`` is independent of pandas, Polars, and stream
 frameworks. It prepares a reusable function over projected rows, with explicit
 coverage alongside each result. The base ``modello`` installation is sufficient.
-The :doc:`pandas adapter <pandas>` uses this same window function.
+The :doc:`DataFrame recipes <validation-frames>` show caller-owned projection
+and windowing for pandas and Polars; neither library is a runtime dependency.
 
 A law of order :math:`p` normally tests
 
@@ -49,6 +50,30 @@ The ordinary model-vector API supplies the schema and source law:
 For this cash process, :math:`\widehat C_n=C_{n-1}-D_n` and the residual is
 :math:`e_n=C_n-\widehat C_n`.
 
+.. list-table:: Input observations
+   :header-rows: 1
+
+   * - Position
+     - Event
+     - Cash
+     - Debit
+   * - 0
+     - opening
+     - 100
+     - 0
+   * - 1
+     - purchase
+     - 90
+     - 10
+   * - 2
+     - sale
+     - 85
+     - 2
+   * - 3
+     - fee
+     - 83
+     - 2
+
 .. code-block:: pycon
 
    >>> from examples.validate_stream import CashLedger
@@ -58,15 +83,16 @@ For this cash process, :math:`\widehat C_n=C_{n-1}-D_n` and the residual is
    ('cash', 'debit')
    >>> validator.order, validator.window_size, validator.first_test_position
    (1, 2, 1)
-   >>> result = validator.check_window(((90, 10), (85, 2)), position=2, index="sale")
+   >>> result = validator(((90, 10), (85, 2)), position=2, index="sale")
    >>> result.valid, result.complete
    (False, True)
    >>> problem = result.first_invalid
    >>> problem.position, problem.index, problem.field, problem.expected, problem.residual
    (2, 'sale', 'cash', 88, -3)
 
-``check_window`` checks **only the final row**. A complete result means all of
-that row's declared checks ran and reached a decided outcome. It does not mean
+The callable checks **only the final row**; ``check_window`` is its equivalent
+named method. A complete result means all of that row's declared checks ran and
+reached a decided outcome. It does not mean
 that preceding rows in the supplied window were independently validated.
 Those are observations used to evaluate the current equations.
 
@@ -94,8 +120,8 @@ Input contract
   sampling grid in the source adapter. Count windows contain observed rows;
   a gap between timestamp labels does not invent missing observations.
 * Use ``None`` for framework-specific null sentinels. Python float NaN, decimal
-  NaN, and SymPy NaN also yield missing observations. The pandas adapter converts
-  its own null sentinels to ``None``. Numeric text must be parsed by the adapter;
+  NaN, and SymPy NaN also yield missing observations. Frame recipes convert their
+  own null sentinels to ``None``. Numeric text must be parsed by the caller;
   it is never evaluated as Python or SymPy source.
 
 Missing mapping fields, wrong row/window sizes, and invalid positions raise
@@ -133,8 +159,8 @@ law can find a break before another law starts, so external frameworks should
 emit partial prefix windows too. Keeping only full-width windows can discard
 that evidence. ``iter_results`` handles those prefixes automatically.
 
-Streams, batches, and Polars
-----------------------------
+Streams and batches
+-------------------
 
 ``iter_results`` takes any ordered iterable of rows. It emits one ``WindowResult``
 per input row, including initial assumptions, using a bounded deque:
@@ -167,21 +193,9 @@ a new partition; restarting enumeration inside each batch changes the law.
 For continuous streams consume individual results, rather than waiting for a
 finite audit to finish.
 
-Polars can provide the same tuples without a pandas conversion:
-
-.. code-block:: python
-
-   rows = polars_frame.select(list(validator.fields)).iter_rows()
-   for result in validator.iter_results(rows):
-       consume(result)
-
-``select`` preserves the requested projection and ``iter_rows`` supplies Python
-row tuples; see the `Polars selection API
-<https://docs.pola.rs/api/python/stable/reference/dataframe/api/polars.DataFrame.select.html>`_
-and `row iterator
-<https://docs.pola.rs/api/python/stable/reference/dataframe/api/polars.DataFrame.iter_rows.html>`_.
-Checks execute in Python/SymPy; Polars supplies the data. No Polars dependency
-or native execution engine is required by the validator.
+For DataFrames, project fields and apply this same callable to row windows, or
+feed projected row tuples to ``iter_results``. The executable
+:doc:`pandas and Polars recipes <validation-frames>` demonstrate both patterns.
 
 Coverage before acceptance
 --------------------------
@@ -244,7 +258,7 @@ Scope and numerical values
 
 The selected row model's scalar domains, definitions, aliases, and relative laws
 are checked. Unrelated parent equations, aggregates, terminal/boundary constraints,
-and other vectors are outside this adapter's validation scope. Keep per-row
+and other vectors are outside this validator's scope. Keep per-row
 inputs in the selected row schema. Missing values and parameters are not fitted
 or filled. A passing row is evidence for these declared checks, conditional on
 its supplied predecessors; it is not an independent guarantee about unmodelled
@@ -265,6 +279,7 @@ API
 
 .. autoclass:: WindowValidator(model, rows, *, parameters=None, atol=0, rtol=0)
    :members: fields, field_paths, order, window_size, first_test_position, fully_testable_position, check_window, iter_results, audit
+   :special-members: __call__
 
 .. autoclass:: WindowResult
    :members: valid, complete, assumed, first_invalid

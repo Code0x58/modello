@@ -30,7 +30,10 @@ assert distribution.metadata["Requires-Python"] == ">=3.10"
 assert Path(modello.__file__).with_name("py.typed").is_file()
 assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
 assert "gui" in distribution.metadata.get_all("Provides-Extra", ())
-assert "pandas" in distribution.metadata.get_all("Provides-Extra", ())
+assert "pandas" not in distribution.metadata.get_all("Provides-Extra", ())
+assert not any(requirement.lower().startswith(("pandas", "polars", "numpy"))
+               for requirement in distribution.requires or ())
+assert not Path(modello.__file__).with_name("contrib").joinpath("pandas.py").exists()
 assert "pandas" not in sys.modules
 assert "flask" not in sys.modules
 from modello.gui import Explorer, FieldInfo, ModelInfo, gui
@@ -155,7 +158,7 @@ class ObservedLedger(modello.Modello):
     law = modello.model_recurrence(rows[n], cash=rows[n-1].cash-rows[n].debit)
 validator = WindowValidator(ObservedLedger, "rows")
 assert (validator.window_size, validator.first_test_position) == (2, 1)
-assert validator.check_window(((100, 0), (90, 10)), position=1).valid is True
+assert validator(((100, 0), (90, 10)), position=1).valid is True
 audit = validator.audit(((100, 0), (90, 10)))
 assert (audit.row_count, audit.checked_rows, audit.assumed_rows) == (2, 1, 1)
 assert audit.valid is None and audit.first_invalid is None
@@ -177,6 +180,7 @@ from examples.geometry import RightAngleTriangle
 from examples.data import NamedMap
 from examples.gui_quickstart import ReturnModel
 from examples.gallery.models import AccountSequence, LinearTrend
+from examples.accounting_breaks import EVENTS, accounting_rows, find_breaks
 from examples.validate_stream import scan_batches
 from modello.contrib.validation import ValidationSummary
 import modello
@@ -205,7 +209,10 @@ for name in ("market.csv", "transactions.csv", "benchmark.csv"):
 stream_audit = ValidationSummary.from_results(scan_batches())
 assert stream_audit.first_invalid.position == 2
 assert stream_audit.assumed_rows == 1 and stream_audit.checked_rows == 3
-assert "pandas" not in sys.modules
+breaks = list(find_breaks(accounting_rows(), labels=EVENTS))
+assert len(breaks) == 1
+assert (breaks[0].index, breaks[0].field, breaks[0].residual) == ("sale", "cash", -8)
+assert not {"pandas", "polars", "numpy"} & sys.modules.keys()
 print("Validated installed example modules, type marker, and portfolio fixtures")
 """
 
@@ -222,39 +229,6 @@ response = client.post("/sequence/api/explore", json={"bindings": {"terminal.cas
 assert response.status_code == 200, response.json
 assert next(field["value"] for field in response.json["fields"] if field["path"] == "fills[1].price") == "110"
 print("Validated installed gallery, assets, and inverse account solve")
-"""
-
-
-PANDAS_SMOKE_TEST = r"""
-import sys
-
-import modello
-assert "pandas" not in sys.modules
-from modello.contrib.pandas import FrameValidator
-from examples.accounting_breaks import Ledger, accounting_frame
-import pandas as pd
-
-validator = FrameValidator(Ledger, "rows")
-assert validator.window_size == 2
-frame = accounting_frame()
-validity = validator.validate(frame)
-assert validity.iloc[0] is pd.NA
-assert validity.iloc[1:].tolist() == [True, False, True]
-assert validity.index.equals(frame.index)
-audit = validator.audit(frame)
-assert (audit.row_count, audit.checked_rows, audit.assumed_rows, audit.unknown_rows) == (4, 3, 1, 0)
-assert audit.violated_rows == 1
-assert audit.valid is False and not audit.complete
-first = validator.first_invalid(frame)
-assert first is not None
-assert (first.position, first.index, first.field, first.expected, first.residual) == (2, "sale", "cash", 90998, -8)
-report = validator.report(frame)
-assert not report["verdict"].eq("unknown").any()
-breaks = report.loc[report["verdict"].eq("violated")]
-assert breaks[["position", "index", "field", "expected", "residual"]].values.tolist() == [
-    [2, "sale", "cash", 90998, -8]
-]
-print("Validated installed pandas extension and nested accounting example")
 """
 
 
@@ -282,6 +256,7 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
     install("examples")
     subprocess.run([str(python), "-I", "-c", EXAMPLES_SMOKE_TEST], cwd=directory, check=True)
     for module in (
+        "examples.accounting_breaks",
         "examples.validate_stream",
         "examples.portfolio",
         "examples.portfolio.optimal_execution",
@@ -302,8 +277,6 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
     print(f"Validated all installed example runners from {wheel.name}", flush=True)
     install("gui")
     subprocess.run([str(python), "-I", "-c", GUI_SMOKE_TEST], cwd=directory, check=True)
-    install("pandas")
-    subprocess.run([str(python), "-I", "-c", PANDAS_SMOKE_TEST], cwd=directory, check=True)
     typing_checks = []
     for path in (
         "typing_checks.py",
@@ -355,9 +328,7 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="modello-distributions-") as temporary:
         scratch = Path(temporary)
-        requirements = {
-            extra: scratch / f"{extra or 'runtime'}-requirements.txt" for extra in ("", "examples", "gui", "pandas")
-        }
+        requirements = {extra: scratch / f"{extra or 'runtime'}-requirements.txt" for extra in ("", "examples", "gui")}
         for extra, target in requirements.items():
             options = ("--extra", extra) if extra else ()
             subprocess.run(

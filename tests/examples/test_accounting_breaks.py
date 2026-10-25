@@ -1,39 +1,33 @@
-"""The nested ledger example identifies a locally isolated accounting break."""
+"""The generic ledger example identifies a locally isolated accounting break."""
 
-import pandas as pd
-from pandas.testing import assert_frame_equal, assert_series_equal
+from copy import deepcopy
 
-from examples.accounting_breaks import Ledger, accounting_frame, find_breaks
-from modello.contrib.pandas import FrameValidator
+from examples.accounting_breaks import EVENTS, Ledger, accounting_rows, find_breaks
+from modello.contrib.validation import WindowValidator
 
 
 def test_accounting_break_and_input_preservation():
-    frame = accounting_frame()
-    original = frame.copy(deep=True)
-    breaks = find_breaks(frame)
-    assert breaks[["position", "index", "field", "rule", "observed", "expected", "residual"]].values.tolist() == [
-        [2, "sale", "cash", "posting", 90_990, 90_998, -8]
+    rows = accounting_rows()
+    original = deepcopy(rows)
+    problems = list(find_breaks(rows, labels=EVENTS))
+    assert [(p.position, p.index, p.field, p.rule, p.observed, p.expected, p.residual) for p in problems] == [
+        (2, "sale", "cash", "posting", 90_990, 90_998, -8)
     ]
-    assert_frame_equal(frame, original)
-    validator = FrameValidator(Ledger, "rows")
-    report = validator.report(frame)
-    assert not report["verdict"].eq("unknown").any()
-    final = report.loc[report["position"].eq(3)]
-    assert final["verdict"].eq("satisfied").all()
-    assert validator.window_size == 2
-    assert_series_equal(
-        validator.validate(frame),
-        pd.Series([pd.NA, True, False, True], index=frame.index, dtype="boolean", name="valid"),
-    )
-    first = validator.first_invalid(frame)
-    assert first is not None
-    assert (first.position, first.index, first.field, first.residual) == (2, "sale", "cash", -8)
+    assert rows == original
+    validator = WindowValidator(Ledger, "rows")
+    results = list(validator.iter_results(rows, labels=EVENTS))
+    assert [result.valid for result in results] == [None, True, False, True]
+    assert results[-1].complete
+    assert validator.window_size == 2 and validator.first_test_position == 1
+    assert next(find_breaks(rows, labels=EVENTS)).position == 2
 
 
 def test_correcting_the_break_and_subsequent_balances_validates_the_ledger():
-    frame = accounting_frame()
+    rows = accounting_rows()
     for position in (2, 3):
         for field in ("cash", "nav"):
-            frame.loc[frame.index[position], (field, "")] += 8
-    assert find_breaks(frame).empty
-    assert FrameValidator(Ledger, "rows").first_invalid(frame) is None
+            rows[position][field] += 8
+    assert list(find_breaks(rows)) == []
+    audit = WindowValidator(Ledger, "rows").audit(rows)
+    assert audit.first_invalid is None
+    assert (audit.assumed_rows, audit.checked_rows, audit.unknown_rows) == (1, 3, 0)
