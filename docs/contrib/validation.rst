@@ -1,279 +1,167 @@
 Observed recurrence windows
 ===========================
 
-Use ``WindowValidator`` to check recorded observations against a model's
-recurrence laws and row schema. Each result identifies broken equations and
-distinguishes validated observations from assumed history and missing data.
+The :doc:`account walkthrough <../model-vectors>` calculates balances from
+trades. When a statement already contains those balances, check that each
+posting agrees with the preceding balance and the recorded cash movement.
+``WindowValidator`` reports the accounting breaks while keeping the supplied
+observations intact.
 
-Import the validator from ``modello.contrib.validation``. It accepts windows of
-ordinary Python rows. The
-:doc:`DataFrame recipes <../recipes/dataframe-validation>` show how to use it
-with pandas and Polars. The base ``modello`` installation is sufficient for
-Python row sequences.
-
-A law of order :math:`p` normally tests
+The nested ledger in ``examples.accounting_breaks`` follows a purchase, sale,
+and repurchase. Amounts are integer cents. Its cash and share balances obey
 
 .. math::
 
-   x_n = f(n, x_{n-1}, \ldots, x_{n-p}, u_n), \qquad n \ge p.
+   \widehat C_n = C_{n-1} + \Delta C_n, \qquad
+   \widehat Q_n = Q_{n-1} + \Delta Q_n.
 
-Its input window ends at the observation being tested. With zero-based
-positions, the first test is at position :math:`p`. The first :math:`p`
-observations supply assumed history; the window contains :math:`p+1` rows.
+For cash, the residual is :math:`e_n=C_n-\widehat C_n`. The sale below records
+90,990 cents against an expected :math:`79{,}999+10{,}999=90{,}998`: an eight-cent
+break.
 
-.. list-table:: History and first test
+.. list-table:: Cash columns from the ledger
    :header-rows: 1
 
-   * - Order
-     - Assumed positions
-     - First test position
-     - Window width
-   * - 0
-     - none (with ``start=0``)
-     - 0
-     - 1
-   * - 1
-     - 0
-     - 1
-     - 2
-   * - 2
-     - 0, 1
-     - 2
-     - 3
-
-Check a window
----------------
-
-The ordinary model-vector API supplies the schema and source law:
-
-.. literalinclude:: ../../examples/validate_stream.py
-   :start-at: class CashRow
-   :end-before: def scan_batches
-   :language: python
-
-For this cash process, :math:`\widehat C_n=C_{n-1}-D_n` and the residual is
-:math:`e_n=C_n-\widehat C_n`.
-
-.. list-table:: Input observations
-   :header-rows: 1
-
-   * - Position
-     - Event
+   * - Event
      - Cash
-     - Debit
-   * - 0
-     - opening
-     - 100
+     - Cash movement
+   * - opening
+     - 100,000
      - 0
-   * - 1
-     - purchase
-     - 90
-     - 10
-   * - 2
-     - sale
-     - 85
-     - 2
-   * - 3
-     - fee
-     - 83
-     - 2
+   * - purchase
+     - 79,999
+     - -20,001
+   * - sale
+     - 90,990
+     - 10,999
+   * - repurchase
+     - 80,489
+     - -10,501
+
+Find an accounting break
+------------------------
+
+Reuse the ledger's row schema and recurrence laws:
 
 .. code-block:: pycon
 
-   >>> from examples.validate_stream import CashLedger
+   >>> from examples.accounting_breaks import EVENTS, Ledger, accounting_rows
    >>> from modello.contrib.validation import WindowValidator
-   >>> validator = WindowValidator(CashLedger, "rows")
-   >>> validator.fields
-   ('cash', 'debit')
-   >>> validator.order, validator.window_size, validator.first_test_position
-   (1, 2, 1)
-   >>> result = validator(((90, 10), (85, 2)), position=2, index="sale")
-   >>> result.valid, result.complete
-   (False, True)
+   >>> rows = accounting_rows()
+   >>> validator = WindowValidator(Ledger, "rows")
+   >>> validator.order, validator.window_size
+   (1, 2)
+   >>> result = validator(rows[1:3], position=2, index=EVENTS[2])
    >>> problem = result.first_invalid
-   >>> problem.position, problem.index, problem.field, problem.expected, problem.residual
-   (2, 'sale', 'cash', 88, -3)
+   >>> result.valid, problem.index, problem.field, problem.expected, problem.residual
+   (False, 'sale', 'cash', 90998, -8)
 
-The callable checks the final row; ``check_window`` is its equivalent
-named method. A complete result means all of that row's declared checks ran and
-reached a decided outcome. Preceding rows supply the observations used to
-evaluate the current equations; their own results require separate checks.
+The callable checks the final row of an oldest-first window; ``check_window``
+is the equivalent named method. Each transition uses recorded predecessors,
+so a later row can pass even after an earlier break. The ledger also checks
+share movements, holding values, and net asset values from its row schema.
 
-The function is stateless: it stores no incoming history between calls. Calls
-may be interleaved across accounts or dispatched to workers when each receives
-the correct window and position. Prepared validators can be pickled when their
-model classes live in an importable module.
+For a law of order :math:`p`, the window contains :math:`p+1` observations.
+The first test is normally at zero-based position :math:`p`; the first
+:math:`p` rows supply assumed history. Each law retains its declared start:
+``first_test_position`` is the earliest start and ``fully_testable_position``
+is when all laws have started.
 
-Prepare input rows
--------------------
+Read the results
+-----------------
 
-* Project columns in exactly ``validator.fields`` order and pass row tuples,
-  or supply flat mappings keyed by those field names. Extra mapping keys are
-  ignored. ``field_paths`` exposes the corresponding nested attribute paths for
-  adapters; flat names include ``holding.quantity`` or ``quantities[0]``.
-* A window is oldest first, ending at the row being tested. Its length must be
-  exactly ``min(position+1, window_size)``. A short window is valid only at the
-  true beginning of a stream. Missing overlap later is a configuration error.
-* ``position`` is a required absolute, nonnegative Python integer. It is the
-  row coordinate used by the law, independent of the current window's length,
-  batch number, and index label. A law containing ``n`` needs this coordinate
-  even when the window already has its full width.
-* Labels are optional hashable metadata and never determine the coordinate.
-  Preserve account grouping, event order, deduplication, and the intended
-  sampling grid in the source adapter. Count windows contain observed rows;
-  a gap between timestamp labels does not invent missing observations.
-* Use ``None`` for framework-specific null sentinels. Python float NaN, decimal
-  NaN, and SymPy NaN also yield missing observations. Frame recipes convert their
-  own null sentinels to ``None``. Numeric text must be parsed by the caller;
-  it is never evaluated as Python or SymPy source.
-
-Missing mapping fields, wrong row/window sizes, and invalid positions raise
-``ModelInputError``. Malformed scalar cells instead produce domain violations
-when their checks apply. Schema binding is required even for assumed rows;
-initial scalar values themselves remain assumptions.
-
-Interpret validation results
------------------------------
+Scan an ordered iterable to obtain one result per observation:
 
 .. code-block:: pycon
 
-   >>> opening = validator.check_window(((100, 0),), position=0)
-   >>> opening.valid, opening.complete, opening.assumed
-   (None, False, True)
-   >>> [(check.field, check.kind, check.verdict, check.start) for check in opening.checks]
-   [('cash', 'domain', 'assumed', 1), ('debit', 'domain', 'assumed', 1), ('cash', 'recurrence', 'assumed', 1)]
+   >>> results = list(validator.iter_results(rows, labels=EVENTS))
+   >>> [result.valid for result in results]
+   [None, True, False, True]
 
-Each ``CheckResult`` retains its field, rule, kind, first applicable ``start``
-position, observed and expected values, residual, verdict, and reason. Verdicts
-are ``assumed``, ``satisfied``, ``violated``, or ``unknown``. Assumed checks have
-not run; unknown checks ran without enough information to decide.
+``valid`` is ``False`` for a proved violation, ``True`` when all current-row
+checks pass, and ``None`` for assumed history or insufficient evidence.
+``complete`` means every current-row check ran and was decided, including
+violations. It describes that row, not the validation of its predecessors.
 
-``WindowResult.valid`` is ``False`` if any check proves a violation, ``True``
-only when every check passes, and ``None`` otherwise. ``complete`` requires every
-check to have run and be decided; it can be true for an invalid row. A proved
-violation still gives ``False`` when some other checks are unknown. The
-``assumed`` property means that every check at this position is initial history.
-``first_invalid is None`` alone never establishes coverage.
+Each ``CheckResult`` records the field, rule, first applicable ``start``,
+observed and expected values, residual, and reason. Its verdict is
+``assumed``, ``satisfied``, ``violated``, or ``unknown``; ``assumed`` means the
+check has not started, while ``unknown`` means it ran without a decided outcome.
+``first_invalid is None`` alone does not establish complete validation.
+The :doc:`DataFrame recipes <../recipes/dataframe-validation>` show nullable
+validity columns and first/all-error selection with pandas and Polars.
 
-Multiple laws keep their own starts. ``first_test_position`` is the earliest
-start; ``fully_testable_position`` is when every law has started, before checking
-its actual data. The declared start may be later than the largest lag. A shorter
-law can find a break before another law starts, so external frameworks should
-emit partial prefix windows too. Keeping only full-width windows can discard
-that evidence. ``iter_results`` handles those prefixes automatically.
+Supply windows or streams
+--------------------------
 
-Streams and batches
--------------------
+* Supply flat mappings keyed by ``validator.fields``, as above, or row tuples
+  in that exact order. ``field_paths`` exposes nested paths for selecting
+  source columns. Extra mapping keys are ignored.
+* A window must contain exactly ``min(position+1, validator.window_size)`` rows.
+  Include short initial windows: laws with earlier starts can already find
+  breaks there. ``position`` is a required absolute nonnegative Python integer.
+* Labels are hashable reporting metadata. Windows follow row order; gaps in
+  timestamp labels do not insert observations. Keep independent accounts in
+  separate partitions with their own positions and history.
+* Use ``None`` for framework-specific nulls. Numeric NaN also means missing;
+  parse numeric text before validation. Wrong row/window sizes, missing fields,
+  and invalid positions raise ``ModelInputError``. Malformed scalar cells
+  produce domain violations when their checks apply.
 
-``iter_results`` takes any ordered iterable of rows. It emits one ``WindowResult``
-per input row, including initial assumptions, using a bounded deque:
+``iter_results`` retains at most ``window_size`` rows. Each call starts fresh
+at position zero; chain batches into one call to preserve continuity:
 
 .. code-block:: pycon
 
    >>> from itertools import chain
-   >>> batches = (((100, 0), (90, 10)), ((85, 2),), ((83, 2),))
-   >>> results = list(validator.iter_results(chain.from_iterable(batches)))
-   >>> [result.valid for result in results]
+   >>> batches = (rows[:2], rows[2:])
+   >>> [result.valid for result in validator.iter_results(chain.from_iterable(batches))]
    [None, True, False, True]
 
-Each call starts position zero and fresh history. To preserve continuity across
-batches, chain their iterators into one call. For a framework that owns its own
-count window, keep the last ``p`` rows and the absolute position across batches:
+If your stream processor supplies windows, call ``validator(window, position=n)``
+directly. Keep the overlapping :math:`p` rows and absolute position across
+batches or restarts. The validator stores no history between these calls.
 
-.. code-block:: python
+Audit coverage
+---------------
 
-   from collections import deque
-
-   history = deque(maxlen=validator.window_size)
-   for position, row in enumerate(source_rows):
-       history.append(row)
-       result = validator.check_window(tuple(history), position=position)
-       consume(result)  # the service's own output or policy
-
-Maintain separate histories and position counters for independent partitions.
-A restart must restore the overlap and absolute position or deliberately begin
-a new partition; restarting enumeration inside each batch changes the law.
-For continuous streams consume individual results, rather than waiting for a
-finite audit to finish.
-
-For DataFrames, project fields and apply this same callable to row windows, or
-feed projected row tuples to ``iter_results``. The
-:doc:`pandas and Polars recipes <../recipes/dataframe-validation>` demonstrate
-both patterns.
-
-Audit a complete sequence
--------------------------
-
-For a finite job, ``audit`` scans the complete input and retains counts plus the
-first violation. It never short-circuits, because later rows affect coverage:
+``audit`` scans a finite input completely and reports coverage plus the first
+violation. Even a sequence of passing transitions retains its assumed prefix:
 
 .. code-block:: pycon
 
-   >>> audit = validator.audit(((100, 0), (90, 10), (88, 2)))
-   >>> audit.row_count, audit.checked_rows, audit.assumed_rows, audit.unknown_rows, audit.violated_rows
-   (3, 2, 1, 0, 0)
+   >>> audit = validator.audit(rows[:2])
+   >>> audit.row_count, audit.checked_rows, audit.assumed_rows, audit.unknown_rows
+   (2, 1, 1, 0)
    >>> audit.first_invalid, audit.valid, audit.complete
    (None, None, False)
 
-These transitions passed, but the initial observation was assumed. The strict
-whole-input verdict stays ``None``. Empty and history-only inputs also cannot
-claim complete success. ``checked_rows`` counts fully decided rows, including
-fully checked invalid rows; ``assumed_rows`` counts wholly assumed initial rows;
-``unknown_rows`` counts other rows without a decided validity. ``violated_rows``
-counts rows with at least one proved violation, even if other checks are missing.
+``checked_rows`` counts fully decided rows, ``assumed_rows`` counts wholly
+assumed history, and ``violated_rows`` counts rows with a proved break.
+``unknown_rows`` counts remaining rows whose validity is undecidable.
+For strict acceptance require ``audit.valid is True``. A policy that trusts
+initial history can instead require no violated or unknown rows and at least
+one fully checked transition. Empty and history-only inputs provide no such
+transition.
 
-A service can deliberately accept a trusted prefix while still requiring at
-least one fully checked transition and rejecting undecidable later rows:
-
-.. code-block:: python
-
-   audit = validator.audit(source_rows)
-   if audit.violated_rows:
-       reject(audit.first_invalid)
-   elif audit.unknown_rows or audit.checked_rows == 0:
-       handle_insufficient_evidence(audit)
-   else:
-       accept_with_trusted_history(assumed_rows=audit.assumed_rows)
-
-The policy functions belong to the consuming service. For acceptance with no
-assumptions at all, require ``audit.valid is True`` instead.
-
-``ValidationSummary.from_results`` aggregates an existing result iterator in
-constant working memory. By default it requires every position from zero, in
-order, including assumed prefixes. Missing, duplicate, or reordered positions raise
-``ModelInputError``; otherwise a framework that drops initial results could
-misrepresent partial output as a complete audit. For a periodic stream horizon,
-explicitly name another ``start_position``:
-
-.. code-block:: pycon
-
-   >>> from modello.contrib.validation import ValidationSummary
-   >>> horizon = ValidationSummary.from_results(results[2:], start_position=2)
-   >>> horizon.start_position, horizon.stop_position, horizon.valid
-   (2, 4, False)
-
-The reported interval is ``[start_position, stop_position)``; its verdict covers
-only those final-row results. Preceding history is outside the interval. An
-unbounded stream has no final whole-input summary until the consumer defines a
-finite horizon.
+``ValidationSummary.from_results(results)`` audits an existing result iterator.
+It requires every position from zero in order, rejecting gaps, duplicates,
+and omitted prefixes. To audit another contiguous interval, supply an explicit
+``start_position``; ``[start_position, stop_position)`` then names its coverage.
 
 Scope and numerical values
---------------------------
+---------------------------
 
-The selected row model's scalar domains, definitions, aliases, and relative laws
-are checked. Unrelated parent equations, aggregates, terminal/boundary constraints,
-and other vectors are outside this validator's scope. Keep per-row
-inputs in the selected row schema. Missing values and parameters are not fitted
-or filled. A passing row is evidence for these declared checks, conditional on
-its supplied predecessors; it is not an independent guarantee about unmodelled
-business rules or the preceding history.
+Validation covers the selected row schema's domains, definitions, aliases,
+and fixed causal laws. Put per-row inputs in that schema; other vectors and
+parent aggregate or boundary constraints are outside this scope. Missing
+values and parameters are never inferred or filled.
 
-Exact integers, ``Decimal``, ``Fraction``, and SymPy numbers preserve exact
-arithmetic. Floating inputs retain their precision. Equation tolerances use
-``abs(observed-expected) <= atol + rtol*abs(expected)``; domains remain strict.
-Independent parameters and resolved constant definitions must satisfy their
-field assumptions. Results retain SymPy values for exact evidence; a service
-chooses its own representation at a JSON or other serialisation boundary.
+Integers, ``Decimal``, ``Fraction``, and SymPy numbers retain exact arithmetic.
+Equation tolerances use ``abs(observed-expected) <= atol + rtol*abs(expected)``;
+domains remain strict. Supply independent constants through ``parameters``;
+they and their resolved definitions must satisfy their field assumptions.
+Results retain SymPy values for exact evidence.
 
 
 API

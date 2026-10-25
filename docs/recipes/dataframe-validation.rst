@@ -2,15 +2,16 @@ Validate pandas and Polars DataFrames
 =====================================
 
 Check recorded account balances against a recurrence, attach a validity column,
-and inspect the rows where the accounts break. These recipes use the
+and locate accounting breaks. These recipes use the
 :doc:`window validator <../contrib/validation>` with pandas and Polars.
 
 Install Modello alongside the DataFrame library you use: ``pip install modello
 pandas`` or ``pip install modello polars``.
 
-The cash-ledger model in :doc:`../contrib/validation` checks
-:math:`C_n=C_{n-1}-D_n`, where :math:`C_n` is the recorded cash balance and
-:math:`D_n` is the debit at row :math:`n`. A result of ``True`` means the row
+The accounting example in :doc:`../contrib/validation` checks
+:math:`C_n=C_{n-1}+\Delta C_n`, where :math:`C_n` is the recorded cash balance
+and :math:`\Delta C_n` is the cash movement at row :math:`n`. Amounts are integer
+cents. A result of ``True`` means the row
 passes, ``False`` identifies a break, and ``None`` means the available
 observations do not establish validity.
 
@@ -25,11 +26,10 @@ Each window contains all the columns needed by the law. Reading its rows with
 .. doctest:: pandas
 
    >>> import pandas as pd
-   >>> from examples.validate_stream import CashLedger
+   >>> from examples.accounting_breaks import EVENTS, Ledger, accounting_rows
    >>> from modello.contrib.validation import WindowValidator
-   >>> validator = WindowValidator(CashLedger, "rows")
-   >>> frame = pd.DataFrame({"cash": [100, 90, 85, 83], "debit": [0, 10, 2, 2]},
-   ...                      index=["opening", "purchase", "sale", "fee"], dtype=object)
+   >>> validator = WindowValidator(Ledger, "rows")
+   >>> frame = pd.DataFrame(accounting_rows(), index=EVENTS, dtype=object)
    >>> projected = frame.loc[:, list(validator.fields)]
    >>> def pandas_windows(projected, validator):
    ...     windows = projected.rolling(validator.window_size, min_periods=1)
@@ -47,9 +47,9 @@ Each window contains all the columns needed by the law. Reading its rows with
    True
 
 The mask has one entry per input row and preserves the frame's index. The
-opening balance is assumed, so its entry is ``NA``. The sale records cash of 85
-against an expected balance of :math:`90-2=88`, so that row is ``False``. The
-final row passes because its debit agrees with the preceding recorded balance.
+opening balance is assumed, so its entry is ``NA``. The sale records cash of
+90,990 cents against an expected balance of 90,998, so that row is ``False``.
+The repurchase passes using the preceding recorded balance.
 
 Include the short initial windows: a law of order :math:`p` first tests position
 :math:`p`, using :math:`p+1` observations. Pass the absolute row position to the
@@ -93,10 +93,10 @@ or collect the iterator to inspect every break:
    ...     return (check for result in results for check in result.checks if check.verdict == "violated")
    >>> first = next(errors(pandas_windows(projected, validator)), None)
    >>> first.position, first.index, first.field, first.expected, first.residual
-   (2, 'sale', 'cash', 88, -3)
+   (2, 'sale', 'cash', 90998, -8)
    >>> all_errors = list(errors(pandas_windows(projected, validator)))
    >>> [(check.position, check.residual) for check in all_errors]
-   [(2, -3)]
+   [(2, -8)]
 
 An empty error iterator means no violation was proved. Initial assumptions and
 missing data can still prevent complete validation. Inspect per-row coverage,
@@ -118,14 +118,12 @@ column depth, then pass the selected rows to the same window helper:
 
 .. doctest:: pandas
 
-   >>> from examples.accounting_breaks import EVENTS, Ledger, accounting_rows
-   >>> accounts = pd.DataFrame(accounting_rows(), index=EVENTS)
+   >>> accounts = frame.copy()
    >>> accounts.columns = pd.MultiIndex.from_tuples(
    ...     tuple(name.split(".")) if "." in name else (name, "") for name in accounts.columns)
-   >>> account_validator = WindowValidator(Ledger, "rows")
-   >>> keys = [path + ("",) * (accounts.columns.nlevels - len(path)) for path in account_validator.field_paths]
+   >>> keys = [path + ("",) * (accounts.columns.nlevels - len(path)) for path in validator.field_paths]
    >>> selected = accounts.loc[:, keys]
-   >>> account_results = list(pandas_windows(selected, account_validator))
+   >>> account_results = list(pandas_windows(selected, validator))
    >>> [result.valid for result in account_results]
    [None, True, False, True]
    >>> [(check.index, check.field, check.residual) for check in errors(account_results)]
@@ -146,10 +144,10 @@ row. Attach the validity values as a nullable boolean column:
 .. doctest:: polars
 
    >>> import polars as pl
-   >>> from examples.validate_stream import CashLedger
+   >>> from examples.accounting_breaks import EVENTS, Ledger, accounting_rows
    >>> from modello.contrib.validation import WindowValidator
-   >>> validator = WindowValidator(CashLedger, "rows")
-   >>> polars_frame = pl.DataFrame({"event": [0, 3, 3, 20], "debit": [0, 10, 2, 2], "cash": [100, 90, 85, 83]})
+   >>> validator = WindowValidator(Ledger, "rows")
+   >>> polars_frame = pl.DataFrame(accounting_rows()).with_columns(pl.Series("event", EVENTS))
    >>> rows = polars_frame.select(list(validator.fields)).iter_rows()
    >>> polars_results = list(validator.iter_results(rows, labels=polars_frame["event"]))
    >>> [result.valid for result in polars_results]
@@ -159,10 +157,10 @@ row. Attach the validity values as a nullable boolean column:
    [None, True, False, True]
    >>> breaks = (check for result in polars_results for check in result.checks if check.verdict == "violated")
    >>> [(check.index, check.residual) for check in breaks]
-   [(3, -3)]
-   >>> nullable = pl.DataFrame({"cash": [100, 90, None, 86, 84], "debit": [0, 10, 2, 2, 2]})
+   [('sale', -8)]
+   >>> nullable = polars_frame.with_columns(pl.Series("cash", [100_000, None, 90_990, 80_489]))
    >>> [result.valid for result in validator.iter_results(nullable.select(list(validator.fields)).iter_rows())]
-   [None, True, None, None, True]
+   [None, None, None, True]
 
 Polars nulls arrive as ``None``, so they need no additional conversion. Checks
 execute in Python/SymPy. For batched or unbounded sources, keep one row iterator

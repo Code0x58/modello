@@ -1,32 +1,51 @@
 Stochastic processes
 =====================
 
-Use ``ItoProcess`` to declare stochastic processes and query their transformed
-drifts, diffusions, and conditional moments. Import it from
-``modello.contrib.stochastic`` and combine it with ordinary Modello declarations.
+A price starts at 100 and follows a model with growth rate 0.10 and volatility
+0.20. Use it to calculate the expected price after one period and the growth of
+its logarithm. The :doc:`gallery's price example <../examples/gallery/index>`
+uses ``GeometricDiffusion`` to calculate both, or infer the coefficients from
+observations of the log-price drift and diffusion.
 
-For one standard Wiener driver, ``ItoProcess(X, a, b, t)`` declares
-``dX = a*dt + b*dW``. For a sufficiently smooth deterministic function ``f``,
-its transformed drift is ``f_t + a*f_x + b**2*f_xx/2`` and diffusion is ``b*f_x``:
+The model declares :math:`dS_t=\mu S_t\,dt+\sigma S_t\,dW_t`. Its
+``ItoProcess`` law applies Itô's formula to obtain
+
+.. math::
+
+   d\log S_t = (\mu-\tfrac12\sigma^2)\,dt + \sigma\,dW_t.
+
+Reuse that example to calculate the log-price coefficients, a realised closing
+price, and the conditional mean:
 
 .. code-block:: pycon
 
-   >>> from sympy import log
-   >>> from modello import Coordinate, InstanceDummy
-   >>> from modello.contrib.stochastic import ItoProcess
-   >>> t = Coordinate("t", real=True)
-   >>> S = Coordinate("S", positive=True)
-   >>> mu = InstanceDummy("mu", real=True)
-   >>> sigma = InstanceDummy("sigma", positive=True)
-   >>> process = ItoProcess(S, mu * S, sigma * S, t)
-   >>> process.drift(log(S)).doit() == mu - sigma**2 / 2
-   True
-   >>> process.diffusion(log(S)).doit() == sigma
-   True
+   >>> from sympy import Rational
+   >>> from examples.gallery.extensions import GeometricDiffusion
+   >>> price = GeometricDiffusion(
+   ...     "price", opening=100, growth=Rational(1, 10), volatility=Rational(1, 5),
+   ...     duration=1, wiener_increment=0,
+   ... )
+   >>> price.log_drift, price.log_diffusion
+   (2/25, 1/5)
+   >>> price.closing, price.mean
+   (100*exp(2/25), 100*exp(1/10))
 
-The positive state makes the logarithm's domain explicit. State and time remain
-independent during differentiation; named formulas expand first. Smoothness and
-adaptedness are hypotheses of the model. A one-state transform rejects another
+The log-price drift is 0.08. A realised Wiener increment of zero gives the
+closing price :math:`100e^{0.08}`, while the mean over possible increments is
+:math:`100e^{0.10}`.
+
+Declare your own process
+------------------------
+
+Import ``ItoProcess`` from ``modello.contrib.stochastic``. For one standard
+Wiener driver, ``ItoProcess(X, a, b, t)`` declares ``dX = a*dt + b*dW``.
+For a sufficiently smooth deterministic function ``f``, its transformed drift
+is ``f_t + a*f_x + b**2*f_xx/2`` and diffusion is ``b*f_x``.
+
+The example declares a positive state, making the logarithm's domain explicit.
+State and time remain independent during differentiation; named formulas expand
+first. Smoothness and adaptedness are hypotheses of the model. A one-state
+transform rejects another
 unmodelled process because its quadratic covariation would need a declaration.
 
 ``generator(f)`` returns the spatial drift without ``f_t``.
@@ -45,13 +64,11 @@ values and exact realised endpoints must satisfy the state domain.
 Zero elapsed time returns the initial value or zero variance even when no
 nonzero-time closed form is supported.
 
-The :doc:`diffusion demo <../examples/gallery/index>` uses those formulas for inverse
-parameter inference:
+To recover the same coefficients from the log-process drift and diffusion,
+supply those observations to the same example:
 
 .. code-block:: pycon
 
-   >>> from sympy import Rational
-   >>> from examples.gallery.extensions import GeometricDiffusion
    >>> fitted = GeometricDiffusion(
    ...     "coefficients", opening=100, duration=1, wiener_increment=0,
    ...     log_drift=Rational(2, 25), log_diffusion=Rational(1, 5),
