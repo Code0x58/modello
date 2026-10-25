@@ -6,7 +6,7 @@ from fractions import Fraction
 import pytest
 from sympy import Derivative, Eq, Integral, Lambda, Mul, Piecewise, Pow, Rational, S, Sum, Symbol
 
-from modello import Index, InstanceDummy, Modello, inspect_model, model_recurrence, model_vector
+from modello import Index, InstanceDummy, Modello, Recurrence, Series, inspect_model, model_recurrence, model_vector
 from modello.contrib.validation import WindowValidator
 from modello.diagnostics import Candidate, FieldValue
 from modello.errors import ModelInputError
@@ -49,6 +49,31 @@ def test_current_row_cycles_need_no_dependency_scheduler():
         second = model_recurrence(rows[n], start=0, b=rows[n].a - n)
 
     assert WindowValidator(History, "rows").audit(((2, 2), (4, 3), (6, 4))).valid is True
+
+
+@pytest.mark.parametrize("projected,valid", [(30, True), (29, False), (None, None)])
+def test_row_template_queries_retain_the_complete_field_scope(projected, valid):
+    class Row(Modello):
+        cash = InstanceDummy("cash", real=True)
+        debit = InstanceDummy("debit", real=True)
+        j = Index("j", nonnegative=True)
+        trace = Series("trace", j, real=True)
+        growth = Recurrence(trace[j], 2 * trace[j - 1], initial={0: cash})
+        projected = growth.at(1)
+
+    class Ledger(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rows = model_vector(Row, size=N)
+        n = Index("n")
+        posting = model_recurrence(rows[n], cash=rows[n - 1].cash - rows[n].debit)
+
+    results = list(WindowValidator(Ledger, "rows").iter_results(((20, 0, 40), (15, 5, projected))))
+    assert results[0].assumed
+    assert results[1].valid == valid
+    domains = {check.field: check.valid for check in results[1].checks if check.kind == "domain"}
+    assert domains["cash"] and domains["debit"]
+    definition = next(check for check in results[1].checks if check.kind == "definition")
+    assert definition.expected == 30
 
 
 @pytest.mark.parametrize(
@@ -305,6 +330,32 @@ def test_resolvable_scalar_constants_are_checked_as_configuration_even_when_unus
 
     with pytest.raises(ModelInputError, match="Defined parameter 'unused'.*domain"):
         WindowValidator(History, "rows")
+
+
+@pytest.mark.parametrize(
+    "definition,rate,invalid",
+    [
+        (lambda rate: 1 / rate, 0, True),
+        (lambda rate: Mul(0, Pow(rate, -1, evaluate=False), evaluate=False), 0, True),
+        (lambda rate: 1 / rate, 2, False),
+        (lambda rate: Piecewise((0, Eq(rate, 0)), (1 / rate, True)), 0, False),
+    ],
+)
+def test_unused_scalar_definitions_must_remain_defined(definition, rate, invalid):
+    class History(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        rate = InstanceDummy("rate", real=True)
+        unused = definition(rate)
+        rows = model_vector(CashRow, size=N)
+        n = Index("n")
+        law = model_recurrence(rows[n], cash=rows[n - 1].cash - rows[n].debit)
+
+    if invalid:
+        with pytest.raises(ModelInputError, match="Defined parameter 'unused'.*domain"):
+            WindowValidator(History, "rows", parameters={"rate": rate})
+    else:
+        validator = WindowValidator(History, "rows", parameters={"rate": rate})
+        assert validator(((20, 0), (15, 5)), position=1).valid
 
 
 @pytest.mark.parametrize("parameters,problem", [({}, "domain"), ({"rate": 0}, "domain")])

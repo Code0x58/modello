@@ -155,8 +155,8 @@ causal laws. Put per-event inputs in that schema: other vectors and parent
 aggregate or boundary constraints are outside its scope. Missing values and
 parameters are never inferred or filled.
 
-Definitions inside derivatives and integrals expand before differentiation or
-integration; ordinary equations use recorded field values.
+Calculus and row-local series or process queries use the core model's operator
+semantics. Ordinary equations use recorded field values.
 
 Integers, ``Decimal``, ``Fraction``, and exact SymPy numbers retain exact arithmetic.
 Equation tolerances use ``abs(observed-expected) <= atol + rtol*abs(expected)``;

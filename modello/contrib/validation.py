@@ -34,7 +34,7 @@ from modello._operators import (
     _scalar_expression,
 )
 from modello._paths import FieldPath, _path_label
-from modello._problem import Candidate, FieldValue, ModelConstraint, _algebra, _domain
+from modello._problem import Candidate, FieldValue, ModelConstraint, _algebra, _assumptions_verdict, _domain
 from modello.diagnostics import _tolerances
 from modello.errors import ModelInputError
 from modello.model_vectors import _collection_columns
@@ -226,17 +226,15 @@ class WindowValidator:
         namespace = model._modello_namespace
         if rows not in namespace.collections:
             raise ModelInputError(f"{rows!r} must name a declared model_vector on {model.__name__}")
-        row_definition = namespace.collections[rows].model._modello_definition
-        self._fields = tuple(row_definition.fields.items())
-        self._field_names = tuple(_path_label(path) for path, _ in self._fields)
-        positions = {path: i for i, (path, _) in enumerate(self._fields)}
+        declared = namespace.collections[rows].model._modello_definition.fields
+        self._problem = inspect_model(namespace.collections[rows].model, "window")
+        self._field_names = tuple(_path_label(field.path) for field in self._problem.fields)
+        positions = {field.path: i for i, field in enumerate(self._problem.fields)}
         self._atol, self._rtol = _tolerances(atol, rtol)
-        problem = inspect_model(namespace.collections[rows].model, "window")
-        self._problem = replace(problem, constraints=())
         known = _parameters(model, rows, parameters or {})
         columns = _collection_columns(namespace.nested_models[rows])
         # Resolve aliases through their first declared field, then check each copy.
-        self._sources = {symbol: positions[path] for path, symbol in reversed(self._fields)}
+        self._sources = {symbol: positions[path] for path, symbol in reversed(tuple(declared.items()))}
         self._sources.update({field.symbol: positions[field.path] for field in reversed(self._problem.fields)})
         self._sources.update({column: positions[path] for path, column in reversed(tuple(columns.items()))})
         self._observed = IndexedBase(Dummy("observed"))
@@ -247,17 +245,17 @@ class WindowValidator:
         self._start = min(int(law.template.start) for _, law in laws)
         self._complete_start = max(int(law.template.start) for _, law in laws)
         rules = [
-            _Rule("domain", i, self._start, _domain(symbol), kind="domain")
-            for i, (_, symbol) in enumerate(self._fields)
+            _Rule("domain", i, self._start, _domain(field.symbol), kind="domain")
+            for i, field in enumerate(self._problem.fields)
         ]
-        resolve = _algebra(problem.constraints, problem.templates.values()).resolve
+        resolve = _algebra(self._problem.constraints, self._problem.templates.values()).resolve
         rules.extend(
             self._compile(
                 "definition", positions[item.path], resolve.operators(item.right), self._start, kind="definition"
             )
-            for item in problem.constraints
+            for item in self._problem.constraints
         )
-        for path, symbol in self._fields:
+        for path, symbol in declared.items():
             if positions[path] != self._sources[symbol]:
                 rules.append(self._compile("alias", positions[path], symbol, self._start, kind="alias"))
         for name, law in laws:
@@ -272,6 +270,8 @@ class WindowValidator:
         self._window_size = 1 + max(
             (int(cell.indices[0]) for rule in rules for cell in _scalar_atoms(rule.expression, Indexed)), default=0
         )
+        # Drop compilation caches and source constraints before shipping to workers.
+        self._problem = replace(self._problem, constraints=())
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -281,7 +281,7 @@ class WindowValidator:
     @property
     def field_paths(self) -> tuple[FieldPath, ...]:
         """Nested paths for selecting source columns, in fields order."""
-        return tuple(path for path, _ in self._fields)
+        return tuple(field.path for field in self._problem.fields)
 
     @property
     def order(self) -> int:
@@ -397,11 +397,10 @@ class WindowValidator:
                 if is_domain
                 else (ModelConstraint(0, field.path, ConstraintKind.DEFINITION, field.symbol, expected),)
             )
-            # Unrelated fields must not make this field's domain verdict unknown.
-            evidence = replace(self._problem, fields=(field,), constraints=constraints).check(
+            evidence = replace(self._problem, constraints=constraints).check(
                 candidate, atol=self._atol, rtol=self._rtol
             )
-            verdict = evidence.verdict if is_domain else evidence.residuals[0].verdict
+            verdict = _assumptions_verdict(evidence.assumptions) if is_domain else evidence.residuals[0].verdict
             valid = {"satisfied": True, "violated": False, "unknown": None}[verdict]
             if is_domain:
                 reason = observation.problem or "unresolved numeric value"
@@ -453,8 +452,8 @@ class WindowValidator:
                 values = tuple(row)
             except TypeError as error:
                 raise ModelInputError("A projected row must be a sequence of scalar cells") from error
-            if len(values) != len(self._fields):
-                raise ModelInputError(f"Projected rows require {len(self._fields)} fields in validator.fields order")
+            if len(values) != len(self.fields):
+                raise ModelInputError(f"Projected rows require {len(self.fields)} fields in validator.fields order")
         return tuple(_observe(value) for value in values)
 
     def _compile(
@@ -542,7 +541,13 @@ def _parameters(model: type[Modello], rows: str, parameters: Mapping[str, Scalar
     resolved, _, _ = _expand_definitions(pending, observations=known)
     for symbol, value in resolved.items():
         assumptions = check_assumptions(value, against=symbol)
-        if assumptions is False or value.is_number is True and assumptions is not True:
+        if (
+            _definitely_undefined(value)
+            or value.is_finite is False
+            or assumptions is False
+            or value.is_number is True
+            and assumptions is not True
+        ):
             name = next(name for name, field in external.items() if field == symbol)
             raise ModelInputError(f"Defined parameter {name!r} violates its field domain")
         if _finite_number(value):

@@ -59,6 +59,7 @@ from modello._problem import (
     Status,
     Verdict,
     _algebra,
+    _assumptions_verdict,
     _canonical_fields,
     _domain,
     _FieldPrinter,
@@ -583,14 +584,9 @@ def _audit(
         and bindings[field.symbol].is_finite is True
         for field in _canonical_fields(problem)
     )
-    violated = any(check.verdict == "violated" for check in residuals) or any(
-        check.actual is not None and check.actual != check.expected for check in assumptions
-    )
-    satisfied = (
-        closed
-        and all(check.verdict == "satisfied" for check in residuals)
-        and all(check.actual == check.expected for check in assumptions)
-    )
+    domains = _assumptions_verdict(assumptions)
+    violated = domains == "violated" or any(check.verdict == "violated" for check in residuals)
+    satisfied = closed and domains == "satisfied" and all(check.verdict == "satisfied" for check in residuals)
     verdict = "violated" if violated else "satisfied" if satisfied else "unknown"
     return CandidateCheck(candidate, tuple(residuals), assumptions, verdict)
 
