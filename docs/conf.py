@@ -18,7 +18,7 @@ copyright = "2018, Oliver Bristow"
 release = metadata.version("modello")
 version = release
 
-extensions = ["sphinx.ext.autodoc", "sphinx.ext.intersphinx", "sphinxcontrib.mermaid"]
+extensions = ["sphinx.ext.autodoc", "sphinx.ext.doctest", "sphinx.ext.intersphinx", "sphinxcontrib.mermaid"]
 mermaid_height = "auto"
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 

@@ -1,0 +1,34 @@
+"""The generic ledger example identifies a locally isolated accounting break."""
+
+from copy import deepcopy
+
+from examples.accounting_breaks import EVENTS, Ledger, accounting_rows
+from modello.contrib.validation import WindowValidator
+
+
+def test_accounting_break_and_input_preservation():
+    rows = accounting_rows()
+    original = deepcopy(rows)
+    validator = WindowValidator(Ledger, "rows")
+    results = list(validator.iter_results(rows, labels=EVENTS))
+    problems = [
+        (result.position, result.index, check.field, check.rule, check.observed, check.expected, check.residual)
+        for result in results
+        for check in result.checks
+        if check.invalid
+    ]
+    assert problems == [(2, "sale", "cash", "posting", 29, 30, -1)]
+    assert rows == original
+    assert [result.valid for result in results] == [None, True, False, True]
+    assert results[-1].complete
+    assert validator.window_size == 2 and validator.first_test_position == 1
+
+
+def test_correcting_the_break_and_subsequent_balances_validates_the_ledger():
+    rows = accounting_rows()
+    for position in (2, 3):
+        for field in ("cash", "nav"):
+            rows[position][field] += 1
+    audit = WindowValidator(Ledger, "rows").audit(rows)
+    assert audit.first_invalid is None
+    assert (audit.assumed_rows, audit.valid_rows, audit.unknown_rows) == (1, 3, 0)

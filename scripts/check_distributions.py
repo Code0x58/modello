@@ -30,6 +30,11 @@ assert distribution.metadata["Requires-Python"] == ">=3.10"
 assert Path(modello.__file__).with_name("py.typed").is_file()
 assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
 assert "gui" in distribution.metadata.get_all("Provides-Extra", ())
+assert "pandas" not in distribution.metadata.get_all("Provides-Extra", ())
+assert not any(requirement.lower().startswith(("pandas", "polars", "numpy"))
+               for requirement in distribution.requires or ())
+assert not Path(modello.__file__).with_name("contrib").joinpath("pandas.py").exists()
+assert "pandas" not in sys.modules
 assert "flask" not in sys.modules
 from modello.gui import Explorer, FieldInfo, ModelInfo, gui
 for name in ("templates/index.html", "static/explorer.css", "static/explorer.js",
@@ -141,6 +146,23 @@ assert accounts.N == 2
 assert accounts.balances == modello.Vector(100, 90, 70)
 assert accounts.terminal is accounts.states[-1]
 assert Accounts("empty", opening=AccountState("opening", cash=100), fills=[]).terminal.cash == 100
+
+from modello.contrib.validation import WindowValidator
+class ObservedCash(modello.Modello):
+    cash = modello.InstanceDummy("cash", real=True)
+    debit = modello.InstanceDummy("debit", real=True)
+class ObservedLedger(modello.Modello):
+    N = modello.InstanceDummy("N", integer=True, nonnegative=True)
+    rows = modello.model_vector(ObservedCash, size=N)
+    n = modello.Index("n")
+    law = modello.model_recurrence(rows[n], cash=rows[n-1].cash-rows[n].debit)
+validator = WindowValidator(ObservedLedger, "rows")
+assert (validator.window_size, validator.first_test_position) == (2, 1)
+assert validator(((100, 0), (90, 10)), position=1).valid is True
+audit = validator.audit(((100, 0), (90, 10)))
+assert (audit.row_count, audit.valid_rows, audit.assumed_rows) == (2, 1, 1)
+assert audit.valid is None and audit.first_invalid is None
+assert not {"pandas", "polars", "numpy"} & sys.modules.keys()
 vector_snapshot = Explorer(window).snapshot()
 assert vector_snapshot["vectors"][0]["shape"] == [3]
 assert "mover" in vector_snapshot["vectors"][0]["symbol_mathml"]
@@ -158,6 +180,8 @@ from examples.geometry import RightAngleTriangle
 from examples.data import NamedMap
 from examples.gui_quickstart import ReturnModel
 from examples.gallery.models import AccountSequence, LinearTrend
+from examples.accounting_breaks import EVENTS, Ledger, accounting_rows
+from modello.contrib.validation import WindowValidator
 import modello
 from examples.portfolio.models import Execution, HoldingState
 from modello.gui import Explorer
@@ -181,6 +205,13 @@ assert gallery.joinpath("static/gallery.css").is_file()
 data = resources.files("examples.portfolio").joinpath("data")
 for name in ("market.csv", "transactions.csv", "benchmark.csv"):
     assert data.joinpath(name).is_file(), name
+ledger_audit = WindowValidator(Ledger, "rows").audit(accounting_rows(), labels=EVENTS)
+assert ledger_audit.first_invalid.position == 2
+assert ledger_audit.assumed_rows == 1 and ledger_audit.valid_rows == 2
+breaks = [check for check in ledger_audit.first_invalid.checks if check.invalid]
+assert len(breaks) == 1
+assert (ledger_audit.first_invalid.index, breaks[0].field, breaks[0].residual) == ("sale", "cash", -1)
+assert not {"pandas", "polars", "numpy"} & sys.modules.keys()
 print("Validated installed example modules, type marker, and portfolio fixtures")
 """
 
@@ -224,6 +255,7 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
     install("examples")
     subprocess.run([str(python), "-I", "-c", EXAMPLES_SMOKE_TEST], cwd=directory, check=True)
     for module in (
+        "examples.accounting_breaks",
         "examples.portfolio",
         "examples.portfolio.optimal_execution",
         "examples.solution_families",

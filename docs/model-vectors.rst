@@ -147,6 +147,10 @@ Each member needs a declared model type and each case needs a finite window.
 Use another construction for different observations, and declare another law
 when the relationships themselves change. See :doc:`generality` for solver scope.
 
+To validate existing histories, use the :doc:`window validator
+<contrib/validation>`. Its :doc:`DataFrame recipes <recipes/dataframe-validation>`
+cover pandas, Polars, and nested columns.
+
 ``ModelRecurrence.equations`` retains the source formulas for inspection and
 rendering. The model compiler applies them across the window; this template is
 not a standalone point-query evaluator.

@@ -172,12 +172,18 @@ class AssumptionCheck:
 
 @dataclass(frozen=True)
 class CandidateCheck:
-    """An audit; only a satisfied, closed assignment is a consistency witness."""
+    """An audit; exact checks need a satisfied, closed assignment to prove consistency."""
 
     candidate: Candidate
     residuals: tuple[ResidualCheck, ...]
     assumptions: tuple[AssumptionCheck, ...]
     verdict: Verdict
+
+
+def _assumptions_verdict(checks: tuple[AssumptionCheck, ...]) -> Verdict:
+    if any(check.actual is not None and check.actual != check.expected for check in checks):
+        return "violated"
+    return "satisfied" if all(check.actual == check.expected for check in checks) else "unknown"
 
 
 def _common_prefix(left: FieldPath, right: FieldPath) -> FieldPath:

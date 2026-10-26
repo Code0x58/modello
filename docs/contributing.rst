@@ -4,6 +4,8 @@ Contributing and releases
 Use uv 0.13.1 or newer. The library and CI support Python 3.10 through 3.15.
 Documentation tooling requires Python 3.12 or newer; notebook tooling has its
 own optional Python 3.11+ group. All environments share the root ``uv.lock``.
+The ``docs`` group includes pandas and Polars for Sphinx-tested recipes, which
+the ordinary pytest suite excludes.
 
 Reading the core
 ----------------
@@ -76,6 +78,12 @@ these layers.
 ``series.py`` declares relative recurrences. ``contrib/stochastic.py`` provides
 the opt-in Itô extension; the core resolver uses scoped declaration hooks without
 importing domain extensions.
+``contrib/validation.py`` compiles causal model-vector laws over indexed
+observations, reusing the core definition resolver and ``ModelProblem.check``.
+Its stateless callable checks a window's final row; ``iter_results`` manages
+bounded history. Results add row labels, rule names, and coverage. DataFrame
+projection lives in documentation recipes. Core imports load neither the
+extension nor DataFrame libraries.
 ``_shapes.py`` solves symbolic finite axes from observation lengths before scalar
 coordinates are compiled. Shape specialization produces a cached subclass; it
 does not mutate the reusable declaration. The GUI creates a fresh finite context
@@ -181,10 +189,14 @@ including doctests:
 
    $ uv sync --locked --dev --group docs --python 3.12
    $ uv run --locked --dev pytest
+   $ uv run --locked --group docs sphinx-build --fail-on-warning --keep-going --builder=doctest docs docs/_build/doctest
+   $ uv run --locked --group docs sphinx-build --fail-on-warning --keep-going --builder=html docs docs/_build/html
 
-Use ``.. code-block:: pycon`` for executable documentation examples, including
-their imports, setup, and expected results. The configured
-``--doctest-glob=*.rst`` runs these examples directly from the displayed source.
+Use ``.. doctest::`` with imports, setup, and expected results. Named groups give
+examples independent namespaces, as in the DataFrame recipes. Use
+``.. testcode::`` and ``.. testoutput::`` for non-interactive examples.
+Sphinx runs these blocks with the docs dependencies; pytest's
+``--doctest-glob=*.rst`` also runs interactive prompts outside the recipe page.
 For a focused check, run ``uv run --locked --dev pytest --no-cov docs/modelling.rst``.
 
 Unset ``PYTEST_DISABLE_PLUGIN_AUTOLOAD`` before running pytest if your shell

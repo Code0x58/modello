@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from sympy import (
@@ -21,6 +22,7 @@ from sympy import (
     Piecewise,
     Product,
     Q,
+    Rational,
     S,
     Subs,
     Sum,
@@ -41,10 +43,17 @@ if TYPE_CHECKING:
 _Atom = TypeVar("_Atom", bound=Basic)
 
 
-def _scalar_expression(value: object, message: str = "Expected a SymPy-compatible scalar expression") -> Expr:
-    """Coerce scalar inputs without evaluating operators or cancelling poles."""
+def _scalar_expression(
+    value: object, message: str = "Expected a SymPy-compatible scalar expression", *, strict: bool = False
+) -> Expr:
+    """Coerce scalars without cancelling poles.
+
+    Strict mode rejects text and preserves finite Decimal values exactly.
+    """
     try:
-        expression = sympify(value)
+        if strict and isinstance(value, Decimal) and value.is_finite():
+            value = Rational(*value.as_integer_ratio())
+        expression = sympify(value, strict=strict)
     except (SympifyError, TypeError, ValueError, AttributeError) as error:
         raise ModelInputError(message) from error
     if not isinstance(expression, Expr) or expression.is_Matrix or isinstance(expression, Lambda):

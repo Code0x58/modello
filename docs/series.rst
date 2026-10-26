@@ -117,6 +117,9 @@ Fixed finite sums can express a law's relative lags, for example
 The nested sum uses its own index. Multiple declared series can drive each
 other; finite query cycles must decrease towards their initial boundaries.
 
+To check existing histories with typed ``model_recurrence`` laws, see the
+:doc:`window validator <contrib/validation>`.
+
 
 API
 ---
