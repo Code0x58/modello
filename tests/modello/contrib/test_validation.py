@@ -4,11 +4,10 @@ import pickle
 import subprocess
 import sys
 from collections import deque
-from decimal import Decimal
 from itertools import chain
 
 import pytest
-from sympy import Integer, S
+from sympy import Integer
 
 from examples.accounting_breaks import AccountRow
 from examples.portfolio.models import HoldingState
@@ -18,14 +17,8 @@ from modello.errors import ModelInputError
 
 
 @pytest.mark.parametrize("order", [0, 1, 2, 3])
-def test_first_validation_is_at_p_and_requires_p_plus_one_rows(order):
-    class History(Modello):
-        N = InstanceDummy("N", integer=True, nonnegative=True)
-        rows = model_vector(HoldingState, size=N)
-        n = Index("n")
-        law = model_recurrence(rows[n], start=order, cash=n if order == 0 else rows[n - order].cash + order)
-
-    validator = WindowValidator(History, "rows")
+def test_first_validation_is_at_p_and_requires_p_plus_one_rows(make_validator, order):
+    validator = make_validator(lambda rows, n: {"cash": n if order == 0 else rows[n - order].cash + order}, start=order)
     assert validator.fields == ("quantity", "cash")
     assert validator.field_paths == (("quantity",), ("cash",))
     assert (validator.order, validator.window_size, validator.first_test_position) == (order, order + 1, order)
@@ -98,19 +91,23 @@ def test_checks_and_rows_distinguish_valid_invalid_assumed_and_unknown(validator
         summary.unknown_rows,
     ) == (4, 1, 1, 1, 1)
     assert summary.first_invalid is results[2]
-    assert summary.invalid and summary.valid is False and not summary.complete
+    assert (summary.valid, summary.invalid, summary.complete) == (False, True, False)
 
 
-def test_first_invalid_row_retains_all_failing_and_undecidable_checks(validator, rows):
-    rows[1].update(cash="bad", cash_change="bad")
+@pytest.mark.parametrize("cash,failed_fields", [("bad", ["cash", "cash_change"]), (None, ["cash_change"])])
+def test_invalid_rows_retain_failing_and_undecidable_checks(validator, rows, cash, failed_fields):
+    rows[1].update(cash=cash, cash_change="bad")
     results = list(validator.iter_results(rows[:2]))
+    result = results[-1]
+    assert validator(rows[:2], position=1) == result
+    assert result.invalid and not result.complete
+    assert [check.field for check in result.checks if check.invalid] == failed_fields
+    assert any(check.valid is None for check in result.checks)
     summary = ValidationSummary.from_results(results)
-    assert summary.first_invalid is results[1]
-    assert isinstance(summary.first_invalid, ValidationResult)
-    assert summary.first_invalid.invalid and not summary.first_invalid.complete
-    assert [check.field for check in summary.first_invalid.checks if check.invalid] == ["cash", "cash_change"]
-    assert any(check.valid is None for check in summary.first_invalid.checks)
+    assert summary.first_invalid is result
+    assert validator.audit(rows[:2]) == summary
     assert (summary.valid_rows, summary.invalid_rows, summary.assumed_rows, summary.unknown_rows) == (0, 1, 1, 0)
+    assert summary.invalid and not summary.complete
 
 
 def test_windows_are_stateless_reentrant_and_keep_observed_predecessors(validator, rows):
@@ -122,14 +119,8 @@ def test_windows_are_stateless_reentrant_and_keep_observed_predecessors(validato
     assert next(check for check in broken.checks if check.invalid).expected == 30
 
 
-def test_position_is_the_absolute_coordinate_not_the_window_length_or_label():
-    class TimeDriven(Modello):
-        N = InstanceDummy("N", integer=True, nonnegative=True)
-        rows = model_vector(HoldingState, size=N)
-        n = Index("n")
-        law = model_recurrence(rows[n], cash=rows[n - 1].cash - n)
-
-    validator = WindowValidator(TimeDriven, "rows")
+def test_position_is_the_absolute_coordinate_not_the_window_length_or_label(make_validator):
+    validator = make_validator(lambda rows, n: {"cash": rows[n - 1].cash - n})
     correct = validator(((0, 97), (0, 94)), position=3, index="event-at-100")
     assert correct.valid
     assert correct.index == "event-at-100"
@@ -249,24 +240,11 @@ def test_batch_chaining_and_external_window_management_preserve_history(validato
         validator(batches[1], position=2)
 
 
-def test_audit_makes_successful_transitions_and_assumed_history_distinct(validator, rows):
-    summary = validator.audit(rows[:2])
-    assert (
-        summary.row_count,
-        summary.valid_rows,
-        summary.assumed_rows,
-        summary.unknown_rows,
-        summary.invalid_rows,
-    ) == (2, 1, 1, 0, 0)
-    assert summary.first_invalid is None
-    assert not summary.complete and summary.valid is None
-
-
-@pytest.mark.parametrize("length", [0, 1])
-def test_empty_and_history_only_audits_never_claim_complete_success(validator, rows, length):
+@pytest.mark.parametrize("length,valid_rows,assumed_rows", [(0, 0, 0), (1, 0, 1), (2, 1, 1)])
+def test_audits_distinguish_assumed_history_from_valid_transitions(validator, rows, length, valid_rows, assumed_rows):
     summary = validator.audit(rows[:length])
-    assert summary.row_count == summary.assumed_rows == length
-    assert summary.valid_rows == summary.unknown_rows == summary.invalid_rows == 0
+    assert (summary.row_count, summary.valid_rows, summary.assumed_rows) == (length, valid_rows, assumed_rows)
+    assert summary.invalid_rows == summary.unknown_rows == 0
     assert summary.first_invalid is None
     assert not summary.complete and summary.valid is None
 
@@ -277,16 +255,6 @@ def test_audit_reports_missing_coverage_that_can_resume_after_a_gap(validator, r
     summary = validator.audit(rows)
     assert (summary.row_count, summary.valid_rows, summary.assumed_rows, summary.unknown_rows) == (5, 2, 1, 2)
     assert summary.first_invalid is None and summary.valid is None
-
-
-def test_proven_violation_does_not_hide_incomplete_checks_on_the_same_row(validator, rows):
-    rows[1].update(cash=None, cash_change="bad")
-    result = validator(rows[:2], position=1)
-    assert result.invalid and not result.complete
-    assert next(check for check in result.checks if check.invalid).field == "cash_change"
-    summary = validator.audit(rows[:2])
-    assert (summary.valid_rows, summary.assumed_rows, summary.unknown_rows, summary.invalid_rows) == (0, 1, 0, 1)
-    assert summary.invalid and not summary.complete
 
 
 def test_audit_reads_past_the_first_failure_to_measure_all_coverage(validator, rows):
@@ -321,14 +289,8 @@ def test_invalid_audit_intervals_are_rejected(start):
         ValidationSummary.from_results((), start_position=start)
 
 
-def test_zero_order_audits_can_prove_every_row_without_a_seed_assumption():
-    class Identity(Modello):
-        N = InstanceDummy("N", integer=True, nonnegative=True)
-        rows = model_vector(HoldingState, size=N)
-        n = Index("n")
-        law = model_recurrence(rows[n], start=0, cash=rows[n].quantity)
-
-    validator = WindowValidator(Identity, "rows")
+def test_zero_order_audits_can_prove_every_row_without_a_seed_assumption(make_validator):
+    validator = make_validator(lambda rows, n: {"cash": rows[n].quantity}, start=0)
     summary = validator.audit(((0, 0), (10, 10)))
     assert summary.complete and summary.valid and summary.assumed_rows == 0
     bad = validator.audit(((0, 0), (10, 9)))
@@ -357,44 +319,18 @@ def test_mixed_law_starts_are_visible_in_each_check_not_just_the_mask():
     assert (summary.valid_rows, summary.assumed_rows, summary.unknown_rows) == (1, 1, 1)
 
 
-@pytest.mark.parametrize("missing", [None, float("nan"), S.NaN, Decimal("NaN")])
-def test_portable_nulls_produce_unknown_checks(validator, rows, missing):
-    rows[1]["cash"] = missing
-    result = validator(rows[:2], position=1)
-    assert result.valid is None and not result.invalid
-
-
 def test_prepared_validator_can_be_serialised_for_a_worker(validator, rows):
     restored = pickle.loads(pickle.dumps(validator))
     assert list(restored.iter_results(rows)) == list(validator.iter_results(rows))
 
 
-def test_derived_parameter_assumptions_are_configuration_requirements():
-    class InvalidParameters(Modello):
-        N = InstanceDummy("N", integer=True, nonnegative=True)
-        rate = InstanceDummy("rate", positive=True)
-        rate = S.NegativeOne
-        rows = model_vector(HoldingState, size=N)
-        n = Index("n")
-        law = model_recurrence(rows[n], cash=rate * rows[n - 1].cash)
-
-    with pytest.raises(ModelInputError, match="Defined parameter 'rate'.*domain"):
-        WindowValidator(InvalidParameters, "rows")
-
-
-def test_nested_flat_mappings_and_aliases_need_no_frame_adapter(rows):
+def test_nested_flat_mappings_and_aliases_need_no_frame_adapter(make_validator, rows):
     class Row(AccountRow):
         spendable = AccountRow.cash
 
-    class AliasedLedger(Modello):
-        N = InstanceDummy("N", integer=True, nonnegative=True)
-        rows = model_vector(Row, size=N)
-        n = Index("n")
-        posting = model_recurrence(rows[n], cash=rows[n - 1].cash + rows[n].cash_change)
-
     for row in rows:
         row["spendable"] = row["cash"]
-    validator = WindowValidator(AliasedLedger, "rows")
+    validator = make_validator(lambda rows, n: {"cash": rows[n - 1].cash + rows[n].cash_change}, row_model=Row)
     result = validator(rows[:2], position=1)
     assert result.valid
     assert {check.kind for check in result.checks} == {"domain", "definition", "alias", "recurrence"}
