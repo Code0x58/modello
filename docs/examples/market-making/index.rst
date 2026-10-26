@@ -15,15 +15,27 @@ For publicly accessible equations, this implementation follows the single-asset
 CARA formulation, Model A, in Guéant's `Optimal market making
 <https://arxiv.org/html/1605.01862>`_, sections 2--3 and Lemma 3.1.
 
-Time is continuous; inventory changes in discrete lots. The executable module
+Time is continuous; inventory changes in discrete lots. The lightweight runner
 represents one state of the reduced HJB and its exact exponential-intensity
-quote optimizer. It does not integrate the coupled terminal-value ODEs.
+quote optimizer. The complete :doc:`research workflow </contrib/research>` adds
+live contracts, checked theorem premises, the coupled terminal-value ODEs, and
+an exponential/logistic comparison.
 
 Run it from the repository:
 
 .. code-block:: console
 
    $ uv run --locked --dev python -m examples.market_making
+
+Run the complete study and open its report:
+
+.. code-block:: console
+
+   $ uv run --locked --extra research python -m examples.market_making --study --output artefacts/market-making
+
+An HTML documentation build also generates a `complete study report
+<study/report.html>`_. Its evidence pages, CSV tables, JSON audit, and figures
+are available offline from the same directory.
 
 The model and its requirements
 -----------------------------------
@@ -95,6 +107,10 @@ Hamiltonian and maximizing quote distance are
 continuation values. The two inventory gates suppress trades that would
 increase inventory past a boundary. ``terminal_value`` evaluates the negative
 terminal penalty at the selected state inventory.
+
+.. literalinclude:: ../../../examples/market_making.py
+   :pyobject: QuoteHamiltonian
+   :language: python
 
 .. literalinclude:: ../../../examples/market_making.py
    :pyobject: ExponentialQuote
@@ -213,8 +229,10 @@ Observing ``residual=0`` infers the time derivative from the other quantities.
 This calculation verifies one equation; it does not establish that arbitrary
 continuation values solve the terminal-value problem.
 
-The next exploration is to retain obligations alongside candidate component
-families, record which downstream operation needs each property, and decide
-how substitution, inheritance, and proof evidence should update those
-obligations. The current example leaves that workflow open and keeps the
-experimental checks outside the library core.
+Continue with :doc:`/contrib/research` for immutable cases and live evidence.
+The full study preserves this HJB declaration, replaces the specialized quote
+components with general Hamiltonian inputs, and integrates forward in remaining
+time. The exponential case has an independent matrix-exponential reference;
+both families have tighter-tolerance and independent time-difference checks.
+The default comparison matches the rate and slope of the two intensities at
+zero distance, so their differences reflect the changed shape.

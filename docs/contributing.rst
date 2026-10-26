@@ -75,6 +75,16 @@ The GUI separates layout and permissions, MathML printing, bounded input parsing
 and vector summaries under ``_gui/``. Finance and time-series examples stay above
 these layers.
 
+``contrib/research`` binds scoped claims to immutable problem snapshots and
+refreshes definition reports through an opt-in ``ResearchModel`` subclass hook.
+Proof attempts retain parameter guards, theorem premises, and unresolved
+outcomes. Method contracts select the evidence they consume. Numerical and
+plotting dependencies remain in optional example methods; the symbolic
+extension imports neither. Report JSON is an audit export rather than a case
+deserializer. The market-making study compiles its RHS from the shared HJB and
+checks it against independent time differences and an exponential linear
+reference.
+
 ``series.py`` declares relative recurrences. ``contrib/stochastic.py`` provides
 the opt-in Itô extension; the core resolver uses scoped declaration hooks without
 importing domain extensions.

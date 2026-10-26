@@ -73,6 +73,11 @@ quantity to observe or infer:
 A finite integration interval does not imply a finite sample vector.
 See :ref:`symbolic-calculus` for using these formulas inside a model.
 
+When a calculation needs mathematical shape or regularity guarantees, use the
+opt-in :doc:`research workflow <contrib/research>`. It records explicit and
+operation-derived requirements, parameter conditions, and proof evidence
+alongside independent research cases.
+
 Work with finite data and indexed formulas
 ------------------------------------------
 

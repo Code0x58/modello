@@ -75,6 +75,7 @@ the API and diagnostic guarantees are separate reference material.
 
    contrib/stochastic
    contrib/validation
+   contrib/research
 
 .. toctree::
    :caption: Recipes

@@ -31,8 +31,11 @@ assert Path(modello.__file__).with_name("py.typed").is_file()
 assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
 assert "gui" in distribution.metadata.get_all("Provides-Extra", ())
 assert "pandas" not in distribution.metadata.get_all("Provides-Extra", ())
-assert not any(requirement.lower().startswith(("pandas", "polars", "numpy"))
+assert not any(requirement.lower().startswith(("pandas", "polars"))
                for requirement in distribution.requires or ())
+for requirement in distribution.requires or ():
+    if requirement.lower().startswith(("numpy", "scipy", "matplotlib")):
+        assert re.search(r";\s*extra\s*==\s*['\"]research['\"]", requirement), requirement
 assert not Path(modello.__file__).with_name("contrib").joinpath("pandas.py").exists()
 assert "pandas" not in sys.modules
 assert "flask" not in sys.modules
@@ -163,6 +166,13 @@ audit = validator.audit(((100, 0), (90, 10)))
 assert (audit.row_count, audit.valid_rows, audit.assumed_rows) == (2, 1, 1)
 assert audit.valid is None and audit.first_invalid is None
 assert not {"pandas", "polars", "numpy"} & sys.modules.keys()
+from modello.contrib.research import ResearchCase, ResearchModel, Requirement, Requires, increasing
+class ResearchCurve(ResearchModel):
+    x = modello.Coordinate("x", real=True)
+    value = modello.annotate(x**3, Requires(Requirement(increasing("value", wrt="x"), "smoke", "Order matters")))
+assert ResearchCurve.definition_report().checks[0].verdict == "strictly true"
+assert ResearchCase.for_model(ResearchCurve).check().to_dict()["checks"]
+assert not {"numpy", "scipy", "matplotlib"} & sys.modules.keys()
 vector_snapshot = Explorer(window).snapshot()
 assert vector_snapshot["vectors"][0]["shape"] == [3]
 assert "mover" in vector_snapshot["vectors"][0]["symbol_mathml"]
@@ -273,6 +283,19 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
     assert json.loads((directory / "report.json").read_text())["snapshots"][-1]["nav"] == 3066.9
     assert (directory / "report.html").read_text().startswith("<!doctype html>")
     print(f"Validated all installed example runners from {wheel.name}", flush=True)
+    install("research")
+    study = directory / "market-making"
+    subprocess.run(
+        [str(python), "-I", "-m", "examples.market_making", "--study", "--output", str(study)],
+        cwd=directory,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    research_report = json.loads((study / "report.json").read_text())
+    assert set(research_report["cases"]) == {"exponential", "logistic"}
+    assert research_report["cases"]["exponential"]["convergence"]["matrix_exponential_theta_error"] < 1e-6
+    assert (study / "figures" / "quotes.svg").is_file()
+    print("Validated the installed research study and its optional numerical dependencies", flush=True)
     install("gui")
     subprocess.run([str(python), "-I", "-c", GUI_SMOKE_TEST], cwd=directory, check=True)
     typing_checks = []
@@ -283,6 +306,7 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
         "tests/examples/test_data.py",
         "tests/examples/reconcile_typing.py",
         "tests/examples/portfolio/typing_contracts.py",
+        "tests/modello/contrib/research_typing.py",
     ):
         source = Path(__file__).resolve().parents[1] / path
         target = directory / source.name
@@ -326,7 +350,9 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="modello-distributions-") as temporary:
         scratch = Path(temporary)
-        requirements = {extra: scratch / f"{extra or 'runtime'}-requirements.txt" for extra in ("", "examples", "gui")}
+        requirements = {
+            extra: scratch / f"{extra or 'runtime'}-requirements.txt" for extra in ("", "examples", "gui", "research")
+        }
         for extra, target in requirements.items():
             options = ("--extra", extra) if extra else ()
             subprocess.run(
