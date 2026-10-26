@@ -13,7 +13,7 @@ from html import escape
 from itertools import combinations
 from math import isfinite
 from pathlib import Path
-from typing import Generic, Iterator, TypeVar
+from typing import Generic, Iterator, TypeVar, cast
 
 from sympy import (
     ConditionSet,
@@ -173,6 +173,7 @@ class ModelView(Generic[M]):
         """Plot a bounded polynomial curve, surface, or three-control colour sample."""
         import matplotlib.pyplot as plt
         import numpy as np
+        from mpl_toolkits.mplot3d import Axes3D
 
         intervals = _intervals(self.family)
         outputs = _polynomials(self.family, (output,))
@@ -202,17 +203,23 @@ class ModelView(Generic[M]):
             axes = figure.add_subplot(projection="3d" if len(grids) > 1 else None)
             if len(grids) == 1:
                 axes.plot(coordinates[0], values)
-            elif len(grids) == 2:
-                axes.plot_surface(*coordinates, values, cmap="viridis", alpha=0.9)
-                axes.contour(*coordinates, values, zdir="z", offset=values.min(), cmap="viridis", linewidths=0.7)
             else:
-                points = axes.scatter(
-                    *(coordinate.ravel() for coordinate in coordinates), c=values.ravel(), cmap="viridis", s=12
-                )
-                figure.colorbar(points, ax=axes, label=output_label, shrink=0.7, pad=0.15)
+                axes3d = cast(Axes3D, axes)
+                if len(grids) == 2:
+                    axes3d.plot_surface(*coordinates, values, cmap="viridis", alpha=0.9)
+                    axes3d.contour(*coordinates, values, zdir="z", offset=values.min(), cmap="viridis", linewidths=0.7)
+                else:
+                    points = axes3d.scatter(
+                        coordinates[0].ravel(),
+                        coordinates[1].ravel(),
+                        coordinates[2].ravel(),
+                        c=values.ravel(),
+                        cmap="viridis",
+                        s=12,
+                    )
+                    figure.colorbar(points, ax=axes, label=output_label, shrink=0.7, pad=0.15)
+                axes3d.set_zlabel(labels[2])
             axes.set(xlabel=labels[0], ylabel=labels[1], title=title or output_label)
-            if len(grids) > 1:
-                axes.set_zlabel(labels[2])
             figure.tight_layout()
             destination.parent.mkdir(parents=True, exist_ok=True)
             figure.savefig(destination)
