@@ -87,6 +87,7 @@ the API and diagnostic guarantees are separate reference material.
    :maxdepth: 1
 
    examples/applications/index
+   examples/market-making/index
    examples/portfolio/index
    examples/reconciliation/index
    examples/solution_families/index
