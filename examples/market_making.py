@@ -1,7 +1,7 @@
 """Explore Guéant's continuous-time CARA market maker and its component requirements.
 
-Run ``python -m examples.market_making``. The requirement checks are deliberately
-small example functions, not a general proof system or a core Modello API.
+Run ``python -m examples.market_making`` for the lightweight baseline, or add
+``--study --output DIRECTORY`` for the reusable researcher workflow and ODE comparison.
 """
 
 from __future__ import annotations
@@ -262,25 +262,32 @@ class ContinuationValue(Modello):
     ask_cost = (current - after_ask) / step
 
 
-class ExponentialQuote(Modello):
-    """Exact CARA Hamiltonian and maximizing quote for exponential intensity.
-
-    These formulas require gamma > 0 and step > 0. They allow negative quote
-    distances; constraining the controls would change the maximization.
-    """
+class QuoteHamiltonian(Modello):
+    """A CARA gain function and an independently supplied Hamiltonian value."""
 
     intensity = component(ExponentialIntensity)
     distance = ExponentialIntensity.distance
     gamma = InstanceDummy("gamma", positive=True)
     step = InstanceDummy("Delta", positive=True)
     cost = InstanceDummy("p", real=True)
+    value = InstanceDummy("H", real=True)
     gain = intensity.rate * (1 - exp(-gamma * step * (distance - cost))) / gamma
-    optimal_distance = cost + log(1 + gamma * step / intensity.decay) / (gamma * step)
-    value = Subs(gain, distance, optimal_distance)
 
 
-class MarketMaker(Modello):
-    """A single-asset slice of Guéant's reduced CARA HJB (Model A).
+class ExponentialQuote(QuoteHamiltonian):
+    """Exact optimizer for exponential intensity, gamma > 0 and step > 0.
+
+    Quote distances may be negative; restricting them changes the optimizer.
+    """
+
+    optimal_distance = QuoteHamiltonian.cost + log(
+        1 + QuoteHamiltonian.gamma * QuoteHamiltonian.step / QuoteHamiltonian.intensity.decay
+    ) / (QuoteHamiltonian.gamma * QuoteHamiltonian.step)
+    value = Subs(QuoteHamiltonian.gain, QuoteHamiltonian.distance, optimal_distance)
+
+
+class MarketMakingState(Modello):
+    """A single-asset CARA HJB state, accepting general Hamiltonian values.
 
     Observe residual=0 to infer theta_t from neighboring continuation values.
     The inventory belongs to {-Q, -Q+Delta, ..., Q}. This slice does not solve
@@ -291,8 +298,8 @@ class MarketMaker(Modello):
     risk = component(QuadraticInventoryRisk)
     terminal = component(QuadraticTerminalPenalty)
     continuation = component(ContinuationValue)
-    bid = component(ExponentialQuote)
-    ask = component(ExponentialQuote)
+    bid = component(QuoteHamiltonian)
+    ask = component(QuoteHamiltonian)
 
     gamma = utility.gamma
     gamma = risk.gamma
@@ -314,8 +321,28 @@ class MarketMaker(Modello):
     terminal_value = -Subs(terminal.cost, QuadraticTerminalPenalty.inventory, inventory)
 
 
+class MarketMaker(MarketMakingState):
+    """Specialize the shared HJB to the exact exponential quote formulas."""
+
+    bid = component(ExponentialQuote)
+    ask = component(ExponentialQuote)
+
+
 def main() -> None:
     """Print the definition checks and one exact interior HJB calculation."""
+    import argparse
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--study", action="store_true", help="Run the complete time-dependent research comparison")
+    parser.add_argument("--output", type=Path, default=Path("artefacts/market-making"))
+    arguments = parser.parse_args()
+    if arguments.study:
+        from examples.market_making_study import write_study
+
+        write_study(arguments.output)
+        print(f"Research report: {arguments.output / 'report.html'}")
+        return
     for path, report in Requirements.for_model(MarketMaker).items():
         for check in report.checks:
             print(f"{path}: {check.name}: {check.verdict}")
