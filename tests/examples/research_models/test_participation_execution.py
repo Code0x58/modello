@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+from dataclasses import replace
 
 import pytest
 from sympy import Eq, S, diff
@@ -18,7 +19,7 @@ from examples.research_models.participation_execution import (
     uniqueness_theorem,
     with_limits,
 )
-from modello.contrib.research import Requirement, ResearchCase, ResearchError, convex
+from modello.contrib.research import ResearchCase, ResearchError, convex
 
 
 @pytest.fixture(scope="module")
@@ -60,7 +61,7 @@ def test_sublinear_per_share_cost_does_not_require_convexity_in_rate(free_case):
     objective = free_case.expression("objective", wrt="rate")
     assert diff(objective, rate, 2).subs(rate, 1) == -S(3) / 8
     claim = convex("objective", wrt="rate", domain=POSITIVE_RATES, name="convex_in_rate")
-    report = free_case.require(Requirement(claim, "test", "This objective is not convex in rho.")).check()
+    report = free_case.require(replace(claim, consumer="test", reason="This objective is not convex in rho.")).check()
     assert report.explain("convex_in_rate").condition is S.false
     assert free_case.run(analytic_method(free_case)).data.rate == S.One / 4
 

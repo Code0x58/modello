@@ -19,7 +19,7 @@ from examples.research_models.black_scholes import (
     symbolic_method,
     valuation_method,
 )
-from modello.contrib.research import Requirement, ResearchCase, ResearchError, smooth
+from modello.contrib.research import ResearchCase, ResearchError, smooth
 
 
 @pytest.fixture(scope="module")
@@ -51,8 +51,8 @@ def test_exact_identities_and_checked_schedule_chain_rule(cases, symbolic_result
         assert result.report.explain(f"terminal_{total}").verdict == "strictly true"
         regularity = result.report.explain(f"schedule_{total}_c1")
         assert regularity.verdict == "strictly true"
-        assert regularity.resolved_claim is not None
-        assert regularity.resolved_claim.domain == Interval(0, 1)
+        assert regularity.resolved is not None
+        assert regularity.resolved.domain == Interval(0, 1)
     # A scalar observation does not reduce the quantified spot curve to a point.
     spot = case.symbols.pricing.spot
     assert spot in case.expression("pricing.call", wrt=spot).free_symbols
@@ -70,7 +70,7 @@ def test_cdf_composition_is_an_explicit_trust_boundary(cases, symbolic_results):
     assert checked.verdict == "strictly true"
     assert checked.premises
     assert all(premise.verdict == "strictly true" for premise in checked.premises)
-    assert any(premise.requirement.claim.name == "call_form" for premise in checked.premises)
+    assert any(premise.requirement.name == "call_form" for premise in checked.premises)
 
 
 def test_symbolic_interest_is_valid_but_numerical_valuation_needs_observations(cases):
@@ -153,7 +153,7 @@ def test_zero_variance_payoff_has_a_checked_kink():
     case = ResearchCase.for_model(PayoffBoundary)
     x = PayoffBoundary.moneyness
     assert simplify(case.expression("call", wrt=x) - case.expression("put", wrt=x) - x) == 0
-    kink = case.require(Requirement(smooth("kink", wrt="moneyness"), "boundary", "Test the C2 boundary premise."))
+    kink = case.require(smooth("kink", wrt="moneyness", consumer="boundary", reason="Test the C2 boundary premise."))
     assert kink.check().explain("smooth").verdict == "strictly false"
 
 

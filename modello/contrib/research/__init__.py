@@ -4,15 +4,12 @@ This module needs only SymPy. Numerical backends and plotting are imported by
 the methods that use them, never by ordinary Modello or symbolic research.
 """
 
-from ._case import ResearchCase as ResearchCase, ResearchModel as ResearchModel
+from ._case import ResearchCase as ResearchCase, ResearchModel as ResearchModel, requires as requires
 from ._records import (
-    Claim as Claim,
     Evidence as Evidence,
     Experiment as Experiment,
     Method as Method,
-    ProofHint as ProofHint,
     Requirement as Requirement,
-    Requires as Requires,
     ResearchError as ResearchError,
     ResearchReport as ResearchReport,
     ResearchResult as ResearchResult,
@@ -30,6 +27,5 @@ from ._records import (
     predicate as predicate,
     smooth as smooth,
     uniform_bound as uniform_bound,
-    upper_bound as upper_bound,
     vanishes as vanishes,
 )

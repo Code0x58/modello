@@ -1,19 +1,20 @@
 """Workflow issues exposed by applying research contracts to several models."""
 
+from dataclasses import replace
+
 import pytest
 from sympy import Derivative, FiniteSet, Interval, Q, S, Subs, assuming, log
 
-from modello import Coordinate, InstanceDummy, annotate
+from modello import Coordinate, InstanceDummy
 from modello.contrib.research import (
     Method,
-    Requirement,
-    Requires,
     ResearchCase,
     ResearchError,
     ResearchModel,
     convex,
     exact_form,
     positive,
+    requires,
 )
 from modello.errors import ModelDefinitionError, ModelInputError
 
@@ -27,7 +28,7 @@ def test_automatic_obligations_use_the_coordinates_declared_domain():
     case = ResearchCase.for_model(PositiveCurve)
     report = case.check()
     assert all(item.verdict == "strictly true" for item in report.checks)
-    assert all(item.resolved_claim.domain == Interval.open(0, S.Infinity) for item in report.checks)
+    assert all(item.resolved.domain == Interval.open(0, S.Infinity) for item in report.checks)
     for path in ("inverse", "slope"):
         result = case.run(Method(path, lambda current, name=path: current.expression(name).doit(), uses=(path,)))
         assert result.data == 1 / PositiveCurve.x
@@ -55,10 +56,10 @@ def test_native_substitution_identities_evaluate_without_losing_their_domains():
 
     case = ResearchCase.for_model(Evaluated)
     report = case.require(
-        Requirement(
-            exact_form("residual", S.Zero, name="substitution_identity"), "test", "Evaluate a native substitution."
+        exact_form(
+            "residual", S.Zero, name="substitution_identity", consumer="test", reason="Evaluate a native substitution."
         ),
-        Requirement(exact_form("bad", S.Zero, name="undefined_point"), "test", "The pole cannot be erased."),
+        exact_form("bad", S.Zero, name="undefined_point", consumer="test", reason="The pole cannot be erased."),
     ).check()
     assert report.explain("substitution_identity").verdict == "strictly true"
     assert report.explain("undefined_point").verdict == "strictly false"
@@ -74,13 +75,18 @@ def test_native_expected_derivatives_and_scalar_equalities_keep_their_premises()
 
     case = ResearchCase.for_model(Curve)
     report = case.require(
-        Requirement(
-            exact_form("slope", Derivative(Curve.x**2, Curve.x), wrt="x", name="native_derivative"),
-            "test",
-            "Check both expressions.",
+        exact_form(
+            "slope",
+            Derivative(Curve.x**2, Curve.x),
+            wrt="x",
+            name="native_derivative",
+            consumer="test",
+            reason="Check both expressions.",
         ),
-        Requirement(exact_form("scalar", S.One, name="parameter_equality"), "test", "Retain the parameter equality."),
-        Requirement(exact_form(S.Zero, S.One, name="false_constant"), "test", "Refute unequal constants."),
+        exact_form(
+            "scalar", S.One, name="parameter_equality", consumer="test", reason="Retain the parameter equality."
+        ),
+        exact_form(S.Zero, S.One, name="false_constant", consumer="test", reason="Refute unequal constants."),
     ).check()
     assert report.explain("native_derivative").verdict == "strictly true"
     assert report.explain("parameter_equality").verdict == "conditionally true"
@@ -94,8 +100,8 @@ def test_removing_an_assumption_rechecks_dependent_method_premises():
     base = ResearchCase.for_model(Parameter)
     condition = base.symbols.a > 0
     positive_branch = base.assume(condition)
-    requirement = Requirement(
-        positive("a", name="positive_parameter"), "calculation", "This method needs a positive parameter."
+    requirement = positive(
+        "a", name="positive_parameter", consumer="calculation", reason="This method needs a positive parameter."
     )
     method = Method("calculation", lambda current: current.expression("a"), (requirement,))
     assert positive_branch.run(method).report.explain("positive_parameter").verdict == "strictly true"
@@ -116,8 +122,8 @@ def test_removing_a_case_requirement_cannot_waive_a_methods_own_requirement():
     class Parameter(ResearchModel):
         a = InstanceDummy("a", real=True)
 
-    requirement = Requirement(
-        positive("a", name="positive_parameter"), "calculation", "This operation needs positivity."
+    requirement = positive(
+        "a", name="positive_parameter", consumer="calculation", reason="This operation needs positivity."
     )
     original = ResearchCase.for_model(Parameter).observe(a=-1).require(requirement)
     assert original.check().explain("positive_parameter").verdict == "strictly false"
@@ -135,7 +141,7 @@ def test_removing_a_case_requirement_cannot_waive_a_methods_own_requirement():
 
 def test_declaration_and_automatic_requirements_are_changed_at_their_source():
     class Annotated(ResearchModel):
-        a = annotate(InstanceDummy("a", real=True), Requires(Requirement(positive("a"), "test", "Live declaration.")))
+        a = requires(InstanceDummy("a", real=True), positive("a", consumer="test", reason="Live declaration."))
         inverse = 1 / a
 
     case = ResearchCase.for_model(Annotated)
@@ -148,11 +154,13 @@ def test_identical_requirements_are_reused_and_conflicting_ids_remain_errors():
     class Parameter(ResearchModel):
         a = InstanceDummy("a", real=True)
 
-    requirement = Requirement(positive("a", name="positive_parameter"), "calculation", "The same consumed requirement.")
+    requirement = positive(
+        "a", name="positive_parameter", consumer="calculation", reason="The same consumed requirement."
+    )
     case = ResearchCase.for_model(Parameter).observe(a=2).require(requirement)
     result = case.run(Method("calculation", lambda current: current.expression("a"), (requirement,)))
     assert len(result.report.checks) == 1
-    conflicting = Requirement(positive("a", name="positive_parameter"), "another consumer", "A conflicting ID.")
+    conflicting = positive("a", name="positive_parameter", consumer="another consumer", reason="A conflicting ID.")
     with pytest.raises(ModelDefinitionError, match="positive_parameter"):
         case.check(requirements=(conflicting,))
 
@@ -186,7 +194,7 @@ def test_method_factories_use_the_current_case_and_forward_execution_settings():
 
     def factory(current):
         value = current.expression("a")
-        requirement = Requirement(positive("a", name="positive"), "calculation", "A positive parameter is needed.")
+        requirement = positive("a", name="positive", consumer="calculation", reason="A positive parameter is needed.")
 
         def execute(inner, *, scale=1):
             calls.append(inner)
@@ -231,10 +239,13 @@ def test_audits_preserve_the_requirement_and_formula_before_observations():
         a = InstanceDummy("a", real=True)
         value = a * x
 
-    requirement = Requirement(
-        exact_form("value", lambda get: get("a") * get("x"), wrt="x", name="live_formula"),
-        "calculation",
-        "Retain the source identity as well as its checked specialization.",
+    requirement = exact_form(
+        "value",
+        lambda get: get("a") * get("x"),
+        wrt="x",
+        name="live_formula",
+        consumer="calculation",
+        reason="Retain the source identity as well as its checked specialization.",
     )
     report = ResearchCase.for_model(Curve).observe(a=2).require(requirement).check()
     audit = report.to_dict()["checks"][0]
@@ -259,7 +270,7 @@ def test_an_inner_derivative_cannot_borrow_an_unrelated_outer_domain():
         domain=Interval.open(0, S.Infinity),
         name="cross_scope",
     )
-    requirement = Requirement(claim, "consumer", "The real logarithm's argument is a separate coordinate.")
+    requirement = replace(claim, consumer="consumer", reason="The real logarithm's argument is a separate coordinate.")
     with pytest.raises(ResearchError) as failure:
         case.run(Method("consumer", lambda current: 42, (requirement,)))
     assert failure.value.report.explain("cross_scope").verdict == "unresolved"
@@ -274,9 +285,9 @@ def test_intrinsic_nonzero_coordinates_keep_zero_out_of_their_requested_domain()
     case = ResearchCase.for_model(Punctured)
     automatic = case.check().checks[0]
     assert automatic.verdict == "strictly true"
-    assert automatic.resolved_claim.domain == S.Reals - FiniteSet(0)
-    impossible_domain = Requirement(
-        positive("square", wrt="x", name="overbroad"), "test", "An intrinsic exclusion cannot be erased."
+    assert automatic.resolved.domain == S.Reals - FiniteSet(0)
+    impossible_domain = positive(
+        "square", wrt="x", name="overbroad", consumer="test", reason="An intrinsic exclusion cannot be erased."
     )
     assert case.require(impossible_domain).check().explain("overbroad").verdict == "unresolved"
 
@@ -286,10 +297,12 @@ def test_reused_scalar_work_keeps_fresh_formula_payloads_and_each_reports_budget
         a = InstanceDummy("a", real=True)
 
     target = [2]
-    requirement = Requirement(
-        exact_form("a", lambda get: S(target[0]), name="live_target"),
-        "test",
-        "Resolve the actual formula before reuse.",
+    requirement = exact_form(
+        "a",
+        lambda get: S(target[0]),
+        name="live_target",
+        consumer="test",
+        reason="Resolve the actual formula before reuse.",
     )
     case = ResearchCase.for_model(Parameter).observe(a=2).require(requirement)
     first = case.check()
@@ -300,8 +313,8 @@ def test_reused_scalar_work_keeps_fresh_formula_payloads_and_each_reports_budget
     assert first.to_dict()["checks"][0]["expected"] == "2"
     assert second.to_dict()["checks"][0]["expected"] == "3"
     target[0] = 2
-    extra = Requirement(
-        exact_form("a", S(2), name="same_identity"), "another consumer", "The mathematical result can be shared."
+    extra = exact_form(
+        "a", S(2), name="same_identity", consumer="another consumer", reason="The mathematical result can be shared."
     )
     populated = case.require(extra)
     assert all(item.verdict == "strictly true" for item in populated.check().checks)
@@ -321,7 +334,7 @@ def test_cached_resolution_follows_temporary_sympy_assumptions(observed):
     case = ResearchCase.for_model(Ratio)
     if observed:
         case = case.observe(a=case.symbols.a)
-    requirement = Requirement(exact_form("ratio", S.One, name="one"), "consumer", "Retain the source pole.")
+    requirement = exact_form("ratio", S.One, name="one", consumer="consumer", reason="Retain the source pole.")
     predicate = Q.nonzero(case.symbols.a + 1)
     with assuming(predicate):
         first = case.check(requirements=(requirement,))
@@ -341,7 +354,7 @@ def test_global_assumptions_are_checked_against_observations():
         value = a + 2
 
     case = ResearchCase.for_model(Parameter).observe(a=-1)
-    requirement = Requirement(positive("value", name="positive"), "consumer", "Skip contradictory premises.")
+    requirement = positive("value", name="positive", consumer="consumer", reason="Skip contradictory premises.")
     with assuming(Q.positive(case.symbols.a)):
         report = case.check(requirements=(requirement,))
         assert report.consistent is False
@@ -383,15 +396,21 @@ def test_singleton_convexity_uses_the_value_instead_of_ambient_curvature():
 
     case = ResearchCase.for_model(Curves)
     for path, verdict in (("concave", "strictly true"), ("pole", "strictly false")):
-        requirement = Requirement(
-            convex(path, wrt="x", domain=Interval(0, 0), name="singleton"),
-            "consumer",
-            "Convexity on a singleton requires a finite real value, without a curvature condition.",
+        requirement = convex(
+            path,
+            wrt="x",
+            domain=Interval(0, 0),
+            name="singleton",
+            consumer="consumer",
+            reason="Convexity on a singleton requires a finite real value, without a curvature condition.",
         )
         assert case.check(requirements=(requirement,)).explain("singleton").verdict == verdict
-    requirement = Requirement(
-        convex("concave", wrt="x", domain=FiniteSet(-1, 1), name="disconnected"),
-        "consumer",
-        "The interval curvature test cannot refute unsupported disconnected-domain convexity.",
+    requirement = convex(
+        "concave",
+        wrt="x",
+        domain=FiniteSet(-1, 1),
+        name="disconnected",
+        consumer="consumer",
+        reason="The interval curvature test cannot refute unsupported disconnected-domain convexity.",
     )
     assert case.check(requirements=(requirement,)).explain("disconnected").verdict == "unresolved"

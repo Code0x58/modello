@@ -8,12 +8,12 @@ from functools import cached_property
 from types import MappingProxyType, new_class
 from typing import ClassVar, Generic, TypeVar, cast
 
-from sympy import Basic, Derivative, Expr, S, Subs, Symbol, default_sort_key, sympify
+from sympy import Basic, Derivative, Expr, S, Subs, Symbol, SympifyError, default_sort_key, sympify
 from sympy.assumptions import global_assumptions
 from sympy.logic.boolalg import Boolean
 from sympy.polys.polyerrors import PolynomialError
 
-from modello import ConstraintKind, Coordinate, Modello, component, inspect_model
+from modello import ConstraintKind, Coordinate, Modello, annotate, annotate_model, component, inspect_model
 from modello._evaluation import _rebind, _substitute
 from modello._problem import ModelConstraint, _algebra
 from modello.diagnostics import ModelProblem
@@ -21,23 +21,22 @@ from modello.errors import ModelDefinitionError, ModelInputError, ModelValidatio
 
 from ._proof import Attempt, attempt, conjunction, consistency, coordinate_domain
 from ._records import (
-    Claim,
     Evidence,
     Experiment,
     Method,
-    ProofHint,
     Requirement,
-    Requires,
     ResearchError,
     ResearchReport,
     ResearchResult,
     ResultT,
     Theorem,
+    _Requirements,
     differentiable,
     nonzero,
 )
 
 ModelT = TypeVar("ModelT", bound=Modello)
+ValueT = TypeVar("ValueT")
 
 
 @dataclass
@@ -137,7 +136,7 @@ class ResearchCase(Generic[ModelT]):
     problem: ModelProblem[ModelT]
     assumptions: tuple[Basic, ...] = ()
     requirements: tuple[Requirement, ...] = ()
-    hints: tuple[tuple[str, ProofHint], ...] = ()
+    hints: tuple[tuple[str, Expr], ...] = ()
     theorems: tuple[Theorem, ...] = ()
     changes: tuple[str, ...] = ()
 
@@ -283,7 +282,7 @@ class ResearchCase(Generic[ModelT]):
             raise ModelDefinitionError("require accepts Requirement records")
         return replace(self, requirements=(*self.requirements, *requirements))
 
-    def without_requirements(self, *claim_ids: str, reason: str) -> ResearchCase[ModelT]:
+    def without_requirements(self, *requirement_ids: str, reason: str) -> ResearchCase[ModelT]:
         """Remove case-added obligations; method and declaration contracts remain.
 
         Change a declaration or component to change its annotations. Automatic
@@ -291,21 +290,26 @@ class ResearchCase(Generic[ModelT]):
         """
         if not isinstance(reason, str) or not reason.strip():
             raise ModelInputError("Record a reason when removing requirements")
-        removed = tuple(dict.fromkeys(claim_ids))
-        available = {item.claim.name for item in self.requirements}
+        removed = tuple(dict.fromkeys(requirement_ids))
+        available = {item.name for item in self.requirements}
         missing = tuple(key for key in removed if key not in available)
         if missing:
             raise ModelInputError(f"Only case-added requirements can be removed; unknown case IDs: {missing}")
         return replace(
             self,
-            requirements=tuple(item for item in self.requirements if item.claim.name not in removed),
+            requirements=tuple(item for item in self.requirements if item.name not in removed),
             changes=(*self.changes, *(f"Removed requirement {key}: {reason.strip()}" for key in removed)),
         )
 
-    def with_hint(self, claim_id: str, hint: ProofHint) -> ResearchCase[ModelT]:
-        if not isinstance(hint, ProofHint):
-            raise ModelInputError("A proof hint must be created with upper_bound")
-        return replace(self, hints=tuple({**dict(self.hints), claim_id: hint}.items()))
+    def with_hint(self, requirement_id: str, *, upper) -> ResearchCase[ModelT]:
+        """Propose a uniform upper bound; every check must establish it."""
+        try:
+            value = sympify(upper)
+        except (SympifyError, TypeError) as error:
+            raise ModelInputError("An upper-bound hint must be a scalar expression") from error
+        if not isinstance(value, Expr):
+            raise ModelInputError("An upper-bound hint must be a scalar expression")
+        return replace(self, hints=tuple({**dict(self.hints), requirement_id: value}.items()))
 
     def with_theorem(self, theorem: Theorem) -> ResearchCase[ModelT]:
         if not theorem.source or any(item.name == theorem.name for item in self.theorems):
@@ -445,13 +449,13 @@ class ResearchCase(Generic[ModelT]):
         return ResearchCase(
             problem,
             tuple(_rebind(value, {**mapping, **global_coordinates}) for value in self.assumptions),
-            tuple(replace(item, claim=rebound(item.claim)) for item in self.requirements),
-            tuple((key, ProofHint(_rebind(hint.upper, {**mapping, **global_coordinates}))) for key, hint in self.hints),
+            tuple(rebound(item) for item in self.requirements),
+            tuple((key, _rebind(hint, {**mapping, **global_coordinates})) for key, hint in self.hints),
             tuple(
                 replace(
                     rule,
                     conclusion=rebound(rule.conclusion),
-                    premises=tuple(replace(item, claim=rebound(item.claim)) for item in rule.premises),
+                    premises=tuple(rebound(item) for item in rule.premises),
                 )
                 for rule in self.theorems
             ),
@@ -473,11 +477,12 @@ class ResearchCase(Generic[ModelT]):
 
     def _declared(self):
         records = []
-        for path, annotation in Requires.for_model(self.problem.model).items():
-            prefix = path.rpartition(".")[0]
+        for path, annotation in _Requirements.for_model(self.problem.model).items():
+            prefix = path if annotation.model_level else path.rpartition(".")[0]
             for requirement in annotation.requirements:
-                records.append((f"{path}/{requirement.claim.name}", requirement, prefix))
-        records.extend((item.claim.name, item, "") for item in self.requirements)
+                key = f"{path}/{requirement.name}" if path else requirement.name
+                records.append((key, requirement, prefix))
+        records.extend((item.name, item, "") for item in self.requirements)
         return records
 
     def _automatic(self):
@@ -525,14 +530,16 @@ class ResearchCase(Generic[ModelT]):
                             name="derivative",
                         )
                     else:
-                        claim = Claim("mixed_derivative", value, "theorem")
+                        claim = Requirement("mixed_derivative", value, "theorem")
                     if claim not in seen:
                         seen.add(claim)
                         records.append(
                             (
                                 f"{path}/auto:{len(seen)}",
-                                Requirement(
-                                    claim, path, "The native derivative requires differentiability, not necessarily C2."
+                                replace(
+                                    claim,
+                                    consumer=path,
+                                    reason="The native derivative requires differentiability, not necessarily C2.",
                                 ),
                                 "",
                             )
@@ -547,14 +554,16 @@ class ResearchCase(Generic[ModelT]):
                             denominator, wrt=variable, domain=coordinate_domain(variable), name="denominator"
                         )
                     else:
-                        claim = Claim("multivariate_denominator", denominator, "theorem")
+                        claim = Requirement("multivariate_denominator", denominator, "theorem")
                     if claim not in seen:
                         seen.add(claim)
                         records.append(
                             (
                                 f"{path}/auto:{len(seen)}",
-                                Requirement(
-                                    claim, path, "The original denominator must be nonzero before cancellation."
+                                replace(
+                                    claim,
+                                    consumer=path,
+                                    reason="The original denominator must be nonzero before cancellation.",
                                 ),
                                 "",
                             )
@@ -572,6 +581,10 @@ class ResearchCase(Generic[ModelT]):
 
         The budget counts proof attempts, not wall-clock time inside the CAS.
         """
+        return self._check(max_steps=max_steps, requirements=requirements)[0]
+
+    def _check(self, *, max_steps: int, requirements: tuple[Requirement, ...]) -> tuple[ResearchReport, frozenset[str]]:
+        """Return evidence and its structural automatic-obligation IDs together."""
         if max_steps < 1:
             raise ModelInputError("max_steps must be positive")
         assumptions = tuple(
@@ -590,7 +603,8 @@ class ResearchCase(Generic[ModelT]):
                     feasible = None
                 observation_issue = "Joint feasibility of the recorded observations remains unresolved."
         records_by_id: dict[str, tuple[str, Requirement, str]] = {}
-        for record in [*self._declared(), *self._automatic(), *((item.claim.name, item, "") for item in requirements)]:
+        automatic = self._automatic()
+        for record in [*self._declared(), *automatic, *((item.name, item, "") for item in requirements)]:
             key = record[0]
             if key in records_by_id and records_by_id[key] != record:
                 raise ModelDefinitionError(f"Requirement IDs must be unique within a research case: {key}")
@@ -604,7 +618,7 @@ class ResearchCase(Generic[ModelT]):
         active, steps = set(), [0]
 
         def prove(key, requirement, prefix):
-            claim = requirement.claim
+            claim = requirement
             declaration_bindings = self._annotation_bindings(prefix)
 
             def native(value):
@@ -646,7 +660,7 @@ class ResearchCase(Generic[ModelT]):
                 claim, subject=expression, wrt=variable, expected=expected, domain=domain, bound=bound, at=point
             )
             dependencies = self._dependencies(subject)
-            token = (claim, prefix)
+            token = (claim._proposition(), prefix)
             if feasible is False or steps[0] >= max_steps or token in active:
                 return Evidence(
                     key,
@@ -656,15 +670,17 @@ class ResearchCase(Generic[ModelT]):
                     None,
                     ("Inconsistent premises, exhausted proof budget, or circular theorem dependency.",),
                     dependencies,
-                    resolved_claim=resolved,
+                    resolved=resolved,
                     expected_template=expected_template,
                 )
             steps[0] += 1
-            theorem = next((rule for rule in self.theorems if rule.conclusion == claim), None)
+            theorem = next(
+                (rule for rule in self.theorems if rule.conclusion._proposition() == claim._proposition()), None
+            )
             if theorem is not None:
                 active.add(token)
                 try:
-                    premises = tuple(prove(f"{key}/{item.claim.name}", item, prefix) for item in theorem.premises)
+                    premises = tuple(prove(f"{key}/{item.name}", item, prefix) for item in theorem.premises)
                 finally:
                     active.remove(token)
                 condition = conjunction(*(item.condition for item in premises))
@@ -682,7 +698,7 @@ class ResearchCase(Generic[ModelT]):
                     dependencies,
                     kind="theorem",
                     premises=premises,
-                    resolved_claim=resolved,
+                    resolved=resolved,
                     expected_template=expected_template,
                 )
             canonical = (
@@ -690,7 +706,7 @@ class ResearchCase(Generic[ModelT]):
             )
             hint = dict(self.hints).get(key, dict(self.hints).get(f"{canonical}/{claim.name}"))
             if hint is not None:
-                hint = ProofHint(cast(Expr, payload(hint.upper)))
+                hint = cast(Expr, payload(hint))
             attempt_key = (
                 resolved.property,
                 expression,
@@ -721,8 +737,8 @@ class ResearchCase(Generic[ModelT]):
                 dependencies,
                 result.witness,
                 kind="counterexample" if result.witness else "symbolic",
-                resolved_claim=resolved,
-                hint=None if hint is None else hint.upper,
+                resolved=resolved,
+                hint=hint,
                 expected_template=expected_template,
             )
 
@@ -738,12 +754,13 @@ class ResearchCase(Generic[ModelT]):
         for constraint in self.problem.constraints:
             for coordinate in constraint.right.atoms(Coordinate):
                 labels.setdefault(coordinate, coordinate.name)
-        return ResearchReport(
+        report = ResearchReport(
             self.problem.model.__name__, checks, assumptions, feasible, tuple(issues), tuple(labels.items())
         )
+        return report, frozenset(key for key, _, _ in automatic)
 
-    def explain(self, claim_id: str) -> Evidence:
-        return self.check().explain(claim_id)
+    def explain(self, requirement_id: str) -> Evidence:
+        return self.check().explain(requirement_id)
 
     def sample(self, subject: str | Basic, *, wrt: str | Symbol, points) -> Experiment:
         variable = self._reference(wrt) if isinstance(wrt, str) else wrt
@@ -776,20 +793,36 @@ class ResearchCase(Generic[ModelT]):
                 self,
                 self.check(max_steps=1000),
             )
-        report = self.check(max_steps=1000, requirements=method.requirements)
+        report, automatic = self._check(max_steps=1000, requirements=method.requirements)
         uses: set[str] = set()
         for path in method.uses:
             uses.update(self._dependencies(self._reference(path)))
-        required = {item.claim.name for item in method.requirements}
+        required = {item.name for item in method.requirements}
+        model_scopes = {
+            f"{path}/{item.name}" if path else item.name: path
+            for path, annotation in _Requirements.for_model(self.problem.model).items()
+            if annotation.model_level
+            for item in annotation.requirements
+        }
 
         def consumed(item):
-            if "/auto:" in item.id:
+            if item.id in required:
+                return True
+            if item.id in automatic:
                 return item.requirement.consumer in method.uses
             return (
-                item.id in required
-                or item.requirement.consumer in uses
+                item.requirement.consumer in uses
                 or item.id.partition("/")[0] in uses
                 or item.requirement.consumer == method.name
+                or (
+                    item.id in model_scopes
+                    and any(
+                        not model_scopes[item.id]
+                        or path == model_scopes[item.id]
+                        or path.startswith(model_scopes[item.id] + ".")
+                        for path in uses
+                    )
+                )
             )
 
         blocked = [item for item in report.checks if consumed(item) and item.condition is not S.true]
@@ -821,3 +854,21 @@ class ResearchModel(Modello):
     @classmethod
     def definition_report(cls) -> ResearchReport:
         return cls._research_definition_report
+
+
+def requires(value: ValueT, *requirements: Requirement) -> ValueT:
+    """Return a field declaration or model subclass carrying requirements.
+
+    Property functions create the same Requirement values accepted by cases,
+    methods, and theorem premises. Use the return value: the input expression,
+    model class, and earlier research cases are left unchanged.
+    """
+    if isinstance(value, type) and issubclass(value, Modello):
+        inherited = _Requirements.for_model(value).get("")
+        previous = () if inherited is None else inherited.requirements
+        constrained = new_class(f"{value.__name__}WithRequirements", (value,))
+        annotate_model(constrained, _Requirements(*previous, *requirements, model_level=True))
+        if issubclass(constrained, ResearchModel):
+            constrained._research_definition_report = ResearchCase.for_model(constrained).check()
+        return cast(ValueT, constrained)
+    return annotate(value, _Requirements(*requirements))

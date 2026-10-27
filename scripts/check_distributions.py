@@ -166,10 +166,10 @@ audit = validator.audit(((100, 0), (90, 10)))
 assert (audit.row_count, audit.valid_rows, audit.assumed_rows) == (2, 1, 1)
 assert audit.valid is None and audit.first_invalid is None
 assert not {"pandas", "polars", "numpy"} & sys.modules.keys()
-from modello.contrib.research import ResearchCase, ResearchModel, Requirement, Requires, increasing
+from modello.contrib.research import ResearchCase, ResearchModel, requires, increasing
 class ResearchCurve(ResearchModel):
     x = modello.Coordinate("x", real=True)
-    value = modello.annotate(x**3, Requires(Requirement(increasing("value", wrt="x"), "smoke", "Order matters")))
+    value = requires(x**3, increasing("value", wrt="x", consumer="smoke", reason="Order matters"))
 assert ResearchCurve.definition_report().checks[0].verdict == "strictly true"
 assert ResearchCase.for_model(ResearchCurve).check().to_dict()["checks"]
 assert not {"numpy", "scipy", "matplotlib"} & sys.modules.keys()

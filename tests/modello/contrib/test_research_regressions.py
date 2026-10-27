@@ -1,13 +1,13 @@
 """Boundary cases uncovered by independent review of the research workflow."""
 
+from dataclasses import replace
+
 import pytest
 from sympy import Abs, Derivative, Eq, Interval, Ne, Piecewise, S, Subs, exp, frac, sin
 
-from modello import Coordinate, InstanceDummy, annotate, component
+from modello import Coordinate, InstanceDummy, component
 from modello.contrib.research import (
     Method,
-    Requirement,
-    Requires,
     ResearchCase,
     ResearchError,
     ResearchModel,
@@ -18,14 +18,14 @@ from modello.contrib.research import (
     increasing,
     nonzero,
     positive,
+    requires,
     uniform_bound,
-    upper_bound,
     vanishes,
 )
 
 
 def check(case, claim):
-    return case.require(Requirement(claim, "test", "Review regression.")).check().explain(claim.name)
+    return case.require(replace(claim, consumer="test", reason="Review regression.")).check().explain(claim.name)
 
 
 def test_discontinuity_does_not_refute_definedness_order_or_identity():
@@ -45,7 +45,7 @@ def test_discontinuity_does_not_refute_definedness_order_or_identity():
 def test_nonpolynomial_certificate_failure_is_an_inapplicable_attempt():
     class Functions(ResearchModel):
         x = Coordinate("x", real=True)
-        value = annotate(exp(x), Requires(Requirement(decreasing("value", wrt="x"), "test", "A wrong claim.")))
+        value = requires(exp(x), decreasing("value", wrt="x", consumer="test", reason="A wrong claim."))
         wave = sin(x)
 
     assert Functions.definition_report().checks[0].verdict == "strictly false"
@@ -59,7 +59,7 @@ def test_native_declaration_metadata_is_bound_in_its_component_scope():
     class Native(ResearchModel):
         x = Coordinate("x", real=True)
         a = InstanceDummy("a", real=True)
-        value = annotate(a * x, Requires(Requirement(increasing(a * x, wrt=x), "test", "Native expression.")))
+        value = requires(a * x, increasing(a * x, wrt=x, consumer="test", reason="Native expression."))
 
     class Parent(ResearchModel):
         curve = component(Native)
@@ -84,7 +84,7 @@ def test_replacement_rebinds_native_coordinates_and_parameters():
 
     case = ResearchCase.for_model(Parent).observe(curve=Old("curve", a=2))
     claim = increasing(case.symbols.curve.value, wrt=Old.x)
-    original = case.require(Requirement(claim, "test", "Native curve coordinate."))
+    original = case.require(replace(claim, consumer="test", reason="Native curve coordinate."))
     changed = original.replace("curve", New)
     assert original.check().checks[0].verdict == changed.check().checks[0].verdict == "strictly true"
     assert changed.check().checks[0].coordinate == New.x
@@ -99,11 +99,11 @@ def test_all_parameter_payloads_are_specialized_and_audited():
 
     case = ResearchCase.for_model(Parameterized)
     claim = uniform_bound("value", case.symbols.a, wrt="x", domain=Interval(0, 1))
-    evidence = check(case.observe(a=5).with_hint(claim.name, upper_bound(1)), claim)
+    evidence = check(case.observe(a=5).with_hint(claim.name, upper=1), claim)
     assert evidence.verdict == "strictly true"
-    assert evidence.resolved_claim.bound == 5
+    assert evidence.resolved.bound == 5
     claim = uniform_bound("value", case.symbols.a + 1, wrt="x", domain=Interval(0, case.symbols.a))
-    assert check(case.observe(a=1).with_hint(claim.name, upper_bound(1)), claim).verdict == "strictly true"
+    assert check(case.observe(a=1).with_hint(claim.name, upper=1), claim).verdict == "strictly true"
     local = differentiable("kink", wrt="x", at=case.symbols.a)
     assert check(case.observe(a=1), local).verdict == "strictly true"
 
@@ -157,8 +157,8 @@ def test_audits_and_fingerprints_include_the_compared_proposition():
         value = x**2
 
     case = ResearchCase.for_model(Quadratic)
-    first = case.require(Requirement(exact_form("value", S(2), wrt="x"), "test", "Compare a form.")).check()
-    second = case.require(Requirement(exact_form("value", S(3), wrt="x"), "test", "Compare a form.")).check()
+    first = case.require(exact_form("value", S(2), wrt="x", consumer="test", reason="Compare a form.")).check()
+    second = case.require(exact_form("value", S(3), wrt="x", consumer="test", reason="Compare a form.")).check()
     assert first.to_dict()["checks"][0]["expected"] == "2"
     assert second.to_dict()["checks"][0]["expected"] == "3"
     assert first.to_dict()["evidence_sha256"] != second.to_dict()["evidence_sha256"]

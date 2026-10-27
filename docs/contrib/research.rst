@@ -26,20 +26,21 @@ Declare the consumer's requirements
 -----------------------------------
 
 Use ``ResearchModel`` to refresh declaration checks automatically for every
-subclass. ``annotate`` attaches requirements without changing the equations:
+subclass. Every property function returns a ``Requirement``. Attach those
+requirements to a declaration with ``requires``:
 
 >>> from sympy import exp, S
->>> from modello import Coordinate, InstanceDummy, annotate
+>>> from modello import Coordinate, InstanceDummy
 >>> from modello.contrib.research import (
-...     ResearchCase, ResearchModel, Requirement, Requires, increasing, smooth,
+...     ResearchCase, ResearchModel, increasing, positive, requires, smooth,
 ... )
 >>> class Utility(ResearchModel):
 ...     wealth = Coordinate("w", real=True)
 ...     gamma = InstanceDummy("gamma", real=True)
-...     value = annotate(-exp(-gamma*wealth), Requires(
-...         Requirement(increasing("value", wrt="wealth"), "valuation", "More wealth must be preferred."),
-...         Requirement(smooth("value", wrt="wealth"), "price_curvature", "This calculation uses C2 regularity."),
-...     ))
+...     value = requires(-exp(-gamma*wealth),
+...         increasing("value", wrt="wealth", consumer="valuation", reason="More wealth must be preferred."),
+...         smooth("value", wrt="wealth", consumer="price_curvature", reason="This calculation uses C2 regularity."),
+...     )
 >>> Utility.definition_report().explain("value/increasing").verdict
 'conditionally true'
 
@@ -48,6 +49,17 @@ when inspected; replacing a component or redefining an inherited formula
 rebinds its requirements. The stored annotations describe claims, not old
 verdicts. Definition checking does not construct a model or select a solver
 candidate. Failed and unresolved requirements remain available for exploration.
+
+``consumer``, ``reason``, and ``source`` are optional metadata accepted by every
+property function. They describe why a condition is needed; they do not change
+its mathematical meaning. There is no separate claim or declaration-wrapper
+type to construct. The same requirement works in ``case.require(...)``,
+``Method.requirements``, and ``Theorem.premises``.
+
+``Constrained = requires(Model, *requirements)`` returns a subclass carrying
+additional model-wide conditions and its refreshed definition report. The
+original model and earlier cases remain unchanged. These conditions follow the
+model into nested components and are consumed by methods that read its fields.
 
 Native expressions in declaration annotations are rebound in their component's
 scope. Paths are useful for contracts that should follow a named formula
@@ -69,6 +81,9 @@ Cases are immutable. Use their actual symbols, preserving identities across
 branches:
 
 >>> case = ResearchCase.for_model(Utility)
+>>> risk_positive = positive("gamma", name="positive_risk")
+>>> case.require(risk_positive).check().explain("positive_risk").verdict
+'conditionally true'
 >>> positive_risk = case.assume(case.symbols.gamma > 0)
 >>> positive_risk.check().explain("value/increasing").verdict
 'strictly true'
@@ -110,6 +125,10 @@ at their source. Removing an exploratory requirement never removes a method's
 own contract; the method checks that requirement again when it runs. Identical
 requirement records shared by a case and a method reuse one check, while
 conflicting uses of an ID remain definition errors.
+The same policy applies to theorem premises: identical requirements reuse one
+check, while conflicting conditions need distinct ``name`` values.
+All evidence IDs, including nested theorem premise paths, must be unique within
+a report; a collision is a definition error.
 
 Check a proposed proof
 ----------------------
@@ -117,11 +136,10 @@ Check a proposed proof
 The logistic intensity makes a useful research substitution:
 
 >>> from examples.market_making_study import LogisticIntensity
->>> from modello.contrib.research import upper_bound
 >>> logistic = ResearchCase.for_model(LogisticIntensity)
 >>> logistic.check().explain("rate/curvature_bound").verdict
 'unresolved'
->>> bounded = logistic.with_hint("rate/curvature_bound", upper_bound(1))
+>>> bounded = logistic.with_hint("rate/curvature_bound", upper=1)
 >>> bounded.check().explain("rate/curvature_bound").verdict
 'strictly true'
 
@@ -131,7 +149,9 @@ proposed uniform upper bound 1 and that :math:`1<2`. The nonzero derivative
 premise is checked before cancellation. A pointwise inequality strictly below
 2 would not by itself establish a supremum strictly below 2.
 
-An incorrect hint leaves the claim unresolved; it does not refute the property.
+An incorrect hint leaves the requirement unresolved; it does not refute the property.
+The ``upper`` value is a proposed proof aid, not an assumption or a requirement
+that is accepted without checking.
 Parameter poles are also retained. For example, regularity of :math:`e^{x/a}`
 cannot be unconditional when the declaration allows :math:`a=0`.
 
@@ -172,6 +192,10 @@ and fails differentiability at zero. Failed C2 certificates alone do not refute
 convexity or twice differentiability. Discontinuity alone does not refute
 positivity, nonzero values, or an identity. Tail-limit claims inspect eventual
 behavior rather than requiring regularity at every finite point.
+
+For a parameterized polynomial such as :math:`a x^3`, that rule retains the
+nonconstancy condition. Assuming only :math:`a\geq0` cannot establish strict
+increase because :math:`a=0` remains admissible.
 
 The curvature characterization of convexity applies on real intervals with
 nonempty interior. A singleton is checked by its finite real value instead;
@@ -289,9 +313,108 @@ risk and terminal laws, including supported component replacements. These are nu
 proofs of error bounds. Source fingerprints, exact parameters, solver settings,
 and dependency versions accompany the results.
 
+Migrating the exploratory interface
+-----------------------------------
+
+The earlier ``Claim``, ``Requirement``, and ``Requires`` constructors have been
+consolidated. A property function now creates the complete requirement:
+
+.. code-block:: python
+
+   # Earlier interface
+   value = annotate(expression, Requires(
+       Requirement(increasing("value", wrt="x"), "optimizer", "Order matters.")))
+
+   # Current interface
+   value = requires(expression,
+       increasing("value", wrt="x", consumer="optimizer", reason="Order matters."))
+
+Pass a property directly to ``case.require`` or a method's ``requirements``.
+Read ``evidence.requirement.subject`` and ``evidence.resolved.subject`` for the
+declared and specialized statements. Use ``case.with_hint(id, upper=value)``
+instead of constructing ``ProofHint`` or calling ``upper_bound``. The old
+constructors are not retained as public aliases.
+
 API
 ----
 
 .. automodule:: modello.contrib.research
-   :members: ResearchModel, ResearchCase, Claim, Requirement, Requires, Evidence, ResearchReport, Method, Theorem, ResearchResult, ResearchError, Experiment, ProofHint, upper_bound, positive, nonnegative, nonzero, increasing, decreasing, convex, concave, smooth, differentiable, vanishes, uniform_bound, curvature_bound, exact_form, predicate
-   :member-order: bysource
+
+.. currentmodule:: modello.contrib.research
+
+Workflow objects
+~~~~~~~~~~~~~~~~~
+
+``Requirement`` is the single type for conditions. ``Method`` describes a
+guarded computation; ``Theorem`` describes an explicitly trusted implication.
+
+.. autoclass:: Requirement
+
+.. autofunction:: requires
+
+.. autoclass:: ResearchModel
+   :members:
+
+.. autoclass:: ResearchCase
+   :members:
+
+.. autoclass:: Method
+   :members:
+
+.. autoclass:: Theorem
+
+Mathematical conditions
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Every function below returns a ``Requirement`` and accepts the same optional
+``consumer``, ``reason``, and ``source`` metadata. Sign, order, shape, regularity,
+and bounds are different mathematical conditions, rather than different
+container types. In particular, ``smooth(order=n)`` requires continuous
+derivatives through order n; ``differentiable(order=n)`` only requires those
+derivatives to exist.
+
+.. autofunction:: positive
+
+.. autofunction:: nonnegative
+
+.. autofunction:: nonzero
+
+.. autofunction:: increasing
+
+.. autofunction:: decreasing
+
+.. autofunction:: convex
+
+.. autofunction:: concave
+
+.. autofunction:: smooth
+
+.. autofunction:: differentiable
+
+.. autofunction:: vanishes
+
+.. autofunction:: uniform_bound
+
+.. autofunction:: curvature_bound
+
+.. autofunction:: exact_form
+
+.. autofunction:: predicate
+
+Returned evidence and results
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+These records are returned by the workflow; they do not introduce additional
+ways to declare a requirement.
+
+.. autoclass:: Evidence
+   :members:
+
+.. autoclass:: ResearchReport
+   :members:
+
+.. autoclass:: ResearchResult
+
+.. autoclass:: Experiment
+
+.. autoexception:: ResearchError

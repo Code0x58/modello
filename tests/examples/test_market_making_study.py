@@ -11,7 +11,7 @@ from examples._market_making_numerics import QuoteEvaluator, exponential_referen
 from examples.market_making import CARAUtility, QuadraticTerminalPenalty
 from examples.market_making_study import _provenance, compare, write_study
 from modello import Coordinate
-from modello.contrib.research import ResearchError, upper_bound
+from modello.contrib.research import ResearchError
 
 
 @pytest.fixture(scope="module")
@@ -104,7 +104,7 @@ def test_invalid_lattice_and_numerical_failure_retain_case_and_report():
 def test_asymmetric_intensities_use_independent_component_scopes():
     case = study_case(capacity=2).replace("ask.intensity", LogisticIntensity)
     # Replacement preserves the recorded scale=2, decay=1 on the ask side.
-    case = case.with_hint("ask.intensity.rate/curvature_bound", upper_bound(1))
+    case = case.with_hint("ask.intensity.rate/curvature_bound", upper=1)
     data = run_quotes(case, points=5).data
     assert data.diagnostics["bid_family"] == "exponential"
     assert data.diagnostics["ask_family"] == "logistic"

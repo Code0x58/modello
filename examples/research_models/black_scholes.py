@@ -17,11 +17,10 @@ from typing import Any
 
 from sympy import Abs, Expr, Interval, Rational, S, Subs, Symbol, diff, erf, exp, limit, log, pi, simplify, sqrt
 
-from modello import Coordinate, InstanceDummy, annotate, component
+from modello import Coordinate, InstanceDummy, component
 from modello.contrib.research import (
     Method,
     Requirement,
-    Requires,
     ResearchCase,
     ResearchError,
     ResearchModel,
@@ -31,6 +30,7 @@ from modello.contrib.research import (
     nonnegative,
     positive,
     predicate,
+    requires,
     smooth,
 )
 
@@ -90,11 +90,15 @@ def _call_put_difference(get: Get) -> Expr:
 
 
 def _helper_contract(name: str, expected: Callable[[Get], Expr]) -> Requirement:
-    return Requirement(
-        exact_form(name, expected, wrt="spot", domain=SPOT_DOMAIN, name=f"{name}_source"),
-        "interior_valuation",
-        "The exposed helper agrees with its primitive inputs or the actual declared call and put.",
-        BSM_SOURCE,
+    return exact_form(
+        name,
+        expected,
+        wrt="spot",
+        domain=SPOT_DOMAIN,
+        name=f"{name}_source",
+        consumer="interior_valuation",
+        reason="The exposed helper agrees with its primitive inputs or the actual declared call and put.",
+        source=BSM_SOURCE,
     )
 
 
@@ -143,45 +147,53 @@ def _gamma_formula(get: Get) -> Expr:
 
 
 def _greek_contract(name: str, expected: Callable[[Get], Expr]) -> Requirement:
-    return Requirement(
-        exact_form(name, expected, wrt="spot", domain=SPOT_DOMAIN, name=f"{name}_form"),
-        "interior_valuation",
-        "The numerical adapter uses this exact Gaussian Greek; the symbolic method checks its derivative identity.",
-        BSM_SOURCE,
+    return exact_form(
+        name,
+        expected,
+        wrt="spot",
+        domain=SPOT_DOMAIN,
+        name=f"{name}_form",
+        consumer="interior_valuation",
+        reason=(
+            "The numerical adapter uses this exact Gaussian Greek; the symbolic method checks its derivative identity."
+        ),
+        source=BSM_SOURCE,
     )
 
 
 def _formula_contract(option: str) -> Requirement:
-    return Requirement(
-        exact_form(
-            option,
-            _put_formula if option == "put" else _call_formula,
-            wrt="spot",
-            domain=SPOT_DOMAIN,
-            name=f"{option}_form",
-        ),
-        "interior_valuation",
-        "The calculation consumes the declared integrated Gaussian option formula.",
-        BSM_SOURCE,
+    return exact_form(
+        option,
+        _put_formula if option == "put" else _call_formula,
+        wrt="spot",
+        domain=SPOT_DOMAIN,
+        name=f"{option}_form",
+        consumer="interior_valuation",
+        reason="The calculation consumes the declared integrated Gaussian option formula.",
+        source=BSM_SOURCE,
     )
 
 
 def _smooth_contract(option: str) -> Requirement:
-    return Requirement(
-        smooth(option, wrt="spot", domain=SPOT_DOMAIN, name=f"{option}_c2"),
-        "interior_valuation",
-        "Spot differentiation applies only inside the positive-variance, positive-spot domain.",
-        CDF_SOURCE,
+    return smooth(
+        option,
+        wrt="spot",
+        domain=SPOT_DOMAIN,
+        name=f"{option}_c2",
+        consumer="interior_valuation",
+        reason="Spot differentiation applies only inside the positive-variance, positive-spot domain.",
+        source=CDF_SOURCE,
     )
 
 
 def _interior_contracts(option: str) -> tuple[Requirement, ...]:
     return (
-        Requirement(positive("strike"), "interior_valuation", "A strictly positive strike keeps log(S/K) real."),
-        Requirement(
-            positive("carry.variance_total", name="positive_variance"),
-            "interior_valuation",
-            "The interior formula divides by the square root of strictly positive total variance.",
+        positive("strike", consumer="interior_valuation", reason="A strictly positive strike keeps log(S/K) real."),
+        positive(
+            "carry.variance_total",
+            name="positive_variance",
+            consumer="interior_valuation",
+            reason="The interior formula divides by the square root of strictly positive total variance.",
         ),
         _formula_contract(option),
         _smooth_contract(option),
@@ -207,54 +219,38 @@ class EuropeanOptions(ResearchModel):
     spot = InstanceDummy("S", real=True)
     strike = InstanceDummy("K", real=True)
     carry = component(IntegratedCarry)
-    d1 = annotate(
+    d1 = requires(
         (log(spot / strike) + carry.rate_total - carry.yield_total + carry.variance_total / 2)
         / sqrt(carry.variance_total),
-        Requires(_helper_contract("d1", _d1)),
+        _helper_contract("d1", _d1),
     )
-    d2 = annotate(d1 - sqrt(carry.variance_total), Requires(_helper_contract("d2", _d2)))
-    discounted_spot = annotate(
-        spot * exp(-carry.yield_total), Requires(_helper_contract("discounted_spot", _discounted_spot))
+    d2 = requires(d1 - sqrt(carry.variance_total), _helper_contract("d2", _d2))
+    discounted_spot = requires(spot * exp(-carry.yield_total), _helper_contract("discounted_spot", _discounted_spot))
+    discounted_strike = requires(
+        strike * exp(-carry.rate_total), _helper_contract("discounted_strike", _discounted_strike)
     )
-    discounted_strike = annotate(
-        strike * exp(-carry.rate_total), Requires(_helper_contract("discounted_strike", _discounted_strike))
+    call = requires(discounted_spot * normal_cdf(d1) - discounted_strike * normal_cdf(d2), *_interior_contracts("call"))
+    put = requires(discounted_strike * normal_cdf(-d2) - discounted_spot * normal_cdf(-d1), *_interior_contracts("put"))
+    call_delta = requires(exp(-carry.yield_total) * normal_cdf(d1), _greek_contract("call_delta", _call_delta_formula))
+    put_delta = requires(
+        exp(-carry.yield_total) * (normal_cdf(d1) - 1), _greek_contract("put_delta", _put_delta_formula)
     )
-    call = annotate(
-        discounted_spot * normal_cdf(d1) - discounted_strike * normal_cdf(d2),
-        Requires(*_interior_contracts("call")),
-    )
-    put = annotate(
-        discounted_strike * normal_cdf(-d2) - discounted_spot * normal_cdf(-d1),
-        Requires(*_interior_contracts("put")),
-    )
-    call_delta = annotate(
-        exp(-carry.yield_total) * normal_cdf(d1),
-        Requires(_greek_contract("call_delta", _call_delta_formula)),
-    )
-    put_delta = annotate(
-        exp(-carry.yield_total) * (normal_cdf(d1) - 1),
-        Requires(_greek_contract("put_delta", _put_delta_formula)),
-    )
-    gamma = annotate(
+    gamma = requires(
         exp(-carry.yield_total) * normal_density(d1) / (spot * sqrt(carry.variance_total)),
-        Requires(_greek_contract("gamma", _gamma_formula)),
+        _greek_contract("gamma", _gamma_formula),
     )
-    call_minus_put = annotate(
+    call_minus_put = requires(
         call - put,
-        Requires(
-            _helper_contract("call_minus_put", _call_put_difference),
-            Requirement(
-                exact_form(
-                    "call_minus_put",
-                    lambda get: _discounted_spot(get) - _discounted_strike(get),
-                    wrt="spot",
-                    domain=SPOT_DOMAIN,
-                    name="put_call_parity",
-                ),
-                "interior_valuation",
-                "Parity discounts stock by cumulative dividend yield and strike by cumulative interest.",
-                BSM_SOURCE,
-            ),
+        _helper_contract("call_minus_put", _call_put_difference),
+        exact_form(
+            "call_minus_put",
+            lambda get: _discounted_spot(get) - _discounted_strike(get),
+            wrt="spot",
+            domain=SPOT_DOMAIN,
+            name="put_call_parity",
+            consumer="interior_valuation",
+            reason="Parity discounts stock by cumulative dividend yield and strike by cumulative interest.",
+            source=BSM_SOURCE,
         ),
     )
 
@@ -280,14 +276,15 @@ class ConstantSchedule(ResearchModel):
     variance_rate = variance_intercept + variance_slope * time
     rate_total = rate_intercept * (horizon - time) + rate_slope * (horizon**2 - time**2) / 2
     yield_total = yield_intercept * (horizon - time) + yield_slope * (horizon**2 - time**2) / 2
-    variance_total = annotate(
+    variance_total = requires(
         variance_intercept * (horizon - time) + variance_slope * (horizon**2 - time**2) / 2,
-        Requires(
-            Requirement(
-                positive("variance_total", wrt="time", domain=TIME_DOMAIN, name="interior_variance"),
-                "deterministic_schedule",
-                "Total variance must be positive before maturity; t=1 is deliberately excluded.",
-            )
+        positive(
+            "variance_total",
+            wrt="time",
+            domain=TIME_DOMAIN,
+            name="interior_variance",
+            consumer="deterministic_schedule",
+            reason="Total variance must be positive before maturity; t=1 is deliberately excluded.",
         ),
     )
 
@@ -335,17 +332,20 @@ def _cdf_theorems() -> tuple[Theorem, ...]:
     not a theorem about arbitrary unknown functions or an option pricing rule.
     """
     elementary = tuple(
-        Requirement(
-            smooth(path, wrt="spot", domain=SPOT_DOMAIN, name=f"smooth_{path}"),
-            "Gaussian_composition",
-            "The Gaussian argument and its elementary multiplicative factors are C2.",
+        smooth(
+            path,
+            wrt="spot",
+            domain=SPOT_DOMAIN,
+            name=f"smooth_{path}",
+            consumer="Gaussian_composition",
+            reason="The Gaussian argument and its elementary multiplicative factors are C2.",
         )
         for path in ("d1", "d2", "discounted_spot", "discounted_strike")
     )
     return tuple(
         Theorem(
             f"{option}_Gaussian_composition",
-            _smooth_contract(option).claim,
+            _smooth_contract(option),
             (*_interior_contracts(option)[:2], _formula_contract(option), *_helper_contracts(), *elementary),
             CDF_SOURCE,
             "1",
@@ -411,25 +411,31 @@ def study_case(
 def _snapshot_requirements(case: ResearchCase[OptionStudy]) -> tuple[Requirement, ...]:
     time = case.expression("schedule.time")
     requirements = [
-        Requirement(
-            positive("pricing.spot", name="positive_spot"), "BSM_snapshot", "The observed stock price is positive."
+        positive(
+            "pricing.spot",
+            name="positive_spot",
+            consumer="BSM_snapshot",
+            reason="The observed stock price is positive.",
         ),
-        Requirement(
-            predicate(OptionStudy.now >= 0, name="nonnegative_time"),
-            "BSM_snapshot",
-            "The snapshot is inside the declared calendar interval.",
+        predicate(
+            OptionStudy.now >= 0,
+            name="nonnegative_time",
+            consumer="BSM_snapshot",
+            reason="The snapshot is inside the declared calendar interval.",
         ),
-        Requirement(
-            predicate(OptionStudy.now < 1, name="before_maturity"),
-            "BSM_snapshot",
-            "The positive-variance formula excludes maturity.",
+        predicate(
+            OptionStudy.now < 1,
+            name="before_maturity",
+            consumer="BSM_snapshot",
+            reason="The positive-variance formula excludes maturity.",
         ),
-        Requirement(
-            nonnegative(
-                "schedule.variance_rate", wrt="schedule.time", domain=SCHEDULE_DOMAIN, name="variance_schedule"
-            ),
-            "BSM_snapshot",
-            "An instantaneous variance schedule cannot be negative.",
+        nonnegative(
+            "schedule.variance_rate",
+            wrt="schedule.time",
+            domain=SCHEDULE_DOMAIN,
+            name="variance_schedule",
+            consumer="BSM_snapshot",
+            reason="An instantaneous variance schedule cannot be negative.",
         ),
     ]
     for name in ("rate_total", "yield_total", "variance_total"):
@@ -437,10 +443,15 @@ def _snapshot_requirements(case: ResearchCase[OptionStudy]) -> tuple[Requirement
         # guard prevents these exact snapshot expectations crossing branches.
         expected = case.expression(f"schedule.{name}", wrt=time).subs(time, case.expression("now"))
         requirements.append(
-            Requirement(
-                exact_form(f"pricing.carry.{name}", expected, name=f"snapshot_{name}"),
-                "BSM_snapshot",
-                "The scalar pricing input equals the independently declared schedule integral at the observation time.",
+            exact_form(
+                f"pricing.carry.{name}",
+                expected,
+                name=f"snapshot_{name}",
+                consumer="BSM_snapshot",
+                reason=(
+                    "The scalar pricing input equals the independently declared "
+                    "schedule integral at the observation time."
+                ),
             )
         )
     return tuple(requirements)
@@ -455,48 +466,50 @@ def _schedule_requirements(case: ResearchCase[OptionStudy]) -> tuple[Requirement
     """
     time = case.expression("schedule.time")
     requirements = [
-        Requirement(
-            exact_form("schedule.horizon", S.One, name="normalized_horizon"),
-            "deterministic_tail_integrals",
-            "This adapter quantifies schedules on the normalized year ending at T=1.",
+        exact_form(
+            "schedule.horizon",
+            S.One,
+            name="normalized_horizon",
+            consumer="deterministic_tail_integrals",
+            reason="This adapter quantifies schedules on the normalized year ending at T=1.",
         )
     ]
     for total, local in _TAIL_FIELDS:
         for path in (total, local):
             requirements.append(
-                Requirement(
-                    smooth(
-                        f"schedule.{path}",
-                        wrt="schedule.time",
-                        order=1,
-                        domain=SCHEDULE_DOMAIN,
-                        name=f"schedule_{path}_c1",
-                    ),
-                    "deterministic_tail_integrals",
-                    "C1 regularity on the closed calendar interval supplies a sufficient FTC scope.",
+                smooth(
+                    f"schedule.{path}",
+                    wrt="schedule.time",
+                    order=1,
+                    domain=SCHEDULE_DOMAIN,
+                    name=f"schedule_{path}_c1",
+                    consumer="deterministic_tail_integrals",
+                    reason="C1 regularity on the closed calendar interval supplies a sufficient FTC scope.",
                 )
             )
         requirements.extend(
             (
-                Requirement(
-                    exact_form(
-                        diff(case.expression(f"schedule.{total}", wrt=time), time),
-                        -case.expression(f"schedule.{local}", wrt=time),
-                        wrt=time,
-                        domain=TIME_DOMAIN,
-                        name=f"chain_{total}",
+                exact_form(
+                    diff(case.expression(f"schedule.{total}", wrt=time), time),
+                    -case.expression(f"schedule.{local}", wrt=time),
+                    wrt=time,
+                    domain=TIME_DOMAIN,
+                    name=f"chain_{total}",
+                    consumer="deterministic_tail_integrals",
+                    reason=(
+                        "Differentiate the live deterministic tail integral "
+                        "to obtain minus its instantaneous coefficient."
                     ),
-                    "deterministic_tail_integrals",
-                    "Differentiate the live deterministic tail integral to obtain minus its instantaneous coefficient.",
                 ),
-                Requirement(
-                    exact_form(
-                        Subs(getattr(case.symbols.schedule, total), time, S.One),
-                        S.Zero,
-                        name=f"terminal_{total}",
+                exact_form(
+                    Subs(getattr(case.symbols.schedule, total), time, S.One),
+                    S.Zero,
+                    name=f"terminal_{total}",
+                    consumer="deterministic_tail_integrals",
+                    reason=(
+                        "A tail integral vanishes at maturity; "
+                        "its derivative alone does not fix the integration constant."
                     ),
-                    "deterministic_tail_integrals",
-                    "A tail integral vanishes at maturity; its derivative alone does not fix the integration constant.",
                 ),
             )
         )
@@ -672,26 +685,25 @@ def valuation_method(case: ResearchCase[OptionStudy]) -> Method[NumericalCheck]:
 
 def dividend_free_method() -> Method[Expr]:
     """The old shortcut is intentionally blocked once cumulative yield changes."""
-    requirement = Requirement(
-        exact_form(
-            "pricing.call_minus_put",
-            lambda get: get("pricing.spot") - get("pricing.strike") * exp(-get("pricing.carry.rate_total")),
-            wrt="pricing.spot",
-            domain=SPOT_DOMAIN,
-            name="dividend_free_parity",
-        ),
-        "dividend_free_shortcut",
-        "Replacing discounted stock by spot requires zero cumulative dividend yield.",
-        BSM_SOURCE,
+    requirement = exact_form(
+        "pricing.call_minus_put",
+        lambda get: get("pricing.spot") - get("pricing.strike") * exp(-get("pricing.carry.rate_total")),
+        wrt="pricing.spot",
+        domain=SPOT_DOMAIN,
+        name="dividend_free_parity",
+        consumer="dividend_free_shortcut",
+        reason="Replacing discounted stock by spot requires zero cumulative dividend yield.",
+        source=BSM_SOURCE,
     )
     return Method(
         "dividend_free_shortcut",
         lambda current: current.expression("pricing.call_minus_put", wrt="pricing.spot"),
         (
-            Requirement(
-                positive("pricing.spot", name="positive_spot"),
-                "dividend_free_shortcut",
-                "The observed stock price is positive.",
+            positive(
+                "pricing.spot",
+                name="positive_spot",
+                consumer="dividend_free_shortcut",
+                reason="The observed stock price is positive.",
             ),
             requirement,
         ),

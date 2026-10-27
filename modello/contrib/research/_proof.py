@@ -47,7 +47,7 @@ from sympy.polys.polyerrors import PolynomialError
 from modello._operators import _defined_part
 
 from ._piecewise import piecewise_regular
-from ._records import Claim, ProofHint
+from ._records import Requirement
 
 
 @dataclass(frozen=True)
@@ -374,8 +374,9 @@ def _monotone(expression, variable, domain) -> Attempt:
         try:
             polynomial = Poly(expression, variable)
             if polynomial.degree() > 0 and nonnegative.condition is not None and nonnegative.condition is not S.false:
+                nonconstant = Or(*(Ne(coefficient, 0) for coefficient in polynomial.all_coeffs()[:-1]))
                 return Attempt(
-                    conjunction(regular.condition, nonnegative.condition),
+                    conjunction(regular.condition, nonnegative.condition, nonconstant),
                     (
                         *regular.steps,
                         *nonnegative.steps,
@@ -445,24 +446,22 @@ def _uniform(expression, variable, domain, bound, hint) -> Attempt:
         )
     if hint is None:
         return Attempt(None, ("Supply a checked uniform upper-bound hint; a pointwise inequality is insufficient.",))
-    if variable in hint.upper.free_symbols:
+    if variable in hint.free_symbols:
         return Attempt(None, ("A uniform bound must be independent of the quantified coordinate.",))
-    upper = _sign(simplify(hint.upper - expression), variable, domain, False)
-    gap = hint.upper < bound
+    upper = _sign(simplify(hint - expression), variable, domain, False)
+    gap = hint < bound
     if upper.condition is S.false or gap is S.false:
         return Attempt(None, ("The proposed upper bound does not certify this claim.",))
-    return Attempt(
-        conjunction(defined.condition, upper.condition, gap), (*upper.steps, f"sup <= {hint.upper} < {bound}.")
-    )
+    return Attempt(conjunction(defined.condition, upper.condition, gap), (*upper.steps, f"sup <= {hint} < {bound}."))
 
 
 def attempt(
-    claim: Claim,
+    claim: Requirement,
     expression: Basic,
     variable: Symbol | None,
     expected: Expr | None,
     assumptions: tuple[Basic, ...],
-    hint: ProofHint | None,
+    hint: Expr | None,
 ) -> Attempt:
     if variable is not None:
         declared = coordinate_domain(variable)
@@ -530,7 +529,7 @@ def attempt(
     forward = {old: new for new, old in reverse.items()}
     if expected is not None:
         specialized_expected = expected.xreplace(forward)
-    specialized_hint = None if hint is None else ProofHint(hint.upper.xreplace(forward))
+    specialized_hint = None if hint is None else hint.xreplace(forward)
     kind, expression = claim.property, specialized
     if kind == "predicate":
         result = Attempt(

@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 
 from sympy import Expr, Piecewise, S, exp
 
 from examples.market_making import ExponentialIntensity, MarketMakingState, QuoteHamiltonian as DeclaredQuote
-from modello import InstanceDummy, annotate, component
+from modello import InstanceDummy, component
 from modello.contrib.research import (
-    Claim,
     Requirement,
-    Requires,
     ResearchCase,
     ResearchModel,
     Theorem,
@@ -22,8 +21,8 @@ from modello.contrib.research import (
     increasing,
     nonnegative,
     positive,
+    requires,
     smooth,
-    upper_bound,
     vanishes,
 )
 
@@ -52,7 +51,7 @@ def intensity_contracts(prefix="") -> tuple[Requirement, ...]:
     path = f"{prefix}." if prefix else ""
     rate, distance = path + "rate", path + "distance"
     return tuple(
-        Requirement(claim, "quote_uniqueness", reason, SOURCE)
+        replace(claim, consumer="quote_uniqueness", reason=reason, source=SOURCE)
         for claim, reason in (
             (positive(rate, wrt=distance), "Trades need a positive arrival intensity."),
             (smooth(rate, wrt=distance), "Guéant's quote theorem requires C2 intensity."),
@@ -66,9 +65,9 @@ def intensity_contracts(prefix="") -> tuple[Requirement, ...]:
 class StudiedExponential(ResearchModel, ExponentialIntensity):
     """Exponential intensity with live requirements, rather than copied verdicts."""
 
-    rate = annotate(
+    rate = requires(
         ExponentialIntensity.scale * exp(-ExponentialIntensity.decay * ExponentialIntensity.distance),
-        Requires(*intensity_contracts()),
+        *intensity_contracts(),
     )
 
 
@@ -98,14 +97,14 @@ def study_case(*, logistic=False, capacity=5) -> ResearchCase[CARAMarketMaker]:
     if logistic:
         case = case.replace("bid.intensity", LogisticIntensity).replace("ask.intensity", LogisticIntensity)
     for side in ("bid", "ask"):
-        conclusion = Claim(f"unique_{side}", f"{side}.intensity.rate", "theorem")
+        conclusion = Requirement(f"unique_{side}", f"{side}.intensity.rate", "theorem")
         case = case.with_theorem(
             Theorem(
                 f"gueant_unique_{side}", conclusion, intensity_contracts(f"{side}.intensity"), SOURCE + "#S3.SS2", "1"
             )
         )
         if logistic:
-            case = case.with_hint(f"{side}.intensity.rate/curvature_bound", upper_bound(1))
+            case = case.with_hint(f"{side}.intensity.rate/curvature_bound", upper=1)
     gamma, eta = S.One / 10, S.One / 20
     scale, decay = (4, 2) if logistic else (2, 1)
     # Constructor-compatible partial components retain shared parameter links.
@@ -130,110 +129,105 @@ def study_case(*, logistic=False, capacity=5) -> ResearchCase[CARAMarketMaker]:
 
 def solver_requirements(case: ResearchCase) -> tuple[Requirement, ...]:
     requirements = [
-        Requirement(
-            exact_form(
-                "utility.value",
-                lambda get: -exp(-get("gamma") * get("utility.wealth")),
-                wrt="utility.wealth",
-                name="cara_form",
-            ),
-            "CARA_reduction",
-            "The reduction uses exact exponential utility.",
-            SOURCE,
+        exact_form(
+            "utility.value",
+            lambda get: -exp(-get("gamma") * get("utility.wealth")),
+            wrt="utility.wealth",
+            name="cara_form",
+            consumer="CARA_reduction",
+            reason="The reduction uses exact exponential utility.",
+            source=SOURCE,
         ),
-        Requirement(
-            increasing("utility.value", wrt="utility.wealth", name="utility_increasing"),
-            "CARA_reduction",
-            "The utility must prefer additional wealth.",
-            SOURCE,
+        increasing(
+            "utility.value",
+            wrt="utility.wealth",
+            name="utility_increasing",
+            consumer="CARA_reduction",
+            reason="The utility must prefer additional wealth.",
+            source=SOURCE,
         ),
-        Requirement(
-            concave("utility.value", wrt="utility.wealth", name="utility_concave"),
-            "CARA_reduction",
-            "The utility must express risk aversion.",
-            SOURCE,
+        concave(
+            "utility.value",
+            wrt="utility.wealth",
+            name="utility_concave",
+            consumer="CARA_reduction",
+            reason="The utility must express risk aversion.",
+            source=SOURCE,
         ),
     ]
     for name in ("gamma", "step", "capacity", "horizon", "risk.sigma"):
         requirements.append(
-            Requirement(positive(name, name=f"positive_{name}"), "ODE_solver", f"{name} must be positive.", SOURCE)
+            positive(
+                name, name=f"positive_{name}", consumer="ODE_solver", reason=f"{name} must be positive.", source=SOURCE
+            )
         )
     requirements.append(
-        Requirement(
-            nonnegative("terminal.eta", name="terminal_cost"),
-            "terminal_condition",
-            "The terminal inventory penalty is nonnegative.",
-            SOURCE,
+        nonnegative(
+            "terminal.eta",
+            name="terminal_cost",
+            consumer="terminal_condition",
+            reason="The terminal inventory penalty is nonnegative.",
+            source=SOURCE,
         )
     )
     for side in ("bid", "ask"):
         neighbor = "after_bid" if side == "bid" else "after_ask"
         requirements.append(
-            Requirement(
-                exact_form(
-                    f"continuation.{side}_cost",
-                    _neighbor_formula(neighbor),
-                    name=f"{side}_neighbor_cost",
-                ),
-                "inventory_adapter",
-                "The grid adapter uses this nearest-neighbor continuation difference.",
-                SOURCE,
+            exact_form(
+                f"continuation.{side}_cost",
+                _neighbor_formula(neighbor),
+                name=f"{side}_neighbor_cost",
+                consumer="inventory_adapter",
+                reason="The grid adapter uses this nearest-neighbor continuation difference.",
+                source=SOURCE,
+            )
+        )
+        requirements.append(
+            exact_form(
+                f"{side}.gain",
+                _gain_formula(side),
+                wrt=f"{side}.intensity.distance",
+                name=f"{side}_cara_gain",
+                consumer="quote_optimizer",
+                reason="The optimizer solves the declared CARA gain, not only the intensity curve.",
+                source=SOURCE,
             )
         )
         requirements.append(
             Requirement(
-                exact_form(
-                    f"{side}.gain",
-                    _gain_formula(side),
-                    wrt=f"{side}.intensity.distance",
-                    name=f"{side}_cara_gain",
-                ),
-                "quote_optimizer",
-                "The optimizer solves the declared CARA gain, not only the intensity curve.",
-                SOURCE,
-            )
-        )
-        requirements.append(
-            Requirement(
-                Claim(f"unique_{side}", f"{side}.intensity.rate", "theorem"),
-                "quote_optimizer",
-                "The general optimizer requires a unique quote.",
-                SOURCE,
+                f"unique_{side}",
+                f"{side}.intensity.rate",
+                "theorem",
+                consumer="quote_optimizer",
+                reason="The general optimizer requires a unique quote.",
+                source=SOURCE,
             )
         )
     requirements.extend(
         (
-            Requirement(
-                exact_form(
-                    "bid_term",
-                    lambda get: Piecewise((get("bid.value"), get("inventory") < get("capacity")), (0, True)),
-                    name="bid_boundary_gate",
-                ),
-                "inventory_adapter",
-                "The bid gate disables inventory-increasing trades at Q.",
-                SOURCE,
+            exact_form(
+                "bid_term",
+                lambda get: Piecewise((get("bid.value"), get("inventory") < get("capacity")), (0, True)),
+                name="bid_boundary_gate",
+                consumer="inventory_adapter",
+                reason="The bid gate disables inventory-increasing trades at Q.",
+                source=SOURCE,
             ),
-            Requirement(
-                exact_form(
-                    "ask_term",
-                    lambda get: Piecewise((get("ask.value"), get("inventory") > -get("capacity")), (0, True)),
-                    name="ask_boundary_gate",
-                ),
-                "inventory_adapter",
-                "The ask gate disables inventory-decreasing trades at -Q.",
-                SOURCE,
+            exact_form(
+                "ask_term",
+                lambda get: Piecewise((get("ask.value"), get("inventory") > -get("capacity")), (0, True)),
+                name="ask_boundary_gate",
+                consumer="inventory_adapter",
+                reason="The ask gate disables inventory-decreasing trades at -Q.",
+                source=SOURCE,
             ),
-            Requirement(
-                exact_form(
-                    "residual",
-                    lambda get: (
-                        -get("continuation.time_derivative") + get("risk.cost") - get("bid_term") - get("ask_term")
-                    ),
-                    name="hjb_structure",
-                ),
-                "inventory_adapter",
-                "The time transformation and linear reference require this HJB structure.",
-                SOURCE,
+            exact_form(
+                "residual",
+                lambda get: -get("continuation.time_derivative") + get("risk.cost") - get("bid_term") - get("ask_term"),
+                name="hjb_structure",
+                consumer="inventory_adapter",
+                reason="The time transformation and linear reference require this HJB structure.",
+                source=SOURCE,
             ),
         )
     )
@@ -241,17 +235,14 @@ def solver_requirements(case: ResearchCase) -> tuple[Requirement, ...]:
 
 
 def exponential_requirement(side: str) -> Requirement:
-    return Requirement(
-        exact_form(
-            f"{side}.intensity.rate",
-            lambda get: (
-                get(f"{side}.intensity.scale")
-                * exp(-get(f"{side}.intensity.decay") * get(f"{side}.intensity.distance"))
-            ),
-            wrt=f"{side}.intensity.distance",
-            name=f"exponential_{side}",
+    return exact_form(
+        f"{side}.intensity.rate",
+        lambda get: (
+            get(f"{side}.intensity.scale") * exp(-get(f"{side}.intensity.decay") * get(f"{side}.intensity.distance"))
         ),
-        "exponential_optimizer",
-        "The specialized formula requires exact exponential intensity.",
-        SOURCE,
+        wrt=f"{side}.intensity.distance",
+        name=f"exponential_{side}",
+        consumer="exponential_optimizer",
+        reason="The specialized formula requires exact exponential intensity.",
+        source=SOURCE,
     )

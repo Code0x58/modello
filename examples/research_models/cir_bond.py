@@ -9,14 +9,13 @@ valuation conclusions are explicitly sourced trusted rules, not CAS proofs.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isfinite
 
 from sympy import Expr, Interval, Rational, S, cosh, diff, exp, log, simplify, sinh, sqrt, sympify
 
 from modello import Coordinate, InstanceDummy, ScalarValue, component
 from modello.contrib.research import (
-    Claim,
     Method,
     Requirement,
     ResearchCase,
@@ -105,8 +104,8 @@ class CIRBond(ResearchModel):
     value = exp(log_value)
 
 
-def _require(claim: Claim, consumer: str, reason: str, *, page: int = 8) -> Requirement:
-    return Requirement(claim, consumer, reason, SOURCE + f"#page={page}")
+def _require(claim: Requirement, consumer: str, reason: str, *, page: int = 8) -> Requirement:
+    return replace(claim, consumer=consumer, reason=reason, source=SOURCE + f"#page={page}")
 
 
 def _parameter_requirements(*, pricing: bool) -> tuple[Requirement, ...]:
@@ -272,8 +271,8 @@ def _coefficient_requirements() -> tuple[Requirement, ...]:
     return tuple(requirements)
 
 
-def _path_claim(*, strict: bool) -> Claim:
-    return Claim("unattainable_zero" if strict else "nonnegative_paths", "diffusion", "theorem")
+def _path_claim(*, strict: bool) -> Requirement:
+    return Requirement("unattainable_zero" if strict else "nonnegative_paths", "diffusion", "theorem")
 
 
 def symbolic_case(model: type[CIRBond] = CIRBond) -> ResearchCase[CIRBond]:
@@ -322,7 +321,7 @@ def symbolic_case(model: type[CIRBond] = CIRBond) -> ResearchCase[CIRBond]:
     return case.with_theorem(
         Theorem(
             "CIR_affine_discounted_expectation",
-            Claim("affine_valuation", "value", "theorem"),
+            Requirement("affine_valuation", "value", "theorem"),
             (
                 *_parameter_requirements(pricing=True),
                 *_dynamics_requirements(),
@@ -500,7 +499,7 @@ def pricing_method(case: ResearchCase[CIRBond]) -> Method[BondPrice]:
         *_coefficient_requirements(),
         *_verification_requirements(case),
         _require(
-            Claim("affine_valuation", "value", "theorem"),
+            Requirement("affine_valuation", "value", "theorem"),
             "bond_pricing",
             "CIR's source formula identifies the discounted expectation under the stated risk-neutral dynamics.",
             page=10,

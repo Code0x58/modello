@@ -11,12 +11,10 @@ from dataclasses import dataclass, replace
 
 from sympy import Derivative, Eq, Expr, FiniteSet, Float, Ge, Interval, Rational, S, Subs, simplify, sympify
 
-from modello import ConstraintKind, Coordinate, InstanceDummy, annotate, component
+from modello import ConstraintKind, Coordinate, InstanceDummy, component
 from modello.contrib.research import (
-    Claim,
     Method,
     Requirement,
-    Requires,
     ResearchCase,
     ResearchModel,
     ResearchResult,
@@ -26,6 +24,7 @@ from modello.contrib.research import (
     nonnegative,
     positive,
     predicate,
+    requires,
     smooth,
 )
 
@@ -35,24 +34,23 @@ SOURCE = "https://www.stanford.edu/~boyd/cvxbook/bv_cvxbook.pdf"
 class Covariance(ResearchModel):
     """A symmetric 2x2 covariance specification, including singular cases."""
 
-    first = annotate(
+    first = requires(
         InstanceDummy("v1", real=True),
-        Requires(Requirement(nonnegative("first", name="first_variance"), "covariance", "Variance is nonnegative.")),
+        nonnegative("first", name="first_variance", consumer="covariance", reason="Variance is nonnegative."),
     )
-    second = annotate(
+    second = requires(
         InstanceDummy("v2", real=True),
-        Requires(Requirement(nonnegative("second", name="second_variance"), "covariance", "Variance is nonnegative.")),
+        nonnegative("second", name="second_variance", consumer="covariance", reason="Variance is nonnegative."),
     )
     cross = InstanceDummy("c", real=True)
-    determinant = annotate(
+    determinant = requires(
         first * second - cross**2,
-        Requires(
-            Requirement(
-                nonnegative("determinant", name="principal_minor"),
-                "covariance",
-                "Together with nonnegative diagonal entries, this certifies 2x2 positive semidefiniteness.",
-                SOURCE + "#page=656",
-            )
+        nonnegative(
+            "determinant",
+            name="principal_minor",
+            consumer="covariance",
+            reason="Together with nonnegative diagonal entries, this certifies 2x2 positive semidefiniteness.",
+            source=SOURCE + "#page=656",
         ),
     )
     contrast = first + second - 2 * cross
@@ -72,15 +70,13 @@ class TwoAssetPortfolio(ResearchModel):
     candidate = InstanceDummy("w_star", real=True)
     other_weight = 1 - weight
     expected_return = weight * means.first + other_weight * means.second
-    variance = annotate(
+    variance = requires(
         moments.first * weight**2 + moments.second * other_weight**2 + 2 * moments.cross * weight * other_weight,
-        Requires(
-            Requirement(
-                convex("variance", wrt="weight"), "allocation", "Variance must be convex along the budget line."
-            ),
-            Requirement(
-                smooth("variance", wrt="weight"), "allocation", "Classical scalar KKT uses this smooth objective."
-            ),
+        convex(
+            "variance", wrt="weight", consumer="allocation", reason="Variance must be convex along the budget line."
+        ),
+        smooth(
+            "variance", wrt="weight", consumer="allocation", reason="Classical scalar KKT uses this smooth objective."
         ),
     )
     slope = Derivative(variance, weight, evaluate=False)
@@ -172,7 +168,7 @@ def portfolio_case(
 
 def _contracts(*, unique: bool):
     requirements = [
-        Requirement(nonnegative(path, name=name), "allocation", reason, SOURCE)
+        nonnegative(path, name=name, consumer="allocation", reason=reason, source=SOURCE)
         for path, name, reason in (
             ("moments.first", "valid_first_variance", "The first covariance diagonal is nonnegative."),
             ("moments.second", "valid_second_variance", "The second covariance diagonal is nonnegative."),
@@ -182,46 +178,46 @@ def _contracts(*, unique: bool):
     ]
     if unique:
         requirements.append(
-            Requirement(
-                positive("moments.contrast", name="unique_curvature"),
-                "allocation",
-                "This shortcut requires strict reduced curvature.",
-                SOURCE,
+            positive(
+                "moments.contrast",
+                name="unique_curvature",
+                consumer="allocation",
+                reason="This shortcut requires strict reduced curvature.",
+                source=SOURCE,
             )
         )
     requirements.extend(
         (
-            Requirement(
-                exact_form(
-                    "variance",
-                    lambda get: (
-                        get("moments.first") * get("weight") ** 2
-                        + get("moments.second") * (1 - get("weight")) ** 2
-                        + 2 * get("moments.cross") * get("weight") * (1 - get("weight"))
-                    ),
-                    wrt="weight",
-                    name="quadratic_variance_form",
+            exact_form(
+                "variance",
+                lambda get: (
+                    get("moments.first") * get("weight") ** 2
+                    + get("moments.second") * (1 - get("weight")) ** 2
+                    + 2 * get("moments.cross") * get("weight") * (1 - get("weight"))
                 ),
-                "allocation",
-                "The analytic candidate uses this declared quadratic law.",
-                SOURCE,
+                wrt="weight",
+                name="quadratic_variance_form",
+                consumer="allocation",
+                reason="The analytic candidate uses this declared quadratic law.",
+                source=SOURCE,
             ),
-            Requirement(
-                exact_form(
-                    "expected_return",
-                    lambda get: get("weight") * get("means.first") + (1 - get("weight")) * get("means.second"),
-                    wrt="weight",
-                    name="linear_return_form",
-                ),
-                "allocation",
-                "A target return must use this same declared mean law.",
-                SOURCE,
+            exact_form(
+                "expected_return",
+                lambda get: get("weight") * get("means.first") + (1 - get("weight")) * get("means.second"),
+                wrt="weight",
+                name="linear_return_form",
+                consumer="allocation",
+                reason="A target return must use this same declared mean law.",
+                source=SOURCE,
             ),
-            Requirement(
-                exact_form("completion_residual", S.Zero, wrt="weight", name="quadratic_completion"),
-                "allocation",
-                "The global objective difference has the checked quadratic decomposition.",
-                SOURCE,
+            exact_form(
+                "completion_residual",
+                S.Zero,
+                wrt="weight",
+                name="quadratic_completion",
+                consumer="allocation",
+                reason="The global objective difference has the checked quadratic decomposition.",
+                source=SOURCE,
             ),
         )
     )
@@ -271,11 +267,14 @@ def _contracts(*, unique: bool):
     )
     for path, formula, coordinate, name in forms:
         requirements.append(
-            Requirement(
-                exact_form(path, formula, wrt=coordinate, name=name),
-                "allocation",
-                "The certificate consumes this live declared identity.",
-                SOURCE,
+            exact_form(
+                path,
+                formula,
+                wrt=coordinate,
+                name=name,
+                consumer="allocation",
+                reason="The certificate consumes this live declared identity.",
+                source=SOURCE,
             )
         )
     return tuple(requirements)
@@ -420,11 +419,12 @@ def allocate(
     gradient = candidate_case.symbols.candidate_slope
     dual_sum = sum((multipliers[item.name] * item.coefficient for item in specs), S.Zero)
     premises.append(
-        Requirement(
-            predicate(Eq(gradient, dual_sum, evaluate=False), name="kkt_stationarity"),
-            "convex_KKT",
-            "The Lagrangian derivative vanishes.",
-            SOURCE + "#page=263",
+        predicate(
+            Eq(gradient, dual_sum, evaluate=False),
+            name="kkt_stationarity",
+            consumer="convex_KKT",
+            reason="The Lagrangian derivative vanishes.",
+            source=SOURCE + "#page=263",
         )
     )
     for item in specs:
@@ -432,32 +432,38 @@ def allocate(
         multiplier = multipliers[item.name]
         premises.extend(
             (
-                Requirement(
-                    predicate(Ge(gap, 0, evaluate=False), name=f"primal_{item.name}"),
-                    "convex_KKT",
-                    "The allocation satisfies this restriction.",
-                    SOURCE,
+                predicate(
+                    Ge(gap, 0, evaluate=False),
+                    name=f"primal_{item.name}",
+                    consumer="convex_KKT",
+                    reason="The allocation satisfies this restriction.",
+                    source=SOURCE,
                 ),
-                Requirement(
-                    predicate(Ge(multiplier, 0, evaluate=False), name=f"dual_{item.name}"),
-                    "convex_KKT",
-                    "The inequality multiplier is nonnegative.",
-                    SOURCE,
+                predicate(
+                    Ge(multiplier, 0, evaluate=False),
+                    name=f"dual_{item.name}",
+                    consumer="convex_KKT",
+                    reason="The inequality multiplier is nonnegative.",
+                    source=SOURCE,
                 ),
-                Requirement(
-                    predicate(Eq(multiplier * gap, 0, evaluate=False), name=f"complementary_{item.name}"),
-                    "convex_KKT",
-                    "The multiplier and constraint slack are complementary.",
-                    SOURCE,
+                predicate(
+                    Eq(multiplier * gap, 0, evaluate=False),
+                    name=f"complementary_{item.name}",
+                    consumer="convex_KKT",
+                    reason="The multiplier and constraint slack are complementary.",
+                    source=SOURCE,
                 ),
             )
         )
-    conclusion = Claim("global_minimum", "candidate_variance", "theorem")
+    conclusion = Requirement("global_minimum", "candidate_variance", "theorem")
     certified = candidate_case.with_theorem(
         Theorem("scalar_convex_KKT", conclusion, tuple(premises), SOURCE + "#page=263", "1")
     )
-    required = Requirement(
-        conclusion, "certified allocation", "Convex KKT certifies a global minimum on the chosen interval.", SOURCE
+    required = replace(
+        conclusion,
+        consumer="certified allocation",
+        reason="Convex KKT certifies a global minimum on the chosen interval.",
+        source=SOURCE,
     )
     return certified.run(
         Method("certified allocation", lambda current: allocation, (required,), ("variance", "expected_return"))

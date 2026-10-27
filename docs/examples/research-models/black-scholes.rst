@@ -61,7 +61,7 @@ example extends the scalar carry inputs to deterministic tail integrals and
 checks the resulting algebra explicitly. It does not cover discrete cash
 dividends, stochastic rates or volatility, early exercise, or transaction costs.
 
-All input symbols are declared real. ``Requires`` records :math:`K>0` and
+All input symbols are declared real. ``requires`` records :math:`K>0` and
 :math:`W>0` as live premises, rather than building positivity into their symbol
 declarations. Spot claims quantify the explicit open domain
 :math:`S\in(0,\infty)`. Observing ``spot=100`` selects a valuation state;

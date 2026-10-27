@@ -38,8 +38,8 @@ Property: TypeAlias = Literal[
 
 
 @dataclass(frozen=True)
-class Claim:
-    """A property of a subject, quantified over an explicit coordinate domain.
+class Requirement:
+    """A mathematical condition and optional motivation, on an explicit domain.
 
     Strings select relative model paths; native expressions retain their symbol
     identities. Other free symbols are parameters, not quantified coordinates.
@@ -55,10 +55,27 @@ class Claim:
     bound: Expr | None = None
     expected: Formula | None = None
     at: Expr | None = None
+    consumer: str = field(default="", kw_only=True)
+    reason: str = field(default="", kw_only=True)
+    source: str = field(default="", kw_only=True)
+
+    def _proposition(self) -> tuple:
+        """Match mathematical statements independently of their motivation."""
+        return (
+            self.name,
+            self.subject,
+            self.property,
+            self.wrt,
+            self.domain,
+            self.order,
+            self.bound,
+            self.expected,
+            self.at,
+        )
 
     def __post_init__(self) -> None:
-        if not self.name or not isinstance(self.domain, Set):
-            raise ModelDefinitionError("Claims need a name and an explicit SymPy set domain")
+        if not isinstance(self.name, str) or not self.name or not isinstance(self.domain, Set):
+            raise ModelDefinitionError("Requirements need a name and an explicit SymPy set domain")
         if type(self.order) is not int or self.order < 1:
             raise ModelDefinitionError("Derivative orders must be positive")
         if not isinstance(self.subject, (str, Basic)):
@@ -75,93 +92,199 @@ class Claim:
             raise ModelDefinitionError(f"{self.property} needs a coordinate")
 
 
-def positive(subject: Subject, *, wrt=None, domain=S.Reals, name="positive") -> Claim:
-    return Claim(name, subject, "positive", wrt, domain)
+def positive(
+    subject: Subject,
+    *,
+    wrt=None,
+    domain=S.Reals,
+    name="positive",
+    consumer: str = "",
+    reason: str = "",
+    source: str = "",
+) -> Requirement:
+    return Requirement(name, subject, "positive", wrt, domain, consumer=consumer, reason=reason, source=source)
 
 
-def nonnegative(subject: Subject, *, wrt=None, domain=S.Reals, name="nonnegative") -> Claim:
-    return Claim(name, subject, "nonnegative", wrt, domain)
+def nonnegative(
+    subject: Subject,
+    *,
+    wrt=None,
+    domain=S.Reals,
+    name="nonnegative",
+    consumer: str = "",
+    reason: str = "",
+    source: str = "",
+) -> Requirement:
+    return Requirement(name, subject, "nonnegative", wrt, domain, consumer=consumer, reason=reason, source=source)
 
 
-def nonzero(subject: Subject, *, wrt=None, domain=S.Reals, name="nonzero") -> Claim:
-    return Claim(name, subject, "nonzero", wrt, domain)
+def nonzero(
+    subject: Subject,
+    *,
+    wrt=None,
+    domain=S.Reals,
+    name="nonzero",
+    consumer: str = "",
+    reason: str = "",
+    source: str = "",
+) -> Requirement:
+    return Requirement(name, subject, "nonzero", wrt, domain, consumer=consumer, reason=reason, source=source)
 
 
-def increasing(subject: Subject, *, wrt, domain=S.Reals, name="increasing") -> Claim:
-    return Claim(name, subject, "increasing", wrt, domain)
+def increasing(
+    subject: Subject, *, wrt, domain=S.Reals, name="increasing", consumer: str = "", reason: str = "", source: str = ""
+) -> Requirement:
+    return Requirement(name, subject, "increasing", wrt, domain, consumer=consumer, reason=reason, source=source)
 
 
-def decreasing(subject: Subject, *, wrt, domain=S.Reals, name="decreasing") -> Claim:
-    return Claim(name, subject, "decreasing", wrt, domain)
+def decreasing(
+    subject: Subject, *, wrt, domain=S.Reals, name="decreasing", consumer: str = "", reason: str = "", source: str = ""
+) -> Requirement:
+    return Requirement(name, subject, "decreasing", wrt, domain, consumer=consumer, reason=reason, source=source)
 
 
-def convex(subject: Subject, *, wrt, domain=S.Reals, name="convex") -> Claim:
-    return Claim(name, subject, "convex", wrt, domain)
+def convex(
+    subject: Subject, *, wrt, domain=S.Reals, name="convex", consumer: str = "", reason: str = "", source: str = ""
+) -> Requirement:
+    return Requirement(name, subject, "convex", wrt, domain, consumer=consumer, reason=reason, source=source)
 
 
-def concave(subject: Subject, *, wrt, domain=S.Reals, name="concave") -> Claim:
-    return Claim(name, subject, "concave", wrt, domain)
+def concave(
+    subject: Subject, *, wrt, domain=S.Reals, name="concave", consumer: str = "", reason: str = "", source: str = ""
+) -> Requirement:
+    return Requirement(name, subject, "concave", wrt, domain, consumer=consumer, reason=reason, source=source)
 
 
-def smooth(subject: Subject, *, wrt, order=2, domain=S.Reals, name="smooth") -> Claim:
-    return Claim(name, subject, "smooth", wrt, domain, order=order)
+def smooth(
+    subject: Subject,
+    *,
+    wrt,
+    order=2,
+    domain=S.Reals,
+    name="smooth",
+    consumer: str = "",
+    reason: str = "",
+    source: str = "",
+) -> Requirement:
+    return Requirement(
+        name, subject, "smooth", wrt, domain, order=order, consumer=consumer, reason=reason, source=source
+    )
 
 
-def differentiable(subject: Subject, *, wrt, order=1, domain=S.Reals, at=None, name="differentiable") -> Claim:
-    return Claim(name, subject, "differentiable", wrt, domain, order=order, at=None if at is None else sympify(at))
+def differentiable(
+    subject: Subject,
+    *,
+    wrt,
+    order=1,
+    domain=S.Reals,
+    at=None,
+    name="differentiable",
+    consumer: str = "",
+    reason: str = "",
+    source: str = "",
+) -> Requirement:
+    return Requirement(
+        name,
+        subject,
+        "differentiable",
+        wrt,
+        domain,
+        order=order,
+        at=None if at is None else sympify(at),
+        consumer=consumer,
+        reason=reason,
+        source=source,
+    )
 
 
-def vanishes(subject: Subject, *, wrt, name="right_tail") -> Claim:
-    return Claim(name, subject, "limit", wrt, expected=S.Zero)
+def vanishes(
+    subject: Subject, *, wrt, name="right_tail", consumer: str = "", reason: str = "", source: str = ""
+) -> Requirement:
+    return Requirement(name, subject, "limit", wrt, expected=S.Zero, consumer=consumer, reason=reason, source=source)
 
 
-def uniform_bound(subject: Subject, bound, *, wrt, domain=S.Reals, name="uniform_bound") -> Claim:
-    return Claim(name, subject, "uniform_bound", wrt, domain, bound=sympify(bound))
+def uniform_bound(
+    subject: Subject,
+    bound,
+    *,
+    wrt,
+    domain=S.Reals,
+    name="uniform_bound",
+    consumer: str = "",
+    reason: str = "",
+    source: str = "",
+) -> Requirement:
+    return Requirement(
+        name,
+        subject,
+        "uniform_bound",
+        wrt,
+        domain,
+        bound=sympify(bound),
+        consumer=consumer,
+        reason=reason,
+        source=source,
+    )
 
 
-def curvature_bound(subject: Subject, *, wrt, bound=2, domain=S.Reals, name="curvature_bound") -> Claim:
-    return Claim(name, subject, "curvature_bound", wrt, domain, bound=sympify(bound))
+def curvature_bound(
+    subject: Subject,
+    *,
+    wrt,
+    bound=2,
+    domain=S.Reals,
+    name="curvature_bound",
+    consumer: str = "",
+    reason: str = "",
+    source: str = "",
+) -> Requirement:
+    return Requirement(
+        name,
+        subject,
+        "curvature_bound",
+        wrt,
+        domain,
+        bound=sympify(bound),
+        consumer=consumer,
+        reason=reason,
+        source=source,
+    )
 
 
-def exact_form(subject: Subject, expected: Formula, *, wrt=None, domain=S.Reals, name="exact_form") -> Claim:
-    return Claim(name, subject, "exact_form", wrt, domain, expected=expected)
+def exact_form(
+    subject: Subject,
+    expected: Formula,
+    *,
+    wrt=None,
+    domain=S.Reals,
+    name="exact_form",
+    consumer: str = "",
+    reason: str = "",
+    source: str = "",
+) -> Requirement:
+    return Requirement(
+        name, subject, "exact_form", wrt, domain, expected=expected, consumer=consumer, reason=reason, source=source
+    )
 
 
-def predicate(condition: Subject, *, name="predicate") -> Claim:
-    return Claim(name, condition, "predicate")
-
-
-@dataclass(frozen=True)
-class Requirement:
-    """A claim together with the consumer that needs it and its motivation."""
-
-    claim: Claim
-    consumer: str
-    reason: str
-    source: str = ""
+def predicate(
+    condition: Subject, *, name="predicate", consumer: str = "", reason: str = "", source: str = ""
+) -> Requirement:
+    return Requirement(name, condition, "predicate", consumer=consumer, reason=reason, source=source)
 
 
 @dataclass(frozen=True, init=False)
-class Requires(Annotation):
-    """Attach relative requirements with ``annotate(expression, Requires(...))``."""
+class _Requirements(Annotation):
+    """One annotation registry entry for a declaration's requirements."""
 
     requirements: tuple[Requirement, ...]
+    model_level: bool
 
-    def __init__(self, *requirements: Requirement) -> None:
+    def __init__(self, *requirements: Requirement, model_level: bool = False) -> None:
         if any(not isinstance(item, Requirement) for item in requirements):
-            raise ModelDefinitionError("Requires accepts Requirement records")
+            raise ModelDefinitionError("requires accepts property requirements")
         object.__setattr__(self, "requirements", requirements)
-
-
-@dataclass(frozen=True)
-class ProofHint:
-    """A proposed uniform upper bound; the checker must establish it."""
-
-    upper: Expr
-
-
-def upper_bound(value) -> ProofHint:
-    return ProofHint(sympify(value))
+        object.__setattr__(self, "model_level", model_level)
 
 
 @dataclass(frozen=True)
@@ -179,7 +302,7 @@ class Evidence:
     kind: str = "symbolic"
     condition_strength: str = "sufficient"
     premises: tuple[Evidence, ...] = ()
-    resolved_claim: Claim | None = None
+    resolved: Requirement | None = None
     hint: Expr | None = None
     expected_template: Basic | None = None
 
@@ -203,22 +326,33 @@ class ResearchReport:
     issues: tuple[str, ...] = ()
     labels: tuple[tuple[Symbol, str], ...] = ()
 
-    def explain(self, claim_id: str) -> Evidence:
+    def __post_init__(self) -> None:
+        pending = list(self.checks)
+        ids: set[str] = set()
+        while pending:
+            item = pending.pop()
+            if item.id in ids:
+                raise ModelDefinitionError(f"Evidence IDs must be unique within a research report: {item.id}")
+            ids.add(item.id)
+            pending.extend(item.premises)
+
+    def explain(self, requirement_id: str) -> Evidence:
         def search(items):
             for item in items:
                 yield item
                 yield from search(item.premises)
 
-        matches = [item for item in search(self.checks) if item.id == claim_id]
+        matches = [item for item in search(self.checks) if item.id == requirement_id]
         if len(matches) != 1:
-            raise KeyError(claim_id)
+            raise KeyError(requirement_id)
         return matches[0]
 
     def __str__(self) -> str:
         lines = [f"Research: {self.model}; assumptions consistent: {self.consistent}"]
         for item in self.checks:
             condition = f" if {item.condition}" if item.verdict == "conditionally true" else ""
-            lines.append(f"  {item.id}: {item.verdict}{condition} — {item.requirement.reason}")
+            reason = f" — {item.requirement.reason}" if item.requirement.reason else ""
+            lines.append(f"  {item.id}: {item.verdict}{condition}{reason}")
         return "\n".join([*lines, *(f"  Issue: {issue}" for issue in self.issues)])
 
     def to_dict(self) -> dict[str, Any]:
@@ -247,10 +381,20 @@ class Theorem:
     """
 
     name: str
-    conclusion: Claim
+    conclusion: Requirement
     premises: tuple[Requirement, ...]
     source: str
     version: str = "1"
+
+    def __post_init__(self) -> None:
+        premises: dict[str, Requirement] = {}
+        for requirement in self.premises:
+            if not isinstance(requirement, Requirement):
+                raise ModelDefinitionError("Theorem premises must be requirements")
+            if requirement.name in premises and premises[requirement.name] != requirement:
+                raise ModelDefinitionError(f"Theorem premise names must be unique: {requirement.name}")
+            premises[requirement.name] = requirement
+        object.__setattr__(self, "premises", tuple(premises.values()))
 
 
 ResultT = TypeVar("ResultT")

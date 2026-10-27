@@ -5,12 +5,10 @@ from dataclasses import replace
 import pytest
 from sympy import Abs, Derivative, Eq, Function, I, Interval, Rational, S, Subs, exp
 
-from modello import Coordinate, InstanceDummy, annotate, component
+from modello import Coordinate, InstanceDummy, component
 from modello.contrib.research import (
-    Claim,
     Method,
     Requirement,
-    Requires,
     ResearchCase,
     ResearchError,
     ResearchModel,
@@ -23,9 +21,9 @@ from modello.contrib.research import (
     nonzero,
     positive,
     predicate,
+    requires,
     smooth,
     uniform_bound,
-    upper_bound,
 )
 from modello.errors import ModelDefinitionError, ModelValidationError
 
@@ -33,13 +31,11 @@ from modello.errors import ModelDefinitionError, ModelValidationError
 class Curve(ResearchModel):
     x = Coordinate("x", real=True)
     a = InstanceDummy("a", real=True)
-    value = annotate(
-        a * x**3, Requires(Requirement(increasing("value", wrt="x"), "optimizer", "Strict order matters."))
-    )
+    value = requires(a * x**3, increasing("value", wrt="x", consumer="optimizer", reason="Strict order matters."))
 
 
 def verdict(case, claim):
-    return case.require(Requirement(claim, "test", "A test claim.")).check().explain(claim.name)
+    return case.require(replace(claim, consumer="test", reason="A test claim.")).check().explain(claim.name)
 
 
 def test_definition_reports_refresh_without_running_the_constructor():
@@ -76,7 +72,7 @@ def test_assumptions_discharge_conditions_and_contradictions_do_not_prove_everyt
     assert verdict(case, claim).verdict == "conditionally true"
     assert verdict(case.assume(case.symbols.a > 0), claim).verdict == "strictly true"
     inconsistent = case.assume(case.symbols.a > 0, case.symbols.a < 0)
-    report = inconsistent.require(Requirement(claim, "test", "Positive parameter.")).check()
+    report = inconsistent.require(replace(claim, consumer="test", reason="Positive parameter.")).check()
     assert report.consistent is False
     assert all(item.verdict == "unresolved" for item in report.checks)
 
@@ -119,9 +115,9 @@ def test_uniform_bounds_require_checked_coordinate_independent_hints():
     case = ResearchCase.for_model(Intensity)
     claim = curvature_bound("rate", wrt="x")
     assert verdict(case, claim).verdict == "unresolved"
-    hinted = case.with_hint(claim.name, upper_bound(1))
+    hinted = case.with_hint(claim.name, upper=1)
     assert verdict(hinted, claim).verdict == "strictly true"
-    assert verdict(case.with_hint(claim.name, upper_bound(-1)), claim).verdict == "unresolved"
+    assert verdict(case.with_hint(claim.name, upper=-1), claim).verdict == "unresolved"
     assert verdict(case, uniform_bound(1 - exp(-Intensity.x), 2, wrt=Intensity.x)).verdict == "unresolved"
 
 
@@ -151,8 +147,8 @@ def test_automatic_requirements_preserve_derivatives_divisions_and_evaluation_po
     denominator = next(item for item in report.checks if item.requirement.consumer == "ratio")
     assert slope.verdict == "strictly false"
     assert denominator.verdict == "conditionally true"
-    assert slope.requirement.claim.property == "differentiable"
-    assert slope.requirement.claim.at == 0
+    assert slope.requirement.property == "differentiable"
+    assert slope.requirement.at == 0
 
 
 def test_replacement_rebinds_contracts_and_observations_without_stale_results():
@@ -178,7 +174,7 @@ def test_exact_form_and_methods_preserve_their_premises():
     method = Method(
         "evaluate",
         lambda current: current.expression("value"),
-        (Requirement(identity, "method", "This formula is cubic."),),
+        (replace(identity, consumer="method", reason="This formula is cubic."),),
         uses=("value",),
     )
     result = case.run(method)
@@ -192,17 +188,17 @@ def test_exact_form_and_methods_preserve_their_premises():
 
 def test_theorems_check_premises_and_circular_rules_stay_unresolved():
     case = ResearchCase.for_model(Curve)
-    conclusion = Claim("conclusion", "a", "theorem")
-    premise = Requirement(positive("a"), "theorem", "The parameter must be positive.")
+    conclusion = Requirement("conclusion", "a", "theorem")
+    premise = positive("a", consumer="theorem", reason="The parameter must be positive.")
     theorem = Theorem("test-rule", conclusion, (premise,), "A test trusted rule")
     case = case.with_theorem(theorem)
     evidence = verdict(case, conclusion)
     assert evidence.kind == "theorem"
     assert evidence.verdict == "conditionally true"
     assert evidence.premises[0].requirement == premise
-    report = case.require(Requirement(conclusion, "test", "Inspect recursive evidence.")).check()
+    report = case.require(replace(conclusion, consumer="test", reason="Inspect recursive evidence.")).check()
     assert report.explain("conclusion/positive").requirement == premise
-    cyclic = replace(theorem, premises=(Requirement(conclusion, "cycle", "Circular premise."),))
+    cyclic = replace(theorem, premises=(replace(conclusion, consumer="cycle", reason="Circular premise."),))
     assert verdict(replace(case, theorems=(cyclic,)), conclusion).verdict == "unresolved"
     assert verdict(case.observe(a=-1), conclusion).verdict == "unresolved"
 
@@ -215,12 +211,12 @@ def test_sampling_never_promotes_a_global_claim_and_foreign_symbols_are_rejected
     with pytest.raises(ModelValidationError):
         case.assume(ResearchCase.for_model(Curve).symbols.a > 0)
     with pytest.raises(ModelDefinitionError):
-        case.require(Requirement(smooth("missing", wrt="x"), "test", "Invalid path.")).check()
+        case.require(smooth("missing", wrt="x", consumer="test", reason="Invalid path.")).check()
 
 
 def test_the_proof_budget_is_an_explicit_unresolved_outcome():
     case = ResearchCase.for_model(Curve).require(
-        Requirement(predicate(Eq(1, 1), name="extra"), "test", "Budget regression.")
+        predicate(Eq(1, 1), name="extra", consumer="test", reason="Budget regression.")
     )
     assert case.check(max_steps=1).explain("extra").verdict == "unresolved"
 
@@ -228,7 +224,7 @@ def test_the_proof_budget_is_an_explicit_unresolved_outcome():
 def test_reports_escape_names_and_preserve_proof_dependencies():
     case = ResearchCase.for_model(Curve).observe(a=1)
     report = case.require(
-        Requirement(positive("a", name="<script>"), "<consumer>", "<reason>", "javascript:alert(1)")
+        positive("a", name="<script>", consumer="<consumer>", reason="<reason>", source="javascript:alert(1)")
     ).check()
     data = report.to_dict()
     assert data["environment"]["sympy"]
@@ -276,7 +272,7 @@ def test_complex_values_cannot_acquire_ordered_properties_from_zero_curvature():
 def test_methods_check_consumed_annotations_without_blocking_unrelated_claims():
     class TwoCurves(ResearchModel):
         x = Coordinate("x", real=True)
-        invalid = annotate(-x, Requires(Requirement(increasing("invalid", wrt="x"), "order", "Order matters.")))
+        invalid = requires(-x, increasing("invalid", wrt="x", consumer="order", reason="Order matters."))
         valid = x**3
 
     case = ResearchCase.for_model(TwoCurves)

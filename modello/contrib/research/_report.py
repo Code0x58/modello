@@ -24,8 +24,8 @@ def _text(report, value):
 
 
 def _evidence(report: ResearchReport, evidence: Evidence):
-    claim = evidence.resolved_claim or evidence.requirement.claim
-    declared = evidence.requirement.claim
+    claim = evidence.resolved or evidence.requirement
+    declared = evidence.requirement
     labels = {str(symbol): label for symbol, label in report.labels}
 
     def step_text(value):

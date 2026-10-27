@@ -1,12 +1,13 @@
 """Finite-join regularity checks keep domains, guards, and refutations distinct."""
 
+from dataclasses import replace
+
 import pytest
 from sympy import Derivative, Eq, FiniteSet, Ge, Gt, Interval, Le, Lt, Ne, Piecewise, S, Subs, Symbol, diff, limit, sin
 
 from modello import Coordinate, InstanceDummy
 from modello.contrib.research import (
     Method,
-    Requirement,
     ResearchCase,
     ResearchError,
     ResearchModel,
@@ -189,7 +190,7 @@ def test_the_requested_domain_cannot_exceed_the_variables_intrinsic_domain():
 
 def public_check(case, claim):
     return case.check(
-        requirements=(Requirement(claim, "integration", "Check the public finite-join contract."),)
+        requirements=(replace(claim, consumer="integration", reason="Check the public finite-join contract."),)
     ).explain(claim.name)
 
 
@@ -214,7 +215,11 @@ def test_public_c1_and_c2_verdicts_and_native_derivative_guards_use_the_actual_j
             Method(
                 "evaluate second derivative",
                 lambda current: "must remain blocked",
-                (Requirement(second, "integration", "A native derivative needs actual differentiability."),),
+                (
+                    replace(
+                        second, consumer="integration", reason="A native derivative needs actual differentiability."
+                    ),
+                ),
             )
         )
     assert failure.value.report.explain("second_derivative").condition is S.false
@@ -246,7 +251,7 @@ def test_public_included_join_endpoint_cannot_discharge_ordinary_derivative_prem
             Method(
                 "ordinary derivative on a closed interval",
                 lambda current: "must remain blocked",
-                (Requirement(ordinary, "integration", "The endpoint requires an ordinary derivative."),),
+                (replace(ordinary, consumer="integration", reason="The endpoint requires an ordinary derivative."),),
             )
         )
     assert failure.value.report.explain("ordinary_derivative").condition is None

@@ -52,7 +52,7 @@ def test_price_has_exact_scalar_and_explicit_trusted_stochastic_evidence(ordinar
     paths = report.explain("affine_valuation/nonnegative_paths")
     assert paths.kind == "theorem" and paths.verdict == "strictly true"
     assert "CIR_affine_discounted_expectation" in theorem.steps[0]
-    assert "feller_condition" not in {item.requirement.claim.name for item in theorem.premises}
+    assert "feller_condition" not in {item.requirement.name for item in theorem.premises}
     assert 0 < float(ordinary_price.data.price) < 1
 
 

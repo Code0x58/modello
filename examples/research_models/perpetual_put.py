@@ -9,14 +9,13 @@ separate from the scalar algebra and the optional numerical observations.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sympy import Derivative, Expr, Interval, Piecewise, S, Subs, diff, exp, limit, simplify
 
 from modello import ConstraintKind, Coordinate, InstanceDummy, ScalarValue, component
 from modello.contrib.research import (
-    Claim,
     Method,
     Requirement,
     ResearchCase,
@@ -51,7 +50,7 @@ TRUSTED_STOPPING_ASSUMPTIONS = (
     "The checked envelope K*exp(-r*t)->0 supplies transversality on the event of no exercise.",
 )
 _OBSTACLE = nonnegative("continuation_gap", wrt="moneyness", domain=CONTINUATION, name="continuation_obstacle")
-_OPTIMAL = Claim("optimal_stopping_under_GBM", "value", "theorem")
+_OPTIMAL = Requirement("optimal_stopping_under_GBM", "value", "theorem")
 
 
 class ConstantBSMMarket(ResearchModel):
@@ -146,39 +145,35 @@ def _source_forms() -> tuple[Requirement, ...]:
         ("terminal_envelope", lambda get: get("strike") * exp(-get("rate") * get("time")), "time"),
     )
     requirements = [
-        Requirement(
-            exact_form(
-                path,
-                formula,
-                wrt=coordinate,
-                domain=POSITIVE if coordinate == "moneyness" else S.Reals,
-                name=f"form_{path}",
-            ),
-            "perpetual_put_algebra",
-            "The computation uses this live declaration, including its intermediate formulas.",
-            SOURCE,
+        exact_form(
+            path,
+            formula,
+            wrt=coordinate,
+            domain=POSITIVE if coordinate == "moneyness" else S.Reals,
+            name=f"form_{path}",
+            consumer="perpetual_put_algebra",
+            reason="The computation uses this live declaration, including its intermediate formulas.",
+            source=SOURCE,
         )
         for path, formula, coordinate in formulas
     ]
     for branch in ("continuation", "exercise"):
         requirements.append(
-            Requirement(
-                exact_form(
-                    f"{branch}_residual",
-                    _generator_formula(branch),
-                    wrt="moneyness",
-                    domain=POSITIVE,
-                    name=f"form_{branch}_generator",
-                ),
-                "perpetual_put_algebra",
-                "The residual is the risk-neutral GBM generator minus discounting.",
-                SOURCE,
+            exact_form(
+                f"{branch}_residual",
+                _generator_formula(branch),
+                wrt="moneyness",
+                domain=POSITIVE,
+                name=f"form_{branch}_generator",
+                consumer="perpetual_put_algebra",
+                reason="The residual is the risk-neutral GBM generator minus discounting.",
+                source=SOURCE,
             )
         )
     return tuple(requirements)
 
 
-def _boundary_identity(order: int, name: str) -> Claim:
+def _boundary_identity(order: int, name: str) -> Requirement:
     difference = PerpetualPut.continuation - PerpetualPut.exercise
     if order:
         difference = Derivative(difference, PerpetualPut.moneyness, order, evaluate=False)
@@ -191,25 +186,29 @@ def obstacle_theorem() -> Theorem:
         "convex_tangent_obstacle",
         _OBSTACLE,
         (
-            Requirement(
-                smooth("continuation_gap", wrt="moneyness", domain=Interval(1, S.Infinity)),
-                "convex_tangent",
-                "The obstacle gap is C2 up to x=1.",
+            smooth(
+                "continuation_gap",
+                wrt="moneyness",
+                domain=Interval(1, S.Infinity),
+                consumer="convex_tangent",
+                reason="The obstacle gap is C2 up to x=1.",
             ),
-            Requirement(
-                nonnegative("continuation_curvature", wrt="moneyness", domain=CONTINUATION),
-                "convex_tangent",
-                "A nonnegative second derivative makes the continuation branch convex.",
+            nonnegative(
+                "continuation_curvature",
+                wrt="moneyness",
+                domain=CONTINUATION,
+                consumer="convex_tangent",
+                reason="A nonnegative second derivative makes the continuation branch convex.",
             ),
-            Requirement(
+            replace(
                 _boundary_identity(0, "tangent_value"),
-                "convex_tangent",
-                "The obstacle gap vanishes at x=1.",
+                consumer="convex_tangent",
+                reason="The obstacle gap vanishes at x=1.",
             ),
-            Requirement(
+            replace(
                 _boundary_identity(1, "tangent_slope"),
-                "convex_tangent",
-                "The obstacle gap has zero first derivative at x=1.",
+                consumer="convex_tangent",
+                reason="The obstacle gap has zero first derivative at x=1.",
             ),
             *_source_forms(),
         ),
@@ -222,114 +221,141 @@ def _requirements(case: ResearchCase[PerpetualPut]) -> tuple[Requirement, ...]:
     requirements = [*_source_forms()]
     for path in ("rate", "volatility", "strike"):
         requirements.append(
-            Requirement(
-                positive(path, name=f"positive_{path}"),
-                "perpetual_put_algebra",
-                f"The positive-parameter perpetual-put formula requires {path}>0.",
-                SOURCE,
+            positive(
+                path,
+                name=f"positive_{path}",
+                consumer="perpetual_put_algebra",
+                reason=f"The positive-parameter perpetual-put formula requires {path}>0.",
+                source=SOURCE,
             )
         )
     requirements.extend(
         (
-            Requirement(
-                exact_form("dividend", S.Zero, name="zero_dividends"),
-                "perpetual_put_algebra",
-                "The exponent and boundary used here assume zero dividends.",
-                SOURCE,
+            exact_form(
+                "dividend",
+                S.Zero,
+                name="zero_dividends",
+                consumer="perpetual_put_algebra",
+                reason="The exponent and boundary used here assume zero dividends.",
+                source=SOURCE,
             ),
-            Requirement(
-                predicate(symbol.beta < 0, name="negative_exponent"),
-                "perpetual_put_algebra",
-                "The decaying solution uses the negative characteristic root.",
-                SOURCE,
+            predicate(
+                symbol.beta < 0,
+                name="negative_exponent",
+                consumer="perpetual_put_algebra",
+                reason="The decaying solution uses the negative characteristic root.",
+                source=SOURCE,
             ),
-            Requirement(
-                positive("boundary", name="positive_boundary"),
-                "perpetual_put_algebra",
-                "The normalization S/B needs B>0.",
+            positive(
+                "boundary",
+                name="positive_boundary",
+                consumer="perpetual_put_algebra",
+                reason="The normalization S/B needs B>0.",
             ),
-            Requirement(
-                positive(symbol.strike - symbol.boundary, name="boundary_below_strike"),
-                "perpetual_put_algebra",
-                "The exercise boundary lies strictly below the strike.",
+            positive(
+                symbol.strike - symbol.boundary,
+                name="boundary_below_strike",
+                consumer="perpetual_put_algebra",
+                reason="The exercise boundary lies strictly below the strike.",
             ),
-            Requirement(
+            replace(
                 _boundary_identity(0, "boundary_value_matching"),
-                "perpetual_put_algebra",
-                "Exercise and continuation values match at x=1.",
+                consumer="perpetual_put_algebra",
+                reason="Exercise and continuation values match at x=1.",
             ),
-            Requirement(
+            replace(
                 _boundary_identity(1, "boundary_smooth_fit"),
-                "perpetual_put_algebra",
-                "First spot derivatives match because B is positive.",
+                consumer="perpetual_put_algebra",
+                reason="First spot derivatives match because B is positive.",
+            ),
+            smooth(
+                "exercise",
+                wrt="moneyness",
+                domain=POSITIVE,
+                name="exercise_branch_c2",
+                consumer="perpetual_put_algebra",
+                reason="Each analytic branch is C2 separately.",
+            ),
+            smooth(
+                "continuation",
+                wrt="moneyness",
+                domain=POSITIVE,
+                name="continuation_branch_c2",
+                consumer="perpetual_put_algebra",
+                reason="The power branch is C2 at positive moneyness.",
+            ),
+            exact_form(
+                "continuation_residual",
+                S.Zero,
+                wrt="moneyness",
+                domain=CONTINUATION,
+                name="continuation_pricing_generator",
+                consumer="perpetual_put_algebra",
+                reason="The discounted pricing-generator identity holds in the continuation region.",
+                source=SOURCE,
+            ),
+            nonnegative(
+                -symbol.exercise_residual,
+                wrt="moneyness",
+                domain=EXERCISE,
+                name="exercise_generator_nonpositive",
+                consumer="perpetual_put_algebra",
+                reason="The discounted exercise-branch generator is -rK<=0.",
+            ),
+            nonnegative(
+                "exercise",
+                wrt="moneyness",
+                domain=EXERCISE,
+                name="exercise_nonnegative",
+                consumer="perpetual_put_algebra",
+                reason="Exercise equals the nonnegative put payoff in its region.",
+            ),
+            nonnegative(
+                symbol.strike - symbol.exercise,
+                wrt="moneyness",
+                domain=EXERCISE,
+                name="exercise_below_strike",
+                consumer="perpetual_put_algebra",
+                reason="The exercise value is bounded by K.",
+            ),
+            positive(
+                "continuation",
+                wrt="moneyness",
+                domain=CONTINUATION,
+                name="continuation_positive",
+                consumer="perpetual_put_algebra",
+                reason="The continuation value dominates the zero part of the payoff.",
+            ),
+            nonnegative(
+                symbol.strike - symbol.continuation,
+                wrt="moneyness",
+                domain=CONTINUATION,
+                name="continuation_below_strike",
+                consumer="perpetual_put_algebra",
+                reason="The continuation value is bounded by K.",
+            ),
+            replace(
+                _OBSTACLE, consumer="perpetual_put_algebra", reason="Convexity and smooth fit give P>=K-S above B."
             ),
             Requirement(
-                smooth("exercise", wrt="moneyness", domain=POSITIVE, name="exercise_branch_c2"),
-                "perpetual_put_algebra",
-                "Each analytic branch is C2 separately.",
+                "decay_at_infinity",
+                "continuation",
+                "limit",
+                "moneyness",
+                POSITIVE,
+                expected=S.Zero,
+                consumer="perpetual_put_algebra",
+                reason="The continuation value vanishes as S tends to infinity.",
+                source=SOURCE,
             ),
             Requirement(
-                smooth("continuation", wrt="moneyness", domain=POSITIVE, name="continuation_branch_c2"),
-                "perpetual_put_algebra",
-                "The power branch is C2 at positive moneyness.",
-            ),
-            Requirement(
-                exact_form(
-                    "continuation_residual",
-                    S.Zero,
-                    wrt="moneyness",
-                    domain=CONTINUATION,
-                    name="continuation_pricing_generator",
-                ),
-                "perpetual_put_algebra",
-                "The discounted pricing-generator identity holds in the continuation region.",
-                SOURCE,
-            ),
-            Requirement(
-                nonnegative(
-                    -symbol.exercise_residual, wrt="moneyness", domain=EXERCISE, name="exercise_generator_nonpositive"
-                ),
-                "perpetual_put_algebra",
-                "The discounted exercise-branch generator is -rK<=0.",
-            ),
-            Requirement(
-                nonnegative("exercise", wrt="moneyness", domain=EXERCISE, name="exercise_nonnegative"),
-                "perpetual_put_algebra",
-                "Exercise equals the nonnegative put payoff in its region.",
-            ),
-            Requirement(
-                nonnegative(
-                    symbol.strike - symbol.exercise, wrt="moneyness", domain=EXERCISE, name="exercise_below_strike"
-                ),
-                "perpetual_put_algebra",
-                "The exercise value is bounded by K.",
-            ),
-            Requirement(
-                positive("continuation", wrt="moneyness", domain=CONTINUATION, name="continuation_positive"),
-                "perpetual_put_algebra",
-                "The continuation value dominates the zero part of the payoff.",
-            ),
-            Requirement(
-                nonnegative(
-                    symbol.strike - symbol.continuation,
-                    wrt="moneyness",
-                    domain=CONTINUATION,
-                    name="continuation_below_strike",
-                ),
-                "perpetual_put_algebra",
-                "The continuation value is bounded by K.",
-            ),
-            Requirement(_OBSTACLE, "perpetual_put_algebra", "Convexity and smooth fit give P>=K-S above B."),
-            Requirement(
-                Claim("decay_at_infinity", "continuation", "limit", "moneyness", POSITIVE, expected=S.Zero),
-                "perpetual_put_algebra",
-                "The continuation value vanishes as S tends to infinity.",
-                SOURCE,
-            ),
-            Requirement(
-                Claim("transversality_envelope", "terminal_envelope", "limit", "time", expected=S.Zero),
-                "perpetual_put_algebra",
-                "K exp(-rt) tends to zero; bounded candidate values obey this envelope.",
+                "transversality_envelope",
+                "terminal_envelope",
+                "limit",
+                "time",
+                expected=S.Zero,
+                consumer="perpetual_put_algebra",
+                reason="K exp(-rt) tends to zero; bounded candidate values obey this envelope.",
             ),
         )
     )
@@ -391,10 +417,14 @@ def regularity_report(case: ResearchCase[PerpetualPut]) -> ResearchReport:
     return case.check(
         max_steps=1000,
         requirements=tuple(
-            Requirement(
-                smooth("value", wrt="moneyness", domain=POSITIVE, order=order, name=f"global_c{order}"),
-                "global_regularity_diagnostic",
-                "Inspect the actual piecewise curve; no theorem overrides this attempt.",
+            smooth(
+                "value",
+                wrt="moneyness",
+                domain=POSITIVE,
+                order=order,
+                name=f"global_c{order}",
+                consumer="global_regularity_diagnostic",
+                reason="Inspect the actual piecewise curve; no theorem overrides this attempt.",
             )
             for order in (1, 2)
         ),
@@ -439,13 +469,17 @@ def _certificate(case: ResearchCase[PerpetualPut]) -> PutCertificate:
     report = case.check(
         max_steps=1000,
         requirements=(
-            Requirement(
-                positive(jump, name="nonzero_second_derivative_jump"),
-                "boundary_certificate",
-                "Actual one-sided second derivatives differ, refuting C2 at B.",
+            positive(
+                jump,
+                name="nonzero_second_derivative_jump",
+                consumer="boundary_certificate",
+                reason="Actual one-sided second derivatives differ, refuting C2 at B.",
             ),
-            Requirement(
-                positive("initial_spot", name="positive_initial_spot"), "boundary_certificate", "Evaluate at S0>0."
+            positive(
+                "initial_spot",
+                name="positive_initial_spot",
+                consumer="boundary_certificate",
+                reason="Evaluate at S0>0.",
             ),
         ),
     )
@@ -476,10 +510,13 @@ def c2_consumer_method() -> Method[Expr]:
         "global C2 consumer",
         lambda case: case.expression("value", wrt="moneyness"),
         (
-            Requirement(
-                smooth("value", wrt="moneyness", domain=POSITIVE, name="requires_global_c2"),
-                "global C2 consumer",
-                "This consumer demands C2 even across the free boundary.",
+            smooth(
+                "value",
+                wrt="moneyness",
+                domain=POSITIVE,
+                name="requires_global_c2",
+                consumer="global C2 consumer",
+                reason="This consumer demands C2 even across the free boundary.",
             ),
         ),
         ("value",),
@@ -502,11 +539,12 @@ def verification_method(case: ResearchCase[PerpetualPut]) -> Method[StoppingVeri
         "trusted perpetual put stopping verification",
         lambda current: StoppingVerification(_certificate(current)),
         (
-            Requirement(
+            replace(
                 _OPTIMAL,
-                "stochastic_verification",
-                "This explicitly trusted conclusion is conditional on: " + " ".join(TRUSTED_STOPPING_ASSUMPTIONS),
-                SOURCE,
+                consumer="stochastic_verification",
+                reason="This explicitly trusted conclusion is conditional on: "
+                + " ".join(TRUSTED_STOPPING_ASSUMPTIONS),
+                source=SOURCE,
             ),
         ),
         ("value", "continuation_residual", "exercise_residual", "continuation_curvature"),

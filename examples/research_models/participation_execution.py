@@ -8,7 +8,7 @@ minimization and quadrature. The symbolic example needs only SymPy.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from sympy import (
@@ -28,12 +28,10 @@ from sympy import (
     simplify,
 )
 
-from modello import ConstraintKind, Coordinate, InstanceDummy, ScalarValue, annotate, component
+from modello import ConstraintKind, Coordinate, InstanceDummy, ScalarValue, component
 from modello.contrib.research import (
-    Claim,
     Method,
     Requirement,
-    Requires,
     ResearchCase,
     ResearchError,
     ResearchModel,
@@ -46,18 +44,19 @@ from modello.contrib.research import (
     nonnegative,
     positive,
     predicate,
+    requires,
     smooth,
 )
 
 SOURCE = "https://arxiv.org/html/1210.7608"
 POSITIVE_RATES = Interval.open(0, S.Infinity)
-_UNIQUE = Claim("at_most_one_pov_minimum", "log_objective", "theorem")
+_UNIQUE = Requirement("at_most_one_pov_minimum", "log_objective", "theorem")
 
 
 def impact_requirements() -> tuple[Requirement, ...]:
     """Live execution-function hypotheses from Section 1 of the paper."""
     return tuple(
-        Requirement(claim, "pov_execution", reason, SOURCE + "#S1")
+        replace(claim, consumer="pov_execution", reason=reason, source=SOURCE + "#S1")
         for claim, reason in (
             (positive("value", wrt="rate", domain=POSITIVE_RATES), "Execution costs are positive at positive rates."),
             (increasing("value", wrt="rate", domain=POSITIVE_RATES), "The execution function L is increasing."),
@@ -77,7 +76,7 @@ class PowerLawImpact(ResearchModel):
     rate = Coordinate("rho", positive=True)
     eta = InstanceDummy("eta", positive=True)
     phi = InstanceDummy("phi", positive=True)
-    value = annotate(eta * rate ** (1 + phi), Requires(*impact_requirements()))
+    value = requires(eta * rate ** (1 + phi), *impact_requirements())
 
 
 class SurchargedPowerImpact(PowerLawImpact):
@@ -181,38 +180,34 @@ def uniqueness_theorem() -> Theorem:
         "strict_log_rate_convexity",
         _UNIQUE,
         (
-            Requirement(
-                exact_form(
-                    "log_objective",
-                    lambda get: Subs(get("objective"), get("rate"), exp(get("log_rate"))),
-                    wrt="log_rate",
-                    name="actual_log_coordinate",
-                ),
-                "pov_uniqueness",
-                "The log-rate curve is the declared POV objective under rho=exp(x).",
+            exact_form(
+                "log_objective",
+                lambda get: Subs(get("objective"), get("rate"), exp(get("log_rate"))),
+                wrt="log_rate",
+                name="actual_log_coordinate",
+                consumer="pov_uniqueness",
+                reason="The log-rate curve is the declared POV objective under rho=exp(x).",
             ),
-            Requirement(
-                exact_form(
-                    ParticipationExecution.log_curvature
-                    - Derivative(
-                        ParticipationExecution.log_objective, ParticipationExecution.log_rate, 2, evaluate=False
-                    ),
-                    S.Zero,
-                    wrt="log_rate",
-                    name="actual_log_curvature",
-                ),
-                "pov_uniqueness",
-                "The claimed curvature is the actual second derivative of the transformed objective.",
+            exact_form(
+                ParticipationExecution.log_curvature
+                - Derivative(ParticipationExecution.log_objective, ParticipationExecution.log_rate, 2, evaluate=False),
+                S.Zero,
+                wrt="log_rate",
+                name="actual_log_curvature",
+                consumer="pov_uniqueness",
+                reason="The claimed curvature is the actual second derivative of the transformed objective.",
             ),
-            Requirement(
-                smooth("log_objective", wrt="log_rate"),
-                "pov_uniqueness",
-                "The transformed objective is C2 on the real line.",
+            smooth(
+                "log_objective",
+                wrt="log_rate",
+                consumer="pov_uniqueness",
+                reason="The transformed objective is C2 on the real line.",
             ),
-            Requirement(
-                positive("log_curvature", wrt="log_rate"),
-                "pov_uniqueness",
-                "An everywhere positive second derivative gives strict convexity in log-rate.",
+            positive(
+                "log_curvature",
+                wrt="log_rate",
+                consumer="pov_uniqueness",
+                reason="An everywhere positive second derivative gives strict convexity in log-rate.",
             ),
         ),
         SOURCE + "#S2.SS1",
@@ -283,114 +278,106 @@ def _risk_integral(get: Callable[[str], Expr]) -> Expr:
 def _requirements(case: ResearchCase[ParticipationExecution], *, power_law: bool) -> tuple[Requirement, ...]:
     symbol = case.symbols
     requirements = [
-        Requirement(
-            exact_form(
-                "temporary_cost",
-                lambda get: get("quantity") * get("impact.value") / get("rate"),
-                wrt="rate",
-                domain=POSITIVE_RATES,
-                name="temporary_cost_identity",
-            ),
-            "pov_execution",
-            "The optional quadrature comparison uses the actual temporary execution cost.",
+        exact_form(
+            "temporary_cost",
+            lambda get: get("quantity") * get("impact.value") / get("rate"),
+            wrt="rate",
+            domain=POSITIVE_RATES,
+            name="temporary_cost_identity",
+            consumer="pov_execution",
+            reason="The optional quadrature comparison uses the actual temporary execution cost.",
         ),
-        Requirement(
-            exact_form(
-                "duration",
-                lambda get: get("quantity") / (get("rate") * get("volume")),
-                wrt="rate",
-                domain=POSITIVE_RATES,
-                name="completion_time_identity",
-            ),
-            "pov_execution",
-            "The completion time is Q/(rho V).",
+        exact_form(
+            "duration",
+            lambda get: get("quantity") / (get("rate") * get("volume")),
+            wrt="rate",
+            domain=POSITIVE_RATES,
+            name="completion_time_identity",
+            consumer="pov_execution",
+            reason="The completion time is Q/(rho V).",
         ),
-        Requirement(
-            exact_form(
-                "inventory",
-                lambda get: get("quantity") - get("rate") * get("volume") * get("time"),
-                wrt="time",
-                name="constant_pov_inventory_identity",
-            ),
-            "pov_execution",
-            "Inventory is Q-rho V t up to the completion time.",
+        exact_form(
+            "inventory",
+            lambda get: get("quantity") - get("rate") * get("volume") * get("time"),
+            wrt="time",
+            name="constant_pov_inventory_identity",
+            consumer="pov_execution",
+            reason="Inventory is Q-rho V t up to the completion time.",
         ),
-        Requirement(
-            exact_form(
-                "limits.lower",
-                lambda get: get("limits.deadline_active") * get("quantity") / (get("volume") * get("limits.deadline")),
-                name="deadline_lower_identity",
-            ),
-            "pov_execution",
-            "An enabled deadline gives precisely the corresponding lower participation bound.",
+        exact_form(
+            "limits.lower",
+            lambda get: get("limits.deadline_active") * get("quantity") / (get("volume") * get("limits.deadline")),
+            name="deadline_lower_identity",
+            consumer="pov_execution",
+            reason="An enabled deadline gives precisely the corresponding lower participation bound.",
         ),
-        Requirement(
-            exact_form(
-                "objective",
-                lambda get: (
-                    get("quantity") * get("impact.value") / get("rate")
-                    + get("gamma") * get("sigma") ** 2 * get("quantity") ** 3 / (6 * get("volume") * get("rate"))
-                ),
-                wrt="rate",
-                domain=POSITIVE_RATES,
-                name="pov_objective_identity",
+        exact_form(
+            "objective",
+            lambda get: (
+                get("quantity") * get("impact.value") / get("rate")
+                + get("gamma") * get("sigma") ** 2 * get("quantity") ** 3 / (6 * get("volume") * get("rate"))
             ),
-            "pov_execution",
-            "Use the declared execution function and constant-volume Brownian inventory risk.",
-            SOURCE + "#S2.SS1",
+            wrt="rate",
+            domain=POSITIVE_RATES,
+            name="pov_objective_identity",
+            consumer="pov_execution",
+            reason="Use the declared execution function and constant-volume Brownian inventory risk.",
+            source=SOURCE + "#S2.SS1",
         ),
-        Requirement(
-            exact_form("risk_cost", _risk_integral, wrt="rate", domain=POSITIVE_RATES, name="inventory_risk_integral"),
-            "pov_execution",
-            "The risk term equals gamma sigma²/2 times the integrated squared inventory.",
-            SOURCE + "#S2.SS1",
+        exact_form(
+            "risk_cost",
+            _risk_integral,
+            wrt="rate",
+            domain=POSITIVE_RATES,
+            name="inventory_risk_integral",
+            consumer="pov_execution",
+            reason="The risk term equals gamma sigma²/2 times the integrated squared inventory.",
+            source=SOURCE + "#S2.SS1",
         ),
-        Requirement(
-            exact_form(
-                "log_objective",
-                lambda get: Subs(get("objective"), get("rate"), exp(get("log_rate"))),
-                wrt="log_rate",
-                name="log_coordinate_identity",
+        exact_form(
+            "log_objective",
+            lambda get: Subs(get("objective"), get("rate"), exp(get("log_rate"))),
+            wrt="log_rate",
+            name="log_coordinate_identity",
+            consumer="pov_execution",
+            reason="The strictly convex curve must be the actual objective under rho=exp(x).",
+        ),
+        replace(
+            _UNIQUE,
+            consumer="pov_execution",
+            reason="Strict log-rate convexity permits at most one attained POV minimum.",
+        ),
+        predicate(
+            And(
+                Or(Eq(symbol.limits.cap_active, 0), Eq(symbol.limits.cap_active, 1)),
+                Or(Eq(symbol.limits.deadline_active, 0), Eq(symbol.limits.deadline_active, 1)),
+                Or(Eq(symbol.limits.cap_active, 0), symbol.limits.lower <= symbol.limits.cap),
             ),
-            "pov_execution",
-            "The strictly convex curve must be the actual objective under rho=exp(x).",
-        ),
-        Requirement(_UNIQUE, "pov_execution", "Strict log-rate convexity permits at most one attained POV minimum."),
-        Requirement(
-            predicate(
-                And(
-                    Or(Eq(symbol.limits.cap_active, 0), Eq(symbol.limits.cap_active, 1)),
-                    Or(Eq(symbol.limits.deadline_active, 0), Eq(symbol.limits.deadline_active, 1)),
-                    Or(Eq(symbol.limits.cap_active, 0), symbol.limits.lower <= symbol.limits.cap),
-                ),
-                name="feasible_limits",
-            ),
-            "pov_execution",
-            "Enabled bounds must form a nonempty positive-rate interval.",
+            name="feasible_limits",
+            consumer="pov_execution",
+            reason="Enabled bounds must form a nonempty positive-rate interval.",
         ),
     ]
     for path in ("quantity", "volume", "eta", "phi", "sigma"):
         requirements.append(
-            Requirement(positive(path, name=f"positive_{path}"), "pov_execution", f"{path} must be positive.")
+            positive(path, name=f"positive_{path}", consumer="pov_execution", reason=f"{path} must be positive.")
         )
     requirements.append(
-        Requirement(
-            nonnegative("gamma", name="nonnegative_risk_aversion"), "pov_execution", "Risk aversion is nonnegative."
+        nonnegative(
+            "gamma", name="nonnegative_risk_aversion", consumer="pov_execution", reason="Risk aversion is nonnegative."
         )
     )
     if power_law:
         requirements.append(
-            Requirement(
-                exact_form(
-                    "impact.value",
-                    lambda get: get("eta") * get("rate") ** (1 + get("phi")),
-                    wrt="rate",
-                    domain=POSITIVE_RATES,
-                    name="pure_power_law",
-                ),
-                "analytic_pov",
-                "Guéant's Proposition 4 shortcut needs this exact power law.",
-                SOURCE + "#S2.SS1",
+            exact_form(
+                "impact.value",
+                lambda get: get("eta") * get("rate") ** (1 + get("phi")),
+                wrt="rate",
+                domain=POSITIVE_RATES,
+                name="pure_power_law",
+                consumer="analytic_pov",
+                reason="Guéant's Proposition 4 shortcut needs this exact power law.",
+                source=SOURCE + "#S2.SS1",
             )
         )
     return tuple(requirements)
@@ -425,7 +412,7 @@ def _checked_report(
     case: ResearchCase[ParticipationExecution], requirements: tuple[Requirement, ...]
 ) -> ResearchReport:
     report = case.check(max_steps=1000, requirements=requirements)
-    failed = [item.claim.name for item in requirements if report.explain(item.claim.name).condition is not S.true]
+    failed = [item.name for item in requirements if report.explain(item.name).condition is not S.true]
     if report.consistent is False or failed:
         raise ResearchError("Unestablished POV certificate: " + ", ".join(failed), case, report)
     return report
@@ -450,10 +437,12 @@ def _risk_regime(case: ResearchCase[ParticipationExecution]) -> Literal["positiv
     if gamma.is_zero is True:
         return "zero"
     requirements = (
-        Requirement(
-            predicate(gamma > 0, name="risk_positive_branch"), "risk_regime", "Check the positive-risk branch."
+        predicate(
+            gamma > 0, name="risk_positive_branch", consumer="risk_regime", reason="Check the positive-risk branch."
         ),
-        Requirement(predicate(Eq(gamma, 0), name="risk_zero_branch"), "risk_regime", "Check the risk-neutral branch."),
+        predicate(
+            Eq(gamma, 0), name="risk_zero_branch", consumer="risk_regime", reason="Check the risk-neutral branch."
+        ),
     )
     report = case.check(max_steps=1000, requirements=requirements)
     if report.explain("risk_positive_branch").condition is S.true:
@@ -475,37 +464,41 @@ def _analytic(case: ResearchCase[ParticipationExecution]) -> ParticipationSoluti
     regime = _risk_regime(case)
     scaled_slope = simplify(rate**2 * diff(objective, rate))
     common = (
-        Requirement(
-            exact_form(
-                scaled_slope,
-                eta * quantity * phi * rate ** (phi + 1) - coefficient,
-                wrt="rate",
-                domain=POSITIVE_RATES,
-                name="scaled_first_order_identity",
-            ),
-            "analytic_certificate",
-            "rho² J'(rho) has one strictly increasing power term and a constant risk term.",
+        exact_form(
+            scaled_slope,
+            eta * quantity * phi * rate ** (phi + 1) - coefficient,
+            wrt="rate",
+            domain=POSITIVE_RATES,
+            name="scaled_first_order_identity",
+            consumer="analytic_certificate",
+            reason="rho² J'(rho) has one strictly increasing power term and a constant risk term.",
         ),
-        Requirement(
-            positive(
-                diff(scaled_slope, rate), wrt="rate", domain=POSITIVE_RATES, name="scaled_slope_strictly_increasing"
-            ),
-            "analytic_certificate",
-            "The scaled slope crosses zero at most once even when J is not convex in rho.",
+        positive(
+            diff(scaled_slope, rate),
+            wrt="rate",
+            domain=POSITIVE_RATES,
+            name="scaled_slope_strictly_increasing",
+            consumer="analytic_certificate",
+            reason="The scaled slope crosses zero at most once even when J is not convex in rho.",
         ),
     )
     if regime == "zero" and lower == 0:
         requirements: tuple[Requirement, ...] = (
             *common,
-            Requirement(
-                positive(objective, wrt="rate", domain=POSITIVE_RATES, name="cost_above_infimum"),
-                "analytic_certificate",
-                "Every positive rate has strictly positive cost.",
+            positive(
+                objective,
+                wrt="rate",
+                domain=POSITIVE_RATES,
+                name="cost_above_infimum",
+                consumer="analytic_certificate",
+                reason="Every positive rate has strictly positive cost.",
             ),
-            Requirement(
-                exact_form(limit(objective, rate, 0, dir="+"), S.Zero, name="unattained_zero_limit"),
-                "analytic_certificate",
-                "The infimum is zero as rho decreases to the excluded endpoint.",
+            exact_form(
+                limit(objective, rate, 0, dir="+"),
+                S.Zero,
+                name="unattained_zero_limit",
+                consumer="analytic_certificate",
+                reason="The infimum is zero as rho decreases to the excluded endpoint.",
             ),
         )
         return ParticipationSolution(
@@ -536,24 +529,25 @@ def _analytic(case: ResearchCase[ParticipationExecution]) -> ParticipationSoluti
     duration = simplify(quantity / (volume * candidate))
     requirements = (
         *common,
-        Requirement(
-            predicate(And(*constraints), name="pov_kkt_certificate"),
-            "analytic_certificate",
-            "Check primal feasibility, nonnegative multipliers, stationarity, and complementary slackness.",
+        predicate(
+            And(*constraints),
+            name="pov_kkt_certificate",
+            consumer="analytic_certificate",
+            reason="Check primal feasibility, nonnegative multipliers, stationarity, and complementary slackness.",
         ),
-        Requirement(
-            exact_form(
-                case.expression("inventory", wrt="time").subs(
-                    {rate: candidate, case.expression("time", wrt="time"): duration}, simultaneous=True
-                ),
-                S.Zero,
-                name="completion_boundary",
+        exact_form(
+            case.expression("inventory", wrt="time").subs(
+                {rate: candidate, case.expression("time", wrt="time"): duration}, simultaneous=True
             ),
-            "analytic_certificate",
-            "The chosen rate liquidates all shares at its completion time.",
+            S.Zero,
+            name="completion_boundary",
+            consumer="analytic_certificate",
+            reason="The chosen rate liquidates all shares at its completion time.",
         ),
-        Requirement(
-            _UNIQUE, "analytic_certificate", "Strict log-rate convexity makes the certified scalar minimum unique."
+        replace(
+            _UNIQUE,
+            consumer="analytic_certificate",
+            reason="Strict log-rate convexity makes the certified scalar minimum unique.",
         ),
     )
     active = tuple(name for name, enabled in (("deadline", at_lower), ("cap", at_upper)) if enabled)
@@ -614,15 +608,20 @@ def _numerical(case: ResearchCase[ParticipationExecution], *, xatol: float = 1e-
         _checked_report(
             case,
             (
-                Requirement(
-                    positive("objective", wrt="rate", domain=POSITIVE_RATES, name="numerical_positive_cost"),
-                    "numerical_certificate",
-                    "A zero limit is unattained at every positive rate.",
+                positive(
+                    "objective",
+                    wrt="rate",
+                    domain=POSITIVE_RATES,
+                    name="numerical_positive_cost",
+                    consumer="numerical_certificate",
+                    reason="A zero limit is unattained at every positive rate.",
                 ),
-                Requirement(
-                    exact_form(limit(expression, x, S.NegativeInfinity), S.Zero, name="numerical_zero_limit"),
-                    "numerical_certificate",
-                    "Check the open-endpoint limit before reporting nonattainment.",
+                exact_form(
+                    limit(expression, x, S.NegativeInfinity),
+                    S.Zero,
+                    name="numerical_zero_limit",
+                    consumer="numerical_certificate",
+                    reason="Check the open-endpoint limit before reporting nonattainment.",
                 ),
             ),
         )
