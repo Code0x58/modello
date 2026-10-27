@@ -160,16 +160,16 @@ def test_reference_derives_terminal_inputs_and_validates_its_domain():
 
 
 def test_coordinate_renaming_preserves_the_declared_gain_and_numerical_model():
-    from examples._market_making_models import StudiedExponential
+    from examples.market_making import ExponentialIntensity
 
-    class Renamed(StudiedExponential):
+    class Renamed(ExponentialIntensity):
         distance = Coordinate("new_delta", real=True)
-        rate = StudiedExponential.scale * exp(-StudiedExponential.decay * distance)
+        rate = ExponentialIntensity.scale * exp(-ExponentialIntensity.decay * distance)
 
     case = study_case(capacity=1)
     changed = case.replace("ask.intensity", Renamed)
     gain = changed.expression("ask.gain", wrt="ask.intensity.distance")
-    assert StudiedExponential.distance not in gain.free_symbols
+    assert ExponentialIntensity.distance not in gain.free_symbols
     np.testing.assert_allclose(
         run_quotes(changed, points=3).data.theta, run_quotes(case, points=3).data.theta, atol=1e-9
     )
@@ -192,8 +192,7 @@ def test_git_is_optional_provenance(monkeypatch):
 
 
 def test_numerical_adapter_rechecks_the_declared_neighbor_and_gain_laws():
-    from examples._market_making_models import QuoteHamiltonian
-    from examples.market_making import ContinuationValue
+    from examples.market_making import ContinuationValue, QuoteHamiltonian
 
     class WrongNeighbor(ContinuationValue):
         bid_cost = (ContinuationValue.current - ContinuationValue.after_ask) / ContinuationValue.step

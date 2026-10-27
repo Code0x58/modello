@@ -107,6 +107,15 @@ still quantifies inventory over its explicit domain. A claim's remaining free
 symbols are parameters. Conditions on them are retained rather than silently
 assumed.
 
+``wrt`` selects an independent model quantity or a declared ``Coordinate``.
+Use a path or the original symbol identity. A new same-named SymPy symbol is
+rejected as foreign to the case. A defined quantity such as ``doubled = 2*x``
+is rejected as a differentiation coordinate with ``ModelDefinitionError``:
+reparameterize the curve explicitly before asking about its derivatives.
+``expression`` and ``sample`` apply the same coordinate validation as property
+checks. Parameter observations do not turn an independent quantity into a
+defined coordinate.
+
 Explicit assumptions can be removed on a new branch, with a recorded reason:
 
 >>> relaxed = positive_risk.without_assumptions(
@@ -151,7 +160,10 @@ premise is checked before cancellation. A pointwise inequality strictly below
 
 An incorrect hint leaves the requirement unresolved; it does not refute the property.
 The ``upper`` value is a proposed proof aid, not an assumption or a requirement
-that is accepted without checking.
+that is accepted without checking. A uniform target bound must also be
+independent of the quantified coordinate, including after resolving aliases.
+A coordinate-dependent target is a ``ModelDefinitionError``; it cannot become
+a uniform bound by assuming a predicate about that coordinate.
 Parameter poles are also retained. For example, regularity of :math:`e^{x/a}`
 cannot be unconditional when the declaration allows :math:`a=0`.
 
@@ -203,6 +215,14 @@ For a parameterized polynomial such as :math:`a x^3`, that rule retains the
 nonconstancy condition. Assuming only :math:`a\geq0` cannot establish strict
 increase because :math:`a=0` remains admissible.
 
+Continuity-domain failures can also depend on parameters. For example,
+:math:`a\sqrt{x}` on :math:`[0,1]` has a smooth zero specialization at
+:math:`a=0`. Its general smoothness check remains unresolved; observing
+:math:`a=1` establishes failure. A CAS continuity-domain exclusion alone does
+not refute every parameter specialization. Derivative formulas can also have
+removable singularities. Such exclusions remain unresolved unless a checked
+one-sided divergence or another supported rule establishes a refutation.
+
 The curvature characterization of convexity applies on real intervals with
 nonempty interior. A singleton is checked by its finite real value instead;
 other discrete or disconnected domains remain unsupported by that rule.
@@ -249,6 +269,12 @@ obligations before executing it. Settings go to the computation, not the
 factory. A blocked computation raises
 ``ResearchError`` with ``case`` and ``report``; numerical failures retain the
 same context. Unrelated unresolved claims do not block a method.
+
+Reading a field through an alias consumes the same automatic obligations as
+reading its original path, including aliases exposed from nested components.
+A locally evaluated expression such as ``Subs(curve, x, 1)`` keeps its own
+scope: its obligations concern that evaluation, while the unevaluated source
+curve can still have a pole elsewhere.
 
 >>> from modello.contrib.research import Method
 >>> def valuation(current):
@@ -322,28 +348,6 @@ matrix-exponential transformation. Both calculations use the case's declared
 risk and terminal laws, including supported component replacements. These are numerical checks rather than
 proofs of error bounds. Source fingerprints, exact parameters, solver settings,
 and dependency versions accompany the results.
-
-Migrating the exploratory interface
------------------------------------
-
-The earlier ``Claim``, ``Requirement``, and ``Requires`` constructors have been
-consolidated. A property function now creates the complete requirement:
-
-.. code-block:: python
-
-   # Earlier interface
-   value = annotate(expression, Requires(
-       Requirement(increasing("value", wrt="x"), "optimizer", "Order matters.")))
-
-   # Current interface
-   value = requires(expression,
-       increasing("value", wrt="x", consumer="optimizer", reason="Order matters."))
-
-Pass a property directly to ``case.require`` or a method's ``requirements``.
-Read ``evidence.requirement.subject`` and ``evidence.resolved.subject`` for the
-declared and specialized statements. Use ``case.with_hint(id, upper=value)``
-instead of constructing ``ProofHint`` or calling ``upper_bound``. The old
-constructors are not retained as public aliases.
 
 API
 ----

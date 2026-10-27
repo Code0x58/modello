@@ -238,6 +238,19 @@ class ResearchCase(Generic[ModelT]):
         if value.free_symbols - allowed:
             raise ModelValidationError("Use this research case's symbols or coordinates from its declaration")
 
+    def _coordinate(self, value: str | Symbol) -> Symbol:
+        """Validate against definitions without specializing an observed state."""
+        coordinate = self._reference(value) if isinstance(value, str) else value
+        if not isinstance(coordinate, Symbol):
+            raise ModelDefinitionError("wrt must select an independent model symbol or declared coordinate")
+        self._require_symbols(coordinate)
+        if self._law(coordinate) != coordinate:
+            raise ModelDefinitionError(
+                "wrt must select an independent model symbol or declared coordinate; "
+                "reparameterize derived quantities explicitly"
+            )
+        return coordinate
+
     def _annotation_bindings(self, prefix: str):
         """Bind native metadata expressions in their declaring component scope."""
         scope = _schema(self.problem.model, tuple(prefix.split(".")) if prefix else ())
@@ -276,7 +289,8 @@ class ResearchCase(Generic[ModelT]):
         return result
 
     def expression(self, subject: str | Basic, *, wrt: str | Symbol | None = None) -> Expr:
-        variable = self._reference(wrt) if isinstance(wrt, str) else wrt
+        """Resolve a law, preserving an independent ``wrt`` symbol from observations."""
+        variable = self._coordinate(wrt) if wrt is not None else None
         value = self._reference(subject) if isinstance(subject, str) else subject
         self._require_symbols(value)
         return cast(Expr, self._bind(value, frozenset() if variable is None else frozenset({variable})))
@@ -667,6 +681,8 @@ class ResearchCase(Generic[ModelT]):
                 if isinstance(claim.wrt, str)
                 else (native(claim.wrt) if claim.wrt is not None else None)
             )
+            if variable is not None:
+                variable = self._coordinate(variable)
             subject = reference(claim.subject) if isinstance(claim.subject, str) else native(claim.subject)
             self._require_symbols(subject)
             protected = frozenset() if variable is None else frozenset({variable})
@@ -691,6 +707,12 @@ class ResearchCase(Generic[ModelT]):
             domain, bound, point = payload(claim.domain), payload(claim.bound), payload(claim.at)
             if variable is not None and variable in domain.free_symbols:
                 raise ModelDefinitionError("A quantified domain cannot depend on its own coordinate")
+            if (
+                variable is not None
+                and claim.property in {"uniform_bound", "curvature_bound"}
+                and variable in bound.free_symbols
+            ):
+                raise ModelDefinitionError("A uniform target bound cannot depend on its quantified coordinate")
             resolved = replace(
                 claim, subject=expression, wrt=variable, expected=expected, domain=domain, bound=bound, at=point
             )
@@ -788,7 +810,7 @@ class ResearchCase(Generic[ModelT]):
         return self.check().explain(requirement_id)
 
     def sample(self, subject: str | Basic, *, wrt: str | Symbol, points) -> Experiment:
-        variable = self._reference(wrt) if isinstance(wrt, str) else wrt
+        variable = self._coordinate(wrt)
         expression = self.expression(subject, wrt=variable)
         samples = tuple(sympify(point) for point in points)
         values = tuple(expression.subs(variable, point).evalf() for point in samples)
@@ -819,9 +841,10 @@ class ResearchCase(Generic[ModelT]):
                 self.check(max_steps=1000),
             )
         report, automatic = self._check(max_steps=1000, requirements=method.requirements)
+        direct_uses = {self._reference(path) for path in method.uses}
         uses: set[str] = set()
-        for path in method.uses:
-            uses.update(self._dependencies(self._reference(path)))
+        for symbol in direct_uses:
+            uses.update(self._dependencies(symbol))
         required = {item.name for item in method.requirements}
         model_scopes = {
             f"{path}/{item.name}" if path else item.name: path
@@ -834,7 +857,7 @@ class ResearchCase(Generic[ModelT]):
             if item.id in required:
                 return True
             if item.id in automatic:
-                return item.requirement.consumer in method.uses
+                return self._reference(item.requirement.consumer) in direct_uses
             return (
                 item.requirement.consumer in uses
                 or item.id.partition("/")[0] in uses

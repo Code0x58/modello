@@ -3,7 +3,24 @@
 from dataclasses import replace
 
 import pytest
-from sympy import Abs, Add, Derivative, Eq, Interval, Ne, Piecewise, S, Subs, exp, frac, sin
+from sympy import (
+    Abs,
+    Add,
+    Derivative,
+    Eq,
+    Interval,
+    Ne,
+    Piecewise,
+    S,
+    Subs,
+    Symbol,
+    assuming,
+    cos,
+    exp,
+    frac,
+    sin,
+    sqrt,
+)
 
 from modello import Coordinate, InstanceDummy, component
 from modello.contrib.research import (
@@ -19,9 +36,11 @@ from modello.contrib.research import (
     nonzero,
     positive,
     requires,
+    smooth,
     uniform_bound,
     vanishes,
 )
+from modello.errors import ModelDefinitionError, ModelValidationError
 
 
 def check(case, claim):
@@ -261,3 +280,136 @@ def test_automatic_obligations_retain_named_divisions_before_cancellation():
         with pytest.raises(ResearchError):
             case.run(method)
         assert case.observe(x=1).run(method).data in (1, S.One)
+
+
+@pytest.mark.parametrize("field", ("pole", "slope"))
+@pytest.mark.parametrize("nested, alias", ((False, False), (False, True), (True, False), (True, True)))
+def test_aliases_consume_the_same_automatic_obligations(field, nested, alias):
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        pole = 1 / x
+        slope = Derivative(Abs(x), x, evaluate=False)
+        pole_alias = pole
+        slope_alias = slope
+
+    class Parent(ResearchModel):
+        curve = component(Curve)
+        pole_alias = curve.pole
+        slope_alias = curve.slope
+
+    case = ResearchCase.for_model(Parent if nested else Curve)
+    path = field + "_alias" if alias else ("curve." if nested else "") + field
+    calls = []
+    with pytest.raises(ResearchError) as failure:
+        case.run(Method("evaluate", lambda current: calls.append(current), uses=(path,)))
+    assert not calls
+    origin = ("curve." if nested else "") + field + "/auto:1"
+    assert failure.value.report.explain(origin).verdict == "strictly false"
+
+
+def test_alias_consumption_preserves_local_substitution_scopes():
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        pole = 1 / x
+        value = Subs(pole, x, 1)
+        slope = Subs(Derivative(pole, x), x, 1)
+        bad = Subs(pole, x, 0)
+
+    class Parent(ResearchModel):
+        curve = component(Curve)
+        value = curve.value
+        slope = curve.slope
+        bad = curve.bad
+
+    case = ResearchCase.for_model(Parent)
+    for path, expected in (("value", 1), ("slope", -1)):
+        result = case.run(Method("evaluate", lambda current: current.expression(path).doit(), uses=(path,)))
+        assert result.data == expected
+        assert result.report.explain("curve.pole/auto:1").verdict == "strictly false"
+    with pytest.raises(ResearchError):
+        case.run(Method("evaluate", lambda current: "must not execute", uses=("bad",)))
+
+
+@pytest.mark.parametrize("operation", ("check", "expression", "sample"))
+@pytest.mark.parametrize("coordinate", ("foreign", "derived", "native_derived", "nonsymbol"))
+def test_research_operations_reject_unknown_or_dependent_coordinates(operation, coordinate):
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        doubled = 2 * x
+        kink = Abs(x)
+
+    case = ResearchCase.for_model(Curve)
+    variable = {
+        "foreign": Symbol("x", real=True),
+        "derived": "doubled",
+        "native_derived": case.symbols.doubled,
+        "nonsymbol": S.One,
+    }[coordinate]
+    error = ModelValidationError if coordinate == "foreign" else ModelDefinitionError
+    with pytest.raises(error):
+        if operation == "check":
+            case.check(requirements=(differentiable("kink", wrt=variable),))
+        elif operation == "expression":
+            case.expression("kink", wrt=variable)
+        else:
+            case.sample("kink", wrt=variable, points=(0, 1))
+    assert check(case, differentiable("kink", wrt="x")).verdict == "strictly false"
+
+
+@pytest.mark.parametrize("factory", (uniform_bound, curvature_bound))
+@pytest.mark.parametrize("alias", (False, True))
+@pytest.mark.parametrize("ambient", (False, True))
+def test_uniform_targets_must_be_independent_after_binding(factory, alias, ambient):
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        value = exp(-x)
+        target = x + 2
+
+    case = ResearchCase.for_model(Curve)
+    target = case.symbols.target if alias else Curve.x + 2
+    requirement = (
+        uniform_bound(S.Zero, target, wrt=Curve.x)
+        if factory is uniform_bound
+        else curvature_bound("value", wrt="x", bound=target)
+    )
+    if not ambient:
+        case = case.assume(Curve.x > 0)
+    with assuming(Curve.x > 0 if ambient else S.true):
+        with pytest.raises(ModelDefinitionError, match="uniform target bound"):
+            case.run(Method("bounded calculation", lambda current: "must not execute", (requirement,)))
+
+
+def test_uniform_targets_can_depend_on_independent_parameters():
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        bound = InstanceDummy("b", real=True)
+
+    case = ResearchCase.for_model(Curve)
+    bounded = case.assume(case.symbols.bound > 0)
+    assert check(bounded, uniform_bound(S.Zero, bounded.symbols.bound, wrt="x")).verdict == "strictly true"
+
+
+@pytest.mark.parametrize("order", (1, 2))
+def test_parameter_dependent_continuity_failures_do_not_refute_every_specialization(order):
+    class Curve(ResearchModel):
+        x = Coordinate("x", nonnegative=True)
+        a = InstanceDummy("a", real=True)
+        value = a * sqrt(x)
+
+    case = ResearchCase.for_model(Curve)
+    requirement = smooth("value", wrt="x", domain=Interval(0, 1), order=order)
+    assert check(case, requirement).verdict == "unresolved"
+    assert check(case.observe(a=0), requirement).verdict == "strictly true"
+    assert check(case.observe(a=1), requirement).verdict == "strictly false"
+    assert check(case.assume(case.symbols.a > 0), requirement).verdict == "strictly false"
+
+
+def test_a_removable_derivative_singularity_does_not_refute_smoothness():
+    class Curve(ResearchModel):
+        x = Coordinate("x", nonnegative=True)
+        value = cos(sqrt(x))
+
+    # The derivative has limit -1/2 at zero despite its unevaluated 0/0 form.
+    evidence = check(ResearchCase.for_model(Curve), smooth("value", wrt="x", domain=Interval(0, 1)))
+    assert evidence.verdict == "unresolved"
+    assert not evidence.witness

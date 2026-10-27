@@ -42,7 +42,8 @@ class Requirement:
     """A mathematical condition and optional motivation, on an explicit domain.
 
     Strings select relative model paths; native expressions retain their symbol
-    identities. Other free symbols are parameters, not quantified coordinates.
+    identities. ``wrt`` selects a known independent symbol, rather than a
+    defined quantity. Other free symbols are parameters, not quantified coordinates.
     ``at`` requests differentiability in a neighborhood of a particular point.
     """
 

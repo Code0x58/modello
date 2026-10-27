@@ -3,30 +3,26 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
 
 from sympy import Expr, Piecewise, S, exp
 
-from examples.market_making import ExponentialIntensity, MarketMakingState, QuoteHamiltonian as DeclaredQuote
-from modello import InstanceDummy, component
+from examples.market_making import (
+    SOURCE,
+    ExponentialIntensity,
+    MarketMakingState,
+    intensity_contracts,
+)
+from modello import InstanceDummy
 from modello.contrib.research import (
     Requirement,
     ResearchCase,
-    ResearchModel,
     Theorem,
     concave,
-    curvature_bound,
-    decreasing,
     exact_form,
     increasing,
     nonnegative,
     positive,
-    requires,
-    smooth,
-    vanishes,
 )
-
-SOURCE = "https://arxiv.org/html/1605.01862"
 
 
 def _neighbor_formula(neighbor: str) -> Callable[[Callable[[str], Expr]], Expr]:
@@ -47,47 +43,15 @@ def _gain_formula(side: str) -> Callable[[Callable[[str], Expr]], Expr]:
     return formula
 
 
-def intensity_contracts(prefix="") -> tuple[Requirement, ...]:
-    path = f"{prefix}." if prefix else ""
-    rate, distance = path + "rate", path + "distance"
-    return tuple(
-        replace(claim, consumer="quote_uniqueness", reason=reason, source=SOURCE)
-        for claim, reason in (
-            (positive(rate, wrt=distance), "Trades need a positive arrival intensity."),
-            (smooth(rate, wrt=distance), "Guéant's quote theorem requires C2 intensity."),
-            (decreasing(rate, wrt=distance), "Increasing distance must strictly reduce the arrival rate."),
-            (vanishes(rate, wrt=distance), "The intensity must vanish at large positive quote distance."),
-            (curvature_bound(rate, wrt=distance), "A uniform curvature bound establishes a unique maximizer."),
-        )
-    )
-
-
-class StudiedExponential(ResearchModel, ExponentialIntensity):
-    """Exponential intensity with live requirements, rather than copied verdicts."""
-
-    rate = requires(
-        ExponentialIntensity.scale * exp(-ExponentialIntensity.decay * ExponentialIntensity.distance),
-        *intensity_contracts(),
-    )
-
-
-class LogisticIntensity(StudiedExponential):
+class LogisticIntensity(ExponentialIntensity):
     """A bounded alternative, with peak arrival rate A and decay k."""
 
     rate = ExponentialIntensity.scale / (1 + exp(ExponentialIntensity.decay * ExponentialIntensity.distance))
 
 
-class QuoteHamiltonian(ResearchModel, DeclaredQuote):
-    """Declare the gain and Hamiltonian input without assuming an optimizer."""
+class CARAMarketMaker(MarketMakingState):
+    """The shared HJB with general Hamiltonian inputs on both trade sides."""
 
-    intensity = component(StudiedExponential)
-
-
-class CARAMarketMaker(ResearchModel, MarketMakingState):
-    """The existing HJB with general Hamiltonian inputs on both trade sides."""
-
-    bid = component(QuoteHamiltonian)
-    ask = component(QuoteHamiltonian)
     horizon = InstanceDummy("T", positive=True)
 
 

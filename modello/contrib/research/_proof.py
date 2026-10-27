@@ -161,6 +161,27 @@ def _parameter_guards(expression: Expr, variable: Symbol | None) -> Basic | None
     return And(*guards)
 
 
+def _singular_witness(expression: Expr, variable: Symbol, domain: Set, missing: Set):
+    """A divergent one-sided limit refutes continuity without assuming parameter values."""
+    points = tuple(missing) if isinstance(missing, FiniteSet) else _points(missing)
+    for point in points[:5]:
+        if point.is_real is not True or point.is_finite is not True:
+            continue
+        for direction, side in (
+            ("-", Interval.open(S.NegativeInfinity, point)),
+            ("+", Interval.open(point, S.Infinity)),
+        ):
+            try:
+                if domain.intersect(side).closure.contains(point) is not S.true:
+                    continue
+                value = limit(expression, variable, point, dir=direction)
+                if value.is_finite is False:
+                    return ((variable, point),)
+            except (NotImplementedError, ValueError, TypeError):
+                continue
+    return ()
+
+
 def _regular(expression: Expr, variable: Symbol | None, domain: Set, order: int) -> Attempt:
     validity = S.true
     if isinstance(expression, Piecewise) and expression.args[-1] == (S.NaN, S.true):
@@ -202,7 +223,22 @@ def _regular(expression: Expr, variable: Symbol | None, domain: Set, order: int)
             allowed = continuous_domain(derivative, variable, domain)
             missing = domain - allowed
             if missing.is_empty is False:
-                return Attempt(S.false, (f"Derivative order {degree} is not continuous on {missing}.",))
+                if degree == 0 and not derivative.free_symbols - {variable}:
+                    return Attempt(S.false, (f"The expression is not continuous on {missing}.",))
+                witness = _singular_witness(derivative, variable, domain, missing)
+                if witness:
+                    return Attempt(
+                        S.false,
+                        (f"Derivative order {degree} has a nonfinite one-sided limit at {witness[0][1]}.",),
+                        witness,
+                    )
+                return Attempt(
+                    None,
+                    (
+                        f"The continuity domain of derivative order {degree} excludes {missing}, "
+                        "but parameter specializations or removable derivative singularities remain unresolved.",
+                    ),
+                )
             if missing.is_empty is not True:
                 return Attempt(None, (f"The continuity domain of derivative order {degree} is unresolved.",))
         except (NotImplementedError, ValueError, TypeError):

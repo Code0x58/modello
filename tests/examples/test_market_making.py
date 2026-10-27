@@ -1,7 +1,7 @@
-"""The exploratory contracts and HJB slice agree with their mathematics."""
+"""The shared research contracts and HJB slice agree with their mathematics."""
 
 import pytest
-from sympy import Function, Rational, S, Symbol, diff, exp, log, simplify
+from sympy import Rational, diff, exp, log, simplify
 
 from examples.market_making import (
     CARAUtility,
@@ -11,87 +11,55 @@ from examples.market_making import (
     MarketMaker,
     QuadraticInventoryRisk,
     QuadraticTerminalPenalty,
-    Requirements,
-    checked,
-    convex,
-    intensity_requirements,
-    positive_slope,
-    smooth,
-    uniform_curvature_bound,
-    utility_requirements,
 )
 from modello import InstanceDummy
+from modello.contrib.research import ResearchCase
 
 
 def test_default_component_contracts_are_proved_and_scoped_in_the_parent():
-    reports = Requirements.for_model(MarketMaker)
-    assert set(reports) == {"utility", "risk", "terminal", "bid.intensity", "ask.intensity"}
-    assert all(check.verdict == "strictly true" for report in reports.values() for check in report.checks)
+    report = MarketMaker.definition_report()
+    for path in (
+        "utility.gamma/positive",
+        "utility.value/increasing",
+        "utility.value/concave",
+        "risk.cost/convex",
+        "terminal.cost/nonnegative",
+        "bid.intensity.rate/curvature_bound",
+        "ask.intensity.rate/decreasing",
+    ):
+        assert report.explain(path).verdict == "strictly true"
+    assert all(check.verdict == "strictly true" for check in report.checks)
 
 
-def test_parameter_conditions_are_distinct_from_failures_and_rechecked_after_binding():
-    @checked(utility_requirements)
+def test_parameter_conditions_refresh_after_subclassing_and_observations():
     class UnrestrictedUtility(CARAUtility):
         gamma = InstanceDummy("gamma", real=True)
 
-    checks = Requirements.for_model(UnrestrictedUtility)[""].checks
-    condition = checks[0].condition
-    assert checks[0].verdict == checks[2].verdict == "conditionally true"
+    report = UnrestrictedUtility.definition_report()
+    condition = report.explain("gamma/positive").condition
+    assert report.explain("gamma/positive").verdict == "conditionally true"
+    assert report.explain("value/increasing").verdict == "conditionally true"
     assert len(condition.free_symbols) == 1
     parameter = next(iter(condition.free_symbols))
     assert condition == (parameter > 0)
-    assert checks[1].verdict == checks[3].verdict == "strictly true"
-    assert utility_requirements(UnrestrictedUtility("positive", gamma=2))[2].verdict == "strictly true"
-    assert utility_requirements(UnrestrictedUtility("constant", gamma=0))[2].verdict == "strictly false"
-    assert utility_requirements(UnrestrictedUtility("negative", gamma=-1))[2].verdict == "strictly false"
-    assert all(check.verdict == "strictly true" for check in Requirements.for_model(CARAUtility)[""].checks)
+    assert report.explain("value/smooth").verdict == report.explain("value/concave").verdict == "strictly true"
+    case = ResearchCase.for_model(UnrestrictedUtility)
+    for gamma, expected in ((2, "strictly true"), (0, "strictly false"), (-1, "strictly false")):
+        assert case.observe(gamma=gamma).check().explain("value/increasing").verdict == expected
+    assert all(check.verdict == "strictly true" for check in CARAUtility.definition_report().checks)
 
 
-def test_incompatible_components_can_be_defined_and_report_a_failed_requirement():
-    @checked(utility_requirements)
+def test_incompatible_components_refresh_inherited_requirements_automatically():
     class ConvexUtility(CARAUtility):
         value = exp(CARAUtility.gamma * CARAUtility.wealth)
 
-    @checked(intensity_requirements)
     class IncreasingIntensity(ExponentialIntensity):
         rate = ExponentialIntensity.scale * exp(ExponentialIntensity.decay * ExponentialIntensity.distance)
 
-    assert Requirements.for_model(ConvexUtility)[""].checks[-1].verdict == "strictly false"
-    checks = Requirements.for_model(IncreasingIntensity)[""].checks
-    assert checks[0].verdict == checks[1].verdict == "strictly true"
-    assert checks[2].verdict == checks[3].verdict == "strictly false"
-
-
-def test_global_certificates_reject_a_pole_and_a_local_only_increase():
-    x = Symbol("x", real=True)
-    assert smooth(1 / x, x, 2) is S.false
-    assert positive_slope(x**2, x) is S.false
-    assert convex(x**2, x) is S.true
-    # This deliberately stronger derivative certificate is not a complete
-    # characterization of strict monotonicity: x³ still increases strictly.
-    assert positive_slope(x**3, x) is S.false
-    assert smooth(abs(x), x, 2) is None
-    assert smooth(Function("f")(x), x, 1) is None
-    # A pointwise bound strictly below 2 need not have supremum below 2.
-    assert uniform_curvature_bound(1 / log(1 + exp(x)), x) is None
-
-
-def test_parameter_poles_remain_unresolved_in_smoothness_checks():
-    x, a = Symbol("x", real=True), Symbol("a", real=True)
-    assert smooth(x / a, x, 2) is None
-    assert smooth(exp(x / a), x, 2) is None
-    nonzero = Symbol("nonzero", real=True, nonzero=True)
-    assert smooth(exp(x / nonzero), x, 2) is S.true
-
-
-def test_uniform_curvature_preserves_zero_derivative_exclusions():
-    x, k = Symbol("x", real=True), Symbol("k", real=True)
-    condition = uniform_curvature_bound(exp(-k * x), x)
-    assert condition.free_symbols == {k}
-    assert condition.subs(k, 0) is S.false
-    assert condition.subs(k, 1) is S.true
-    assert uniform_curvature_bound(S.One, x) is S.false
-    assert uniform_curvature_bound(x**2, x) is S.false
+    assert ConvexUtility.definition_report().explain("value/concave").verdict == "strictly false"
+    report = IncreasingIntensity.definition_report()
+    assert report.explain("rate/positive").verdict == report.explain("rate/smooth").verdict == "strictly true"
+    assert report.explain("rate/decreasing").verdict == report.explain("rate/right_tail").verdict == "strictly false"
 
 
 def test_quote_is_the_cara_stationary_maximum_and_matches_the_closed_hamiltonian():
@@ -110,7 +78,6 @@ def test_quote_is_the_cara_stationary_maximum_and_matches_the_closed_hamiltonian
     assert simplify(quote.value - expected) == 0
     # The maximizer is unique globally: the derivative has the sign of
     # exp((k+gamma*Delta)*(delta*-delta)) - exp(k*(delta*-delta)).
-    assert all(check.verdict == "strictly true" for check in intensity_requirements(quote.intensity))
 
 
 @pytest.mark.parametrize(

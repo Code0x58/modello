@@ -124,81 +124,81 @@ it does not enforce lattice membership or supply a stochastic simulator.
 Check the component definitions
 -----------------------------------
 
-``checked`` is an example decorator: after the class body, it constructs the
-component with symbolic parameters and calls an ordinary requirement function.
-It stores a ``Requirements`` annotation through Modello's existing metadata
-API. Nested composition carries the reports to their component paths:
+The components use the shared ``modello.contrib.research`` interface.
+``ResearchModel`` checks their declarations after each class body, including
+subclasses. ``requires`` attaches mathematical requirements to a field or a
+model. Nested composition scopes those requirements to their component paths:
 
->>> from examples.market_making import MarketMaker, Requirements
->>> reports = Requirements.for_model(MarketMaker)
->>> sorted(reports)
-['ask.intensity', 'bid.intensity', 'risk', 'terminal', 'utility']
->>> all(check.verdict == "strictly true" for report in reports.values() for check in report.checks)
+>>> from examples.market_making import MarketMaker
+>>> report = MarketMaker.definition_report()
+>>> report.explain("utility.value/increasing").verdict
+'strictly true'
+>>> report.explain("bid.intensity.rate/curvature_bound").verdict
+'strictly true'
+>>> all(check.verdict == "strictly true" for check in report.checks)
 True
 
 A check has one of the requested three truth classifications, or an explicit
 unresolved result when no proof or parameter condition has been established:
 
 ``strictly true``
-   Established over the declared real domain and parameter assumptions.
+   Established over the declared domain and parameter assumptions.
 
 ``conditionally true``
-   The check reduces to an explicit condition on parameters, such as
-   :math:`\gamma>0`; the condition is retained in ``condition``.
+   An explicit sufficient parameter condition is retained in ``condition``.
 
 ``strictly false``
-   The stated global certificate fails for this definition.
+   A checked refutation of the stated property.
 
 ``unresolved``
    The checker has not established a result; ``condition`` is ``None``.
 
 For example, relax the declaration of risk aversion before connecting it to
-any consumer. Reapply the decorator after changing a component definition:
+any consumer. The subclass automatically refreshes the inherited requirements:
 
->>> from examples.market_making import CARAUtility, checked, utility_requirements
+>>> from examples.market_making import CARAUtility
 >>> from modello import InstanceDummy
->>> @checked(utility_requirements)
-... class UnrestrictedUtility(CARAUtility):
+>>> from modello.contrib.research import ResearchCase
+>>> class UnrestrictedUtility(CARAUtility):
 ...     gamma = InstanceDummy("gamma", real=True)
->>> checks = Requirements.for_model(UnrestrictedUtility)[""].checks
->>> checks[0].verdict, checks[2].verdict
+>>> checks = UnrestrictedUtility.definition_report()
+>>> checks.explain("gamma/positive").verdict, checks.explain("value/increasing").verdict
 ('conditionally true', 'conditionally true')
->>> condition = checks[0].condition
+>>> condition = checks.explain("gamma/positive").condition
 >>> gamma = next(iter(condition.free_symbols))
 >>> condition == (gamma > 0)
 True
->>> utility_requirements(UnrestrictedUtility("constant", gamma=0))[2].verdict
+>>> case = ResearchCase.for_model(UnrestrictedUtility)
+>>> case.observe(gamma=0).check().explain("value/increasing").verdict
 'strictly false'
 
-The functions check whole real domains. A positive derivative at one sampled
-wealth does not establish monotonicity. ``positive_slope`` requires a :math:`C^1`
-function with positive derivative everywhere, a sufficient condition for strict
-increase. It is deliberately stronger than strict increase itself: :math:`w^3`
-fails this certificate at zero. ``convex`` uses a nonnegative second derivative
-and :math:`C^2` regularity, so it is also a smooth-function certificate.
+Checks quantify whole declared domains. A sampled slope supplies an observation;
+strict increase needs a global argument. The shared checker can prove strict
+increase of a nonconstant polynomial such as :math:`w^3` even though its slope
+vanishes at zero. Likewise, :math:`|w|` is convex and fails differentiability at
+zero. A failed smoothness certificate alone does not refute convexity.
 
-``smooth`` asks SymPy for the continuity domains of the expression and its
-derivatives. Poles fail; unsupported functions and some nonsmooth expressions
-remain unresolved. Parameter-only subexpressions must also be known finite:
-for example, :math:`e^{w/a}` with unrestricted real :math:`a` remains unresolved
-because :math:`a=0` is allowed. ``uniform_curvature_bound`` retains the condition
-that the derivative never vanishes before simplifying the ratio. It only
-certifies ratios independent of the quote coordinate; a pointwise inequality
-does not establish a uniform supremum bound. In particular, the existence of a
-formal derivative does not establish differentiability or continuity:
+``smooth`` asks SymPy for continuity domains of the expression and its
+derivatives, retaining guards for parameter poles. For example,
+:math:`e^{w/a}` with unrestricted real :math:`a` retains :math:`a\ne0`.
+``curvature_bound`` checks that the slope never vanishes before simplifying
+the ratio. A coordinate-independent upper-bound hint can certify a nonconstant
+ratio; the checker establishes that hint and its strict gap below the target.
+An unevaluated derivative of an unknown function supplies no such certificate:
 
->>> from sympy import Function, Symbol
->>> from examples.market_making import smooth
->>> t = Symbol("t", real=True)
->>> smooth(Function("theta")(t), t, 1) is None
-True
+>>> from sympy import Function
+>>> from modello.contrib.research import smooth
+>>> formal = smooth(Function("theta")(CARAUtility.wealth), wrt=CARAUtility.wealth,
+...                 order=1, name="formal_regularity")
+>>> ResearchCase.for_model(CARAUtility).check(requirements=(formal,)).explain("formal_regularity").verdict
+'unresolved'
 
-Reports describe each declared component family independently. They are not
-an enforcement hook, do not add assumptions to the solver, and do not refresh
-after subclassing or observations. Call the requirement function again for a
-new case; redecorate a changed subclass. Conditional and failed definitions
-remain available for exploration. Substituting another utility family would
-also require reconsidering the CARA ansatz, not just its shape requirements.
+Definition reports and case reports share the same proof engine. Subclasses
+refresh definition reports; observations and assumptions create new cases whose
+checks use the current data. Failed or unresolved definitions remain available
+for exploration. :doc:`Guarded methods </contrib/research>` consume the evidence
+they need before computing. Substituting another utility family also requires
+reconsidering the CARA ansatz and its exact-form contract.
 
 Evaluate a state of the HJB
 -----------------------------------
