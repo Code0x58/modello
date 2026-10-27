@@ -25,3 +25,8 @@ if TYPE_CHECKING:
     assert_type(increasing("value", wrt="x"), Claim)
     assert_type(case.run(Method("constant", lambda current: 1)).data, int)
     assert_type(Method("constant", lambda current: 1).bind(case), Method[int])
+
+    def method_factory(current: ResearchCase[TypedCurve]) -> Method[int]:
+        return Method("constant", lambda inner: 1).bind(current)
+
+    assert_type(case.run(method_factory).data, int)

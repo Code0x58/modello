@@ -84,7 +84,7 @@ The defaults are exact: :math:`Q=3,V=4,\eta=1,\phi=1/2,\gamma=1/6,\sigma=1`.
 ... )
 >>> from sympy import S
 >>> case = participation_case()
->>> result = case.run(analytic_method(case))
+>>> result = case.run(analytic_method)
 >>> result.data.rate, result.data.duration, result.data.cost
 (1/4, 3, 9/4)
 >>> result.report.explain("inventory_risk_integral").verdict
@@ -131,17 +131,17 @@ when there is no deadline. Limits are live model components, and changing a
 component rechecks the same method's requirements.
 
 >>> capped = with_limits(case, cap=S.One/8)
->>> answer = capped.run(analytic_method(capped)).data
+>>> answer = capped.run(analytic_method).data
 >>> answer.rate, answer.duration, answer.active_bounds
 (1/8, 6, ('cap',))
 >>> deadline = with_limits(case, deadline=2)
->>> answer = deadline.run(analytic_method(deadline)).data
+>>> answer = deadline.run(analytic_method).data
 >>> answer.rate, answer.duration, answer.active_bounds
 (3/8, 2, ('deadline',))
 >>> restored = with_limits(capped)
->>> restored.run(analytic_method(restored)).data.rate
+>>> restored.run(analytic_method).data.rate
 1/4
->>> capped.run(analytic_method(capped)).data.rate
+>>> capped.run(analytic_method).data.rate
 1/8
 
 Removal disables the bound and preserves the earlier observations. Cases are
@@ -173,11 +173,11 @@ zero as :math:`\rho\downarrow0`; no admissible finite optimizer attains it.
 A participation cap alone does not repair nonattainment.
 
 >>> neutral = participation_case(gamma=0)
->>> answer = neutral.run(analytic_method(neutral)).data
+>>> answer = neutral.run(analytic_method).data
 >>> answer.status, answer.rate, answer.duration, answer.cost
 ('infimum_not_attained', None, None, 0)
 >>> urgent = participation_case(gamma=0, deadline=2)
->>> urgent.run(analytic_method(urgent)).data.rate
+>>> urgent.run(analytic_method).data.rate
 3/8
 
 ``symbolic_case()`` exposes the unobserved declaration. Parameter assumptions
@@ -203,7 +203,7 @@ analytic shortcut; the independent numerical method remains applicable.
    changed = case.replace("impact", SurchargedPowerImpact).observe(
        impact=SurchargedPowerImpact("surcharge", surcharge=S.One/4)
    )
-   numerical = changed.run(numerical_method(changed))
+   numerical = changed.run(numerical_method)
    # rate approximately 0.2174036176; the earlier case still has rate 1/4.
 
 The numerical method minimizes the actual declared objective in log-rate. It

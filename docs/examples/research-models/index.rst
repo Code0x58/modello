@@ -105,11 +105,11 @@ A repeatable investigation
 Changes to the shared workflow
 ------------------------------
 
-Reviewing these models exposed several reusable requirements. A method that
-captures case-specific expressions now uses ``Method.bind(case)``; a new
-assumption branch must rebuild that factory even when its underlying problem
-snapshot is shared. Removing a case-added requirement cannot waive a method's
-own premise or an automatic denominator/differentiability obligation.
+Run case-specific methods with ``case.run(method_factory)``. The runner builds
+the method from the current branch before checking its premises. Prepared
+methods retain ``Method.bind(case)`` protection against reuse on another branch
+or under different SymPy assumptions. Removing a case-added requirement cannot
+waive a method's own premise or an automatic operation obligation.
 
 Source identities matter beyond a final formula. A false determinant, shifted
 integral, or stale derivative helper can make a valid-looking certificate

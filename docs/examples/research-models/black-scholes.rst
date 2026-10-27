@@ -183,8 +183,8 @@ Branching and replacement
 
    constant = study_case()
    changing = study_case(schedule=True, now=Rational(1, 4))
-   exact = changing.run(symbolic_method(changing))
-   reference = changing.run(valuation_method(changing))
+   exact = changing.run(symbolic_method)
+   reference = changing.run(valuation_method)
    assert all(value == 0 for value in exact.data.residuals.values())
    assert reference.data.call_error < 1e-9  # a numerical comparison
 
@@ -192,15 +192,12 @@ Branching and replacement
    stale = constant.replace("schedule", AffineSchedule).observe(
        schedule=AffineSchedule("schedule", rate_slope=Rational(1, 100)),
    )
-   # stale.run(symbolic_method(stale)) raises ResearchError: its totals disagree.
+   # stale.run(symbolic_method) raises ResearchError: its totals disagree.
 
-Build a fresh method after any change of immutable case context, including
-assumptions, observations, requirements, or component replacement. The
-case-aware factories evaluate the current schedule at ``now``; a method
-retained from another case is rejected even when that case shares the same
-problem object. Both factories use ``Method.bind(case)`` so the shared runner
-rejects a different case before checking the captured requirements. The
-original branch keeps its observations and formulas.
+``case.run(symbolic_method)`` and ``case.run(valuation_method)`` build a fresh
+method for the current branch, evaluating its schedule at ``now``. Prepared
+methods use ``Method.bind(case)`` and reject reuse on a different case, even
+when it shares the same problem object. Earlier branches remain unchanged.
 
 ``dividend_free_method()`` has the additional exact contract
 :math:`C-P=S-Ke^{-R}`. It runs when cumulative dividend yield is zero. Adding the

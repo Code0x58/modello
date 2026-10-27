@@ -548,11 +548,11 @@ def pricing_method(case: ResearchCase[CIRBond]) -> Method[BondPrice]:
 
 
 def price(case: ResearchCase[CIRBond]) -> ResearchResult[BondPrice]:
-    return case.run(pricing_method(case))
+    return case.run(pricing_method)
 
 
 def verify(case: ResearchCase[CIRBond]) -> ResearchResult[BondVerification]:
-    return case.run(verification_method(case))
+    return case.run(verification_method)
 
 
 def strict_positive_boundary_method(case: ResearchCase[CIRBond]) -> Method[BoundaryConclusion]:
@@ -661,12 +661,12 @@ def run_demo(*, numerical: bool = False) -> dict[str, dict[str, object]]:
     for name, case in cases.items():
         row: dict[str, object] = {"case": case, "price": price(case), "verification": verify(case)}
         try:
-            row["boundary"] = case.run(strict_positive_boundary_method(case))
+            row["boundary"] = case.run(strict_positive_boundary_method)
         except ResearchError as error:
             row["boundary_blocked"] = str(error)
             row["boundary_report"] = error.report
         if numerical:
-            row["numerical"] = case.run(numerical_method(case))
+            row["numerical"] = case.run(numerical_method)
         rows[name] = row
     base = cir_case(theta=None)
     bounded = with_feller(base)
@@ -677,7 +677,7 @@ def run_demo(*, numerical: bool = False) -> dict[str, dict[str, object]]:
     for name, case in (("feller_assumption_added", bounded), ("feller_assumption_removed", relaxed)):
         row = {"case": case}
         try:
-            row["boundary"] = case.run(strict_positive_boundary_method(case))
+            row["boundary"] = case.run(strict_positive_boundary_method)
         except ResearchError as error:
             row["boundary_blocked"] = str(error)
             row["boundary_report"] = error.report

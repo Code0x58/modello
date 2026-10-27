@@ -554,7 +554,7 @@ def _integrated_identities() -> tuple[tuple[str, Expr], ...]:
 def symbolic_method(case: ResearchCase[OptionStudy]) -> Method[SymbolicChecks]:
     """Check this branch's actual spot derivatives and deterministic schedule.
 
-    Rebuild the method after any change of immutable case context. The
+    Pass the factory to ``case.run`` to build it for the current branch. The
     integrated PDE audit keeps R, Q and W independent until applying the checked
     schedule chain rule. No derivative tree is checked at module import.
     """
@@ -724,9 +724,9 @@ def run_demo(*, numerical: bool = True) -> dict[str, Any]:
     symbolic: dict[str, ResearchResult[SymbolicChecks]] = {}
     numeric: dict[str, ResearchResult[NumericalCheck]] = {}
     for name, case in (("constant", dividends), ("affine", changing)):
-        symbolic[name] = case.run(symbolic_method(case))
+        symbolic[name] = case.run(symbolic_method)
         if numerical:
-            numeric[name] = case.run(valuation_method(case))
+            numeric[name] = case.run(valuation_method)
     shortcut = no_dividends.run(dividend_free_method())
     try:
         dividends.run(dividend_free_method())
@@ -741,7 +741,7 @@ def run_demo(*, numerical: bool = True) -> dict[str, Any]:
         ("negative_variance", study_case(variance=-Rational(1, 25))),
     ):
         try:
-            case.run(valuation_method(case))
+            case.run(valuation_method)
         except ResearchError as error:
             rejected_interior[name] = {"case": case, "report": error.report}
         else:

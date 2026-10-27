@@ -212,25 +212,30 @@ Methods and theorems
 --------------------
 
 ``Method`` records a computation, its explicit requirements, and the field
-paths it reads. ``case.run(method, **settings)`` checks its premises and relevant
-automatic obligations before calling it. A blocked computation raises
+paths it reads. Pass either a prepared method or a method factory to
+``case.run(method, **settings)``. A factory receives the current case and returns
+a ``Method``; the runner then checks its premises and relevant automatic
+obligations before executing it. Settings go to the computation, not the
+factory. A blocked computation raises
 ``ResearchError`` with ``case`` and ``report``; numerical failures retain the
 same context. Unrelated unresolved claims do not block a method.
 
 >>> from modello.contrib.research import Method
->>> method = Method("symbolic valuation", lambda current: current.expression("value", wrt="wealth"),
-...                 uses=("value",))
->>> positive_risk.run(method).report.explain("value/increasing").verdict
+>>> def valuation(current):
+...     curve = current.expression("value", wrt="wealth")
+...     return Method("symbolic valuation", lambda inner: curve, uses=("value",)).bind(current)
+>>> positive_risk.run(valuation).report.explain("value/increasing").verdict
 'strictly true'
 
-A method factory that captures ``case.expression(...)`` should return
-``Method(...).bind(case)``. Binding retains the entire immutable research
-context, including assumptions, hints, registered rules, and the active SymPy
-global assumption context. A different branch or global context must rebuild
-the factory; sharing the same underlying problem snapshot is not enough.
-``case.run`` rejects a stale bound method before checking its captured
-requirements or executing it. Generic methods that resolve expressions from
-the supplied ``current`` case can remain unbound.
+Use ``case.run(valuation)`` after branching: it builds the method from the
+current case on every call. The model examples use this form, such as
+``case.run(symbolic_method)`` or ``case.run(numerical_method, xatol=1e-10)``.
+
+Factories capturing expressions bind the returned method with
+``Method(...).bind(case)``. If a prepared method is retained for later use,
+``case.run(prepared)`` rejects a different case or SymPy assumption context
+before checking its captured requirements or executing it. Generic methods
+that resolve expressions from the supplied ``current`` case can remain unbound.
 
 ``Theorem`` registers a trusted rule with a conclusion, named premises, source,
 and version. ``with_theorem`` adds it to a case. The engine recursively checks

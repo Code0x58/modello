@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from collections.abc import Callable
+from dataclasses import dataclass, field as dataclass_field, replace
 from functools import cached_property
 from types import MappingProxyType, new_class
 from typing import ClassVar, Generic, TypeVar, cast
@@ -37,6 +38,26 @@ from ._records import (
 )
 
 ModelT = TypeVar("ModelT", bound=Modello)
+
+
+@dataclass
+class _Context:
+    """Resolved work for one case under one set of global assumptions."""
+
+    problem: ModelProblem
+    assumptions: tuple[Basic, ...]
+    parameters: dict[Symbol, Expr] = dataclass_field(default_factory=dict)
+    expressions: dict[tuple[Basic, frozenset[Basic]], Basic] = dataclass_field(default_factory=dict)
+    attempts: dict[tuple, Attempt] = dataclass_field(default_factory=dict)
+
+    @cached_property
+    def law(self):
+        definitions = tuple(item for item in self.problem.constraints if item.kind is ConstraintKind.DEFINITION)
+        return _algebra(definitions, self.problem.templates.values()).resolve.symbolic()
+
+    @cached_property
+    def family(self):
+        return self.problem.solutions().where(*self.assumptions)
 
 
 def _schema(model: type[Modello], path: tuple[str, ...]) -> type[Modello]:
@@ -131,47 +152,27 @@ class ResearchCase(Generic[ModelT]):
     @property
     def family(self):
         """The existing exact solution family, evaluated only on explicit demand."""
-        context = frozenset(global_assumptions)
-        if context not in self._families:
-            self._families[context] = self.problem.solutions().where(*self.assumptions)
-        return self._families[context]
+        return self._context.family
+
+    @property
+    def _context(self) -> _Context:
+        key = frozenset(global_assumptions)
+        if key not in self._contexts:
+            self._contexts[key] = _Context(self.problem, self.assumptions)
+        return self._contexts[key]
 
     @cached_property
-    def _families(self):
+    def _contexts(self) -> dict[frozenset[Basic], _Context]:
         return {}
 
     @property
     def _law(self):
-        context = frozenset(global_assumptions)
-        if context not in self._laws:
-            definitions = tuple(item for item in self.problem.constraints if item.kind is ConstraintKind.DEFINITION)
-            self._laws[context] = _algebra(definitions, self.problem.templates.values()).resolve.symbolic()
-        return self._laws[context]
-
-    @cached_property
-    def _laws(self):
-        return {}
+        """Expand definitions without observations for source-domain guards."""
+        return self._context.law
 
     @cached_property
     def _fields(self):
         return {".".join(field.path): field.symbol for field in self.problem.fields}
-
-    @property
-    def _parameter_values(self):
-        return self._parameters_by_context.setdefault(frozenset(global_assumptions), {})
-
-    @cached_property
-    def _parameters_by_context(self):
-        return {}
-
-    @cached_property
-    def _proof_attempts(self) -> dict[tuple, Attempt]:
-        """Reuse resolved scalar work within this immutable case only."""
-        return {}
-
-    @cached_property
-    def _bound_expressions(self) -> dict[tuple[Basic, frozenset[Basic], frozenset[Basic]], Basic]:
-        return {}
 
     def _reference(self, path: str) -> Expr:
         if path in self._fields:
@@ -220,23 +221,24 @@ class ResearchCase(Generic[ModelT]):
         return mapping
 
     def _bind(self, value: Basic, protected: frozenset[Basic] = frozenset()) -> Basic:
-        key = (value, protected, frozenset(global_assumptions))
-        if key in self._bound_expressions:
-            return self._bound_expressions[key]
-        result = self._law(value, protected)
+        context = self._context
+        key = (value, protected)
+        if key in context.expressions:
+            return context.expressions[key]
+        result = context.law(value, protected)
         if any(item.kind is not ConstraintKind.DEFINITION for item in self.problem.constraints):
             # Bind free parameters individually. Resolving the entire curve
             # through a specialized family would also substitute its coordinate.
             replacements = {}
             for symbol in result.free_symbols - protected:
                 if symbol in self._fields.values():
-                    if symbol not in self._parameter_values:
-                        self._parameter_values[symbol] = self.family.expression(symbol)
-                    resolved = self._parameter_values[symbol]
+                    if symbol not in context.parameters:
+                        context.parameters[symbol] = context.family.expression(symbol)
+                    resolved = context.parameters[symbol]
                     if resolved != symbol:
                         replacements[symbol] = resolved
             result = _substitute(result, replacements)
-        self._bound_expressions[key] = result
+        context.expressions[key] = result
         return result
 
     def expression(self, subject: str | Basic, *, wrt: str | Symbol | None = None) -> Expr:
@@ -600,7 +602,6 @@ class ResearchCase(Generic[ModelT]):
             issues.append(observation_issue)
         issues.extend(self.changes)
         active, steps = set(), [0]
-        attempts = self._proof_attempts
 
         def prove(key, requirement, prefix):
             claim = requirement.claim
@@ -701,8 +702,8 @@ class ResearchCase(Generic[ModelT]):
                 resolved.at,
                 assumptions,
                 hint,
-                frozenset(global_assumptions),
             )
+            attempts = self._context.attempts
             result = attempts.get(attempt_key)
             if result is None:
                 try:
@@ -753,7 +754,20 @@ class ResearchCase(Generic[ModelT]):
             raise ModelValidationError("Sampling needs finite real values and bound parameters")
         return Experiment(expression, variable, samples, values)
 
-    def run(self, method: Method[ResultT], **settings) -> ResearchResult[ResultT]:
+    def run(
+        self,
+        method: Method[ResultT] | Callable[[ResearchCase[ModelT]], Method[ResultT]],
+        **settings,
+    ) -> ResearchResult[ResultT]:
+        """Run a prepared method or build one for this case before checking it."""
+        if not isinstance(method, Method):
+            if not callable(method):
+                raise ModelDefinitionError("run needs a Method or a case-to-Method factory")
+            method = method(self)
+            if not isinstance(method, Method):
+                raise ModelDefinitionError(
+                    "A method factory must return a Method; pass its computation as Method.execute"
+                )
         if method.bound_case is not None and (
             method.bound_case is not self or method.bound_assumptions != frozenset(global_assumptions)
         ):

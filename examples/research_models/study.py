@@ -33,9 +33,9 @@ def _black_scholes(*, numerical: bool, compact: bool) -> Study:
     variants = {}
     if compact:
         case = model.study_case(schedule=True, now=Rational(1, 4))
-        results = {"identities": Computation(case.run(model.symbolic_method(case)))}
+        results = {"identities": Computation(case.run(model.symbolic_method))}
         if numerical:
-            results["quadrature"] = Computation(case.run(model.valuation_method(case)), "numerical observation")
+            results["quadrature"] = Computation(case.run(model.valuation_method), "numerical observation")
         _, blocked = _attempt(lambda: case.run(model.dividend_free_method()))
         variants["affine_with_dividends"] = Variant(
             case, results, {"dividend_free_shortcut": blocked} if blocked else {}
@@ -86,9 +86,9 @@ def _participation(*, numerical: bool, compact: bool) -> Study:
 
     if compact:
         case = model.participation_case(cap=S.Half, deadline=2)
-        rows: dict[str, dict] = {"capped_deadline": {"case": case, "analytic": case.run(model.analytic_method(case))}}
+        rows: dict[str, dict] = {"capped_deadline": {"case": case, "analytic": case.run(model.analytic_method)}}
         if numerical:
-            rows["capped_deadline"]["numerical"] = case.run(model.numerical_method(case))
+            rows["capped_deadline"]["numerical"] = case.run(model.numerical_method)
     else:
         rows = model.compare(numerical=numerical)
     variants = {}
@@ -165,14 +165,14 @@ def _cir(*, numerical: bool, compact: bool) -> Study:
         case = model.cir_case(sigma=Rational(2, 5))
         row = {"case": case, "price": model.price(case), "verification": model.verify(case)}
         result, blocked = _attempt(
-            lambda: case.run(model.strict_positive_boundary_method(case)), kind="trusted stochastic rule"
+            lambda: case.run(model.strict_positive_boundary_method), kind="trusted stochastic rule"
         )
         if result:
             row["boundary"] = result.result
         if blocked:
             row["boundary_report"], row["boundary_blocked"] = blocked.report, blocked.message
         if numerical:
-            row["numerical"] = case.run(model.numerical_method(case))
+            row["numerical"] = case.run(model.numerical_method)
         rows = {"feller_not_satisfied": row}
     else:
         rows = model.run_demo(numerical=numerical)
@@ -214,13 +214,13 @@ def _perpetual(*, numerical: bool, compact: bool) -> Study:
     variants = {}
     if compact:
         case = model.perpetual_put_case()
-        results = {"scalar_certificate": Computation(case.run(model.algebra_method(case)))}
+        results = {"scalar_certificate": Computation(case.run(model.algebra_method))}
         if numerical:
-            results["barrier_search"] = Computation(case.run(model.numerical_method(case)), "numerical observation")
+            results["barrier_search"] = Computation(case.run(model.numerical_method), "numerical observation")
         rejected = {}
         for name, method in (
             ("global_c2", model.c2_consumer_method()),
-            ("untrusted_stopping", model.verification_method(case)),
+            ("untrusted_stopping", model.verification_method),
         ):
             _, blocked = _attempt(lambda: case.run(method))
             if blocked:

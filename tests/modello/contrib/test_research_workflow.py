@@ -178,6 +178,53 @@ def test_case_bound_methods_reject_assumption_only_branches_before_execution():
     assert changed.run(rebuilt).data == 2
 
 
+def test_method_factories_use_the_current_case_and_forward_execution_settings():
+    class Parameter(ResearchModel):
+        a = InstanceDummy("a", real=True)
+
+    calls = []
+
+    def factory(current):
+        value = current.expression("a")
+        requirement = Requirement(positive("a", name="positive"), "calculation", "A positive parameter is needed.")
+
+        def execute(inner, *, scale=1):
+            calls.append(inner)
+            return value * scale
+
+        return Method("calculation", execute, (requirement,)).bind(current)
+
+    base = ResearchCase.for_model(Parameter)
+    first, second = base.observe(a=2), base.observe(a=3)
+    assert first.run(factory, scale=4).data == 8
+    assert second.run(factory).data == 3
+    assert calls == [first, second]
+    negative = base.observe(a=-1)
+    with pytest.raises(ResearchError) as failure:
+        negative.run(factory)
+    assert failure.value.case is negative
+    assert failure.value.report.explain("positive").verdict == "strictly false"
+    assert calls == [first, second]
+
+
+def test_a_factory_cannot_bypass_a_prepared_methods_context_guard():
+    class Parameter(ResearchModel):
+        a = InstanceDummy("a", real=True)
+
+    case = ResearchCase.for_model(Parameter).observe(a=2)
+    method = Method("captured", lambda current: 2).bind(case)
+    changed = case.assume(case.symbols.a > 0)
+    with pytest.raises(ResearchError, match="different research case") as failure:
+        changed.run(lambda current: method)
+    assert failure.value.case is changed
+
+
+def test_a_factory_must_return_a_method_instead_of_a_computation_result():
+    case = ResearchCase.for_model(ResearchModel)
+    with pytest.raises(ModelDefinitionError, match="factory must return a Method"):
+        case.run(lambda current: 1)  # type: ignore[arg-type, return-value]
+
+
 def test_audits_preserve_the_requirement_and_formula_before_observations():
     class Curve(ResearchModel):
         x = Coordinate("x", real=True)

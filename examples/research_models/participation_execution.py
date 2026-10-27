@@ -728,7 +728,7 @@ def compare(*, numerical: bool = False) -> dict[str, dict[str, object]]:
     results: dict[str, dict[str, object]] = {}
     for name, case in cases.items():
         row: dict[str, object] = {"case": case}
-        for key, method in (("analytic", analytic_method(case)), ("numerical", numerical_method(case))):
+        for key, method in (("analytic", analytic_method), ("numerical", numerical_method)):
             if key == "numerical" and not numerical:
                 continue
             try:

@@ -587,26 +587,26 @@ def run_demo(*, numerical: bool = False) -> dict[str, Any]:
     trusted = trust_stopping_theorem(case)
     results: dict[str, Any] = {
         "case": case,
-        "algebra": case.run(algebra_method(case)),
+        "algebra": case.run(algebra_method),
         "trusted_case": trusted,
-        "verification": trusted.run(verification_method(trusted)),
+        "verification": trusted.run(verification_method),
     }
     for name, current, method in (
         ("global_c2", case, c2_consumer_method()),
-        ("untrusted_verification", case, verification_method(case)),
-        ("zero_rate", perpetual_put_case(rate=0), None),
+        ("untrusted_verification", case, verification_method),
+        ("zero_rate", perpetual_put_case(rate=0), algebra_method),
     ):
         try:
-            current.run(method if method is not None else algebra_method(current))
+            current.run(method)
         except ResearchError as error:
             results[f"blocked_{name}"] = {"case": current, "report": error.report, "message": str(error)}
         else:
             raise RuntimeError(f"The restricted consumer unexpectedly accepted {name}")
     if numerical:
-        results["numerical"] = case.run(numerical_method(case))
+        results["numerical"] = case.run(numerical_method)
         exercising = perpetual_put_case(initial_spot=50)
         results["exercise_case"] = exercising
-        results["numerical_exercise"] = exercising.run(numerical_method(exercising))
+        results["numerical_exercise"] = exercising.run(numerical_method)
     return results
 
 

@@ -89,7 +89,7 @@ justify that reduction. This avoids a large native mixed-derivative
 declaration and preserves the distinction between a scalar identity and a
 stochastic valuation theorem.
 
->>> verification = case.run(verification_method(case))
+>>> verification = case.run(verification_method)
 >>> verification.data.riccati_b, verification.data.riccati_log_a
 (0, 0)
 >>> verification.data.generator, verification.data.terminal_price
@@ -127,7 +127,7 @@ True
 >>> price(weak).report.explain("affine_valuation").verdict
 'strictly true'
 >>> try:
-...     weak.run(strict_positive_boundary_method(weak))
+...     weak.run(strict_positive_boundary_method)
 ... except ResearchError as error:
 ...     boundary_report = error.report
 >>> boundary_report.explain("unattainable_zero").verdict
@@ -145,7 +145,7 @@ visible:
 >>> from examples.research_models.cir_bond import with_feller
 >>> earlier = cir_case(theta=None)
 >>> bounded = with_feller(earlier)
->>> bounded.run(strict_positive_boundary_method(bounded)).data.kind
+>>> bounded.run(strict_positive_boundary_method).data.kind
 'trusted stochastic boundary rule'
 >>> feller_condition = bounded.assumptions[-1]
 >>> relaxed = bounded.without_assumptions(
@@ -155,7 +155,7 @@ visible:
 >>> "Removed assumption" in relaxed.changes[-1]
 True
 >>> try:
-...     relaxed.run(strict_positive_boundary_method(relaxed))
+...     relaxed.run(strict_positive_boundary_method)
 ... except ResearchError as error:
 ...     relaxed_report = error.report
 >>> relaxed_report.explain("unattainable_zero").verdict
@@ -167,9 +167,9 @@ The earlier and bounded cases retain their original assumptions. The relaxed
 case records the removal while preserving the positive parameter and
 nonnegative initial-state domains. Pricing and nonnegative-path evidence
 survive; the stronger boundary conclusion again needs its sufficient condition.
-Each case-aware method factory uses ``Method.bind(case)``. Rebuild a method
-after changing assumptions, observations, or any other part of its immutable
-case context.
+Passing a factory to ``case.run`` prepares it for the current branch. Its
+``Method.bind(case)`` guard also protects a prepared method retained for later
+use against changes to the case or SymPy assumptions.
 ``run_demo()`` returns these raw cases, results, and blocked-method reports
 alongside the two fully observed parameter regimes, zero-rate valuation, and
 the terminal-payment case.

@@ -50,7 +50,7 @@ The defaults are :math:`r=1/25,\sigma=1/5,K=100,S_0=100`:
 ...     trust_stopping_theorem, verification_method,
 ... )
 >>> case = perpetual_put_case()
->>> algebra = case.run(algebra_method(case))
+>>> algebra = case.run(algebra_method)
 >>> algebra.data.beta, algebra.data.boundary, algebra.data.value_at_initial_spot
 (-2, 200/3, 400/27)
 >>> algebra.report.explain("continuation_pricing_generator").verdict
@@ -131,7 +131,7 @@ A PDE residual alone does not prove optimal stopping. The ordinary case has
 no rule establishing ``optimal_stopping_under_GBM``. Adopt it explicitly:
 
 >>> trusted = trust_stopping_theorem(case)
->>> verification = trusted.run(verification_method(trusted))
+>>> verification = trusted.run(verification_method)
 >>> verification.report.explain("optimal_stopping_under_GBM").kind
 'theorem'
 
@@ -169,8 +169,8 @@ zero-rate price by substituting into a formula whose normalization requires
 :math:`B>0`. Nonzero dividends likewise invalidate this exponent and are
 blocked by the exact zero-dividend and generator checks.
 
-Cases remain immutable, and a method built for a particular case must be
-rebuilt after branching. Observe ``initial_spot`` to value an initial state;
+``case.run(algebra_method)`` builds the method for the current immutable branch.
+Observe ``initial_spot`` to value an initial state;
 observations or assumptions fixing the normalized curve itself are rejected
 because verification traverses both regions.
 
