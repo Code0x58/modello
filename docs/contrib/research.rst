@@ -5,7 +5,9 @@ An optimization method consumes more than component values: it may need a
 function to be monotone, convex, or differentiable on a particular domain.
 ``modello.contrib.research`` records those obligations, checks supported scalar
 claims, and explains which conclusions depend on them. Numerical observations
-remain separate from mathematical evidence.
+remain separate from mathematical evidence. The :doc:`model collection
+<../examples/research-models/index>` applies the same workflow to pricing,
+execution, and allocation with changing restrictions.
 
 The symbolic API requires only SymPy. Install optional numerical and plotting
 dependencies for the complete example:
@@ -90,6 +92,25 @@ still quantifies inventory over its explicit domain. A claim's remaining free
 symbols are parameters. Conditions on them are retained rather than silently
 assumed.
 
+Explicit assumptions can be removed on a new branch, with a recorded reason:
+
+>>> relaxed = positive_risk.without_assumptions(
+...     case.symbols.gamma > 0, reason="Compare zero and negative risk aversion.")
+>>> relaxed.check().explain("value/increasing").verdict
+'conditionally true'
+>>> positive_risk.check().explain("value/increasing").verdict
+'strictly true'
+
+``without_assumptions`` removes only explicitly recorded predicates. To change
+an intrinsic symbol domain or an observation, change the declaration or branch
+before that observation. ``without_requirements(*ids, reason=...)`` removes
+requirements added with ``case.require`` and records their retirement in the
+report. Declaration annotations and automatic operation obligations are changed
+at their source. Removing an exploratory requirement never removes a method's
+own contract; the method checks that requirement again when it runs. Identical
+requirement records shared by a case and a method reuse one check, while
+conflicting uses of an ID remain definition errors.
+
 Check a proposed proof
 ----------------------
 
@@ -121,6 +142,12 @@ theorem premises. Expected forms, target bounds, and checked hints retain their
 specialized values in the audit and its fingerprint. ``to_json()`` and
 ``to_html()`` export the report.
 
+Exports retain the declared subject and the expected formula before parameter
+observations, alongside the specialized expression actually checked. This
+keeps a successful equality readable even when both evaluated sides become
+the same number. The JSON remains descriptive; it cannot reconstruct a case
+or execute a stored formula.
+
 Property truth and proof attempts
 ---------------------------------
 
@@ -131,6 +158,13 @@ claim that condition is necessary unless separately established.
 missing proof, unsupported operation, exhausted attempt budget, or inapplicable
 theorem. Contradictory assumptions do not produce successful proofs.
 
+Checks also bind active SymPy ``assuming(...)`` predicates through observations
+and record them in their report, checking the combined premises for consistency.
+Cached expression bindings, solution families, and proof attempts remain scoped
+to that global assumption context. Leaving the context checks the original
+branch again without retaining context-dependent simplifications. Use explicit
+``case.assume(...)`` branches for premises that should persist in the study.
+
 The positive-derivative test is sufficient for strict increase, but it is not
 its definition. The polynomial rule can establish strict increase of
 :math:`x^3` despite its zero derivative at zero. Likewise, :math:`|x|` is convex
@@ -138,6 +172,10 @@ and fails differentiability at zero. Failed C2 certificates alone do not refute
 convexity or twice differentiability. Discontinuity alone does not refute
 positivity, nonzero values, or an identity. Tail-limit claims inspect eventual
 behavior rather than requiring regularity at every finite point.
+
+The curvature characterization of convexity applies on real intervals with
+nonempty interior. A singleton is checked by its finite real value instead;
+other discrete or disconnected domains remain unsupported by that rule.
 
 Supported proofs cover scalar real functions on real intervals, sign and
 polynomial arguments, supported continuity domains, limits, and checked
@@ -150,6 +188,25 @@ and evaluation point. They do not imply convexity or continuity of the
 derivatives. Divisions introduce definedness obligations before research-layer
 cancellation. Inspection sees the expressions SymPy and Modello retained; it
 cannot recover syntax already simplified away before declaration.
+
+Automatic obligations use a coordinate's declared domain: a positive
+coordinate is checked on :math:`(0,\infty)`, while a nonnegative coordinate
+still includes zero and retains a denominator failure there. Explicit claims
+keep their own requested domains. Native ``Subs`` and ``Derivative`` expressions
+on either side of an identity are evaluated after checking derivative scopes;
+undefined evaluation points remain failures.
+
+A nonzero real coordinate keeps zero excluded even when its sign is unknown.
+An inner derivative cannot borrow an unrelated outer coordinate's domain.
+For a supported two-branch piecewise curve with one constant interior join,
+the checker compares actual assigned values and finite one-sided derivatives
+through order two. Unsupported joins stay unresolved; an included interval
+endpoint with only one active side does not establish ordinary differentiability.
+
+Use deferred ``Derivative(named_quantity, coordinate)`` inside declarations.
+A named quantity acts as a symbol while the class body is collected, so eager
+``diff`` can treat it as independent of the coordinate. Differentiate a resolved
+``case.expression`` when performing a calculation outside the declaration.
 
 Methods and theorems
 --------------------
@@ -165,6 +222,15 @@ same context. Unrelated unresolved claims do not block a method.
 ...                 uses=("value",))
 >>> positive_risk.run(method).report.explain("value/increasing").verdict
 'strictly true'
+
+A method factory that captures ``case.expression(...)`` should return
+``Method(...).bind(case)``. Binding retains the entire immutable research
+context, including assumptions, hints, registered rules, and the active SymPy
+global assumption context. A different branch or global context must rebuild
+the factory; sharing the same underlying problem snapshot is not enough.
+``case.run`` rejects a stale bound method before checking its captured
+requirements or executing it. Generic methods that resolve expressions from
+the supplied ``current`` case can remain unbound.
 
 ``Theorem`` registers a trusted rule with a conclusion, named premises, source,
 and version. ``with_theorem`` adds it to a case. The engine recursively checks

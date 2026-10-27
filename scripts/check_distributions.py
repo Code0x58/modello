@@ -173,6 +173,10 @@ class ResearchCurve(ResearchModel):
 assert ResearchCurve.definition_report().checks[0].verdict == "strictly true"
 assert ResearchCase.for_model(ResearchCurve).check().to_dict()["checks"]
 assert not {"numpy", "scipy", "matplotlib"} & sys.modules.keys()
+import importlib
+for name in ("black_scholes", "participation_execution", "markowitz", "cir_bond", "perpetual_put"):
+    importlib.import_module("examples.research_models." + name)
+assert not {"numpy", "scipy", "matplotlib"} & sys.modules.keys()
 vector_snapshot = Explorer(window).snapshot()
 assert vector_snapshot["vectors"][0]["shape"] == [3]
 assert "mover" in vector_snapshot["vectors"][0]["symbol_mathml"]
@@ -296,6 +300,19 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
     assert research_report["cases"]["exponential"]["convergence"]["matrix_exponential_theta_error"] < 1e-6
     assert (study / "figures" / "quotes.svg").is_file()
     print("Validated the installed research study and its optional numerical dependencies", flush=True)
+    collection = directory / "research-models"
+    subprocess.run(
+        [str(python), "-I", "-m", "examples.research_models", "--compact", "--output", str(collection)],
+        cwd=directory,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    models = json.loads((collection / "collection.json").read_text())["studies"]
+    assert set(models) == {"black-scholes", "participation-execution", "markowitz", "cir-bond", "perpetual-put"}
+    for name in models:
+        assert (collection / name / "figures" / "overview.svg").is_file()
+        assert (collection / name / "results.csv").is_file()
+    print("Validated all five installed model studies and their evidence artifacts", flush=True)
     install("gui")
     subprocess.run([str(python), "-I", "-c", GUI_SMOKE_TEST], cwd=directory, check=True)
     typing_checks = []

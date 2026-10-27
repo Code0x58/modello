@@ -13,6 +13,7 @@ from sympy import (
     Dummy,
     Eq,
     Expr,
+    FiniteSet,
     Interval,
     Limit,
     Mul,
@@ -37,6 +38,7 @@ from sympy import (
     simplify,
     sympify,
 )
+from sympy.assumptions import AssumptionsContext
 from sympy.calculus.util import continuous_domain
 from sympy.core.function import AppliedUndef
 from sympy.logic.inference import satisfiable
@@ -44,6 +46,7 @@ from sympy.polys.polyerrors import PolynomialError
 
 from modello._operators import _defined_part
 
+from ._piecewise import piecewise_regular
 from ._records import Claim, ProofHint
 
 
@@ -52,6 +55,22 @@ class Attempt:
     condition: Basic | None
     steps: tuple[str, ...]
     witness: tuple[tuple[Symbol, Expr], ...] = ()
+
+
+def coordinate_domain(variable: Symbol | None) -> Set:
+    """The real domain already guaranteed by a coordinate declaration."""
+    if variable is None:
+        return S.Reals
+    domain = S.Reals
+    if variable.is_positive is True:
+        domain = Interval.open(0, S.Infinity)
+    elif variable.is_negative is True:
+        domain = Interval.open(S.NegativeInfinity, 0)
+    elif variable.is_nonnegative is True:
+        domain = Interval(0, S.Infinity)
+    elif variable.is_nonpositive is True:
+        domain = Interval(S.NegativeInfinity, 0)
+    return domain - FiniteSet(0) if variable.is_nonzero is True else domain
 
 
 def conjunction(*conditions: Basic | None) -> Basic | None:
@@ -95,6 +114,10 @@ def consistency(assumptions: tuple[Basic, ...]) -> bool | None:
     if combined is S.true:
         return True
     try:
+        # Do not let a global predicate certify itself before its conjunction
+        # with observed or explicit premises has been checked.
+        if ask(combined, context=AssumptionsContext()) is False:
+            return False
         result = satisfiable(combined, use_lra_theory=True)
         return False if result is False else True
     except (TypeError, ValueError, NotImplementedError, AssertionError):
@@ -155,6 +178,10 @@ def _regular(expression: Expr, variable: Symbol | None, domain: Set, order: int)
                 validity = S.true
             except (NotImplementedError, TypeError, ValueError):
                 return Attempt(None, ("The original expression's domain guard is unresolved.",))
+    if isinstance(expression, Piecewise):
+        joined = piecewise_regular(expression, variable, domain, order, _regular)
+        if joined is not None:
+            return Attempt(conjunction(validity, joined.condition), joined.steps, joined.witness)
     guard = _parameter_guards(expression, variable)
     if guard is None:
         return Attempt(None, ("Parameter-dependent definedness is unresolved.",))
@@ -209,6 +236,15 @@ def _defined(expression: Expr, variable: Symbol | None, domain: Set) -> Attempt:
 def _differentiable(expression, variable, domain, order, point=None) -> Attempt:
     """Use Cn as a sufficient certificate and keep local questions local."""
     if point is not None:
+        if isinstance(expression, Piecewise):
+            joined = piecewise_regular(expression, variable, domain, order, _regular)
+            if joined is not None:
+                if joined.condition is not None and joined.condition is not S.false:
+                    if domain.interior.contains(point) is S.true:
+                        return Attempt(joined.condition, joined.steps)
+                elif joined.failure_order is not None and joined.failure_order <= order:
+                    if (variable, point) in joined.witness:
+                        return Attempt(S.false, joined.steps, joined.witness)
         if expression == Abs(variable):
             return Attempt(
                 Ne(point, 0),
@@ -241,6 +277,11 @@ def _differentiable(expression, variable, domain, order, point=None) -> Attempt:
     regular = _regular(expression, variable, domain, order)
     if regular.condition is not None and regular.condition is not S.false:
         return regular
+    if isinstance(expression, Piecewise):
+        joined = piecewise_regular(expression, variable, domain, order, _regular)
+        if joined is not None and joined.condition is S.false and joined.failure_order is not None:
+            if joined.failure_order <= order:
+                return Attempt(S.false, joined.steps, joined.witness)
     defined = _defined(expression, variable, domain)
     if defined.condition is S.false:
         return defined
@@ -357,6 +398,21 @@ def _monotone(expression, variable, domain) -> Attempt:
 
 
 def _convex(expression, variable, domain) -> Attempt:
+    if variable is None:
+        return Attempt(None, ("Convexity currently requires one coordinate and a real interval or singleton.",))
+    if isinstance(domain, FiniteSet) and len(domain) == 1:
+        value = expression.subs(variable, next(iter(domain)))
+        defined = _defined(value, None, S.Reals)
+        if defined.condition is S.false:
+            return defined
+        if value.is_real is True:
+            return Attempt(
+                defined.condition,
+                (*defined.steps, "Every finite real-valued function on a singleton is convex."),
+            )
+        return Attempt(None, (*defined.steps, "Singleton convexity needs a finite real value at its point."))
+    if not isinstance(domain, Interval) and domain != S.Reals:
+        return Attempt(None, ("The curvature characterization requires a real interval with nonempty interior.",))
     if expression.is_real is not True:
         defined = _defined(expression, variable, domain)
         return (
@@ -409,15 +465,7 @@ def attempt(
     hint: ProofHint | None,
 ) -> Attempt:
     if variable is not None:
-        declared = S.Reals
-        if variable.is_positive is True:
-            declared = Interval.open(0, S.Infinity)
-        elif variable.is_negative is True:
-            declared = Interval.open(S.NegativeInfinity, 0)
-        elif variable.is_nonnegative is True:
-            declared = Interval(0, S.Infinity)
-        elif variable.is_nonpositive is True:
-            declared = Interval(S.NegativeInfinity, 0)
+        declared = coordinate_domain(variable)
         if claim.domain.is_subset(declared) is not True:
             return Attempt(None, ("The requested domain exceeds the coordinate's declared domain.",))
         if claim.at is not None and claim.domain.contains(claim.at) is not S.true:
@@ -440,18 +488,43 @@ def attempt(
             if len(variables) != 1:
                 yield Attempt(None, ("Mixed derivative regularity remains unresolved.",))
                 return
-            variable = variables[0]
-            curve = value.expr.subs({symbol: point for symbol, point in points.items() if symbol != variable})
-            yield _differentiable(curve, variable, claim.domain, len(value.variables), points.get(variable))
+            inner = variables[0]
+            curve = value.expr.subs({symbol: point for symbol, point in points.items() if symbol != inner})
+            domain = claim.domain if inner == variable else coordinate_domain(inner)
+            regularity = _differentiable(curve, inner, domain, len(value.variables), points.get(inner))
+            if inner != variable and inner not in points and regularity.condition in (None, S.false):
+                yield Attempt(
+                    None,
+                    (
+                        "An inner derivative needs its own coordinate domain or evaluation scope; "
+                        "the outer domain does not apply.",
+                    ),
+                )
+            else:
+                yield regularity
         for arg in value.args:
             yield from derivatives(arg, points)
 
-    for regularity in derivatives(expression, {}):
-        if regularity.condition is None or regularity.condition is S.false:
-            return regularity
-        derivative_guards.append(regularity.condition)
-    if expression.has(Derivative):
-        expression = expression.doit()
+    for value in (expression, expected):
+        if value is None:
+            continue
+        for regularity in derivatives(value, {}):
+            if regularity.condition is None or regularity.condition is S.false:
+                return regularity
+            derivative_guards.append(regularity.condition)
+
+    def evaluate_native(value):
+        if value is None:
+            return None
+        return value.replace(
+            lambda part: isinstance(part, (Derivative, Subs)),
+            lambda part: part.doit(),
+        )
+
+    # Native substitutions are evaluated only after checking the derivatives
+    # inside their original local scopes. Other operators remain unevaluated.
+    expression = evaluate_native(expression)
+    expected = evaluate_native(expected)
     specialized, reverse = _specialize(expression, variable, assumptions)
     specialized_expected = expected
     forward = {old: new for new, old in reverse.items()}
@@ -512,8 +585,15 @@ def attempt(
                 _defined(expression, variable, claim.domain).condition,
                 _defined(specialized_expected, variable, claim.domain).condition,
             )
-            if difference == 0:
+            if guards is S.false:
+                result = Attempt(S.false, ("At least one side is undefined on the requested domain.",))
+            elif difference == 0:
                 result = Attempt(guards, ("The expressions agree identically under the retained domain guards.",))
+            elif variable is None or variable not in difference.free_symbols:
+                result = Attempt(
+                    conjunction(guards, Eq(difference, 0)),
+                    ("The coordinate-independent equality is checked under the retained domain guards.",),
+                )
             else:
                 witness: tuple[tuple[Symbol, Expr], ...] = ()
                 for point in _points(claim.domain) if variable is not None else ():

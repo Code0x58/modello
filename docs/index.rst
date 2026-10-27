@@ -89,6 +89,7 @@ the API and diagnostic guarantees are separate reference material.
 
    examples/applications/index
    examples/market-making/index
+   examples/research-models/index
    examples/portfolio/index
    examples/reconciliation/index
    examples/solution_families/index

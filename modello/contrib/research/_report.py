@@ -25,6 +25,7 @@ def _text(report, value):
 
 def _evidence(report: ResearchReport, evidence: Evidence):
     claim = evidence.resolved_claim or evidence.requirement.claim
+    declared = evidence.requirement.claim
     labels = {str(symbol): label for symbol, label in report.labels}
 
     def step_text(value):
@@ -36,6 +37,10 @@ def _evidence(report: ResearchReport, evidence: Evidence):
         "id": evidence.id,
         "property": claim.property,
         "verdict": evidence.verdict,
+        "declared_subject": _text(report, declared.subject),
+        "declared_coordinate": _text(report, declared.wrt),
+        "declared_domain": _text(report, declared.domain),
+        "expected_template": _text(report, evidence.expected_template),
         "subject": str(claim.subject) if isinstance(claim.subject, str) else _text(report, claim.subject),
         "expression": _text(report, evidence.expression),
         "coordinate": _text(report, evidence.coordinate),
@@ -98,12 +103,15 @@ def report_html(report: ResearchReport, title: str):
             f"<article><h{level}>{escape(item['id'])}</h{level}>"
             f"<p><strong>{escape(item['verdict'])}</strong> · {escape(item['kind'])}</p>"
             f"<p>{escape(item['reason'])} Used by: <code>{escape(item['consumer'])}</code>.</p>"
+            f"<p>Declared subject: <code>{escape(str(item['declared_subject']))}</code>; "
+            f"property: {escape(item['property'])}.</p>"
             f"<p>Expression: <code>{escape(item['expression'])}</code></p>"
             f"<p>Coordinate: {escape(str(item['coordinate']))}; domain: {escape(item['domain'])}.</p>"
             f"<p>Condition ({escape(item['condition_strength'])}): <code>{escape(str(item['condition']))}</code></p>"
             f"<p>Expected form: <code>{escape(str(item['expected']))}</code>; "
             f"target bound: <code>{escape(str(item['target_bound']))}</code>; "
             f"checked upper bound: <code>{escape(str(item['checked_upper_bound']))}</code>.</p>"
+            f"<p>Expected template: <code>{escape(str(item['expected_template']))}</code>.</p>"
             f"<ol>{steps}</ol><ul>{witness}</ul><p>{source_link}</p>{premises}</article>"
         )
 

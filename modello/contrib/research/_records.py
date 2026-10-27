@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, TypeVar
 
 from sympy import Basic, Expr, S, Set, Symbol, sympify
+from sympy.assumptions import global_assumptions
 
 from modello import Annotation
 from modello.errors import ModelDefinitionError, ModelValidationError
@@ -180,6 +181,7 @@ class Evidence:
     premises: tuple[Evidence, ...] = ()
     resolved_claim: Claim | None = None
     hint: Expr | None = None
+    expected_template: Basic | None = None
 
     @property
     def verdict(self) -> Verdict:
@@ -262,6 +264,19 @@ class Method(Generic[ResultT]):
     execute: Callable[..., ResultT]
     requirements: tuple[Requirement, ...] = ()
     uses: tuple[str, ...] = ()
+    bound_case: ResearchCase | None = field(default=None, repr=False, compare=False)
+    bound_assumptions: frozenset[Basic] | None = field(default=None, repr=False, compare=False)
+
+    def bind(self, case: ResearchCase) -> Method[ResultT]:
+        """Bind case-specific expressions to their full immutable context.
+
+        Rebuild a bound method after branching. Rebinding stale requirements
+        would not recompute the expressions that captured the earlier case.
+        """
+        context = frozenset(global_assumptions)
+        if self.bound_case is not None and (self.bound_case is not case or self.bound_assumptions != context):
+            raise ModelDefinitionError("Rebuild a case-bound method after changing its case or SymPy assumptions")
+        return self if self.bound_case is case else replace(self, bound_case=case, bound_assumptions=context)
 
 
 @dataclass(frozen=True)

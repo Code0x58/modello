@@ -7,17 +7,18 @@ from functools import cached_property
 from types import MappingProxyType, new_class
 from typing import ClassVar, Generic, TypeVar, cast
 
-from sympy import Basic, Derivative, Expr, S, Subs, Symbol, sympify
+from sympy import Basic, Derivative, Expr, S, Subs, Symbol, default_sort_key, sympify
+from sympy.assumptions import global_assumptions
 from sympy.logic.boolalg import Boolean
 from sympy.polys.polyerrors import PolynomialError
 
 from modello import ConstraintKind, Coordinate, Modello, component, inspect_model
-from modello._evaluation import _rebind
+from modello._evaluation import _rebind, _substitute
 from modello._problem import ModelConstraint, _algebra
 from modello.diagnostics import ModelProblem
 from modello.errors import ModelDefinitionError, ModelInputError, ModelValidationError
 
-from ._proof import attempt, conjunction, consistency
+from ._proof import Attempt, attempt, conjunction, consistency, coordinate_domain
 from ._records import (
     Claim,
     Evidence,
@@ -127,22 +128,49 @@ class ResearchCase(Generic[ModelT]):
     def symbols(self) -> ModelT:
         return self.problem.symbols
 
-    @cached_property
+    @property
     def family(self):
         """The existing exact solution family, evaluated only on explicit demand."""
-        return self.problem.solutions().where(*self.assumptions)
+        context = frozenset(global_assumptions)
+        if context not in self._families:
+            self._families[context] = self.problem.solutions().where(*self.assumptions)
+        return self._families[context]
 
     @cached_property
+    def _families(self):
+        return {}
+
+    @property
     def _law(self):
-        definitions = tuple(item for item in self.problem.constraints if item.kind is ConstraintKind.DEFINITION)
-        return _algebra(definitions, self.problem.templates.values()).resolve.symbolic()
+        context = frozenset(global_assumptions)
+        if context not in self._laws:
+            definitions = tuple(item for item in self.problem.constraints if item.kind is ConstraintKind.DEFINITION)
+            self._laws[context] = _algebra(definitions, self.problem.templates.values()).resolve.symbolic()
+        return self._laws[context]
+
+    @cached_property
+    def _laws(self):
+        return {}
 
     @cached_property
     def _fields(self):
         return {".".join(field.path): field.symbol for field in self.problem.fields}
 
-    @cached_property
+    @property
     def _parameter_values(self):
+        return self._parameters_by_context.setdefault(frozenset(global_assumptions), {})
+
+    @cached_property
+    def _parameters_by_context(self):
+        return {}
+
+    @cached_property
+    def _proof_attempts(self) -> dict[tuple, Attempt]:
+        """Reuse resolved scalar work within this immutable case only."""
+        return {}
+
+    @cached_property
+    def _bound_expressions(self) -> dict[tuple[Basic, frozenset[Basic], frozenset[Basic]], Basic]:
         return {}
 
     def _reference(self, path: str) -> Expr:
@@ -192,6 +220,9 @@ class ResearchCase(Generic[ModelT]):
         return mapping
 
     def _bind(self, value: Basic, protected: frozenset[Basic] = frozenset()) -> Basic:
+        key = (value, protected, frozenset(global_assumptions))
+        if key in self._bound_expressions:
+            return self._bound_expressions[key]
         result = self._law(value, protected)
         if any(item.kind is not ConstraintKind.DEFINITION for item in self.problem.constraints):
             # Bind free parameters individually. Resolving the entire curve
@@ -201,8 +232,11 @@ class ResearchCase(Generic[ModelT]):
                 if symbol in self._fields.values():
                     if symbol not in self._parameter_values:
                         self._parameter_values[symbol] = self.family.expression(symbol)
-                    replacements[symbol] = self._parameter_values[symbol]
-            result = result.subs(replacements, simultaneous=True)
+                    resolved = self._parameter_values[symbol]
+                    if resolved != symbol:
+                        replacements[symbol] = resolved
+            result = _substitute(result, replacements)
+        self._bound_expressions[key] = result
         return result
 
     def expression(self, subject: str | Basic, *, wrt: str | Symbol | None = None) -> Expr:
@@ -224,10 +258,47 @@ class ResearchCase(Generic[ModelT]):
     def observe(self, **observations) -> ResearchCase[ModelT]:
         return replace(self, problem=self.problem._capture_inputs(**observations))
 
+    def without_assumptions(self, *conditions: Basic, reason: str) -> ResearchCase[ModelT]:
+        """Remove explicitly recorded assumptions, retaining why they changed.
+
+        Declaration domains and observations are unaffected. Each new report
+        checks every dependent conclusion again under the remaining premises.
+        """
+        if not isinstance(reason, str) or not reason.strip():
+            raise ModelInputError("Record a reason when removing assumptions")
+        removed = tuple(dict.fromkeys(sympify(condition) for condition in conditions))
+        missing = tuple(condition for condition in removed if condition not in self.assumptions)
+        if missing:
+            raise ModelInputError(f"These assumptions were not recorded in this case: {missing}")
+        return replace(
+            self,
+            assumptions=tuple(condition for condition in self.assumptions if condition not in removed),
+            changes=(*self.changes, *(f"Removed assumption {condition}: {reason.strip()}" for condition in removed)),
+        )
+
     def require(self, *requirements: Requirement) -> ResearchCase[ModelT]:
         if any(not isinstance(item, Requirement) for item in requirements):
             raise ModelDefinitionError("require accepts Requirement records")
         return replace(self, requirements=(*self.requirements, *requirements))
+
+    def without_requirements(self, *claim_ids: str, reason: str) -> ResearchCase[ModelT]:
+        """Remove case-added obligations; method and declaration contracts remain.
+
+        Change a declaration or component to change its annotations. Automatic
+        obligations and a method's own requirements cannot be waived here.
+        """
+        if not isinstance(reason, str) or not reason.strip():
+            raise ModelInputError("Record a reason when removing requirements")
+        removed = tuple(dict.fromkeys(claim_ids))
+        available = {item.claim.name for item in self.requirements}
+        missing = tuple(key for key in removed if key not in available)
+        if missing:
+            raise ModelInputError(f"Only case-added requirements can be removed; unknown case IDs: {missing}")
+        return replace(
+            self,
+            requirements=tuple(item for item in self.requirements if item.claim.name not in removed),
+            changes=(*self.changes, *(f"Removed requirement {key}: {reason.strip()}" for key in removed)),
+        )
 
     def with_hint(self, claim_id: str, hint: ProofHint) -> ResearchCase[ModelT]:
         if not isinstance(hint, ProofHint):
@@ -446,6 +517,7 @@ class ResearchCase(Generic[ModelT]):
                         claim = differentiable(
                             curve,
                             wrt=variable,
+                            domain=coordinate_domain(variable),
                             order=len(value.variables),
                             at=points.get(variable),
                             name="derivative",
@@ -469,7 +541,9 @@ class ResearchCase(Generic[ModelT]):
                     coordinates = set(denominator.atoms(Coordinate)) | (set(bound) & denominator.free_symbols)
                     if len(coordinates) <= 1:
                         variable = next(iter(coordinates), None)
-                        claim = nonzero(denominator, wrt=variable, name="denominator")
+                        claim = nonzero(
+                            denominator, wrt=variable, domain=coordinate_domain(variable), name="denominator"
+                        )
                     else:
                         claim = Claim("multivariate_denominator", denominator, "theorem")
                     if claim not in seen:
@@ -498,7 +572,10 @@ class ResearchCase(Generic[ModelT]):
         """
         if max_steps < 1:
             raise ModelInputError("max_steps must be positive")
-        assumptions = tuple(self._bind(condition) for condition in self.assumptions)
+        assumptions = tuple(
+            self._bind(condition)
+            for condition in (*self.assumptions, *sorted(global_assumptions, key=default_sort_key))
+        )
         feasible = consistency(assumptions)
         observation_issue = ""
         if any(item.kind is not ConstraintKind.DEFINITION for item in self.problem.constraints):
@@ -510,15 +587,20 @@ class ResearchCase(Generic[ModelT]):
                 if feasible is True:
                     feasible = None
                 observation_issue = "Joint feasibility of the recorded observations remains unresolved."
-        records = [*self._declared(), *self._automatic(), *((item.claim.name, item, "") for item in requirements)]
-        ids = [key for key, _, _ in records]
-        if len(set(ids)) != len(ids):
-            raise ModelDefinitionError("Requirement IDs must be unique within a research case")
+        records_by_id: dict[str, tuple[str, Requirement, str]] = {}
+        for record in [*self._declared(), *self._automatic(), *((item.claim.name, item, "") for item in requirements)]:
+            key = record[0]
+            if key in records_by_id and records_by_id[key] != record:
+                raise ModelDefinitionError(f"Requirement IDs must be unique within a research case: {key}")
+            records_by_id[key] = record
+        records = tuple(records_by_id.values())
+        ids = tuple(records_by_id)
         issues = [] if feasible is not False else ["The assumptions are inconsistent; proofs were skipped."]
         if observation_issue:
             issues.append(observation_issue)
         issues.extend(self.changes)
         active, steps = set(), [0]
+        attempts = self._proof_attempts
 
         def prove(key, requirement, prefix):
             claim = requirement.claim
@@ -544,6 +626,7 @@ class ResearchCase(Generic[ModelT]):
                 if callable(claim.expected)
                 else (native(claim.expected) if claim.expected is not None else None)
             )
+            expected_template = expected
             if expected is not None:
                 self._require_symbols(expected)
                 expected = self._bind(expected, protected)
@@ -573,6 +656,7 @@ class ResearchCase(Generic[ModelT]):
                     ("Inconsistent premises, exhausted proof budget, or circular theorem dependency.",),
                     dependencies,
                     resolved_claim=resolved,
+                    expected_template=expected_template,
                 )
             steps[0] += 1
             theorem = next((rule for rule in self.theorems if rule.conclusion == claim), None)
@@ -598,6 +682,7 @@ class ResearchCase(Generic[ModelT]):
                     kind="theorem",
                     premises=premises,
                     resolved_claim=resolved,
+                    expected_template=expected_template,
                 )
             canonical = (
                 (f"{prefix}.{claim.subject}" if prefix else claim.subject) if isinstance(claim.subject, str) else ""
@@ -605,12 +690,26 @@ class ResearchCase(Generic[ModelT]):
             hint = dict(self.hints).get(key, dict(self.hints).get(f"{canonical}/{claim.name}"))
             if hint is not None:
                 hint = ProofHint(cast(Expr, payload(hint.upper)))
-            try:
-                result = attempt(resolved, expression, variable, expected, assumptions, hint)
-            except (NotImplementedError, ValueError, TypeError, PolynomialError) as error:
-                from ._proof import Attempt
-
-                result = Attempt(None, (f"Unsupported CAS proof attempt: {type(error).__name__}: {error}",))
+            attempt_key = (
+                resolved.property,
+                expression,
+                variable,
+                expected,
+                resolved.domain,
+                resolved.order,
+                resolved.bound,
+                resolved.at,
+                assumptions,
+                hint,
+                frozenset(global_assumptions),
+            )
+            result = attempts.get(attempt_key)
+            if result is None:
+                try:
+                    result = attempt(resolved, expression, variable, expected, assumptions, hint)
+                except (NotImplementedError, ValueError, TypeError, PolynomialError) as error:
+                    result = Attempt(None, (f"Unsupported CAS proof attempt: {type(error).__name__}: {error}",))
+                attempts[attempt_key] = result
             return Evidence(
                 key,
                 requirement,
@@ -623,6 +722,7 @@ class ResearchCase(Generic[ModelT]):
                 kind="counterexample" if result.witness else "symbolic",
                 resolved_claim=resolved,
                 hint=None if hint is None else hint.upper,
+                expected_template=expected_template,
             )
 
         checks = tuple(prove(*record) for record in records)
@@ -654,6 +754,14 @@ class ResearchCase(Generic[ModelT]):
         return Experiment(expression, variable, samples, values)
 
     def run(self, method: Method[ResultT], **settings) -> ResearchResult[ResultT]:
+        if method.bound_case is not None and (
+            method.bound_case is not self or method.bound_assumptions != frozenset(global_assumptions)
+        ):
+            raise ResearchError(
+                f"{method.name} is bound to a different research case or SymPy assumption context; rebuild it",
+                self,
+                self.check(max_steps=1000),
+            )
         report = self.check(max_steps=1000, requirements=method.requirements)
         uses: set[str] = set()
         for path in method.uses:

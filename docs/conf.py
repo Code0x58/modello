@@ -49,6 +49,13 @@ def write_research_report(app: Sphinx, exception: Exception | None) -> None:
             check=True,
             stdout=subprocess.DEVNULL,
         )
+        collection = Path(app.outdir) / "examples" / "research-models" / "study"
+        subprocess.run(
+            [sys.executable, "-m", "examples.research_models", "--compact", "--output", str(collection)],
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
 
 
 def setup(app: Sphinx) -> None:
