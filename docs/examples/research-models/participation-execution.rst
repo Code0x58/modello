@@ -184,6 +184,9 @@ A participation cap alone does not repair nonattainment.
 can establish its positive-risk or zero-risk branch. The methods reject
 assumptions restricting the rate itself; express a cap or deadline with
 ``with_limits`` so the feasible interval and KKT conditions stay explicit.
+This rejection covers both ``case.assume(...)`` and active SymPy
+``assuming(...)`` predicates on the rate, its logarithmic search coordinate,
+or execution time.
 Unsupported symbolic comparisons leave the certificate unestablished and
 raise ``ResearchError`` with the case and report.
 

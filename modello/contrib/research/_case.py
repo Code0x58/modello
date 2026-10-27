@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field as dataclass_field, replace
 from functools import cached_property
@@ -172,6 +173,40 @@ class ResearchCase(Generic[ModelT]):
     @cached_property
     def _fields(self):
         return {".".join(field.path): field.symbol for field in self.problem.fields}
+
+    @cached_property
+    def _labels(self) -> tuple[tuple[Symbol, str], ...]:
+        labels: dict[Symbol, str] = {}
+        for path, symbol in self._fields.items():
+            previous = labels.get(symbol)
+            if previous is None or (path.count("."), len(path)) < (previous.count("."), len(previous)):
+                labels[symbol] = path
+        paths: dict[Coordinate, str] = {}
+        for path, coordinate in _coordinates(self.problem.model).items():
+            previous = paths.get(coordinate)
+            if previous is None or (path.count("."), len(path), path) < (previous.count("."), len(previous), previous):
+                paths[coordinate] = path
+        for constraint in self.problem.constraints:
+            for coordinate in sorted(
+                constraint.right.atoms(Coordinate), key=lambda value: (value.name, value.dummy_index)
+            ):
+                paths.setdefault(coordinate, ".".join((*constraint.path, coordinate.name)))
+        counts = Counter(coordinate.name for coordinate in paths)
+        occupied = set(labels.values())
+        reserved = set(paths.values())
+        for coordinate, path in sorted(paths.items(), key=lambda item: (item[1], item[0].dummy_index)):
+            if coordinate in labels:
+                continue
+            label = coordinate.name
+            if counts[label] > 1 or label in occupied or label in reserved and label != path:
+                label = path
+            base, suffix = label, 2
+            while label in occupied:
+                label = f"{base}#{suffix}"
+                suffix += 1
+            labels[coordinate] = label
+            occupied.add(label)
+        return tuple(labels.items())
 
     def _reference(self, path: str) -> Expr:
         if path in self._fields:
@@ -746,17 +781,7 @@ class ResearchCase(Generic[ModelT]):
         unused = set(dict(self.hints)) - set(ids)
         if unused:
             issues.append(f"Unused proof hints: {', '.join(sorted(unused))}")
-        labels: dict[Symbol, str] = {}
-        for path, symbol in self._fields.items():
-            previous = labels.get(symbol)
-            if previous is None or (path.count("."), len(path)) < (previous.count("."), len(previous)):
-                labels[symbol] = path
-        for constraint in self.problem.constraints:
-            for coordinate in constraint.right.atoms(Coordinate):
-                labels.setdefault(coordinate, coordinate.name)
-        report = ResearchReport(
-            self.problem.model.__name__, checks, assumptions, feasible, tuple(issues), tuple(labels.items())
-        )
+        report = ResearchReport(self.problem.model.__name__, checks, assumptions, feasible, tuple(issues), self._labels)
         return report, frozenset(key for key, _, _ in automatic)
 
     def explain(self, requirement_id: str) -> Evidence:

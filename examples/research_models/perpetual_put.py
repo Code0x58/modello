@@ -14,6 +14,7 @@ from typing import Any
 
 from sympy import Derivative, Expr, Interval, Piecewise, S, Subs, diff, exp, limit, simplify
 
+from examples._research_checks import require_parameter_assumptions
 from modello import ConstraintKind, Coordinate, InstanceDummy, ScalarValue, component
 from modello.contrib.research import (
     Method,
@@ -400,13 +401,17 @@ def trust_stopping_theorem(case: ResearchCase[PerpetualPut]) -> ResearchCase[Per
 
 
 def _independent_curve(case: ResearchCase[PerpetualPut]) -> None:
-    x = case.expression("moneyness", wrt="moneyness")
-    if any(x in case.expression(condition).free_symbols for condition in case.assumptions):
-        raise ValueError("The verification traverses both regions; do not restrict its moneyness coordinate")
+    coordinates = {case._reference(name) for name in ("moneyness", "time")}
+    require_parameter_assumptions(
+        case,
+        *coordinates,
+        message="The verification traverses both regions and an unbounded time horizon; "
+        "do not restrict its coordinates",
+    )
     for constraint in case.problem.constraints:
         if constraint.kind is ConstraintKind.INPUT:
             if any(
-                x in case.expression(value, wrt="moneyness").free_symbols
+                case.expression(value, wrt="moneyness").free_symbols & coordinates
                 for value in (constraint.left, constraint.right)
             ):
                 raise ValueError("Observe market parameters and initial_spot rather than derived curve values")

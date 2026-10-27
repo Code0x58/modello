@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 import pytest
-from sympy import S
+from sympy import S, assuming
 
 from examples.research_models.perpetual_put import (
     TRUSTED_STOPPING_ASSUMPTIONS,
@@ -186,6 +186,25 @@ def test_curve_restrictions_and_derived_observations_do_not_silently_change_the_
     observed = case.observe(spot=100)
     with pytest.raises(ResearchError, match="derived curve values"):
         observed.run(algebra_method(observed))
+
+
+@pytest.mark.parametrize("method", [algebra_method, verification_method])
+@pytest.mark.parametrize("subject", ["moneyness", "time"])
+def test_global_curve_restrictions_cannot_change_the_verification_problem(case, method, subject):
+    if method is verification_method:
+        case = trust_stopping_theorem(case)
+    coordinate = case._reference(subject)
+    condition = coordinate > 2
+    with assuming(condition):
+        with pytest.raises(ResearchError, match="both regions") as failure:
+            case.run(method)
+        assert condition in failure.value.report.assumptions
+
+
+def test_local_time_restrictions_cannot_change_the_verification_problem(case):
+    restricted = case.assume(case._reference("time") < 1)
+    with pytest.raises(ResearchError, match="both regions"):
+        restricted.run(algebra_method)
 
 
 def test_a_method_cannot_reuse_case_bound_native_requirements(case):

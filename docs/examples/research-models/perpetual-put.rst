@@ -173,6 +173,10 @@ blocked by the exact zero-dividend and generator checks.
 Observe ``initial_spot`` to value an initial state;
 observations or assumptions fixing the normalized curve itself are rejected
 because verification traverses both regions.
+The restriction check includes active SymPy ``assuming(...)`` contexts as well
+as explicitly recorded ``case.assume(...)`` predicates.
+Both moneyness and the time coordinate of the transversality envelope must
+remain unrestricted.
 
 Independent stopping-barrier optimization
 -----------------------------------------

@@ -3,7 +3,7 @@
 from dataclasses import FrozenInstanceError
 
 import pytest
-from sympy import AtomicExpr, FiniteSet, Interval, Rational, S
+from sympy import AtomicExpr, FiniteSet, Interval, Rational, S, assuming
 
 from examples.research_models.markowitz import (
     Covariance,
@@ -187,6 +187,24 @@ def test_hidden_weight_assumptions_and_derived_observations_cannot_change_the_se
     for restricted in (case.assume(weight >= S(3) / 4), case.observe(variance=S(5) / 4)):
         with pytest.raises(ResearchError, match="PortfolioRestrictions"):
             allocate(restricted)
+
+
+@pytest.mark.parametrize("subject,bound", [("weight", S(3) / 4), ("expected_return", S(7) / 100)])
+def test_global_weight_restrictions_cannot_change_the_search_set(subject, bound):
+    case = portfolio_case()
+    condition = case.expression(subject, wrt="weight") >= bound
+    with assuming(condition):
+        with pytest.raises(ResearchError, match="PortfolioRestrictions") as failure:
+            allocate(case)
+        assert condition in failure.value.report.assumptions
+
+
+def test_global_parameter_assumptions_remain_supported():
+    case = portfolio_case()
+    with assuming(case.symbols.moments.first > 0):
+        result = allocate(case)
+    assert result.data.weight == S.One / 5
+    assert result.report.explain("global_minimum").verdict == "strictly true"
 
 
 def test_a_false_determinant_cannot_certify_an_invalid_covariance():

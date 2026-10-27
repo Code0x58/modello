@@ -15,6 +15,7 @@ from scipy.special import expit
 from sympy import Symbol, diff, exp as symbolic_exp, lambdify, simplify
 
 from examples._market_making_models import exponential_requirement, solver_requirements
+from examples._research_checks import require_parameter_assumptions
 from modello import ConstraintKind
 from modello.contrib.research import Method, ResearchCase, ResearchResult
 
@@ -159,16 +160,23 @@ def _state_roles(case):
     symbols = {case._reference(name) for name in names}
     if len(symbols) != len(names):
         raise ValueError("The ODE adapter requires independent state and Hamiltonian coordinates")
+    varying = symbols | {
+        case._reference(name) for name in ("terminal.inventory", "bid.intensity.distance", "ask.intensity.distance")
+    }
     for constraint in case.problem.constraints:
         if constraint.left in symbols and constraint.kind is ConstraintKind.DEFINITION:
             raise ValueError("The ODE adapter requires independent state and Hamiltonian coordinates")
         if (
             constraint.kind is ConstraintKind.INPUT
-            and (case._law(constraint.left).free_symbols | case._law(constraint.right).free_symbols) & symbols
+            and (case._law(constraint.left).free_symbols | case._law(constraint.right).free_symbols) & varying
         ):
             raise ValueError("The full ODE study accepts parameter observations, not fixed state observations")
-    if any(case._law(condition).free_symbols & symbols for condition in case.assumptions):
-        raise ValueError("The full ODE study requires parameter assumptions; state coordinates vary on the grid")
+    require_parameter_assumptions(
+        case,
+        *varying,
+        message="The full ODE study requires parameter assumptions; state coordinates vary on the grid "
+        "and quote distances remain unrestricted",
+    )
 
 
 def solve_quotes(case: ResearchCase, *, rtol=1e-8, atol=1e-10, max_step=None, points=101) -> QuoteSolution:

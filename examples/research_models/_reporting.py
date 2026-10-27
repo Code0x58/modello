@@ -62,7 +62,8 @@ def _provenance() -> dict[str, Any]:
             versions[package] = metadata.version(package)
         except metadata.PackageNotFoundError:
             versions[package] = None
-    sources = {}
+    shared = Path(__file__).parent.parent / "_research_checks.py"
+    sources = {"examples/_research_checks.py": sha256(shared.read_bytes()).hexdigest()}
     for prefix, directory in (
         ("examples/research_models", Path(__file__).parent),
         ("modello/contrib/research", Path(research.__file__).parent),

@@ -5,7 +5,7 @@ import sys
 from dataclasses import replace
 
 import pytest
-from sympy import Eq, S, diff
+from sympy import Eq, S, assuming, diff
 
 from examples.research_models.participation_execution import (
     POSITIVE_RATES,
@@ -180,11 +180,23 @@ def test_impact_replacement_invalidates_shortcut_but_retains_general_method(free
     assert free_case.run(analytic_method(free_case)).data.rate == S.One / 4
 
 
-def test_optimizers_reject_hidden_restrictions_on_the_search_argument(free_case):
-    rate = free_case.expression("rate", wrt="rate")
-    restricted = free_case.assume(rate < S.One / 8)
+@pytest.mark.parametrize("subject", ["rate", "log_rate", "time"])
+def test_optimizers_reject_hidden_restrictions_on_the_search_argument(free_case, subject):
+    coordinate = free_case._reference(subject)
+    restricted = free_case.assume(coordinate < S.One / 8)
     with pytest.raises(ResearchError, match="with_limits"):
         restricted.run(analytic_method(restricted))
+
+
+@pytest.mark.parametrize("method", [analytic_method, numerical_method])
+@pytest.mark.parametrize("subject", ["rate", "log_rate", "time"])
+def test_optimizers_reject_global_rate_restrictions(free_case, method, subject):
+    coordinate = free_case._reference(subject)
+    condition = coordinate >= S.Half
+    with assuming(condition):
+        with pytest.raises(ResearchError, match="with_limits") as failure:
+            free_case.run(method)
+        assert condition in failure.value.report.assumptions
 
 
 def test_observing_completion_time_cannot_silently_fix_the_rate(free_case):

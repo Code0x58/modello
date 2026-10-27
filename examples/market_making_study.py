@@ -81,6 +81,7 @@ def _provenance():
         *Path(research.__file__).parent.glob("*.py"),
         Path(__file__).with_name("_market_making_models.py"),
         Path(__file__).with_name("_market_making_numerics.py"),
+        Path(__file__).with_name("_research_checks.py"),
         Path(__file__).with_name("market_making.py"),
     ]
     return {

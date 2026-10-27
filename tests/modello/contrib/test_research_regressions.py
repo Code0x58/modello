@@ -3,7 +3,7 @@
 from dataclasses import replace
 
 import pytest
-from sympy import Abs, Derivative, Eq, Interval, Ne, Piecewise, S, Subs, exp, frac, sin
+from sympy import Abs, Add, Derivative, Eq, Interval, Ne, Piecewise, S, Subs, exp, frac, sin
 
 from modello import Coordinate, InstanceDummy, component
 from modello.contrib.research import (
@@ -163,6 +163,66 @@ def test_audits_and_fingerprints_include_the_compared_proposition():
     assert second.to_dict()["checks"][0]["expected"] == "3"
     assert first.to_dict()["evidence_sha256"] != second.to_dict()["evidence_sha256"]
     assert "Expected form:" in first.to_html()
+
+
+def test_exports_preserve_independent_same_named_coordinates_and_shared_aliases():
+    class Left(ResearchModel):
+        x = Coordinate("x", real=True)
+        value = x**2
+
+    class Right(ResearchModel):
+        x = Coordinate("x", real=True)
+        value = x**2
+
+    class Pair(ResearchModel):
+        a = component(Left)
+        alias = component(Left)
+        b = component(Right)
+
+    case = ResearchCase.for_model(Pair).assume(Left.x > Right.x)
+    expression = Left.x**2 - Right.x**2
+    shared = exact_form("a.value", case.symbols.alias.value, wrt=Left.x, name="shared")
+    first = case.check(requirements=(exact_form(expression, 0, wrt=Left.x), shared))
+    second = case.check(requirements=(exact_form(2 * expression, 0, wrt=Left.x), shared))
+    assert first.explain("exact_form").expression.free_symbols == {Left.x, Right.x}
+    assert first.explain("exact_form").verdict == "unresolved"
+    assert first.explain("shared").verdict == "strictly true"
+    assert dict(first.labels)[Left.x] == "a.x"
+    assert dict(first.labels)[Right.x] == "b.x"
+    audit = first.to_dict()
+    for field in ("declared_subject", "subject", "expression"):
+        assert audit["checks"][0][field] in {"a.x**2 - b.x**2", "-b.x**2 + a.x**2"}
+    assert audit["checks"][0]["coordinate"] == "a.x"
+    assert audit["checks"][1]["expression"] == audit["checks"][1]["expected"] == "a.x**2"
+    assert audit["assumptions"] == ["a.x > b.x"]
+    assert audit["evidence_sha256"] != second.to_dict()["evidence_sha256"]
+    html = first.to_html()
+    assert "<mi>a.x</mi>" in html and "<mi>b.x</mi>" in html
+    assert audit["checks"][0]["expression"] in html
+
+
+def test_coordinate_labels_cannot_alias_a_field_path():
+    class Curve(ResearchModel):
+        argument = Coordinate("t", real=True)
+        t = InstanceDummy("t", real=True)
+        value = argument - t
+
+    case = ResearchCase.for_model(Curve)
+    report = case.check(requirements=(exact_form("value", 0, wrt="argument"),))
+    assert dict(report.labels)[Curve.argument] == "argument"
+    assert report.to_dict()["checks"][0]["expression"] in {"argument - t", "-t + argument"}
+
+
+def test_export_printing_does_not_evaluate_the_declared_expression():
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+
+    declared = Add(Curve.x, -Curve.x, evaluate=False)
+    report = ResearchCase.for_model(Curve).check(requirements=(exact_form(declared, 0, wrt=Curve.x),))
+    audit = report.to_dict()["checks"][0]
+    assert audit["declared_subject"] in {"-x + x", "x - x"}
+    assert audit["expression"] == audit["declared_subject"]
+    assert report.explain("exact_form").verdict == "strictly true"
 
 
 def test_differentiability_remains_open_when_only_continuity_of_derivatives_fails():

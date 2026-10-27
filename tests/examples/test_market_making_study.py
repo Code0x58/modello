@@ -4,7 +4,7 @@ import json
 
 import numpy as np
 import pytest
-from sympy import S, exp
+from sympy import S, assuming, exp
 
 from examples._market_making_models import CARAMarketMaker, LogisticIntensity, study_case
 from examples._market_making_numerics import QuoteEvaluator, exponential_reference, run_quotes
@@ -129,6 +129,7 @@ def test_report_artifacts_are_complete_and_replayable(tmp_path):
     assert len(list((tmp_path / "figures").glob("*.svg"))) == 4
     assert saved["provenance"]["versions"]["scipy"]
     assert saved["provenance"]["source_sha256"]
+    assert "examples/_research_checks.py" in saved["provenance"]["source_sha256"]
     replayed = compare(capacity=1, points=5)
     for name, record in replayed.items():
         np.testing.assert_allclose(payload["cases"][name]["theta"], record["result"].data.theta, atol=1e-10)
@@ -217,6 +218,22 @@ def test_full_ode_rejects_fixed_state_observations_and_assumptions():
         (case.observe(bid_cost=0), "fixed state observations"),
         (case.assume(case.symbols.inventory >= 0), "state coordinates vary"),
         (case.assume(case.symbols.bid_cost >= 0), "state coordinates vary"),
+        (case.assume(case._reference("terminal.inventory") > 0), "state coordinates vary"),
+        (case.assume(case._reference("bid.intensity.distance") < 0), "state coordinates vary"),
+        (case.assume(case._reference("ask.intensity.distance") < 0), "state coordinates vary"),
     ):
         with pytest.raises(ResearchError, match=message):
             run_quotes(changed, points=3)
+
+
+@pytest.mark.parametrize(
+    "subject", ["inventory", "bid_cost", "terminal.inventory", "bid.intensity.distance", "ask.intensity.distance"]
+)
+def test_full_ode_rejects_global_state_restrictions(subject):
+    case = study_case(capacity=1)
+    coordinate = case._reference(subject)
+    condition = coordinate < 0 if subject.endswith("distance") else coordinate >= 0
+    with assuming(condition):
+        with pytest.raises(ResearchError, match="state coordinates vary") as failure:
+            run_quotes(case, points=3)
+        assert failure.value.report.assumptions

@@ -71,6 +71,9 @@ The optimizer rejects assumptions restricting the quantified weight and scalar
 observations of weight-dependent outputs. Put those restrictions in
 ``PortfolioRestrictions`` so that the candidate and its KKT certificate use the
 same admissible interval. Observing market moments remains supported.
+The same check applies to ``case.assume(...)`` and active SymPy
+``assuming(...)`` contexts; ambient predicates cannot silently narrow the
+weight interval used by the certificate.
 
 >>> restrictions = PortfolioRestrictions(target=Rational(7, 100), cap=Rational(4, 5))
 >>> targeted = allocate(case, restrictions)

@@ -31,6 +31,7 @@ def test_all_model_subdirectories_export_evidence_results_figures_and_provenance
     saved = json.loads((directory / "collection.json").read_text())
     assert saved["compact_selection"] and saved["numerical_references"]
     assert saved["provenance"]["source_sha256"]
+    assert "examples/_research_checks.py" in saved["provenance"]["source_sha256"]
     for name, study in payload["studies"].items():
         output = directory / name
         assert (output / "report.html").read_text().startswith("<!doctype html>")

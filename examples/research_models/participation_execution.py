@@ -28,6 +28,7 @@ from sympy import (
     simplify,
 )
 
+from examples._research_checks import require_parameter_assumptions
 from modello import ConstraintKind, Coordinate, InstanceDummy, ScalarValue, component
 from modello.contrib.research import (
     Method,
@@ -419,14 +420,17 @@ def _checked_report(
 
 
 def _independent_rate(case: ResearchCase[ParticipationExecution]) -> None:
-    rate = case.expression("rate", wrt="rate")
-    if any(rate in case.expression(condition).free_symbols for condition in case.assumptions):
-        raise ValueError("Optimize over the positive rate interval; encode caps and deadlines with with_limits")
+    coordinates = {case._reference(name) for name in ("rate", "log_rate", "time")}
+    require_parameter_assumptions(
+        case,
+        *coordinates,
+        message="Optimize over the positive rate interval; encode caps and deadlines with with_limits",
+    )
     for constraint in case.problem.constraints:
         if constraint.kind is not ConstraintKind.INPUT:
             continue
         expressions = (case.expression(value, wrt="rate") for value in (constraint.left, constraint.right))
-        if any(rate in value.free_symbols for value in expressions):
+        if any(value.free_symbols & coordinates for value in expressions):
             raise ValueError("Optimize over an independent rate; observe parameters rather than its derived outputs")
 
 

@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 
 from sympy import Derivative, Eq, Expr, FiniteSet, Float, Ge, Interval, Rational, S, Subs, simplify, sympify
 
+from examples._research_checks import require_parameter_assumptions
 from modello import ConstraintKind, Coordinate, InstanceDummy, component
 from modello.contrib.research import (
     Method,
@@ -324,8 +325,11 @@ def _ordered_minimum(left, right):
 
 def _propose(case, restrictions):
     weight_coordinate = case._reference("weight")
-    if any(weight_coordinate in case._law(condition).free_symbols for condition in case.assumptions):
-        raise ValueError("Keep weight assumptions in PortfolioRestrictions so the admissible interval is explicit")
+    require_parameter_assumptions(
+        case,
+        weight_coordinate,
+        message="Keep weight assumptions in PortfolioRestrictions so the admissible interval is explicit",
+    )
     for constraint in case.problem.constraints:
         if constraint.kind is ConstraintKind.INPUT and weight_coordinate in (
             case._law(constraint.left).free_symbols | case._law(constraint.right).free_symbols

@@ -168,6 +168,12 @@ keeps a successful equality readable even when both evaluated sides become
 the same number. The JSON remains descriptive; it cannot reconstruct a case
 or execute a stored formula.
 
+Independent coordinates with the same name receive distinct scoped labels in
+exports, such as ``a.x`` and ``b.x``. Deliberately shared coordinates retain one
+identity even when reached through several component paths. Report printers
+label the original symbolic tree without substituting or simplifying it, so
+formatting cannot turn a difference of independent coordinates into zero.
+
 Property truth and proof attempts
 ---------------------------------
 
@@ -304,6 +310,10 @@ nonfinite values, failed bracketing, and solver failures retain diagnostics.
 The full ODE requires independent state inputs and parameter observations;
 observations or assumptions fixing a state are rejected because the study
 traverses the entire inventory and time grid.
+These checks include active SymPy ``assuming(...)`` predicates as well as
+``case.assume(...)``. Parameter-only assumptions remain supported.
+Quote-distance and terminal-inventory coordinates are included in the check;
+a predicate on a locally substituted argument cannot narrow the solver's domain.
 
 Default tolerances are ``rtol=1e-8``, ``atol=1e-10``, and a maximum time step
 of ``T/100``. The report compares a tighter run, measures independent central
