@@ -9,20 +9,23 @@ from functools import cached_property
 from types import MappingProxyType, new_class
 from typing import ClassVar, Generic, TypeVar, cast
 
-from sympy import Basic, Derivative, Expr, S, Subs, Symbol, SympifyError, default_sort_key, sympify
+from sympy import Basic, Derivative, Expr, Piecewise, S, Subs, Symbol, SympifyError, default_sort_key, sympify
 from sympy.assumptions import global_assumptions
 from sympy.logic.boolalg import Boolean
 from sympy.polys.polyerrors import PolynomialError
 
 from modello import ConstraintKind, Coordinate, Modello, annotate, annotate_model, component, inspect_model
-from modello._evaluation import _rebind
-from modello._expressions import _DefinitionResolver
+from modello._evaluation import _BINDERS, _rebind
+from modello._expressions import _DefinitionResolver, _expand_definitions
+from modello._operators import _bound_coordinates
 from modello._problem import ModelConstraint, _algebra
 from modello.diagnostics import ModelProblem
 from modello.errors import ModelDefinitionError, ModelInputError, ModelValidationError
+from modello.solutions import _membership
 
 from ._proof import (
     Attempt,
+    _defined,
     attempt,
     conjunction,
     consistency,
@@ -30,6 +33,7 @@ from ._proof import (
     derivative_premises,
     evaluate_native,
     guard_source,
+    truth,
 )
 from ._records import (
     Evidence,
@@ -57,7 +61,9 @@ class _Context:
     problem: ModelProblem
     assumptions: tuple[Basic, ...]
     parameters: dict[Symbol, Expr] = dataclass_field(default_factory=dict)
-    expressions: dict[tuple[Basic, frozenset[Basic]], Basic] = dataclass_field(default_factory=dict)
+    expressions: dict[tuple[Basic, frozenset[Basic]], tuple[Basic, tuple[Basic, ...]]] = dataclass_field(
+        default_factory=dict
+    )
     attempts: dict[tuple, Attempt] = dataclass_field(default_factory=dict)
 
     @cached_property
@@ -68,6 +74,44 @@ class _Context:
             if item.kind is ConstraintKind.DEFINITION
         )
         return _algebra(definitions, self.problem.templates.values()).resolve.symbolic()
+
+    @cached_property
+    def bindings(self) -> _DefinitionResolver:
+        """Keep directed observation formulas until their operations are checked."""
+        defined = {item.left for item in self.problem.constraints if item.kind is ConstraintKind.DEFINITION}
+        inputs: dict[Symbol, set[Basic]] = {}
+        for item in self.problem.constraints:
+            if item.kind is not ConstraintKind.DEFINITION and item.left not in defined:
+                inputs.setdefault(item.left, set()).add(item.right)
+        direct = {symbol: guard_source(next(iter(values))) for symbol, values in inputs.items() if len(values) == 1}
+        if not direct:
+            return self.law
+        _, _, source = _expand_definitions(
+            {**self.law.definitions, **direct}, self.law.ambiguous, templates=self.law.templates
+        )
+        # Cyclic and conflicting inputs remain equations for the joint solver.
+        # Retain the original laws even when they depend on such an input.
+        return _DefinitionResolver(
+            {
+                **self.law.definitions,
+                **{symbol: value for symbol, value in source.definitions.items() if symbol in direct},
+            },
+            self.law.cyclic,
+            self.law.ambiguous,
+            {},
+            source.templates,
+            evaluate_operators=False,
+        )
+
+    @cached_property
+    def residual_inputs(self) -> tuple[ModelConstraint, ...]:
+        """Observation sources the directed bindings leave for joint solving."""
+        direct = self.bindings.definitions.keys() - self.law.definitions.keys()
+        return tuple(
+            item
+            for item in self.problem.constraints
+            if item.kind is not ConstraintKind.DEFINITION and item.left not in direct
+        )
 
     @cached_property
     def family(self):
@@ -285,13 +329,20 @@ class ResearchCase(Generic[ModelT]):
         context = self._context
         key = (value, protected)
         if key in context.expressions:
-            return context.expressions[key]
-        result = context.law(guard_source(value), protected)
+            return context.expressions[key][0]
+        result = context.bindings(guard_source(value), protected)
+        sources: tuple[Basic, ...] = ()
         if any(item.kind is not ConstraintKind.DEFINITION for item in self.problem.constraints):
+            dependencies = {self._fields[path] for path in self._dependencies(value)}
+            sources = tuple(
+                context.law(guard_source(item.right), protected)
+                for item in context.residual_inputs
+                if item.left in dependencies
+            )
             # Bind free parameters individually. Resolving the entire curve
             # through a specialized family would also substitute its coordinate.
             replacements = {}
-            for symbol in result.free_symbols - protected:
+            for symbol in set().union(*(item.free_symbols for item in (result, *sources))) - protected:
                 if symbol in self._fields.values():
                     if symbol not in context.parameters:
                         context.parameters[symbol] = context.family.expression(symbol)
@@ -300,18 +351,23 @@ class ResearchCase(Generic[ModelT]):
                         replacements[symbol] = guard_source(resolved)
             # Preserve held operations even when observed coefficients are zero;
             # the proof walker must check their original scopes before evaluation.
-            result = _DefinitionResolver({}, frozenset(), frozenset(), replacements, evaluate_operators=False)(
-                result, protected
-            )
-            points = sorted(
-                set(replacements)
-                & result.free_symbols
-                & {symbol for derivative in result.atoms(Derivative) for symbol in derivative.variables},
-                key=default_sort_key,
-            )
-            if points:
-                result = Subs(result, tuple(points), tuple(replacements[symbol] for symbol in points))
-        context.expressions[key] = result
+            resolve = _DefinitionResolver({}, frozenset(), frozenset(), replacements, evaluate_operators=False)
+
+            def bind(expression):
+                expression = resolve(expression, protected)
+                points = sorted(
+                    set(replacements)
+                    & expression.free_symbols
+                    & {symbol for derivative in expression.atoms(Derivative) for symbol in derivative.variables},
+                    key=default_sort_key,
+                )
+                if points:
+                    expression = Subs(expression, tuple(points), tuple(replacements[symbol] for symbol in points))
+                return expression
+
+            result = bind(result)
+            sources = tuple(bind(source) for source in sources)
+        context.expressions[key] = result, sources
         return result
 
     def expression(self, subject: str | Basic, *, wrt: str | Symbol | None = None) -> Expr:
@@ -541,8 +597,7 @@ class ResearchCase(Generic[ModelT]):
         symbols, pending = set(), list(value.free_symbols)
         definitions: dict[Symbol, set[Symbol]] = {}
         for item in self.problem.constraints:
-            if item.kind is ConstraintKind.DEFINITION:
-                definitions.setdefault(item.left, set()).update(item.right.free_symbols)
+            definitions.setdefault(item.left, set()).update(item.right.free_symbols)
         while pending:
             symbol = pending.pop()
             if symbol not in symbols:
@@ -560,33 +615,69 @@ class ResearchCase(Generic[ModelT]):
         records.extend((item.name, item, "") for item in self.requirements)
         return records
 
-    def _automatic(self):
-        records = []
-        definitions = {}
+    def _automatic(self) -> tuple[list[tuple[str, Requirement, str]], frozenset[str]]:
+        records: list[tuple[str, Requirement, str]] = []
+        conditional: set[str] = set()
+        sources: dict[Symbol, list[Basic]] = {}
         for constraint in self.problem.constraints:
-            if constraint.kind is ConstraintKind.DEFINITION:
-                definitions.setdefault(constraint.left, []).append(constraint.right)
+            sources.setdefault(constraint.left, []).append(constraint.right)
+        quantified: set[Basic] = set().union(
+            *(value.atoms(Coordinate) for values in sources.values() for value in values)
+        )
+        quantified.update(
+            variable
+            for values in sources.values()
+            for value in values
+            for operator in value.atoms(*_BINDERS)
+            for variable in _bound_coordinates(operator)
+        )
+        seen_by_path: dict[str, dict[Requirement, str]] = {}
         for constraint in self.problem.constraints:
-            if constraint.kind is not ConstraintKind.DEFINITION:
-                continue
             path = ".".join(constraint.path)
-            seen = set()
+            seen = seen_by_path.setdefault(path, {})
 
-            def visit(value, points=None, bound=(), active=()):
+            def record(claim, reason, uncertain):
+                key = seen.get(claim)
+                if key is None:
+                    key = f"{path}/auto:{len(seen) + 1}"
+                    seen[claim] = key
+                    records.append((key, replace(claim, consumer=path, reason=reason), ""))
+                    if uncertain:
+                        conditional.add(key)
+                elif not uncertain:
+                    conditional.discard(key)
+
+            def visit(value, points=None, bound=(), active=(), uncertain=False):
                 points = points or {}
+                if isinstance(value, Piecewise):
+                    for branch, condition in value.args:
+                        visit(condition, points, bound, active, uncertain)
+                        protected = frozenset((*quantified, *bound))
+                        selected = self._bind(condition, protected).subs(points, simultaneous=True)
+                        if selected.free_symbols & protected or selected.has(*_BINDERS):
+                            selected = None
+                        else:
+                            selected = truth(selected, self.assumptions)
+                        if selected is S.true:
+                            visit(branch, points, bound, active, uncertain)
+                            return
+                        if selected is not S.false:
+                            visit(branch, points, bound, active, True)
+                            uncertain = True
+                    return
                 if isinstance(value, Subs):
                     local = {
                         symbol: point.subs(points, simultaneous=True)
                         for symbol, point in zip(value.variables, value.point)
                     }
-                    visit(value.expr, {**points, **local}, bound, active)
+                    visit(value.expr, {**points, **local}, bound, active, uncertain)
                     for point in value.point:
-                        visit(point, points, bound, active)
+                        visit(point, points, bound, active, uncertain)
                     return
-                if value in definitions:
+                if value in sources:
                     if value not in active:
-                        for source in definitions[value]:
-                            visit(source, points, bound, (*active, value))
+                        for source in sources[value]:
+                            visit(source, points, bound, (*active, value), uncertain)
                     return
                 if isinstance(value, Derivative):
                     variables = tuple(dict.fromkeys(value.variables))
@@ -606,19 +697,11 @@ class ResearchCase(Generic[ModelT]):
                         )
                     else:
                         claim = Requirement("mixed_derivative", value, "theorem")
-                    if claim not in seen:
-                        seen.add(claim)
-                        records.append(
-                            (
-                                f"{path}/auto:{len(seen)}",
-                                replace(
-                                    claim,
-                                    consumer=path,
-                                    reason="The native derivative requires differentiability, not necessarily C2.",
-                                ),
-                                "",
-                            )
-                        )
+                    record(
+                        claim,
+                        "The native derivative requires differentiability, not necessarily C2.",
+                        uncertain,
+                    )
                     bound = (*bound, *variables)
                 if isinstance(value, Expr) and value.is_Pow and value.exp.is_negative is True:
                     denominator = self._law(value.base, frozenset(bound)).subs(points, simultaneous=True)
@@ -630,26 +713,14 @@ class ResearchCase(Generic[ModelT]):
                         )
                     else:
                         claim = Requirement("multivariate_denominator", denominator, "theorem")
-                    if claim not in seen:
-                        seen.add(claim)
-                        records.append(
-                            (
-                                f"{path}/auto:{len(seen)}",
-                                replace(
-                                    claim,
-                                    consumer=path,
-                                    reason="The original denominator must be nonzero before cancellation.",
-                                ),
-                                "",
-                            )
-                        )
+                    record(claim, "The original denominator must be nonzero before cancellation.", uncertain)
                 for arg in value.args:
-                    visit(arg, points, bound, active)
+                    visit(arg, points, bound, active, uncertain)
 
-            # Follow source definitions under operator scopes before algebra
+            # Follow source equations under operator scopes before algebra
             # can cancel an original division or erase a local derivative.
             visit(constraint.right)
-        return records
+        return records, frozenset(conditional)
 
     def check(self, *, max_steps: int = 100, requirements: tuple[Requirement, ...] = ()) -> ResearchReport:
         """Try bounded scalar rules; unknown does not mean a false proposition.
@@ -678,7 +749,7 @@ class ResearchCase(Generic[ModelT]):
                     feasible = None
                 observation_issue = "Joint feasibility of the recorded observations remains unresolved."
         records_by_id: dict[str, tuple[str, Requirement, str]] = {}
-        automatic = self._automatic()
+        automatic, conditional_operations = self._automatic()
         for record in [*self._declared(), *automatic, *((item.name, item, "") for item in requirements)]:
             key = record[0]
             if key in records_by_id and records_by_id[key] != record:
@@ -712,7 +783,16 @@ class ResearchCase(Generic[ModelT]):
             subject = reference(claim.subject) if isinstance(claim.subject, str) else native(claim.subject)
             self._require_symbols(subject)
             protected = frozenset() if variable is None else frozenset({variable})
-            expression = self._bind(subject, protected)
+            sources: list[Basic] = []
+            hint_sources: list[Basic] = []
+
+            def bind(value, *, optional=False):
+                result = self._bind(value, protected)
+                _, operands = self._context.expressions[value, protected]
+                (hint_sources if optional else sources).extend(operands)
+                return result
+
+            expression = bind(subject)
             expected = (
                 native(claim.expected(reference))
                 if callable(claim.expected)
@@ -721,14 +801,14 @@ class ResearchCase(Generic[ModelT]):
             expected_template = expected
             if expected is not None:
                 self._require_symbols(expected)
-                expected = self._bind(expected, protected)
+                expected = bind(expected)
 
-            def payload(value):
+            def payload(value, *, optional=False):
                 if value is None:
                     return None
                 value = native(value)
                 self._require_symbols(value)
-                return self._bind(value, protected)
+                return bind(value, optional=optional)
 
             domain, bound, point = payload(claim.domain), payload(claim.bound), payload(claim.at)
             if variable is not None and variable in domain.free_symbols:
@@ -755,6 +835,7 @@ class ResearchCase(Generic[ModelT]):
                     dependencies,
                     resolved=resolved,
                     expected_template=expected_template,
+                    observation_sources=tuple(dict.fromkeys(sources)),
                 )
             steps[0] += 1
             theorem = next(
@@ -783,13 +864,16 @@ class ResearchCase(Generic[ModelT]):
                     premises=premises,
                     resolved=resolved,
                     expected_template=expected_template,
+                    observation_sources=tuple(dict.fromkeys(sources)),
                 )
             canonical = (
                 (f"{prefix}.{claim.subject}" if prefix else claim.subject) if isinstance(claim.subject, str) else ""
             )
             hint = dict(self.hints).get(key, dict(self.hints).get(f"{canonical}/{claim.name}"))
             if hint is not None:
-                hint = cast(Expr, payload(hint))
+                hint = cast(Expr, payload(hint, optional=True))
+            source_operands = tuple(dict.fromkeys(sources))
+            hint_operands = tuple(dict.fromkeys(hint_sources))
             attempt_key = (
                 resolved.property,
                 expression,
@@ -801,12 +885,16 @@ class ResearchCase(Generic[ModelT]):
                 resolved.at,
                 assumptions,
                 hint,
+                source_operands,
+                hint_operands,
             )
             attempts = self._context.attempts
             result = attempts.get(attempt_key)
             if result is None:
                 try:
-                    result = attempt(resolved, expression, variable, expected, assumptions, hint)
+                    result = attempt(
+                        resolved, expression, variable, expected, assumptions, hint, source_operands, hint_operands
+                    )
                 except (NotImplementedError, ValueError, TypeError, PolynomialError) as error:
                     result = Attempt(None, (f"Unsupported CAS proof attempt: {type(error).__name__}: {error}",))
                 attempts[attempt_key] = result
@@ -823,9 +911,25 @@ class ResearchCase(Generic[ModelT]):
                 resolved=resolved,
                 hint=hint,
                 expected_template=expected_template,
+                observation_sources=tuple(dict.fromkeys((*source_operands, *hint_operands))),
             )
 
         checks = tuple(prove(*record) for record in records)
+        checks = tuple(
+            replace(
+                item,
+                condition=None,
+                steps=(
+                    *item.steps,
+                    "An unconditional certificate did not establish this conditionally active operation.",
+                ),
+                witness=(),
+                kind="symbolic" if item.kind == "counterexample" else item.kind,
+            )
+            if item.id in conditional_operations and item.condition is not S.true
+            else item
+            for item in checks
+        )
         unused = set(dict(self.hints)) - set(ids)
         if unused:
             issues.append(f"Unused proof hints: {', '.join(sorted(unused))}")
@@ -838,6 +942,8 @@ class ResearchCase(Generic[ModelT]):
     def sample(self, subject: str | Basic, *, wrt: str | Symbol, points) -> Experiment:
         variable = self._coordinate(wrt)
         expression = self.expression(subject, wrt=variable)
+        reference = self._reference(subject) if isinstance(subject, str) else subject
+        _, sources = self._context.expressions[reference, frozenset({variable})]
         if not isinstance(expression, Expr):
             raise ModelValidationError("Sampling needs a scalar expression")
         try:
@@ -850,16 +956,23 @@ class ResearchCase(Generic[ModelT]):
             or point.free_symbols
             or point.is_finite is not True
             or point.is_real is not True
-            or domain.contains(point) is not S.true
+            or _membership(point, domain, ()) is not S.true
             for point in samples
         ):
             raise ModelValidationError("Sampling points must be bound finite real values in the coordinate's domain")
         if any(
             premise.condition is not S.true
             for point in samples
-            for premise in derivative_premises(expression, variable, domain, {variable: point})
+            for value in (expression, *sources)
+            for premise in derivative_premises(value, variable, domain, {variable: point})
         ):
             raise ModelValidationError("Sampling needs established native derivative premises")
+        if any(
+            _defined(evaluate_native(source.subs(variable, point)), None, S.Reals).condition is not S.true
+            for point in samples
+            for source in sources
+        ):
+            raise ModelValidationError("Sampling needs established observation source domains")
         values = tuple(evaluate_native(expression.subs(variable, point)).evalf() for point in samples)
         if any(value.free_symbols or value.is_finite is not True or value.is_real is not True for value in values):
             raise ModelValidationError("Sampling needs finite real values and bound parameters")

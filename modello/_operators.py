@@ -112,7 +112,12 @@ def _conditioned(expression: Expr, condition: Basic) -> Expr:
             pass
     if condition is S.true:
         return expression
-    return piecewise_fold(Piecewise((expression, condition), (S.NaN, True)))
+    result = Piecewise((expression, condition), (S.NaN, True))
+    if expression.has(_SymbolicTemplate, _ScopedOperator, Sum, Product, Integral, Derivative, Limit, Subs):
+        # Folding through a binder lifts its local branch conditions outside
+        # their scope, and can create derivatives of inactive undefined values.
+        return result
+    return piecewise_fold(result)
 
 
 class _ScopedExpression:

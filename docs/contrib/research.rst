@@ -241,6 +241,13 @@ cannot recover syntax already simplified away before declaration.
 
 Parameter observations also retain the source operands' definedness. For
 example, setting ``a=0`` in ``a*log(x)`` does not define its value at ``x=0``.
+Symbolic observations retain their native operations too: supplying an
+undefined derivative as an observation cannot establish a method's premises,
+even if a later multiplication would erase its value. Automatic obligations
+follow these observations as well as model definitions.
+Joint solving of cyclic or conflicting observations also retains their source
+operands for checking and sampling. Evidence and exported reports expose them
+as ``observation_sources``, alongside the resolved expression.
 Supported source domains are checked alongside the simplified formula;
 unsupported operand domains remain unresolved. These checks keep local
 substitutions and derivative evaluation points in their original scopes.
@@ -251,9 +258,24 @@ backend-specific values to fill undefined points.
 Automatic obligations use a coordinate's declared domain: a positive
 coordinate is checked on :math:`(0,\infty)`, while a nonnegative coordinate
 still includes zero and retains a denominator failure there. Explicit claims
-keep their own requested domains. Native ``Subs`` and ``Derivative`` expressions
-on either side of an identity are evaluated after checking derivative scopes;
-undefined evaluation points remain failures.
+keep their own requested domains, which must lie inside the intrinsic domain.
+The same domain rules as solution families retain integer, rational, parity,
+zero, and other declared restrictions. A discrete coordinate is not silently
+treated as a real continuum; unsupported proof scopes remain unresolved.
+Sampling checks membership using those same restrictions.
+
+Native ``Subs`` and ``Derivative`` expressions on either side of an identity,
+in target bounds, evaluation points, domains, and proposed hints are evaluated
+after checking their own derivative scopes. Undefined evaluation points remain
+failures. An invalid optional hint leaves the attempted proof unresolved; it
+does not refute the requested bound.
+Native derivative premises in ``Piecewise`` expressions respect the active
+branch's domain. Missing regularity proofs remain unresolved, including when
+the operation occurs in a conditional branch.
+Automatic obligations skip branches excluded by established parameter choices;
+a global certificate also establishes an operation whose activation is unknown.
+Otherwise the obligation remains unresolved. Coordinate assumptions cannot
+select away branches of a globally quantified automatic obligation.
 
 A nonzero real coordinate keeps zero excluded even when its sign is unknown.
 An inner derivative cannot borrow an unrelated outer coordinate's domain.

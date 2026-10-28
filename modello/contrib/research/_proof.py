@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache
 
 from sympy import (
@@ -64,8 +64,9 @@ from sympy.logic.boolalg import Boolean
 from sympy.logic.inference import satisfiable
 from sympy.polys.polyerrors import PolynomialError
 
-from modello._evaluation import _BINDERS, _rebuild
+from modello._evaluation import _BINDERS, _evaluate, _rebuild
 from modello._operators import _conditioned, _defined_part, _denominator_condition
+from modello.solutions import _field_domain, _membership
 
 from ._piecewise import piecewise_regular
 from ._records import Requirement
@@ -83,6 +84,8 @@ _TOTAL_FUNCTIONS = (Abs, exp, sin, cos, sinh, cosh, erf, erfc, frac, floor, ceil
 
 class _SourceFinite(Boolean):
     """Retain operand definedness without consulting ambient assumptions."""
+
+    is_Atom = True
 
     def __new__(cls, operand):
         body = _defined_part(operand)
@@ -155,7 +158,6 @@ def guard_source(expression: Basic) -> Basic:
             and not isinstance(value, (Add, Mul, Piecewise, *_BINDERS))
             and (isinstance(value, Function) or value.is_finite is not True)
             and not (isinstance(value, Function) and value.func in _TOTAL_FUNCTIONS)
-            and not (isinstance(value, Pow) and _denominator_condition(value) is not S.true)
         ):
             return _conditioned(result, _SourceFinite(value))
         return result
@@ -231,18 +233,7 @@ def _source_domain(expression, variable, domain):
 
 def coordinate_domain(variable: Symbol | None) -> Set:
     """The real domain already guaranteed by a coordinate declaration."""
-    if variable is None:
-        return S.Reals
-    domain = S.Reals
-    if variable.is_positive is True:
-        domain = Interval.open(0, S.Infinity)
-    elif variable.is_negative is True:
-        domain = Interval.open(S.NegativeInfinity, 0)
-    elif variable.is_nonnegative is True:
-        domain = Interval(0, S.Infinity)
-    elif variable.is_nonpositive is True:
-        domain = Interval(S.NegativeInfinity, 0)
-    return domain - FiniteSet(0) if variable.is_nonzero is True else domain
+    return S.Reals if variable is None else _field_domain(variable).intersect(S.Reals)
 
 
 def conjunction(*conditions: Basic | None) -> Basic | None:
@@ -264,6 +255,11 @@ def truth(condition: Basic, assumptions: tuple[Basic, ...]) -> Basic:
         return S.false
     if isinstance(condition, And):
         return And(*(truth(arg, assumptions) for arg in condition.args))
+    if isinstance(condition, _SourceFinite):
+        operand = condition.args[0]
+        parameters = tuple(operand.free_symbols)
+        if all(parameter.is_finite is True for parameter in parameters) and operand.is_rational_function(*parameters):
+            condition = _membership(operand, S.Complexes, parameters)
     try:
         refined = refine(condition, And(*assumptions))
         if refined in (S.true, S.false):
@@ -431,6 +427,7 @@ def _defined(expression: Expr, variable: Symbol | None, domain: Set) -> Attempt:
 
 def _differentiable(expression, variable, domain, order, point=None) -> Attempt:
     """Use Cn as a sufficient certificate and keep local questions local."""
+    expression = piecewise_fold(expression)
     if point is not None:
         if isinstance(expression, Piecewise):
             joined = piecewise_regular(expression, variable, domain, order, _regular)
@@ -659,6 +656,47 @@ def derivative_premises(value, variable, domain, points=None):
         for point in value.point:
             yield from derivative_premises(point, variable, domain, points)
         return
+    if isinstance(value, Piecewise) and value.has(Derivative):
+        remaining = domain
+        guard = S.true
+        for branch, condition in value.args:
+            reachable = guard.subs(points, simultaneous=True)
+            if reachable is S.false:
+                return
+            for premise in derivative_premises(condition, variable, remaining, points):
+                if reachable is S.true or premise.condition is None:
+                    yield premise
+                else:
+                    required = Or(~reachable, premise.condition)
+                    yield Attempt(required, premise.steps)
+            active = And(guard, condition).subs(points, simultaneous=True)
+            guard = And(guard, ~condition)
+            if active is S.false:
+                continue
+            parameters, allowed, unknown = _guard_scope(active, variable, remaining)
+            if not unknown and parameters is S.true and (remaining - allowed).is_empty is True:
+                yield from derivative_premises(branch, variable, remaining, points)
+                return
+            if (
+                variable is not None
+                and active.free_symbols <= {variable}
+                and not active.has(_SourceFinite)
+                and not unknown
+            ):
+                selected = remaining.intersect(allowed)
+                remaining -= allowed
+                if selected.is_empty is None:
+                    yield Attempt(None, ("The active native-derivative branch domain is unresolved.",))
+                    return
+                if selected.is_empty is False:
+                    yield from derivative_premises(branch, variable, selected, points)
+                if remaining.is_empty is True:
+                    return
+            else:
+                for premise in derivative_premises(branch, variable, remaining, points):
+                    condition = None if premise.condition is None else Or(~active, premise.condition)
+                    yield Attempt(condition, premise.steps)
+        return
     if isinstance(value, Derivative):
         variables = tuple(dict.fromkeys(value.variables))
         if len(variables) != 1:
@@ -666,7 +704,7 @@ def derivative_premises(value, variable, domain, points=None):
             return
         inner = variables[0]
         curve = value.expr.subs({symbol: point for symbol, point in points.items() if symbol != inner})
-        inner_domain = domain if inner == variable else coordinate_domain(inner)
+        inner_domain = domain if inner == variable and inner not in points else coordinate_domain(inner)
         regularity = _differentiable(curve, inner, inner_domain, len(value.variables), points.get(inner))
         if inner != variable and inner not in points and regularity.condition in (None, S.false):
             yield Attempt(
@@ -687,7 +725,7 @@ def evaluate_native(value):
         return None
     return value.replace(
         lambda part: isinstance(part, (Derivative, Subs)),
-        lambda part: part.doit(),
+        _evaluate,
     )
 
 
@@ -698,7 +736,51 @@ def attempt(
     expected: Expr | None,
     assumptions: tuple[Basic, ...],
     hint: Expr | None,
+    sources: tuple[Basic, ...] = (),
+    hint_sources: tuple[Basic, ...] = (),
 ) -> Attempt:
+    derivative_guards = []
+    source_values: list[Expr] = []
+    hint_values: list[Expr] = []
+    for operands, optional in ((sources, False), (hint_sources, True)):
+        for operand in operands:
+            for regularity in derivative_premises(operand, variable, claim.domain):
+                if regularity.condition is None or regularity.condition is S.false:
+                    return (
+                        Attempt(None, (*regularity.steps, "The proposed hint has unestablished observation sources."))
+                        if optional
+                        else regularity
+                    )
+                derivative_guards.append(regularity.condition)
+            value = piecewise_fold(evaluate_native(operand))
+            if not isinstance(value, Expr):
+                return Attempt(None, ("Observation source checks require scalar expressions.",))
+            finite = _defined(_defined_part(value), None, S.Reals)
+            if finite.condition is None or finite.condition is S.false:
+                return Attempt(None, finite.steps) if optional else finite
+            derivative_guards.append(finite.condition)
+            (hint_values if optional else source_values).append(value)
+    # Bounds and evaluation scopes have their own native coordinates. Their
+    # derivatives must not borrow the quantified subject's interval.
+    for value in (claim.domain, claim.bound, claim.at):
+        if value is None:
+            continue
+        for regularity in derivative_premises(value, None, S.Reals):
+            if regularity.condition is None or regularity.condition is S.false:
+                return regularity
+            derivative_guards.append(regularity.condition)
+    if hint is not None:
+        for regularity in derivative_premises(hint, None, S.Reals):
+            if regularity.condition is None or regularity.condition is S.false:
+                return Attempt(None, (*regularity.steps, "The proposed bound hint has unestablished native premises."))
+            derivative_guards.append(regularity.condition)
+    claim = replace(
+        claim,
+        domain=evaluate_native(claim.domain),
+        bound=evaluate_native(claim.bound),
+        at=evaluate_native(claim.at),
+    )
+    hint = evaluate_native(hint)
     if variable is not None:
         declared = coordinate_domain(variable)
         if claim.domain.is_subset(declared) is not True:
@@ -707,8 +789,6 @@ def attempt(
             return Attempt(None, ("The requested evaluation point is not established inside the claim's domain.",))
     if expression.has(AppliedUndef) and claim.property not in {"predicate", "exact_form"}:
         return Attempt(None, ("The subject contains an uninterpreted function.",))
-    derivative_guards = []
-
     for value in (expression, expected):
         if value is None:
             continue
@@ -721,6 +801,19 @@ def attempt(
     # inside their original local scopes. Other operators remain unevaluated.
     expression = evaluate_native(expression)
     expected = evaluate_native(expected)
+    # Source operands are checked before native evaluation, then their domain
+    # guards apply to the subject's scope, including local differentiability.
+    if source_values:
+        condition = And(*(_denominator_condition(value) for value in source_values))
+        if isinstance(expression, Expr):
+            expression = Piecewise((expression, condition), (S.NaN, True))
+        elif isinstance(expression, Boolean):
+            expression = And(expression, condition)
+    if hint_values and hint is not None:
+        condition = And(*(_denominator_condition(value) for value in hint_values))
+        hint = Piecewise((hint, condition), (S.NaN, True))
+    expression = piecewise_fold(expression)
+    expected = piecewise_fold(expected)
     specialized, reverse = _specialize(expression, variable, assumptions)
     specialized_expected = expected
     forward = {old: new for new, old in reverse.items()}
@@ -837,9 +930,10 @@ def attempt(
     condition = condition.xreplace(reverse) if condition is not None else None
     condition = conjunction(condition, *derivative_guards)
     if condition is not None:
-        condition = truth(condition, assumptions)
         if variable is not None and variable in condition.free_symbols:
             condition = None
+        else:
+            condition = truth(condition, assumptions)
     return Attempt(
         condition,
         result.steps,

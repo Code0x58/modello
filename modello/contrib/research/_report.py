@@ -76,6 +76,7 @@ def _evidence(report: ResearchReport, evidence: Evidence):
         "expected": _text(report, claim.expected),
         "target_bound": _text(report, claim.bound),
         "checked_upper_bound": _text(report, evidence.hint),
+        "observation_sources": [_text(report, value) for value in evidence.observation_sources],
         "condition": _text(report, evidence.condition),
         "condition_strength": evidence.condition_strength,
         "consumer": evidence.requirement.consumer,
@@ -125,6 +126,13 @@ def report_html(report: ResearchReport, title: str):
         steps = "".join(f"<li>{escape(step)}</li>" for step in item["steps"])
         witness = "".join(f"<li>{escape(point['symbol'])} = {escape(point['value'])}</li>" for point in item["witness"])
         premises = "".join(render(premise, min(level + 1, 6)) for premise in item["premises"])
+        observations = (
+            "<p>Observation sources: "
+            + "; ".join(f"<code>{escape(value)}</code>" for value in item["observation_sources"])
+            + ".</p>"
+            if item["observation_sources"]
+            else ""
+        )
         return (
             f"<article><h{level}>{escape(item['id'])}</h{level}>"
             f"<p><strong>{escape(item['verdict'])}</strong> · {escape(item['kind'])}</p>"
@@ -138,6 +146,7 @@ def report_html(report: ResearchReport, title: str):
             f"target bound: <code>{escape(str(item['target_bound']))}</code>; "
             f"checked upper bound: <code>{escape(str(item['checked_upper_bound']))}</code>.</p>"
             f"<p>Expected template: <code>{escape(str(item['expected_template']))}</code>.</p>"
+            f"{observations}"
             f"<ol>{steps}</ol><ul>{witness}</ul><p>{source_link}</p>{premises}</article>"
         )
 

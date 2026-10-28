@@ -306,6 +306,7 @@ class Evidence:
     resolved: Requirement | None = None
     hint: Expr | None = None
     expected_template: Basic | None = None
+    observation_sources: tuple[Basic, ...] = ()
 
     @property
     def verdict(self) -> Verdict:

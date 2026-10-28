@@ -34,6 +34,8 @@ from sympy import (
 )
 from sympy.core.relational import Relational
 
+from modello.solutions import _field_domain
+
 
 class _Regularity(Protocol):
     @property
@@ -149,17 +151,7 @@ def piecewise_regular(
     """
     if type(order) is not int or order not in (0, 1, 2) or variable is None or variable.is_real is not True:
         return None
-    declared = S.Reals
-    if variable.is_positive is True:
-        declared = Interval.open(0, S.Infinity)
-    elif variable.is_negative is True:
-        declared = Interval.open(S.NegativeInfinity, 0)
-    elif variable.is_nonnegative is True:
-        declared = Interval(0, S.Infinity)
-    elif variable.is_nonpositive is True:
-        declared = Interval(S.NegativeInfinity, 0)
-    if variable.is_nonzero is True:
-        declared -= FiniteSet(0)
+    declared = _field_domain(variable).intersect(S.Reals)
     if domain.is_subset(declared) is not True:
         return None
     if not isinstance(expression, Piecewise):
