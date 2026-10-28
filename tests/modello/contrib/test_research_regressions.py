@@ -8,16 +8,22 @@ from sympy import (
     Add,
     Derivative,
     Eq,
+    Function,
     Interval,
     Ne,
     Piecewise,
     S,
     Subs,
     Symbol,
+    arg,
     assuming,
     cos,
+    cot,
     exp,
     frac,
+    gamma,
+    lambdify,
+    log,
     sin,
     sqrt,
 )
@@ -28,11 +34,13 @@ from modello.contrib.research import (
     ResearchCase,
     ResearchError,
     ResearchModel,
+    convex,
     curvature_bound,
     decreasing,
     differentiable,
     exact_form,
     increasing,
+    nonnegative,
     nonzero,
     positive,
     requires,
@@ -45,6 +53,214 @@ from modello.errors import ModelDefinitionError, ModelValidationError
 
 def check(case, claim):
     return case.require(replace(claim, consumer="test", reason="Review regression.")).check().explain(claim.name)
+
+
+@pytest.mark.parametrize("function", (log, cot, gamma, arg, lambda x: 1 / x))
+def test_zero_coefficient_retains_source_poles(function):
+    class Curves(ResearchModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+        source = function(x)
+        value = a * source
+
+    case = ResearchCase.for_model(Curves).observe(a=0)
+    for claim in (smooth("value", wrt="x"), exact_form("value", S.Zero, wrt="x")):
+        assert check(case, claim).verdict == "strictly false"
+    with pytest.raises(ModelValidationError):
+        case.sample("value", wrt="x", points=(0,))
+    assert case.sample("value", wrt="x", points=(1,)).values == (0,)
+    expression = case.expression("value", wrt="x")
+    assert expression.subs(Curves.x, 1).doit().evalf() == 0
+    assert expression.subs(Curves.x, 0).doit().evalf() is S.NaN
+
+
+def test_source_guards_preserve_local_substitutions_and_identity_domains():
+    class Curves(ResearchModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+        value = a * log(x)
+        local = Subs(value, x, 1)
+        undefined = Subs(value, x, 0)
+        slope = Derivative(value, x)
+
+    case = ResearchCase.for_model(Curves).observe(a=0)
+    domain = Interval.open(0, S.Infinity)
+    assert check(case, smooth("value", wrt="x", domain=domain)).verdict == "strictly true"
+    assert check(case, exact_form("value", S.Zero, wrt="x", domain=domain)).verdict == "strictly true"
+    assert check(case, smooth("local", wrt="x")).verdict == "strictly true"
+    assert check(case, smooth("undefined", wrt="x")).verdict == "strictly false"
+    assert check(case, smooth("slope", wrt="x")).verdict == "strictly false"
+    assert check(case, differentiable("value", wrt="x", at=1)).verdict == "strictly true"
+    assert check(case, differentiable("value", wrt="x", at=0)).verdict == "strictly false"
+    expected = case.symbols.a * log(Curves.x)
+    assert check(case, exact_form(S.Zero, expected, wrt="x")).verdict == "strictly false"
+    assert check(case, exact_form(S.Zero, expected, wrt="x", domain=domain)).verdict == "strictly true"
+
+
+def test_unsupported_source_definedness_is_not_erased_by_zero_coefficients():
+    class Curves(ResearchModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+        value = a * Function("f")(x)
+
+    case = ResearchCase.for_model(Curves).observe(a=0)
+    assert check(case, smooth("value", wrt="x")).verdict == "unresolved"
+
+
+@pytest.mark.parametrize("backend", ("math", "numpy"))
+def test_source_guards_support_native_numerical_compilation(backend):
+    if backend == "numpy":
+        pytest.importorskip("numpy")
+
+    class Curves(ResearchModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+        value = a * log(x)
+
+    expression = ResearchCase.for_model(Curves).observe(a=0).expression("value", wrt="x")
+    assert lambdify(Curves.x, expression, modules=backend)(1) == 0
+
+
+def test_compilation_cannot_use_backend_extensions_to_fill_source_holes():
+    pytest.importorskip("numpy")
+
+    class Curves(ResearchModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+        value = a * arg(x)
+
+    expression = ResearchCase.for_model(Curves).observe(a=0).expression("value", wrt="x")
+    assert expression.subs(Curves.x, 0) is S.NaN
+    with pytest.raises(NotImplementedError, match="source domain"):
+        lambdify(Curves.x, expression, modules="numpy")
+
+
+def test_fixed_unevaluated_functions_do_not_supply_false_finite_certificates():
+    class Curves(ResearchModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+
+    case = ResearchCase.for_model(Curves).observe(a=0)
+    source = arg(0, evaluate=False)
+    assert case.expression(source, wrt="x") is S.NaN
+    assert check(case, smooth(source, wrt="x")).verdict == "strictly false"
+    with pytest.raises(ModelValidationError):
+        case.sample(source, wrt="x", points=(1,))
+
+
+@pytest.mark.parametrize("nested", (False, True))
+def test_zero_observation_retains_native_derivative_premises(nested):
+    class Curves(ResearchModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+
+    case = ResearchCase.for_model(Curves).observe(a=0)
+    for point, expected in ((0, "strictly false"), (1, "strictly true")):
+        value = case.symbols.a * Subs(Derivative(Abs(Curves.x), Curves.x), Curves.x, point)
+        if nested:
+            value = log(1 + value)
+        requirement = exact_form(value, S.Zero, wrt="x")
+        assert check(case, requirement).verdict == expected
+        assert check(case, smooth(value, wrt="x")).verdict == expected
+        method = Method("native", lambda current: 0, (requirement,))
+        if point == 0:
+            with pytest.raises(ResearchError):
+                case.run(method)
+            with pytest.raises(ModelValidationError):
+                case.sample(value, wrt="x", points=(1,))
+        else:
+            assert case.run(method).data == 0
+            assert case.sample(value, wrt="x", points=(1,)).values == (0,)
+
+    zero_inside = Derivative(case.symbols.a * Abs(Curves.x), Curves.x)
+    assert check(case, exact_form(zero_inside, S.Zero, wrt="x")).verdict == "strictly true"
+
+
+def test_observed_derivative_coordinates_retain_their_evaluation_scope():
+    class State(ResearchModel):
+        q = InstanceDummy("q", real=True)
+
+    original = ResearchCase.for_model(State)
+    native = Derivative(Abs(original.symbols.q), original.symbols.q)
+    assert check(original.observe(q=1), exact_form(native, S.One)).verdict == "strictly true"
+    assert check(original.observe(q=0), exact_form(native, S.Zero)).verdict == "strictly false"
+
+
+def test_symbolic_observations_preserve_their_source_domains():
+    class Curves(ResearchModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+        b = InstanceDummy("b", real=True)
+        value = a * b
+
+    case = ResearchCase.for_model(Curves).observe(a=log(Curves.x), b=0)
+    assert check(case, smooth("value", wrt="x")).verdict == "strictly false"
+    assert check(case, smooth("value", wrt="x", domain=Interval.open(0, S.Infinity))).verdict == "strictly true"
+    assert case.sample("value", wrt="x", points=(1,)).values == (0,)
+    with pytest.raises(ModelValidationError):
+        case.sample("value", wrt="x", points=(0,))
+
+
+def test_supported_source_domain_is_shared_by_scalar_property_checks():
+    class Curves(ResearchModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+        value = a * log(x)
+        shifted = 1 + value
+
+    case = ResearchCase.for_model(Curves).observe(a=0)
+    domain = Interval.open(0, S.Infinity)
+    for claim in (
+        nonnegative("value", wrt="x", domain=domain),
+        positive("shifted", wrt="x", domain=domain),
+        nonzero("shifted", wrt="x", domain=domain),
+        convex("value", wrt="x", domain=domain),
+        uniform_bound("value", 1, wrt="x", domain=domain),
+        vanishes("value", wrt="x"),
+    ):
+        assert check(case, claim).verdict == "strictly true"
+
+
+def test_source_guards_do_not_borrow_coordinate_assumptions_for_a_larger_domain():
+    class Curves(ResearchModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+        value = a * log(x)
+
+    case = ResearchCase.for_model(Curves).observe(a=0)
+    with assuming(Curves.x > 0):
+        assert check(case, smooth("value", wrt="x")).verdict == "strictly false"
+    assert check(case.assume(Curves.x > 0), smooth("value", wrt="x")).verdict == "strictly false"
+    assumed = ResearchCase.for_model(Curves)
+    assert check(assumed.assume(Eq(assumed.symbols.a, 0)), smooth("value", wrt="x")).verdict != "strictly true"
+
+
+@pytest.mark.parametrize("point", (-1, 0, S.Infinity, S.ImaginaryUnit, S.true, (1, 2)))
+def test_sampling_rejects_invalid_points_and_intrinsic_domain_violations(point):
+    class PositiveAxis(ResearchModel):
+        x = Coordinate("x", positive=True)
+        value = sqrt(x**2)
+
+    case = ResearchCase.for_model(PositiveAxis)
+    with pytest.raises(ModelValidationError):
+        case.sample("value", wrt="x", points=(point,))
+    assert tuple(float(value) for value in case.sample("value", wrt="x", points=(1, 2)).values) == (1, 2)
+
+
+def test_sampling_rejects_unbound_parameters_and_symbolic_points():
+    class Curves(ResearchModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+        value = a * x**3
+
+    case = ResearchCase.for_model(Curves)
+    with pytest.raises(ModelValidationError, match="bound parameters"):
+        case.sample("value", wrt="x", points=(1,))
+    with pytest.raises(ModelValidationError, match="bound finite real"):
+        case.sample("value", wrt="x", points=(case.symbols.a,))
+    with pytest.raises(ModelValidationError, match="scalar expression"):
+        case.sample(S.true, wrt="x", points=(1,))
+    assert case.sample("value", wrt="x", points=(0,)).values == (0,)
 
 
 def test_discontinuity_does_not_refute_definedness_order_or_identity():

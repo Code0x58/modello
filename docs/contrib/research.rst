@@ -239,6 +239,15 @@ derivatives. Divisions introduce definedness obligations before research-layer
 cancellation. Inspection sees the expressions SymPy and Modello retained; it
 cannot recover syntax already simplified away before declaration.
 
+Parameter observations also retain the source operands' definedness. For
+example, setting ``a=0`` in ``a*log(x)`` does not define its value at ``x=0``.
+Supported source domains are checked alongside the simplified formula;
+unsupported operand domains remain unresolved. These checks keep local
+substitutions and derivative evaluation points in their original scopes.
+Native SymPy substitutions retain these domains. Numerical compilation of
+unsupported operand guards raises ``NotImplementedError`` instead of using
+backend-specific values to fill undefined points.
+
 Automatic obligations use a coordinate's declared domain: a positive
 coordinate is checked on :math:`(0,\infty)`, while a nonnegative coordinate
 still includes zero and retains a denominator failure there. Explicit claims
@@ -302,7 +311,10 @@ trust boundary; a citation or user assertion alone supplies no proof.
 
 ``sample`` evaluates a finite set of points and returns an ``Experiment``.
 This record is labelled numerical observation and cannot discharge a global
-requirement.
+requirement. Points must be fully bound finite real scalars in the coordinate's
+declared domain, and their evaluated values must be fully bound, finite, and
+real. Invalid points and unresolved symbolic values raise
+``ModelValidationError``.
 
 Complete the time-dependent study
 ---------------------------------

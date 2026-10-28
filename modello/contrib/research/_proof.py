@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cache
 
 from sympy import (
     Abs,
     AccumBounds,
+    Add,
     And,
     Basic,
     Derivative,
@@ -14,6 +16,7 @@ from sympy import (
     Eq,
     Expr,
     FiniteSet,
+    Function,
     Interval,
     Limit,
     Mul,
@@ -29,22 +32,40 @@ from sympy import (
     Subs,
     Symbol,
     ask,
+    ceiling,
+    conjugate,
+    cos,
+    cosh,
     diff,
+    erf,
+    erfc,
+    exp,
     factor,
+    floor,
+    frac,
+    im,
     limit,
+    log,
+    piecewise_fold,
     preorder_traversal,
+    re,
     reduce_inequalities,
     refine,
+    sign,
     simplify,
+    sin,
+    sinh,
     sympify,
 )
 from sympy.assumptions import AssumptionsContext
 from sympy.calculus.util import continuous_domain
 from sympy.core.function import AppliedUndef
+from sympy.logic.boolalg import Boolean
 from sympy.logic.inference import satisfiable
 from sympy.polys.polyerrors import PolynomialError
 
-from modello._operators import _defined_part
+from modello._evaluation import _BINDERS, _rebuild
+from modello._operators import _conditioned, _defined_part, _denominator_condition
 
 from ._piecewise import piecewise_regular
 from ._records import Requirement
@@ -55,6 +76,157 @@ class Attempt:
     condition: Basic | None
     steps: tuple[str, ...]
     witness: tuple[tuple[Symbol, Expr], ...] = ()
+
+
+_TOTAL_FUNCTIONS = (Abs, exp, sin, cos, sinh, cosh, erf, erfc, frac, floor, ceiling, sign, conjugate, re, im)
+
+
+class _SourceFinite(Boolean):
+    """Retain operand definedness without consulting ambient assumptions."""
+
+    def __new__(cls, operand):
+        body = _defined_part(operand)
+        status = _finite_status(body)
+        if status is True:
+            return _denominator_condition(operand)
+        if status is False:
+            return S.false
+        if body != operand:
+            return And(_denominator_condition(operand), cls(body))
+        return super().__new__(cls, operand)
+
+    def _numpycode(self, printer):
+        return self._code(printer, "numpy")
+
+    def _pythoncode(self, printer):
+        return self._code(printer, "cmath")
+
+    def _code(self, printer, module):
+        # Backend values alone do not establish arbitrary source domains:
+        # numpy.angle(0), for example, extends SymPy's undefined arg(0).
+        if any(part.func not in (*_TOTAL_FUNCTIONS, log) for part in self.args[0].atoms(Function)):
+            raise NotImplementedError("Numerical compilation cannot establish this operand's source domain")
+        return f"{printer._module_format(module + '.isfinite')}({printer._print(self.args[0])})"
+
+
+def _finite_status(operand):
+    # The proof walker must establish the original derivative scope before
+    # native evaluation can supply a finite-looking value at a nonsmooth point.
+    if operand.has(Derivative):
+        return None
+    if not operand.free_symbols and operand.has(Function):
+        operand = operand.doit()
+    if operand.is_finite is False or operand in (S.NaN, S.ComplexInfinity):
+        return False
+    # Generic finite flags miss holes such as log(0) and arg(0). Certify only
+    # fixed values or functions known to be defined on their finite operands.
+    if operand.is_finite is True and all(
+        part.func in _TOTAL_FUNCTIONS
+        or not part.free_symbols
+        or part.func is log
+        and part.args[0].is_finite is True
+        and part.args[0].is_zero is False
+        for part in operand.atoms(Function)
+    ):
+        return True
+    return None
+
+
+def guard_source(expression: Basic) -> Basic:
+    """Keep operand definedness through arithmetic collapse and native binders.
+
+    The private guard stays opaque to ambient assumptions during binding.
+    Proofs interpret it on their own explicitly quantified domains.
+    """
+
+    @cache
+    def visit(value):
+        if not value.args or isinstance(value, _SourceFinite):
+            return value
+        args = tuple(visit(arg) for arg in value.args)
+        if not isinstance(value, Expr) or isinstance(value, (*_BINDERS, Piecewise)):
+            result = value.func(*args) if args != value.args else value
+        else:
+            result = _rebuild(value, args, _denominator_condition(value)) if args != value.args else value
+        if isinstance(result, Piecewise):
+            result = piecewise_fold(result)
+        if (
+            isinstance(value, Expr)
+            and not isinstance(value, (Add, Mul, Piecewise, *_BINDERS))
+            and (isinstance(value, Function) or value.is_finite is not True)
+            and not (isinstance(value, Function) and value.func in _TOTAL_FUNCTIONS)
+            and not (isinstance(value, Pow) and _denominator_condition(value) is not S.true)
+        ):
+            return _conditioned(result, _SourceFinite(value))
+        return result
+
+    return visit(expression)
+
+
+def _guard_scope(condition, variable, domain):
+    """A sufficient coordinate scope and retained parameter conditions for source guards."""
+    parameter_guards = []
+    unknown = False
+
+    def finite(predicate):
+        nonlocal unknown
+        operand = predicate.args[0]
+        if variable is None or variable not in operand.free_symbols:
+            return predicate
+        guard = _parameter_guards(operand, variable)
+        try:
+            allowed = continuous_domain(operand, variable, domain)
+            if guard is None:
+                unknown = True
+                return S.true
+            parameter_guards.append(guard)
+            return allowed.contains(variable)
+        except (NotImplementedError, TypeError, ValueError):
+            unknown = True
+            return S.true
+
+    sufficient = condition.replace(lambda part: isinstance(part, _SourceFinite), finite)
+    if variable is None or variable not in sufficient.free_symbols:
+        return And(sufficient, *parameter_guards), domain, unknown
+    coordinate_guards = []
+    for item in And.make_args(sufficient):
+        if variable in item.free_symbols:
+            coordinate_guards.append(item)
+        else:
+            parameter_guards.append(item)
+    coordinate_guard = And(*coordinate_guards)
+    if coordinate_guard.free_symbols - {variable}:
+        return And(*parameter_guards), domain, True
+    try:
+        return And(*parameter_guards), domain.intersect(coordinate_guard.as_set()), unknown
+    except (NotImplementedError, TypeError, ValueError):
+        return And(*parameter_guards), domain, True
+
+
+def _source_domain(expression, variable, domain):
+    """Separate a guarded value from its original operand-definedness proof."""
+    expression = piecewise_fold(expression)
+    if expression.is_finite is False or expression in (S.NaN, S.ComplexInfinity):
+        return expression, Attempt(S.false, ("The original expression is not finite.",))
+    if not isinstance(expression, Piecewise) or expression.args[-1] != (S.NaN, S.true):
+        return expression, Attempt(S.true, ())
+    validity = Or(*(condition for _, condition in expression.args[:-1]))
+    body = _defined_part(expression)
+    if variable is not None:
+        for point in _points(domain):
+            if validity.subs(variable, point) is S.false:
+                return body, Attempt(
+                    S.false, (f"The original expression is undefined at {point}.",), ((variable, point),)
+                )
+    parameters, allowed, unknown = _guard_scope(validity, variable, domain)
+    if parameters is S.false and not unknown:
+        return body, Attempt(S.false, ("The original expression has an undefined source operand.",))
+    missing = domain - allowed
+    if not unknown and missing.is_empty is True:
+        return body, Attempt(parameters, ())
+    if not validity.has(_SourceFinite) and not unknown and missing.is_empty is False:
+        return body, Attempt(S.false, (f"The original expression is undefined on {missing}.",))
+    return body, Attempt(None, ("Original operand definedness on the requested domain remains unresolved.",))
 
 
 def coordinate_domain(variable: Symbol | None) -> Set:
@@ -183,32 +355,19 @@ def _singular_witness(expression: Expr, variable: Symbol, domain: Set, missing: 
 
 
 def _regular(expression: Expr, variable: Symbol | None, domain: Set, order: int) -> Attempt:
-    validity = S.true
-    if isinstance(expression, Piecewise) and expression.args[-1] == (S.NaN, S.true):
-        validity = Or(*(condition for _, condition in expression.args[:-1]))
-        expression = _defined_part(expression)
-        if variable is not None and variable in validity.free_symbols:
-            if validity.free_symbols != {variable}:
-                return Attempt(None, ("A parameter-dependent coordinate guard remains unresolved.",))
-            try:
-                missing = domain - validity.as_set()
-                if missing.is_empty is False:
-                    return Attempt(S.false, (f"The original expression is undefined on {missing}.",))
-                if missing.is_empty is not True:
-                    return Attempt(None, ("The original expression's domain guard is unresolved.",))
-                validity = S.true
-            except (NotImplementedError, TypeError, ValueError):
-                return Attempt(None, ("The original expression's domain guard is unresolved.",))
+    expression, source = _source_domain(expression, variable, domain)
+    if source.condition is None or source.condition is S.false:
+        return source
     if isinstance(expression, Piecewise):
         joined = piecewise_regular(expression, variable, domain, order, _regular)
         if joined is not None:
-            return Attempt(conjunction(validity, joined.condition), joined.steps, joined.witness)
+            return Attempt(conjunction(source.condition, joined.condition), joined.steps, joined.witness)
     guard = _parameter_guards(expression, variable)
     if guard is None:
         return Attempt(None, ("Parameter-dependent definedness is unresolved.",))
     if guard is S.false:
         return Attempt(S.false, ("A parameter denominator is zero.",))
-    guard = And(guard, validity)
+    guard = And(guard, source.condition)
     if variable is None:
         return Attempt(guard, ("The parameter expression is defined under the retained guards.",))
     if expression.has(AppliedUndef, Derivative):
@@ -248,17 +407,18 @@ def _regular(expression: Expr, variable: Symbol | None, domain: Set, order: int)
 
 def _defined(expression: Expr, variable: Symbol | None, domain: Set) -> Attempt:
     """Continuity is sufficient for definedness; its failure is not a refutation."""
-    regular = _regular(expression, variable, domain, 0)
+    body, source = _source_domain(expression, variable, domain)
+    if source.condition is None or source.condition is S.false:
+        return source
+    regular = _regular(body, variable, domain, 0)
     if regular.condition is not None and regular.condition is not S.false:
-        return regular
-    if regular.condition is S.false and any("original expression is undefined" in step for step in regular.steps):
-        return regular
-    body = _defined_part(expression)
-    if body != expression:
-        return Attempt(None, (*regular.steps, "The original expression's domain guard has not been established."))
+        return Attempt(conjunction(source.condition, regular.condition), regular.steps, regular.witness)
     guard = _parameter_guards(body, variable)
     if body.is_finite is True and guard is not None:
-        return Attempt(guard, ("The expression is finite; continuity is not required for this claim.",))
+        return Attempt(
+            conjunction(source.condition, guard),
+            ("The expression is finite; continuity is not required for this claim.",),
+        )
     if variable is not None:
         for point in _points(domain):
             value = body.subs(variable, point)
@@ -297,12 +457,11 @@ def _differentiable(expression, variable, domain, order, point=None) -> Attempt:
                 neighborhood = domain
                 if body != expression:
                     validity = Or(*(condition for _, condition in expression.args[:-1]))
-                    if variable in validity.free_symbols:
-                        if validity.free_symbols != {variable}:
-                            return Attempt(None, ("The local coordinate domain depends on unresolved parameters.",))
-                        neighborhood &= validity.as_set()
-                    else:
-                        guard = conjunction(guard, validity)
+                    parameters, allowed, unknown = _guard_scope(validity, variable, domain)
+                    if unknown:
+                        return Attempt(None, ("The local source domain remains unresolved.",))
+                    neighborhood &= allowed
+                    guard = conjunction(guard, parameters)
                 for degree in range(order + 1):
                     neighborhood &= continuous_domain(diff(body, variable, degree), variable, domain)
                 if neighborhood.interior.contains(point) is S.true:
@@ -491,6 +650,47 @@ def _uniform(expression, variable, domain, bound, hint) -> Attempt:
     return Attempt(conjunction(defined.condition, upper.condition, gap), (*upper.steps, f"sup <= {hint} < {bound}."))
 
 
+def derivative_premises(value, variable, domain, points=None):
+    """Check retained native derivatives before evaluation or arithmetic collapse."""
+    points = {} if points is None else points
+    if isinstance(value, Subs):
+        local = {symbol: point.subs(points, simultaneous=True) for symbol, point in zip(value.variables, value.point)}
+        yield from derivative_premises(value.expr, variable, domain, {**points, **local})
+        for point in value.point:
+            yield from derivative_premises(point, variable, domain, points)
+        return
+    if isinstance(value, Derivative):
+        variables = tuple(dict.fromkeys(value.variables))
+        if len(variables) != 1:
+            yield Attempt(None, ("Mixed derivative regularity remains unresolved.",))
+            return
+        inner = variables[0]
+        curve = value.expr.subs({symbol: point for symbol, point in points.items() if symbol != inner})
+        inner_domain = domain if inner == variable else coordinate_domain(inner)
+        regularity = _differentiable(curve, inner, inner_domain, len(value.variables), points.get(inner))
+        if inner != variable and inner not in points and regularity.condition in (None, S.false):
+            yield Attempt(
+                None,
+                (
+                    "An inner derivative needs its own coordinate domain or evaluation scope; "
+                    "the outer domain does not apply.",
+                ),
+            )
+        else:
+            yield regularity
+    for arg in value.args:
+        yield from derivative_premises(arg, variable, domain, points)
+
+
+def evaluate_native(value):
+    if value is None:
+        return None
+    return value.replace(
+        lambda part: isinstance(part, (Derivative, Subs)),
+        lambda part: part.doit(),
+    )
+
+
 def attempt(
     claim: Requirement,
     expression: Basic,
@@ -509,52 +709,13 @@ def attempt(
         return Attempt(None, ("The subject contains an uninterpreted function.",))
     derivative_guards = []
 
-    def derivatives(value, points):
-        if isinstance(value, Subs):
-            local = {
-                symbol: point.subs(points, simultaneous=True) for symbol, point in zip(value.variables, value.point)
-            }
-            yield from derivatives(value.expr, {**points, **local})
-            for point in value.point:
-                yield from derivatives(point, points)
-            return
-        if isinstance(value, Derivative):
-            variables = tuple(dict.fromkeys(value.variables))
-            if len(variables) != 1:
-                yield Attempt(None, ("Mixed derivative regularity remains unresolved.",))
-                return
-            inner = variables[0]
-            curve = value.expr.subs({symbol: point for symbol, point in points.items() if symbol != inner})
-            domain = claim.domain if inner == variable else coordinate_domain(inner)
-            regularity = _differentiable(curve, inner, domain, len(value.variables), points.get(inner))
-            if inner != variable and inner not in points and regularity.condition in (None, S.false):
-                yield Attempt(
-                    None,
-                    (
-                        "An inner derivative needs its own coordinate domain or evaluation scope; "
-                        "the outer domain does not apply.",
-                    ),
-                )
-            else:
-                yield regularity
-        for arg in value.args:
-            yield from derivatives(arg, points)
-
     for value in (expression, expected):
         if value is None:
             continue
-        for regularity in derivatives(value, {}):
+        for regularity in derivative_premises(value, variable, claim.domain):
             if regularity.condition is None or regularity.condition is S.false:
                 return regularity
             derivative_guards.append(regularity.condition)
-
-    def evaluate_native(value):
-        if value is None:
-            return None
-        return value.replace(
-            lambda part: isinstance(part, (Derivative, Subs)),
-            lambda part: part.doit(),
-        )
 
     # Native substitutions are evaluated only after checking the derivatives
     # inside their original local scopes. Other operators remain unevaluated.
@@ -567,7 +728,23 @@ def attempt(
         specialized_expected = expected.xreplace(forward)
     specialized_hint = None if hint is None else hint.xreplace(forward)
     kind, expression = claim.property, specialized
-    if kind == "predicate":
+    source = Attempt(S.true, ())
+    if (
+        isinstance(expression, Expr)
+        and kind not in {"predicate", "limit"}
+        and not (kind == "differentiable" and claim.at is not None)
+    ):
+        expression, source = _source_domain(expression, variable, claim.domain)
+    if kind == "exact_form" and specialized_expected is not None:
+        specialized_expected, expected_source = _source_domain(specialized_expected, variable, claim.domain)
+        source = Attempt(
+            conjunction(source.condition, expected_source.condition),
+            (*source.steps, *expected_source.steps),
+            source.witness or expected_source.witness,
+        )
+    if source.condition is None or source.condition is S.false:
+        result = source
+    elif kind == "predicate":
         result = Attempt(
             truth(expression, tuple(item.xreplace(forward) for item in assumptions)),
             ("The parameter predicate is retained or established by the explicit assumptions.",),
@@ -595,14 +772,10 @@ def attempt(
         guard = _parameter_guards(body, variable)
         if body != expression:
             validity = Or(*(condition for _, condition in expression.args[:-1]))
-            if variable not in validity.free_symbols:
-                guard = conjunction(guard, validity)
-            else:
-                try:
-                    if validity.as_set().sup != S.Infinity:
-                        return Attempt(None, ("An unbounded right-hand domain has not been established.",))
-                except (NotImplementedError, ValueError, TypeError):
-                    return Attempt(None, ("The eventual parameter-dependent domain is unresolved.",))
+            parameters, allowed, unknown = _guard_scope(validity, variable, claim.domain)
+            if unknown or allowed.sup != S.Infinity:
+                return Attempt(None, ("An unbounded right-hand source domain has not been established.",))
+            guard = conjunction(guard, parameters)
         try:
             value = limit(body, variable, S.Infinity)
             condition = None if value.has(Limit, AppliedUndef, AccumBounds) else Eq(value, specialized_expected)
@@ -615,7 +788,7 @@ def attempt(
         if specialized_expected is None:
             result = Attempt(None, ("No expected form was supplied.",))
         else:
-            difference = simplify(expression - specialized_expected)
+            difference = simplify(_defined_part(expression) - _defined_part(specialized_expected))
             guards = conjunction(
                 _defined(expression, variable, claim.domain).condition,
                 _defined(specialized_expected, variable, claim.domain).condition,
@@ -660,7 +833,8 @@ def attempt(
             )
     else:
         result = Attempt(None, ("No registered theorem establishes this conclusion.",))
-    condition = result.condition.xreplace(reverse) if result.condition is not None else None
+    condition = conjunction(source.condition, result.condition)
+    condition = condition.xreplace(reverse) if condition is not None else None
     condition = conjunction(condition, *derivative_guards)
     if condition is not None:
         condition = truth(condition, assumptions)

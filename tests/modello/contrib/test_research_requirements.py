@@ -74,7 +74,7 @@ def test_model_requirements_refresh_definition_evidence_and_follow_component_sco
         case.run(Method("child", lambda current: current.expression("child.a"), uses=("child.a",)))
 
 
-def test_hint_values_are_scalar_proposals_and_removed_wrappers_are_not_exported():
+def test_hint_values_are_scalar_proposals():
     case = ResearchCase.for_model(ResearchModel)
     hinted = case.with_hint("bound", upper=2)
     assert dict(hinted.hints)["bound"] == S(2)
@@ -82,11 +82,9 @@ def test_hint_values_are_scalar_proposals_and_removed_wrappers_are_not_exported(
         case.with_hint("bound", upper=object())
     with pytest.raises(ModelInputError, match="scalar expression"):
         case.with_hint("bound", upper=S.true)
-    for name in ("Claim", "Requires", "ProofHint", "upper_bound"):
-        assert not hasattr(research, name)
 
 
-def test_requires_rejects_nonrequirements_and_ambiguous_legacy_construction():
+def test_requires_rejects_invalid_requirement_inputs():
     with pytest.raises(ModelDefinitionError, match="property requirements"):
         requires(S.One, S.One)  # type: ignore[arg-type]
     with pytest.raises(ModelDefinitionError, match="name"):

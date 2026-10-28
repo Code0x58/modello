@@ -15,12 +15,22 @@ from sympy.logic.boolalg import Boolean
 from sympy.polys.polyerrors import PolynomialError
 
 from modello import ConstraintKind, Coordinate, Modello, annotate, annotate_model, component, inspect_model
-from modello._evaluation import _rebind, _substitute
+from modello._evaluation import _rebind
+from modello._expressions import _DefinitionResolver
 from modello._problem import ModelConstraint, _algebra
 from modello.diagnostics import ModelProblem
 from modello.errors import ModelDefinitionError, ModelInputError, ModelValidationError
 
-from ._proof import Attempt, attempt, conjunction, consistency, coordinate_domain
+from ._proof import (
+    Attempt,
+    attempt,
+    conjunction,
+    consistency,
+    coordinate_domain,
+    derivative_premises,
+    evaluate_native,
+    guard_source,
+)
 from ._records import (
     Evidence,
     Experiment,
@@ -52,7 +62,11 @@ class _Context:
 
     @cached_property
     def law(self):
-        definitions = tuple(item for item in self.problem.constraints if item.kind is ConstraintKind.DEFINITION)
+        definitions = tuple(
+            replace(item, right=guard_source(item.right))
+            for item in self.problem.constraints
+            if item.kind is ConstraintKind.DEFINITION
+        )
         return _algebra(definitions, self.problem.templates.values()).resolve.symbolic()
 
     @cached_property
@@ -272,7 +286,7 @@ class ResearchCase(Generic[ModelT]):
         key = (value, protected)
         if key in context.expressions:
             return context.expressions[key]
-        result = context.law(value, protected)
+        result = context.law(guard_source(value), protected)
         if any(item.kind is not ConstraintKind.DEFINITION for item in self.problem.constraints):
             # Bind free parameters individually. Resolving the entire curve
             # through a specialized family would also substitute its coordinate.
@@ -283,8 +297,20 @@ class ResearchCase(Generic[ModelT]):
                         context.parameters[symbol] = context.family.expression(symbol)
                     resolved = context.parameters[symbol]
                     if resolved != symbol:
-                        replacements[symbol] = resolved
-            result = _substitute(result, replacements)
+                        replacements[symbol] = guard_source(resolved)
+            # Preserve held operations even when observed coefficients are zero;
+            # the proof walker must check their original scopes before evaluation.
+            result = _DefinitionResolver({}, frozenset(), frozenset(), replacements, evaluate_operators=False)(
+                result, protected
+            )
+            points = sorted(
+                set(replacements)
+                & result.free_symbols
+                & {symbol for derivative in result.atoms(Derivative) for symbol in derivative.variables},
+                key=default_sort_key,
+            )
+            if points:
+                result = Subs(result, tuple(points), tuple(replacements[symbol] for symbol in points))
         context.expressions[key] = result
         return result
 
@@ -812,9 +838,30 @@ class ResearchCase(Generic[ModelT]):
     def sample(self, subject: str | Basic, *, wrt: str | Symbol, points) -> Experiment:
         variable = self._coordinate(wrt)
         expression = self.expression(subject, wrt=variable)
-        samples = tuple(sympify(point) for point in points)
-        values = tuple(expression.subs(variable, point).evalf() for point in samples)
-        if any(value.is_finite is not True or value.is_real is not True for value in values):
+        if not isinstance(expression, Expr):
+            raise ModelValidationError("Sampling needs a scalar expression")
+        try:
+            samples = tuple(sympify(point) for point in points)
+        except (SympifyError, TypeError) as error:
+            raise ModelValidationError("Sampling points must be finite real scalar values") from error
+        domain = coordinate_domain(variable)
+        if any(
+            not isinstance(point, Expr)
+            or point.free_symbols
+            or point.is_finite is not True
+            or point.is_real is not True
+            or domain.contains(point) is not S.true
+            for point in samples
+        ):
+            raise ModelValidationError("Sampling points must be bound finite real values in the coordinate's domain")
+        if any(
+            premise.condition is not S.true
+            for point in samples
+            for premise in derivative_premises(expression, variable, domain, {variable: point})
+        ):
+            raise ModelValidationError("Sampling needs established native derivative premises")
+        values = tuple(evaluate_native(expression.subs(variable, point)).evalf() for point in samples)
+        if any(value.free_symbols or value.is_finite is not True or value.is_real is not True for value in values):
             raise ModelValidationError("Sampling needs finite real values and bound parameters")
         return Experiment(expression, variable, samples, values)
 
