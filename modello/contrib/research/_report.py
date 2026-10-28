@@ -76,7 +76,7 @@ def _evidence(report: ResearchReport, evidence: Evidence):
         "expected": _text(report, claim.expected),
         "target_bound": _text(report, claim.bound),
         "checked_upper_bound": _text(report, evidence.hint),
-        "observation_sources": [_text(report, value) for value in evidence.observation_sources],
+        "source_operands": [_text(report, value) for value in evidence.source_operands],
         "condition": _text(report, evidence.condition),
         "condition_strength": evidence.condition_strength,
         "consumer": evidence.requirement.consumer,
@@ -127,10 +127,10 @@ def report_html(report: ResearchReport, title: str):
         witness = "".join(f"<li>{escape(point['symbol'])} = {escape(point['value'])}</li>" for point in item["witness"])
         premises = "".join(render(premise, min(level + 1, 6)) for premise in item["premises"])
         observations = (
-            "<p>Observation sources: "
-            + "; ".join(f"<code>{escape(value)}</code>" for value in item["observation_sources"])
+            "<p>Source operands: "
+            + "; ".join(f"<code>{escape(value)}</code>" for value in item["source_operands"])
             + ".</p>"
-            if item["observation_sources"]
+            if item["source_operands"]
             else ""
         )
         return (

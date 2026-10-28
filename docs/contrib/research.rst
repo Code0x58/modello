@@ -245,9 +245,9 @@ Symbolic observations retain their native operations too: supplying an
 undefined derivative as an observation cannot establish a method's premises,
 even if a later multiplication would erase its value. Automatic obligations
 follow these observations as well as model definitions.
-Joint solving of cyclic or conflicting observations also retains their source
-operands for checking and sampling. Evidence and exported reports expose them
-as ``observation_sources``, alongside the resolved expression.
+Joint solving retains the source operands of observations and implicit defining
+equations for checking and sampling. Evidence and exported reports expose them
+as ``source_operands``, alongside the resolved expression.
 Supported source domains are checked alongside the simplified formula;
 unsupported operand domains remain unresolved. These checks keep local
 substitutions and derivative evaluation points in their original scopes.
@@ -277,12 +277,32 @@ a global certificate also establishes an operation whose activation is unknown.
 Otherwise the obligation remains unresolved. Coordinate assumptions cannot
 select away branches of a globally quantified automatic obligation.
 
+Native reductions retain their bound variables and supported integration or
+summation ranges. Assumptions on a free parameter cannot certify a locally bound
+variable with the same name. Single definite real integration intervals and
+integer reduction ranges have explicit scopes; unsupported nested ranges remain
+unresolved. These checks establish the operations used in an integrand or term;
+they do not establish convergence of an integral, series, or limit.
+
+Implicit defining equations and intrinsic field domains participate in joint
+feasibility checks even without observations. Inconsistent cases block method execution.
+Unsupported cyclic calculus remains inspectable as unresolved evidence, and
+blocks computations that depend on the unavailable model algebra.
+
 A nonzero real coordinate keeps zero excluded even when its sign is unknown.
 An inner derivative cannot borrow an unrelated outer coordinate's domain.
 For a supported two-branch piecewise curve with one constant interior join,
 the checker compares actual assigned values and finite one-sided derivatives
 through order two. Unsupported joins stay unresolved; an included interval
 endpoint with only one active side does not establish ordinary differentiability.
+Pointwise definedness at a guarded boundary is insufficient: an ordinary
+derivative needs a defined neighborhood around every point, including points
+in finite or closed interval domains.
+
+A uniform-bound hint supplies a sufficient certificate. If its parameter guard
+fails, the attempted proof is unresolved; a loose hint cannot refute the bound.
+Consumed hint keys, including canonical paths and theorem-premise hints, are
+excluded from unused-hint diagnostics.
 
 Use deferred ``Derivative(named_quantity, coordinate)`` inside declarations.
 A named quantity acts as a symbol while the class body is collected, so eager

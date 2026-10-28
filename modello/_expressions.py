@@ -18,6 +18,7 @@ from sympy import (
     Subs,
     Sum,
     Symbol,
+    Tuple,
     simplify,
 )
 
@@ -25,6 +26,7 @@ from modello._evaluation import _OPERATORS, _evaluate as _evaluate, _rebuild, _s
 from modello._operators import (
     _conditioned,
     _denominator_condition,
+    _held_reduction,
     _ScopedExpression,
     _ScopedOperator,
     _SymbolicTemplate,
@@ -184,7 +186,11 @@ class _DefinitionResolver:
             if isinstance(expression, Integral):
                 self._check_calculus(expression.function, protected | variables)
             body = self(expression.function, protected | variables)
-            operator = expression.func(body, *limits)
+            operator = (
+                expression.func(body, *limits)
+                if self.evaluate_operators
+                else _held_reduction(expression, (body, *(Tuple(*limit) for limit in limits)))
+            )
         elif isinstance(expression, Derivative):
             variables = frozenset(expression.variables)
             self._check_calculus(expression.expr, protected | variables)
@@ -220,13 +226,15 @@ class _DefinitionResolver:
                 pending.update(self.definitions[symbol].free_symbols - protected - visited)
 
 
-def _expand_definitions(
+def _definition_resolver(
     definitions: Mapping[Symbol, Basic],
     ambiguous: frozenset[Symbol] = frozenset(),
     observations: Mapping[Symbol, Basic] | None = None,
     templates: Iterable[_SymbolicTemplate] = (),
-) -> tuple[dict[Symbol, Basic], tuple[Symbol, ...], _DefinitionResolver]:
-    """Resolve the directed part; leave algebraic cycles for the joint solver."""
+    *,
+    evaluate_operators: bool = True,
+) -> _DefinitionResolver:
+    """Prepare directed expansion without evaluating the declared expressions."""
     pending = dict(definitions)
     ordered: dict[Symbol, Basic] = {}
     while pending:
@@ -236,5 +244,21 @@ def _expand_definitions(
         for left, right in ready.items():
             ordered[left] = right
             del pending[left]
-    resolve = _DefinitionResolver(ordered, frozenset(pending), ambiguous, observations or {}, templates)
-    return {left: resolve(right) for left, right in ordered.items()}, tuple(pending), resolve
+    return _DefinitionResolver(
+        ordered, frozenset(pending), ambiguous, observations or {}, templates, evaluate_operators=evaluate_operators
+    )
+
+
+def _expand_definitions(
+    definitions: Mapping[Symbol, Basic],
+    ambiguous: frozenset[Symbol] = frozenset(),
+    observations: Mapping[Symbol, Basic] | None = None,
+    templates: Iterable[_SymbolicTemplate] = (),
+) -> tuple[dict[Symbol, Basic], tuple[Symbol, ...], _DefinitionResolver]:
+    """Resolve the directed part; leave algebraic cycles for the joint solver."""
+    resolve = _definition_resolver(definitions, ambiguous, observations, templates)
+    return (
+        {left: resolve(right) for left, right in resolve.definitions.items()},
+        tuple(left for left in definitions if left in resolve.cyclic),
+        resolve,
+    )

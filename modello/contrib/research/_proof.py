@@ -17,8 +17,11 @@ from sympy import (
     Expr,
     FiniteSet,
     Function,
+    Integral,
     Interval,
     Limit,
+    Max,
+    Min,
     Mul,
     Ne,
     Not,
@@ -26,10 +29,13 @@ from sympy import (
     Piecewise,
     Poly,
     Pow,
+    Product,
     Q,
+    Range,
     S,
     Set,
     Subs,
+    Sum,
     Symbol,
     ask,
     ceiling,
@@ -65,7 +71,7 @@ from sympy.logic.inference import satisfiable
 from sympy.polys.polyerrors import PolynomialError
 
 from modello._evaluation import _BINDERS, _evaluate, _rebuild
-from modello._operators import _conditioned, _defined_part, _denominator_condition
+from modello._operators import _bound_coordinates, _conditioned, _defined_part, _denominator_condition, _held_reduction
 from modello.solutions import _field_domain, _membership
 
 from ._piecewise import piecewise_regular
@@ -77,6 +83,7 @@ class Attempt:
     condition: Basic | None
     steps: tuple[str, ...]
     witness: tuple[tuple[Symbol, Expr], ...] = ()
+    sufficient_only: bool = False
 
 
 _TOTAL_FUNCTIONS = (Abs, exp, sin, cos, sinh, cosh, erf, erfc, frac, floor, ceiling, sign, conjugate, re, im)
@@ -147,7 +154,10 @@ def guard_source(expression: Basic) -> Basic:
         if not value.args or isinstance(value, _SourceFinite):
             return value
         args = tuple(visit(arg) for arg in value.args)
-        if not isinstance(value, Expr) or isinstance(value, (*_BINDERS, Piecewise)):
+        if isinstance(value, (Sum, Product, Integral)) and args != value.args:
+            # Their constructors fold Piecewise through nested local binders.
+            result = _held_reduction(value, args)
+        elif not isinstance(value, Expr) or isinstance(value, (*_BINDERS, Piecewise)):
             result = value.func(*args) if args != value.args else value
         else:
             result = _rebuild(value, args, _denominator_condition(value)) if args != value.args else value
@@ -428,6 +438,19 @@ def _defined(expression: Expr, variable: Symbol | None, domain: Set) -> Attempt:
 def _differentiable(expression, variable, domain, order, point=None) -> Attempt:
     """Use Cn as a sufficient certificate and keep local questions local."""
     expression = piecewise_fold(expression)
+    if (
+        point is None
+        and variable is not None
+        and isinstance(expression, Piecewise)
+        and expression.args[-1] == (S.NaN, S.true)
+    ):
+        _, defined = _source_domain(expression, variable, domain)
+        if defined.condition is None or defined.condition is S.false:
+            return defined
+        validity = Or(*(condition for _, condition in expression.args[:-1]))
+        _, allowed, unknown = _guard_scope(validity, variable, S.Reals)
+        if unknown or domain.is_subset(allowed.interior) is not True:
+            return Attempt(None, ("Ordinary derivatives require a defined neighborhood around every requested point.",))
     if point is not None:
         if isinstance(expression, Piecewise):
             joined = piecewise_regular(expression, variable, domain, order, _regular)
@@ -644,12 +667,71 @@ def _uniform(expression, variable, domain, bound, hint) -> Attempt:
     gap = hint < bound
     if upper.condition is S.false or gap is S.false:
         return Attempt(None, ("The proposed upper bound does not certify this claim.",))
-    return Attempt(conjunction(defined.condition, upper.condition, gap), (*upper.steps, f"sup <= {hint} < {bound}."))
+    return Attempt(
+        conjunction(defined.condition, upper.condition, gap),
+        (*upper.steps, f"sup <= {hint} < {bound}."),
+        sufficient_only=True,
+    )
+
+
+def native_domains(value, resolve=lambda value: value, protected=frozenset()):
+    """Supported local ranges; complex space marks an unsupported real scope."""
+    variables = tuple(_bound_coordinates(value))
+    domains = dict.fromkeys(variables, S.Complexes)
+    if isinstance(value, Limit):
+        point, direction = resolve(value.args[2]), str(value.args[3])
+        if point.is_real is True and direction in {"+", "-"}:
+            domains[variables[0]] = (
+                Interval.open(point, S.Infinity) if direction == "+" else Interval.open(S.NegativeInfinity, point)
+            )
+    elif len(value.limits) == 1 and len(value.limits[0]) == 3:
+        variable, start, end = value.limits[0]
+        start, end = resolve(start), resolve(end)
+        if isinstance(value, Integral) and start == end:
+            domains[variable] = S.EmptySet
+        elif not (start.free_symbols | end.free_symbols) & protected:
+            if isinstance(value, Integral) and start.is_real is True and end.is_real is True:
+                domains[variable] = Interval(Min(start, end), Max(start, end))
+            elif start.is_integer is True and end.is_integer is True:
+                domains[variable] = Range(Min(start, end + 1), Max(start, end + 1))
+    return domains
 
 
 def derivative_premises(value, variable, domain, points=None):
     """Check retained native derivatives before evaluation or arithmetic collapse."""
     points = {} if points is None else points
+    if isinstance(value, (Integral, Sum, Product, Limit)):
+        scopes = native_domains(value, lambda endpoint: endpoint.subs(points, simultaneous=True))
+        if any(scope.is_empty is True for scope in scopes.values()):
+            return
+        if any(scope.is_subset(coordinate_domain(symbol)) is not True for symbol, scope in scopes.items()):
+            yield Attempt(None, ("The native binder's coordinate scope remains unresolved.",))
+            return
+        inner = next(iter(scopes))
+        local = {symbol: point for symbol, point in points.items() if symbol not in scopes}
+        for premise in derivative_premises(value.args[0], inner, scopes[inner], local):
+            condition = premise.condition
+            if condition is not None and inner in condition.free_symbols:
+                parameters, allowed, unknown = _guard_scope(condition, inner, scopes[inner])
+                missing = scopes[inner] - allowed
+                condition = (
+                    parameters
+                    if not unknown and missing.is_empty is True
+                    else S.false
+                    if not unknown and not condition.has(_SourceFinite) and missing.is_empty is False
+                    else None
+                )
+            if condition is S.false and isinstance(value, (Integral, Limit)):
+                condition = None
+            yield Attempt(condition, premise.steps, premise.witness if condition is S.false else ())
+        endpoints = (
+            (value.args[2],)
+            if isinstance(value, Limit)
+            else tuple(endpoint for limit in value.limits for endpoint in limit[1:])
+        )
+        for endpoint in endpoints:
+            yield from derivative_premises(endpoint, variable, domain, points)
+        return
     if isinstance(value, Subs):
         local = {symbol: point.subs(points, simultaneous=True) for symbol, point in zip(value.variables, value.point)}
         yield from derivative_premises(value.expr, variable, domain, {**points, **local})
@@ -739,7 +821,8 @@ def attempt(
     sources: tuple[Basic, ...] = (),
     hint_sources: tuple[Basic, ...] = (),
 ) -> Attempt:
-    derivative_guards = []
+    derivative_guards: list[Basic] = []
+    hint_guards: list[Basic] = []
     source_values: list[Expr] = []
     hint_values: list[Expr] = []
     for operands, optional in ((sources, False), (hint_sources, True)):
@@ -751,14 +834,14 @@ def attempt(
                         if optional
                         else regularity
                     )
-                derivative_guards.append(regularity.condition)
+                (hint_guards if optional else derivative_guards).append(regularity.condition)
             value = piecewise_fold(evaluate_native(operand))
             if not isinstance(value, Expr):
                 return Attempt(None, ("Observation source checks require scalar expressions.",))
             finite = _defined(_defined_part(value), None, S.Reals)
             if finite.condition is None or finite.condition is S.false:
                 return Attempt(None, finite.steps) if optional else finite
-            derivative_guards.append(finite.condition)
+            (hint_guards if optional else derivative_guards).append(finite.condition)
             (hint_values if optional else source_values).append(value)
     # Bounds and evaluation scopes have their own native coordinates. Their
     # derivatives must not borrow the quantified subject's interval.
@@ -773,7 +856,7 @@ def attempt(
         for regularity in derivative_premises(hint, None, S.Reals):
             if regularity.condition is None or regularity.condition is S.false:
                 return Attempt(None, (*regularity.steps, "The proposed bound hint has unestablished native premises."))
-            derivative_guards.append(regularity.condition)
+            hint_guards.append(regularity.condition)
     claim = replace(
         claim,
         domain=evaluate_native(claim.domain),
@@ -822,11 +905,7 @@ def attempt(
     specialized_hint = None if hint is None else hint.xreplace(forward)
     kind, expression = claim.property, specialized
     source = Attempt(S.true, ())
-    if (
-        isinstance(expression, Expr)
-        and kind not in {"predicate", "limit"}
-        and not (kind == "differentiable" and claim.at is not None)
-    ):
+    if isinstance(expression, Expr) and kind not in {"predicate", "limit", "differentiable", "curvature_bound"}:
         expression, source = _source_domain(expression, variable, claim.domain)
     if kind == "exact_form" and specialized_expected is not None:
         specialized_expected, expected_source = _source_domain(specialized_expected, variable, claim.domain)
@@ -911,29 +990,38 @@ def attempt(
         result = _uniform(expression, variable, claim.domain, claim.bound, specialized_hint)
     elif kind == "curvature_bound":
         regular = _differentiable(expression, variable, claim.domain, 2)
-        slope = diff(expression, variable)
+        curve, curve_source = _source_domain(expression, variable, claim.domain)
+        slope = diff(curve, variable)
         nonzero = _nonzero(slope, variable, claim.domain)
         if nonzero.condition is S.false:
             result = Attempt(
                 S.false, (*nonzero.steps, "The original curvature ratio has a zero denominator."), nonzero.witness
             )
         else:
-            ratio = simplify(expression * diff(expression, variable, 2) / slope**2)
+            ratio = simplify(curve * diff(curve, variable, 2) / slope**2)
             upper = _uniform(ratio, variable, claim.domain, claim.bound, specialized_hint)
             result = Attempt(
-                conjunction(regular.condition, nonzero.condition, upper.condition),
+                conjunction(regular.condition, curve_source.condition, nonzero.condition, upper.condition),
                 (*regular.steps, *nonzero.steps, f"Curvature ratio: {ratio}.", *upper.steps),
+                sufficient_only=upper.sufficient_only,
             )
     else:
         result = Attempt(None, ("No registered theorem establishes this conclusion.",))
+    hint_condition = conjunction(*hint_guards)
+    if hint_condition is not None and (variable is None or variable not in hint_condition.free_symbols):
+        hint_condition = truth(hint_condition, assumptions)
+    if hint_condition is S.false:
+        return Attempt(None, (*result.steps, "The proposed hint's native premises are not established."))
     condition = conjunction(source.condition, result.condition)
     condition = condition.xreplace(reverse) if condition is not None else None
-    condition = conjunction(condition, *derivative_guards)
+    condition = conjunction(condition, *derivative_guards, hint_condition)
     if condition is not None:
         if variable is not None and variable in condition.free_symbols:
             condition = None
         else:
             condition = truth(condition, assumptions)
+    if condition is S.false and result.sufficient_only:
+        condition = None
     return Attempt(
         condition,
         result.steps,

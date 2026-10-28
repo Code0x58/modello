@@ -136,10 +136,10 @@ def test_cyclic_observations_keep_native_premises_after_joint_elimination(point)
     with assuming(Q.positive(Curve.x)):
         report = case.check(requirements=(claim,))
         assert report.explain(claim.name).verdict == ("strictly false" if point == 0 else "strictly true")
-        assert report.explain(claim.name).observation_sources
+        assert report.explain(claim.name).source_operands
         audit = next(row for row in report.to_dict()["checks"] if row["id"] == claim.name)
-        assert any("Derivative" in source for source in audit["observation_sources"])
-        assert "Observation sources:" in report.to_html()
+        assert any("Derivative" in source for source in audit["source_operands"])
+        assert "Source operands:" in report.to_html()
     if point == 0:
         with pytest.raises(ResearchError):
             case.run(method)

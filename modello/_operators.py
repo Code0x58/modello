@@ -103,6 +103,13 @@ def _defined_part(expression: Expr) -> Expr:
     return expression
 
 
+def _held_reduction(expression: Expr, args: tuple[Basic, ...]) -> Expr:
+    """Rebuild validated reduction arguments without folding inner binders."""
+    result = Expr.__new__(expression.func, *args)
+    result.is_commutative = args[0].is_commutative
+    return result
+
+
 def _conditioned(expression: Expr, condition: Basic) -> Expr:
     if condition is not S.true:
         try:
