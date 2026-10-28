@@ -66,6 +66,7 @@ from sympy import (
 from sympy.assumptions import AssumptionsContext
 from sympy.calculus.util import continuous_domain
 from sympy.core.function import AppliedUndef
+from sympy.logic.algorithms.lra_theory import UnhandledInput
 from sympy.logic.boolalg import Boolean
 from sympy.logic.inference import satisfiable
 from sympy.polys.polyerrors import PolynomialError
@@ -198,6 +199,10 @@ def _guard_scope(condition, variable, domain):
             return S.true
 
     sufficient = condition.replace(lambda part: isinstance(part, _SourceFinite), finite)
+    # Disjoint real-continuity certificates do not establish undefinedness:
+    # finite complex operands can still be used on the requested domain.
+    if sufficient is S.false and condition.has(_SourceFinite):
+        unknown = True
     if variable is None or variable not in sufficient.free_symbols:
         return And(sufficient, *parameter_guards), domain, unknown
     coordinate_guards = []
@@ -278,7 +283,7 @@ def truth(condition: Basic, assumptions: tuple[Basic, ...]) -> Basic:
             return S.true
         if satisfiable(And(*assumptions, condition), use_lra_theory=True) is False:
             return S.false
-    except (TypeError, ValueError, NotImplementedError, AssertionError):
+    except (TypeError, ValueError, NotImplementedError, AssertionError, UnhandledInput):
         pass
     return condition
 
@@ -298,7 +303,7 @@ def consistency(assumptions: tuple[Basic, ...]) -> bool | None:
             return False
         result = satisfiable(combined, use_lra_theory=True)
         return False if result is False else True
-    except (TypeError, ValueError, NotImplementedError, AssertionError):
+    except (TypeError, ValueError, NotImplementedError, AssertionError, UnhandledInput):
         return None
 
 
@@ -309,7 +314,7 @@ def _specialize(expression: Basic, variable: Symbol | None, assumptions: tuple[B
         for name in ("positive", "negative", "nonzero", "nonnegative", "nonpositive", "real", "integer"):
             try:
                 answer = ask(getattr(Q, name)(parameter), And(*assumptions))
-            except (ValueError, TypeError, NotImplementedError):
+            except (ValueError, TypeError, NotImplementedError, UnhandledInput):
                 answer = None
             if answer is True:
                 facts[name] = True
@@ -388,8 +393,6 @@ def _regular(expression: Expr, variable: Symbol | None, domain: Set, order: int)
             allowed = continuous_domain(derivative, variable, domain)
             missing = domain - allowed
             if missing.is_empty is False:
-                if degree == 0 and not derivative.free_symbols - {variable}:
-                    return Attempt(S.false, (f"The expression is not continuous on {missing}.",))
                 witness = _singular_witness(derivative, variable, domain, missing)
                 if witness:
                     return Attempt(
@@ -401,7 +404,7 @@ def _regular(expression: Expr, variable: Symbol | None, domain: Set, order: int)
                     None,
                     (
                         f"The continuity domain of derivative order {degree} excludes {missing}, "
-                        "but parameter specializations or removable derivative singularities remain unresolved.",
+                        "but no discontinuity at this derivative order has been established.",
                     ),
                 )
             if missing.is_empty is not True:

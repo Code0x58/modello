@@ -32,10 +32,11 @@ from sympy.polys.polyerrors import PolynomialError
 from modello import ConstraintKind, Coordinate, Modello, annotate, annotate_model, component, inspect_model
 from modello._evaluation import _BINDERS, _rebind
 from modello._expressions import _definition_resolver, _DefinitionResolver
-from modello._operators import _bound_coordinates
+from modello._operators import _bound_coordinates, _scalar_atoms, _ScopedExpression, _SymbolicTemplate
 from modello._problem import ModelConstraint
 from modello.diagnostics import ModelProblem
 from modello.errors import ModelDefinitionError, ModelInputError, ModelValidationError
+from modello.series import Recurrence, _project_series, _SeriesTerm
 from modello.solutions import _field_domain, _membership
 
 from ._proof import (
@@ -199,11 +200,13 @@ def _coordinates(model: type[Modello], prefix=""):
     return result
 
 
-def _scoped_symbols(value: Basic) -> set[Basic]:
-    """Include local coordinates when tracking declaration identities."""
+def _scoped_symbols(value: Basic, *, include_declarations: bool = False) -> set[Basic]:
+    """Track scalar scopes without borrowing a named declaration's binders."""
+    operators = value.atoms(*_BINDERS) if include_declarations else _scalar_atoms(value, _BINDERS)
     return value.free_symbols | {
         symbol
-        for operator in value.atoms(*_BINDERS)
+        for operator in operators
+        if include_declarations or not isinstance(operator, _ScopedExpression) or operator.scoped_arguments
         for variable in _bound_coordinates(operator)
         for symbol in variable.free_symbols | {variable}
     }
@@ -347,7 +350,7 @@ class ResearchCase(Generic[ModelT]):
     def _known_symbols(self) -> frozenset[Basic]:
         allowed: set[Basic] = set(self._fields.values()) | set(_coordinates(self.problem.model).values())
         for item in self.problem.constraints:
-            allowed.update(item.symbols | _scoped_symbols(item.right))
+            allowed.update(item.symbols | _scoped_symbols(item.right, include_declarations=True))
         return frozenset(allowed)
 
     def _require_symbols(self, value: Basic) -> None:
@@ -508,15 +511,40 @@ class ResearchCase(Generic[ModelT]):
     def replace(self, component_path: str, model: type[Modello]) -> ResearchCase[ModelT]:
         declaration = _replace_component(self.problem.model, tuple(component_path.split(".")), model)
         problem = inspect_model(cast(type[ModelT], declaration), self.problem.name)
-        paths = {field.path: field.symbol for field in problem.fields}
-        mapping: dict[Symbol, Symbol] = {}
-        for field in self.problem.fields:
-            if field.path not in paths:
-                raise ModelDefinitionError(f"Replacement removed a recorded field: {'.'.join(field.path)}")
-            target = paths[field.path]
-            if field.symbol in mapping and mapping[field.symbol] != target:
-                raise ModelDefinitionError("Replacement splits aliased fields; declare a new model and case")
-            mapping[field.symbol] = target
+        mapping: dict[Basic, Basic] = {}
+        for originals, paths, kind in (
+            (
+                {field.path: field.symbol for field in self.problem.fields},
+                {field.path: field.symbol for field in problem.fields},
+                "field",
+            ),
+            (self.problem.templates, problem.templates, "declaration"),
+        ):
+            for path, original in originals.items():
+                if path not in paths:
+                    raise ModelDefinitionError(f"Replacement removed a recorded {kind}: {'.'.join(path)}")
+                target = paths[path]
+                if isinstance(original, _SymbolicTemplate) and (
+                    not isinstance(target, _SymbolicTemplate)
+                    or original._binding_signature != target._binding_signature
+                ):
+                    raise ModelDefinitionError(
+                        f"Replacement changes a declaration's argument signature: {'.'.join(path)}"
+                    )
+                if isinstance(original, _SymbolicTemplate) and isinstance(target, _SymbolicTemplate):
+                    split = any(
+                        isinstance(previous, _SymbolicTemplate)
+                        and original._same_declaration(previous)
+                        and (not isinstance(mapped, _SymbolicTemplate) or not target._same_declaration(mapped))
+                        for previous, mapped in mapping.items()
+                    )
+                else:
+                    split = original in mapping and mapping[original] != target
+                if split:
+                    raise ModelDefinitionError(
+                        "Replacement splits aliased fields or declarations; declare a new model and case"
+                    )
+                mapping[original] = target
         old_coordinates = _coordinates(self.problem.model)
         new_coordinates = _coordinates(declaration)
         changed_coordinates = {
@@ -593,7 +621,7 @@ class ResearchCase(Generic[ModelT]):
             if constraint.kind is not ConstraintKind.DEFINITION:
                 if constraint.kind is ConstraintKind.INFERRED and any(
                     path == component_path or path.startswith(component_path + ".")
-                    for path in self._dependencies(constraint.left)
+                    for path in self._dependencies(constraint.left, include_declarations=True)
                 ):
                     invalidated.append(
                         "Invalidated inferred observation "
@@ -660,17 +688,59 @@ class ResearchCase(Generic[ModelT]):
             (*self.changes, *invalidated),
         )
 
-    def _dependencies(self, value: Basic) -> tuple[str, ...]:
-        symbols, pending = set(), list(value.free_symbols)
-        definitions: dict[Symbol, set[Symbol]] = {}
+    def _dependencies(self, value: Basic, *, include_declarations: bool = False) -> tuple[str, ...]:
+        templates = tuple(self.problem.templates.values())
+
+        def references(expression, laws=templates):
+            result = expression.free_symbols | expression.atoms(_SymbolicTemplate)
+            for term in _scalar_atoms(expression, _SeriesTerm):
+                try:
+                    projected = _project_series(term, laws)
+                except ModelInputError:
+                    # Dependency inspection must not choose an ambiguous law
+                    # or replace the proof engine's unresolved evidence.
+                    continue
+                result.update(projected.free_symbols | projected.atoms(_SymbolicTemplate))
+            return result
+
+        symbols: set[Basic] = set()
+        pending = list(references(value))
+        sources: dict[Basic, list[Basic]] = {}
         for item in self.problem.constraints:
-            definitions.setdefault(item.left, set()).update(item.right.free_symbols)
+            sources.setdefault(item.left, []).append(item.right)
         while pending:
             symbol = pending.pop()
-            if symbol not in symbols:
-                symbols.add(symbol)
-                pending.extend(definitions.get(symbol, ()))
-        return tuple(name for name, symbol in self._fields.items() if symbol in symbols)
+            if symbol in symbols:
+                continue
+            symbols.add(symbol)
+            if isinstance(symbol, _SymbolicTemplate):
+                laws = templates
+                if isinstance(symbol, Recurrence):
+                    # An explicit recurrence selects itself; only foreign
+                    # series queries use the registry's ambiguity policy.
+                    laws = (
+                        *(
+                            law
+                            for law in templates
+                            if not isinstance(law, Recurrence)
+                            or law.target.series.symbol != symbol.target.series.symbol
+                        ),
+                        symbol,
+                    )
+                for expression in (symbol, *symbol.equations):
+                    pending.extend(references(expression, laws) - set(symbol.protected_symbols))
+            else:
+                for expression in sources.get(symbol, ()):
+                    pending.extend(references(expression))
+        paths = [name for name, symbol in self._fields.items() if symbol in symbols]
+        if include_declarations:
+            reached = tuple(symbol for symbol in symbols if isinstance(symbol, _SymbolicTemplate))
+            paths.extend(
+                ".".join(path)
+                for path, template in self.problem.templates.items()
+                if any(template._same_declaration(symbol) for symbol in reached)
+            )
+        return tuple(paths)
 
     def _declared(self):
         records = []
@@ -1167,7 +1237,7 @@ class ResearchCase(Generic[ModelT]):
         direct_uses = {self._reference(path) for path in method.uses}
         uses: set[str] = set()
         for symbol in direct_uses:
-            uses.update(self._dependencies(symbol))
+            uses.update(self._dependencies(symbol, include_declarations=True))
         required = {item.name for item in method.requirements}
         model_scopes = {
             f"{path}/{item.name}" if path else item.name: path

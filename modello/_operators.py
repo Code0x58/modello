@@ -61,7 +61,7 @@ def _scalar_expression(
     return expression
 
 
-def _scalar_atoms(expression: Basic, kind: type[_Atom]) -> set[_Atom]:
+def _scalar_atoms(expression: Basic, kind: type[_Atom] | tuple[type[_Atom], ...]) -> set[_Atom]:
     """Find scalar terms without entering the local bodies of declarations."""
     found: set[_Atom] = set()
     pending = [expression]

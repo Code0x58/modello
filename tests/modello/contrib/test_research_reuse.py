@@ -1,10 +1,11 @@
 """Reusing a case preserves identities through component changes."""
 
 import pytest
-from sympy import Derivative, Eq, Integral, Limit, Product, S, Subs, Sum
+from sympy import Abs, Derivative, Eq, Integral, Limit, Product, S, Subs, Sum
 
-from modello import Coordinate, InstanceDummy, Modello, Vector, component
-from modello.contrib.research import ResearchCase, exact_form
+from modello import ConstraintKind, Coordinate, Index, InstanceDummy, Modello, Recurrence, Series, Vector, component
+from modello.contrib.research import Method, ResearchCase, ResearchError, exact_form, predicate, requires
+from modello.contrib.stochastic import ItoProcess
 from modello.errors import ModelDefinitionError
 
 
@@ -173,3 +174,348 @@ def test_replacement_preserves_aliases_and_their_observations():
     changed = source.replace("curve", New)
     assert changed.symbols.curve.a == changed.symbols.curve.b
     assert changed.expression("curve.a") == changed.expression("curve.b") == 2
+
+
+@pytest.mark.parametrize("query", ("series", "recurrence"))
+def test_replacement_rebinds_named_declarations_in_case_payloads(query):
+    class Old(Modello):
+        n = Index("n")
+        opening = InstanceDummy("opening", real=True)
+        values = Series("values", n, real=True)
+        law = Recurrence(values[n], 2 * values[n - 1], initial={0: opening})
+        terminal = law.at(2)
+
+    class New(Modello):
+        n = Index("position")
+        opening = InstanceDummy("opening", real=True)
+        values = Series("values", n, real=True)
+        law = Recurrence(values[n], 3 * values[n - 1], initial={0: opening})
+        terminal = law.at(2)
+
+    class Parent(Modello):
+        curve = component(Old)
+        sibling = component(Old)
+        observed = InstanceDummy("observed", real=True)
+
+    original = ResearchCase.for_model(Parent)
+    value = original.symbols.curve.values[2] if query == "series" else original.symbols.curve.law.at(2)
+    source = (
+        original.observe(observed=value).require(exact_form("curve.terminal", value)).with_hint("upper", upper=value)
+    )
+    changed = source.replace("curve", New)
+    opening = changed.symbols.curve.opening
+    assert changed.expression("observed").doit() == changed.expression("curve.terminal").doit() == 9 * opening
+    assert changed.expression("sibling.terminal").doit() == 4 * changed.symbols.sibling.opening
+    assert source.expression("observed").doit() == 4 * source.symbols.curve.opening
+    expected = changed.requirements[0].expected
+    assert changed.expression(expected).doit() == 9 * opening
+    assert changed.expression(dict(changed.hints)["upper"]).doit() == 9 * opening
+    result = changed.run(Method("query", lambda current: current.expression("observed").doit(), uses=("observed",)))
+    assert result.data == 9 * opening
+
+
+def test_replacement_rejects_removed_or_incompatible_declarations():
+    class Old(Modello):
+        n = Index("n")
+        values = Series("values", n)
+
+    class Removed(Modello):
+        pass
+
+    class Continuous(Modello):
+        n = Coordinate("n", real=True)
+        values = Series("values", n)
+
+    class Parent(Modello):
+        curve = component(Old)
+
+    source = ResearchCase.for_model(Parent)
+    with pytest.raises(ModelDefinitionError, match="recorded declaration"):
+        source.replace("curve", Removed)
+    with pytest.raises(ModelDefinitionError, match="argument signature"):
+        source.replace("curve", Continuous)
+
+
+def test_named_declaration_binders_do_not_join_shared_parent_coordinates():
+    class Old(Modello):
+        n = Index("n")
+        values = Series("values", n)
+        law = Recurrence(values[n], 2 * values[n - 1], initial={0: 1})
+
+    class New(Modello):
+        n = Index("position")
+        values = Series("values", n)
+        law = Recurrence(values[n], 3 * values[n - 1], initial={0: 1})
+
+    class Parent(Modello):
+        a = component(Old)
+        b = component(Old)
+        named = a.values[2]
+
+    source = ResearchCase.for_model(Parent)
+    changed = source.replace("a", New)
+    assert changed.expression("named").doit() == 9
+    assert source.expression("named").doit() == 4
+    assert changed.expression(changed.symbols.b.values[2]).doit() == 4
+
+
+def test_replacement_rejects_splitting_aliased_declarations():
+    class Old(Modello):
+        n = Index("n")
+        first = Series("first", n)
+        second = first
+
+    class New(Modello):
+        n = Index("n")
+        first = Series("first", n)
+        second = Series("second", n)
+
+    class Parent(Modello):
+        curve = component(Old)
+
+    with pytest.raises(ModelDefinitionError, match="splits aliased"):
+        ResearchCase.for_model(Parent).replace("curve", New)
+
+
+@pytest.mark.parametrize("original_kind", ("field", "declaration"))
+def test_replacement_cannot_change_a_recorded_paths_kind(original_kind):
+    class Scalar(Modello):
+        value = InstanceDummy("value", real=True)
+
+    class Declared(Modello):
+        n = Index("n")
+        value = Series("value", n)
+
+    old, new = (Scalar, Declared) if original_kind == "field" else (Declared, Scalar)
+
+    class Parent(Modello):
+        curve = component(old)
+
+    source = ResearchCase.for_model(Parent)
+    if original_kind == "field":
+        source = source.observe(curve=Scalar("old", value=2))
+    with pytest.raises(ModelDefinitionError, match=f"recorded {original_kind}"):
+        source.replace("curve", new)
+
+
+@pytest.fixture
+def processes():
+    class Old(Modello):
+        x = Coordinate("x", real=True)
+        t = Coordinate("t", real=True)
+        process = ItoProcess(x, 5, 3, t)
+
+    class New(Modello):
+        x = Coordinate("z", real=True)
+        t = Coordinate("s", real=True)
+        process = ItoProcess(x, 7, 4, t)
+
+    return Old, New
+
+
+@pytest.mark.parametrize("operation, expected", (("mean", 30), ("variance", 64), ("exact", 34)))
+def test_process_solution_queries_rebind_without_joining_sibling_local_coordinates(processes, operation, expected):
+    old, new = processes
+
+    class Parent(Modello):
+        a = component(old)
+        b = component(old)
+        named = a.process.mean(2, 4)
+        observed = InstanceDummy("observed", real=True)
+
+    source = ResearchCase.for_model(Parent)
+    query = (
+        getattr(source.symbols.a.process, operation)(2, 4, 1)
+        if operation == "exact"
+        else getattr(source.symbols.a.process, operation)(2, 4)
+    )
+    changed = source.observe(observed=query).replace("a", new)
+    assert changed.expression("named").doit() == 30
+    assert changed.expression("observed").doit() == expected
+    assert changed.expression(changed.symbols.b.process.mean(2, 4)).doit() == 22
+
+
+@pytest.mark.parametrize("operation", ("drift", "initial"))
+def test_process_queries_keep_external_coordinate_join_checks(processes, operation):
+    old, new = processes
+
+    class Parent(Modello):
+        a = component(old)
+        b = component(old)
+        observed = InstanceDummy("observed", real=True)
+
+    source = ResearchCase.for_model(Parent)
+    process = source.symbols.a.process
+    query = process.drift(old.x**2) if operation == "drift" else process.mean(old.x, 1)
+    with pytest.raises(ModelDefinitionError, match="joins"):
+        source.observe(observed=query).replace("a", new)
+
+
+@pytest.fixture
+def fixed_series():
+    class Old(Modello):
+        n = Index("n")
+        values = Series("values", n)
+        law = Recurrence(values[n], 2 * values[n - 1], initial={0: 1})
+
+    class New(Modello):
+        n = Index("position")
+        values = Series("values", n)
+        law = Recurrence(values[n], 3 * values[n - 1], initial={0: 1})
+
+    return Old, New
+
+
+@pytest.mark.parametrize("composed", (False, True))
+@pytest.mark.parametrize("explicit", (False, True))
+def test_named_law_changes_invalidate_inferred_values_and_preserve_inputs(fixed_series, composed, explicit):
+    old, new = fixed_series
+
+    class Parent(Modello):
+        curve = component(old)
+        sibling = component(old)
+        n = Index("outer")
+        outer = Series("outer", n)
+        composed_law = Recurrence(outer[n], outer[n - 1] + curve.values[1], initial={0: 0})
+        value = composed_law.at(2) if composed else curve.values[2]
+        alias = value
+
+    class Wrapper(Modello):
+        model = component(Parent)
+
+    point = Parent("old", value=4) if explicit else Parent("old")
+    source = ResearchCase.for_model(Wrapper).observe(model=point)
+    changed = source.replace("model.curve", new)
+    if explicit:
+        assert any(item.kind is ConstraintKind.INPUT and item.right == 4 for item in changed.problem.constraints)
+        assert changed.check().consistent is False
+    else:
+        expected = 6 if composed else 9
+        assert changed.check().consistent is True
+        assert changed.expression("model.value").doit() == changed.expression("model.alias").doit() == expected
+        assert any("Invalidated inferred observation" in item for item in changed.changes)
+        assert changed.expression(changed.symbols.model.sibling.values[2]).doit() == 4
+        assert source.expression("model.value").doit() == 4
+
+
+@pytest.mark.parametrize("native", (False, True))
+def test_native_series_queries_retain_the_same_observation_sources_as_fields(native):
+    class Curve(Modello):
+        x = Coordinate("x", real=True)
+        n = Index("n")
+        a = InstanceDummy("a", real=True)
+        b = InstanceDummy("b", real=True)
+        values = Series("values", n)
+        law = Recurrence(values[n], a * values[n - 1], initial={0: 1})
+        first = law.at(1)
+
+    source = ResearchCase.for_model(Curve)
+    case = source.observe(
+        a=source.symbols.b, b=2 * source.symbols.a + Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, 0)
+    )
+    subject = case.symbols.values[1] if native else "first"
+    claim = exact_form(subject, S.Zero, wrt="x")
+    evidence = case.check(requirements=(claim,)).explain(claim.name)
+    assert evidence.verdict == "strictly false"
+    assert evidence.source_operands
+
+
+def test_a_method_consumes_component_contracts_reached_through_named_laws(fixed_series):
+    old, _ = fixed_series
+    restricted = requires(old, predicate(S.false, name="admissible"))
+
+    class Parent(Modello):
+        curve = component(restricted)
+        value = curve.values[2]
+
+    case = ResearchCase.for_model(Parent)
+    calls = []
+    with pytest.raises(ResearchError) as failure:
+        case.run(Method("read", lambda current: calls.append(current), uses=("value",)))
+    assert failure.value.report.explain("curve/admissible").verdict == "strictly false"
+    assert not calls
+
+
+@pytest.mark.parametrize("alpha_renamed", (False, True))
+def test_explicit_named_law_selection_does_not_consume_an_alternative_laws_contract(alpha_renamed):
+    class Curve(Modello):
+        n = Index("n")
+        values = Series("values", n)
+        chosen = Recurrence(values[n], 2 * values[n - 1], initial={0: 1})
+        other = chosen.as_dummy() if alpha_renamed else chosen
+        alternative = requires(
+            Recurrence(other.target, 3 * other.target.series[other.index - 1], initial={0: 1}),
+            predicate(S.false, name="not_selected"),
+        )
+        value = chosen.at(2)
+
+    case = ResearchCase.for_model(Curve)
+    result = case.run(Method("read", lambda current: current.expression("value").doit(), uses=("value",)))
+    assert result.data == 4
+    assert result.report.explain("alternative/not_selected").verdict == "strictly false"
+
+
+@pytest.mark.parametrize("observed", (False, True))
+def test_ambiguous_series_queries_remain_inspectable_and_block_required_methods(observed):
+    class Curve(Modello):
+        n = Index("n")
+        values = Series("values", n)
+        first = Recurrence(values[n], 2 * values[n - 1], initial={0: 1})
+        second = Recurrence(values[n], 3 * values[n - 1], initial={0: 1})
+        input = InstanceDummy("input")
+
+    case = ResearchCase.for_model(Curve)
+    subject = case.symbols.values[2]
+    if observed:
+        case = case.observe(input=subject)
+        subject = "input"
+    claim = exact_form(subject, 4)
+    assert case.check(requirements=(claim,)).explain(claim.name).verdict == "unresolved"
+    calls = []
+    with pytest.raises(ResearchError) as failure:
+        case.run(Method("read", lambda current: calls.append(current), (claim,), uses=("input",) if observed else ()))
+    assert failure.value.report.explain(claim.name).verdict == "unresolved"
+    assert not calls
+
+
+def test_alpha_renamed_declaration_aliases_consume_the_same_contracts():
+    class Curve(Modello):
+        n = Index("n")
+        values = Series("values", n)
+        chosen = Recurrence(values[n], 2 * values[n - 1], initial={0: 1})
+        alias = requires(chosen.as_dummy(), predicate(S.false, name="required"))
+        value = chosen.at(2)
+
+    case = ResearchCase.for_model(Curve)
+    calls = []
+    with pytest.raises(ResearchError) as failure:
+        case.run(Method("read", lambda current: calls.append(current), uses=("value",)))
+    assert failure.value.report.explain("alias/required").verdict == "strictly false"
+    assert not calls
+
+
+@pytest.mark.parametrize("split", (False, True))
+def test_replacement_preserves_alpha_renamed_declaration_aliases(fixed_series, split):
+    old, _ = fixed_series
+
+    class Old(old):
+        alias = old.law.as_dummy()
+
+    class New(Modello):
+        n = Index("position")
+        values = Series("values", n)
+        law = Recurrence(values[n], 3 * values[n - 1], initial={0: 1})
+        alpha = law.as_dummy()
+        alias = Recurrence(alpha.target, 4 * alpha.target.series[alpha.index - 1], initial={0: 1}) if split else alpha
+
+    class Parent(Modello):
+        curve = component(Old)
+
+    source = ResearchCase.for_model(Parent)
+    if split:
+        with pytest.raises(ModelDefinitionError, match="splits aliased"):
+            source.replace("curve", New)
+    else:
+        changed = source.replace("curve", New)
+        assert changed.expression(changed.symbols.curve.law.at(2)).doit() == 9
+        assert changed.expression(changed.symbols.curve.alias.at(2)).doit() == 9

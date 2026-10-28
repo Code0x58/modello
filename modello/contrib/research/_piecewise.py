@@ -33,6 +33,7 @@ from sympy import (
     simplify,
 )
 from sympy.core.relational import Relational
+from sympy.logic.algorithms.lra_theory import UnhandledInput
 
 from modello.solutions import _field_domain
 
@@ -121,7 +122,7 @@ def _finite(value: Expr, check: _Check, guards: list[Basic | None], steps: list[
     try:
         real = value.is_real is True or ask(Q.real(value), assumptions) is True
         finite = value.is_finite is True or ask(Q.finite(value), assumptions) is True
-    except (ValueError, TypeError, NotImplementedError, AssertionError):
+    except (ValueError, TypeError, NotImplementedError, AssertionError, UnhandledInput):
         real = finite = False
     if not real or not finite:
         steps.append(f"Finite real-valuedness of {label} remains unestablished.")

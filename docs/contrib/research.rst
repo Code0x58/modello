@@ -72,11 +72,20 @@ expressions cannot identify which component owns a shared coordinate, so
 replacement rejects that ambiguity.
 Replacement cannot split previously aliased fields into independent quantities:
 start a new model and case to give those quantities separate observations and
-contracts.
+contracts. Named symbolic declarations, such as series and recurrence laws,
+follow the same path-based rebinding as fields in observations, claims, and
+hints. Recorded declaration paths and argument signatures must remain
+compatible; removing or changing that interface requires a new model and case.
 
 Replacement preserves explicit observations. Copied inferred values whose
 definitions depend on the replaced component are invalidated and listed in
 the report, so an old calculated intensity cannot constrain its replacement.
+Dependencies include named laws and composed series queries, even when they
+have no free scalar parameters. Methods also consume the component contracts
+reached through those declarations. Selecting one recurrence explicitly does
+not consume an alternative law merely because it targets the same series.
+Equivalent declarations with renamed local variables share their contracts;
+ambiguous series queries remain unresolved until a law is selected explicitly.
 
 ``ResearchCase.for_model`` also accepts an ordinary ``Modello`` class, which
 then receives checks when explicitly inspected.
@@ -258,6 +267,11 @@ as ``source_operands``, alongside the resolved expression.
 Supported source domains are checked alongside the simplified formula;
 unsupported operand domains remain unresolved. These checks keep local
 substitutions and derivative evaluation points in their original scopes.
+Real continuity domains provide sufficient definedness and regularity
+certificates. Their failure alone does not refute claims involving finite
+complex intermediate values, such as ``0*log(x)`` or ``cos(sqrt(x))`` on a
+negative interval. Unsupported source domains remain
+unresolved even when point samples happen to be finite.
 Native SymPy substitutions retain these domains. Numerical compilation of
 unsupported operand guards raises ``NotImplementedError`` instead of using
 backend-specific values to fill undefined points.
@@ -295,6 +309,10 @@ Implicit defining equations and intrinsic field domains participate in joint
 feasibility checks even without observations. Inconsistent cases block method execution.
 Unsupported cyclic calculus remains inspectable as unresolved evidence, and
 blocks computations that depend on the unavailable model algebra.
+Unsupported inequality reasoning, including the solver's limits on irrational
+coefficients, leaves consistency or evidence conditions unresolved. The report
+retains the assumptions, and a method still needs its required evidence before
+it can execute.
 
 A nonzero real coordinate keeps zero excluded even when its sign is unknown.
 An inner derivative cannot borrow an unrelated outer coordinate's domain.
