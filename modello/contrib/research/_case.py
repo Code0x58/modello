@@ -199,6 +199,16 @@ def _coordinates(model: type[Modello], prefix=""):
     return result
 
 
+def _scoped_symbols(value: Basic) -> set[Basic]:
+    """Include local coordinates when tracking declaration identities."""
+    return value.free_symbols | {
+        symbol
+        for operator in value.atoms(*_BINDERS)
+        for variable in _bound_coordinates(operator)
+        for symbol in variable.free_symbols | {variable}
+    }
+
+
 def _replace_component(model: type[Modello], path: tuple[str, ...], replacement: type[Modello]) -> type[Modello]:
     if not path or not isinstance(replacement, type) or not issubclass(replacement, Modello):
         raise ModelDefinitionError("Replacement needs a component path and a Modello class")
@@ -212,7 +222,9 @@ def _replace_component(model: type[Modello], path: tuple[str, ...], replacement:
         if name in new_coordinates and value != new_coordinates[name]
     }
     own_coordinates = {name: value for name, value in _coordinates(model).items() if "." not in name}
-    used = set().union(*(value.free_symbols for value in model._modello_namespace.attrs.values()))
+    namespace = model._modello_namespace
+    sources = (*namespace.attrs.values(), *namespace.vector_attrs.values(), *namespace.templates.values())
+    used = set().union(*(_scoped_symbols(value) for value in sources))
     used.update(own_coordinates.values())
     needed = {old: new for old, new in coordinate_map.items() if old in used}
     other_coordinates = {
@@ -333,16 +345,9 @@ class ResearchCase(Generic[ModelT]):
 
     @cached_property
     def _known_symbols(self) -> frozenset[Basic]:
-        allowed: set[Basic] = set(self._fields.values()) | set().union(
-            *(item.symbols for item in self.problem.constraints)
-        )
-        allowed.update(
-            variable
-            for item in self.problem.constraints
-            for operator in item.right.atoms(*_BINDERS)
-            for variable in _bound_coordinates(operator)
-        )
-        allowed.update(_coordinates(self.problem.model).values())
+        allowed: set[Basic] = set(self._fields.values()) | set(_coordinates(self.problem.model).values())
+        for item in self.problem.constraints:
+            allowed.update(item.symbols | _scoped_symbols(item.right))
         return frozenset(allowed)
 
     def _require_symbols(self, value: Basic) -> None:
@@ -504,11 +509,14 @@ class ResearchCase(Generic[ModelT]):
         declaration = _replace_component(self.problem.model, tuple(component_path.split(".")), model)
         problem = inspect_model(cast(type[ModelT], declaration), self.problem.name)
         paths = {field.path: field.symbol for field in problem.fields}
-        mapping = {}
+        mapping: dict[Symbol, Symbol] = {}
         for field in self.problem.fields:
             if field.path not in paths:
                 raise ModelDefinitionError(f"Replacement removed a recorded field: {'.'.join(field.path)}")
-            mapping[field.symbol] = paths[field.path]
+            target = paths[field.path]
+            if field.symbol in mapping and mapping[field.symbol] != target:
+                raise ModelDefinitionError("Replacement splits aliased fields; declare a new model and case")
+            mapping[field.symbol] = target
         old_coordinates = _coordinates(self.problem.model)
         new_coordinates = _coordinates(declaration)
         changed_coordinates = {
@@ -517,22 +525,29 @@ class ResearchCase(Generic[ModelT]):
             if name in new_coordinates and old != new_coordinates[name]
         }
 
-        def coordinate_bindings(subject=None):
-            dependencies = (
-                self._dependencies(subject)
-                if isinstance(subject, Basic)
-                else ((subject,) if isinstance(subject, str) else ())
+        def coordinate_bindings(*subjects):
+            referenced = set().union(*(_scoped_symbols(value) for value in subjects if isinstance(value, Basic)))
+            dependencies = tuple(
+                dict.fromkeys(
+                    path
+                    for subject in subjects
+                    if isinstance(subject, (str, Basic))
+                    for path in self._dependencies(self._reference(subject) if isinstance(subject, str) else subject)
+                )
             )
             selected = {}
             for name, (old, new) in changed_coordinates.items():
                 coordinate_dependencies = [
                     path
                     for path in dependencies
-                    if old in self._law(self._reference(path), frozenset({old})).free_symbols
+                    if old in _scoped_symbols(self._law(self._reference(path), frozenset({old})))
                 ]
                 scope = name.rpartition(".")[0]
-                relevant = not dependencies or any(
-                    path == scope or path.startswith(scope + ".") for path in coordinate_dependencies
+                unscoped = old in referenced and not coordinate_dependencies
+                relevant = (
+                    not dependencies
+                    or unscoped
+                    or any(path == scope or path.startswith(scope + ".") for path in coordinate_dependencies)
                 )
                 if relevant:
                     unchanged = [
@@ -540,13 +555,17 @@ class ResearchCase(Generic[ModelT]):
                         for path, value in old_coordinates.items()
                         if value == old and new_coordinates.get(path) == old
                     ]
-                    if any(
-                        any(
-                            dependency.startswith(path.rpartition(".")[0] + ".")
-                            for dependency in coordinate_dependencies
+                    if (
+                        unchanged
+                        and unscoped
+                        or any(
+                            any(
+                                dependency.startswith(path.rpartition(".")[0] + ".")
+                                for dependency in coordinate_dependencies
+                            )
+                            for path in unchanged
+                            if path.rpartition(".")[0]
                         )
-                        for path in unchanged
-                        if path.rpartition(".")[0]
                     ):
                         raise ModelDefinitionError(
                             "A native claim joins renamed and unchanged coordinates; redeclare its scope"
@@ -560,7 +579,7 @@ class ResearchCase(Generic[ModelT]):
 
         global_coordinates = coordinate_bindings()
         for value in self.assumptions:
-            for old in value.free_symbols & set(global_coordinates):
+            for old in _scoped_symbols(value) & set(global_coordinates):
                 if any(
                     coordinate == old and new_coordinates.get(path) == old
                     for path, coordinate in old_coordinates.items()
@@ -594,8 +613,8 @@ class ResearchCase(Generic[ModelT]):
                             {
                                 **mapping,
                                 **(
-                                    coordinate_bindings(constraint.left)
-                                    if constraint.right.free_symbols & set(global_coordinates)
+                                    coordinate_bindings(constraint.left, constraint.right)
+                                    if _scoped_symbols(constraint.right) & set(global_coordinates)
                                     else {}
                                 ),
                             },
@@ -605,16 +624,11 @@ class ResearchCase(Generic[ModelT]):
         problem = replace(problem, constraints=(*problem.constraints, *observations))
 
         def rebound(claim):
-            native_symbols = set().union(
-                *(
-                    value.free_symbols
-                    for value in (claim.subject, claim.wrt, claim.domain, claim.bound, claim.expected, claim.at)
-                    if isinstance(value, Basic)
-                )
-            )
+            payloads = (claim.subject, claim.wrt, claim.domain, claim.bound, claim.expected, claim.at)
+            native_symbols = set().union(*(_scoped_symbols(value) for value in payloads if isinstance(value, Basic)))
             bindings = {
                 **mapping,
-                **(coordinate_bindings(claim.subject) if native_symbols & set(global_coordinates) else {}),
+                **(coordinate_bindings(*payloads) if native_symbols & set(global_coordinates) else {}),
             }
 
             def value(item):
@@ -634,7 +648,7 @@ class ResearchCase(Generic[ModelT]):
             problem,
             tuple(_rebind(value, {**mapping, **global_coordinates}) for value in self.assumptions),
             tuple(rebound(item) for item in self.requirements),
-            tuple((key, _rebind(hint, {**mapping, **global_coordinates})) for key, hint in self.hints),
+            tuple((key, _rebind(hint, {**mapping, **coordinate_bindings(hint)})) for key, hint in self.hints),
             tuple(
                 replace(
                     rule,

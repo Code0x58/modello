@@ -65,7 +65,14 @@ Native expressions in declaration annotations are rebound in their component's
 scope. Paths are useful for contracts that should follow a named formula
 through replacement. Equivalent component coordinates are matched by their
 relative attribute paths; ambiguous joins of changed and unchanged coordinates
-require an explicit new declaration.
+require an explicit new declaration. Coordinate rebinding includes native
+derivative and reduction variables, even when they do not occur freely.
+Keep component field references in reusable native claims and hints: expanded
+expressions cannot identify which component owns a shared coordinate, so
+replacement rejects that ambiguity.
+Replacement cannot split previously aliased fields into independent quantities:
+start a new model and case to give those quantities separate observations and
+contracts.
 
 Replacement preserves explicit observations. Copied inferred values whose
 definitions depend on the replaced component are invalidated and listed in
