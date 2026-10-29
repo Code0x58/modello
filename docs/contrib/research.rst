@@ -79,6 +79,9 @@ contracts. Named symbolic declarations, such as series and recurrence laws,
 follow the same path-based rebinding as fields in observations, claims, and
 hints. Recorded declaration paths and argument signatures must remain
 compatible; removing or changing that interface requires a new model and case.
+Coordinate paths also retain their argument role during replacement. Changing
+one into an observed or derived model field requires a new model and case;
+replacement rejects that change before it can alter an inherited derivative.
 
 Replacement preserves explicit observations. Copied inferred values whose
 definitions depend on the replaced component are invalidated and listed in
@@ -263,6 +266,9 @@ and evaluation point. They do not imply convexity or continuity of the
 derivatives. Divisions introduce definedness obligations before research-layer
 cancellation. Inspection sees the expressions SymPy and Modello retained; it
 cannot recover syntax already simplified away before declaration.
+Empty sums, products, and zero-width integrals skip their inactive bodies, but
+their endpoint operations still need established premises. An undefined endpoint
+derivative cannot certify an identity merely because the resulting range is empty.
 
 Parameter observations also retain the source operands' definedness. For
 example, setting ``a=0`` in ``a*log(x)`` does not define its value at ``x=0``.

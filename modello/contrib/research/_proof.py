@@ -71,7 +71,14 @@ from sympy.logic.inference import satisfiable
 from sympy.polys.polyerrors import PolynomialError
 
 from modello._evaluation import _BINDERS, _evaluate, _rebuild
-from modello._operators import _bound_coordinates, _conditioned, _defined_part, _denominator_condition, _held_reduction
+from modello._operators import (
+    _bound_coordinates,
+    _conditioned,
+    _defined_part,
+    _denominator_condition,
+    _empty_reduction,
+    _held_reduction,
+)
 from modello.solutions import _field_domain, _membership
 
 from ._piecewise import piecewise_regular
@@ -703,7 +710,14 @@ def derivative_premises(value, variable, domain, points=None):
     """Check retained native derivatives before evaluation or arithmetic collapse."""
     points = {} if points is None else points
     if isinstance(value, (Integral, Sum, Product, Limit)):
-        scopes = native_domains(value, lambda endpoint: endpoint.subs(points, simultaneous=True))
+        endpoints = (
+            (value.args[2],)
+            if isinstance(value, Limit)
+            else tuple(endpoint for limit in value.limits for endpoint in limit[1:])
+        )
+        for endpoint in endpoints:
+            yield from derivative_premises(endpoint, variable, domain, points)
+        scopes = native_domains(value, lambda endpoint: evaluate_native(endpoint.subs(points, simultaneous=True)))
         if any(scope.is_empty is True for scope in scopes.values()):
             return
         if any(scope.is_subset(coordinate_domain(symbol)) is not True for symbol, scope in scopes.items()):
@@ -726,13 +740,6 @@ def derivative_premises(value, variable, domain, points=None):
             if condition is S.false and isinstance(value, (Integral, Limit)):
                 condition = None
             yield Attempt(condition, premise.steps, premise.witness if condition is S.false else ())
-        endpoints = (
-            (value.args[2],)
-            if isinstance(value, Limit)
-            else tuple(endpoint for limit in value.limits for endpoint in limit[1:])
-        )
-        for endpoint in endpoints:
-            yield from derivative_premises(endpoint, variable, domain, points)
         return
     if isinstance(value, Subs):
         local = {symbol: point.subs(points, simultaneous=True) for symbol, point in zip(value.variables, value.point)}
@@ -805,8 +812,13 @@ def derivative_premises(value, variable, domain, points=None):
 
 
 def evaluate_native(value):
+    """Normalize native values, pruning inactive discrete bodies first."""
     if value is None:
         return None
+    value = value.replace(
+        lambda part: isinstance(part, (Sum, Product)),
+        lambda part: part if (empty := _empty_reduction(part)) is None else empty,
+    )
     return value.replace(
         lambda part: isinstance(part, (Derivative, Subs)),
         _evaluate,
@@ -872,8 +884,6 @@ def attempt(
             return Attempt(None, ("The requested domain exceeds the coordinate's declared domain.",))
         if claim.at is not None and claim.domain.contains(claim.at) is not S.true:
             return Attempt(None, ("The requested evaluation point is not established inside the claim's domain.",))
-    if expression.has(AppliedUndef) and claim.property not in {"predicate", "exact_form"}:
-        return Attempt(None, ("The subject contains an uninterpreted function.",))
     for value in (expression, expected):
         if value is None:
             continue
@@ -882,10 +892,12 @@ def attempt(
                 return regularity
             derivative_guards.append(regularity.condition)
 
-    # Native substitutions are evaluated only after checking the derivatives
-    # inside their original local scopes. Other operators remain unevaluated.
+    # Check original local scopes before evaluating substitutions or collapsing
+    # empty discrete reductions.
     expression = evaluate_native(expression)
     expected = evaluate_native(expected)
+    if expression.has(AppliedUndef) and claim.property not in {"predicate", "exact_form"}:
+        return Attempt(None, ("The subject contains an uninterpreted function.",))
     # Source operands are checked before native evaluation, then their domain
     # guards apply to the subject's scope, including local differentiability.
     if source_values:

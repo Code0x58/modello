@@ -26,6 +26,7 @@ from modello._evaluation import _OPERATORS, _evaluate as _evaluate, _rebuild, _s
 from modello._operators import (
     _conditioned,
     _denominator_condition,
+    _empty_reduction,
     _held_reduction,
     _ScopedExpression,
     _ScopedOperator,
@@ -179,10 +180,10 @@ class _DefinitionResolver:
                 # Inner bounds may depend on variables bound by outer operators.
                 outer = frozenset(item[0] for item in expression.limits[i + 1 :])
                 limits.append((limit[0], *(self(bound, protected | outer) for bound in limit[1:])))
-            if isinstance(expression, (Sum, Product)) and any(
-                len(limit) == 3 and simplify(limit[2] - limit[1]) == -1 for limit in limits
-            ):
-                return S.Zero if isinstance(expression, Sum) else S.One
+            held = _held_reduction(expression, (expression.function, *(Tuple(*limit) for limit in limits)))
+            empty = _empty_reduction(held)
+            if empty is not None:
+                return empty if self.evaluate_operators else held
             if isinstance(expression, Integral):
                 self._check_calculus(expression.function, protected | variables)
             body = self(expression.function, protected | variables)

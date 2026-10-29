@@ -127,6 +127,16 @@ def _conditioned(expression: Expr, condition: Basic) -> Expr:
     return piecewise_fold(result)
 
 
+def _empty_reduction(expression: Basic) -> Expr | None:
+    """Return an empty discrete reduction's identity with its endpoint guards."""
+    if not isinstance(expression, (Sum, Product)) or not any(
+        len(limit) == 3 and simplify(limit[2] - limit[1]) == -1 for limit in expression.limits
+    ):
+        return None
+    condition = And(*(_denominator_condition(bound) for limit in expression.limits for bound in limit[1:]))
+    return _conditioned(S.Zero if isinstance(expression, Sum) else S.One, condition)
+
+
 class _ScopedExpression:
     """Describe which arguments contain local coordinates during expansion."""
 

@@ -208,6 +208,13 @@ def _replace_component(model: type[Modello], path: tuple[str, ...], replacement:
     if len(path) > 1:
         replacement = _replace_component(old_child, path[1:], replacement)
     old_coordinates, new_coordinates = _coordinates(old_child), _coordinates(replacement)
+    changed_kind = old_coordinates.keys() & {
+        ".".join(field_path) for field_path in replacement._modello_definition.fields
+    }
+    if changed_kind:
+        raise ModelDefinitionError(
+            "Replacement changes coordinate paths to model fields: " + ", ".join(sorted(changed_kind))
+        )
     coordinate_map = {
         value: new_coordinates[name]
         for name, value in old_coordinates.items()

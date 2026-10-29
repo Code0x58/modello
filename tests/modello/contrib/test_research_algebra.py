@@ -7,6 +7,7 @@ from sympy import (
     Derivative,
     Eq,
     FiniteSet,
+    Function,
     Integral,
     Interval,
     Limit,
@@ -32,6 +33,8 @@ from modello.contrib.research import (
     Theorem,
     curvature_bound,
     differentiable,
+    exact_form,
+    nonnegative,
     positive,
     uniform_bound,
 )
@@ -131,6 +134,69 @@ def test_automatic_operations_use_native_binder_domains(operator, expected):
     method = Method("calculate", lambda current: current.expression("value").doit(), uses=("value",))
     assert case.run(method).data == expected
     assert case.assume(case.symbols.x > 0).run(method).data == expected
+
+
+@pytest.mark.parametrize(("operator", "identity"), ((Sum, S.Zero), (Product, S.One), (Integral, S.Zero)))
+@pytest.mark.parametrize("source", ("definition", "native", "observation"))
+@pytest.mark.parametrize("point", (0, 1))
+def test_empty_reductions_check_native_endpoints_before_certifying_identities(operator, identity, source, point):
+    class Scoped(Modello):
+        x = Coordinate("x", real=True)
+        n = Coordinate("n", integer=True)
+        endpoint = Subs(Derivative(Abs(x), x), x, point)
+        reduction = operator(
+            1, (x if operator is Integral else n, endpoint, endpoint if operator is Integral else endpoint - 1)
+        )
+        value = reduction if source == "definition" else InstanceDummy("value", real=True)
+
+    case = ResearchCase.for_model(Scoped)
+    subject = case.expression("reduction") if source == "native" else "value"
+    if source == "observation":
+        case = case.observe(value=case.expression("reduction"))
+    claim = exact_form(subject, identity)
+    evidence = case.check(requirements=(claim,)).explain(claim.name)
+    calls = []
+    method = Method("identity", lambda current: calls.append(current) or identity, (claim,))
+    if point == 0:
+        assert evidence.verdict == "strictly false"
+        with pytest.raises(ResearchError):
+            case.run(method)
+        assert not calls
+        with pytest.raises(ModelValidationError):
+            case.sample(subject, wrt="x", points=(1,))
+    else:
+        assert evidence.verdict == "strictly true"
+        assert case.run(method).data == identity
+        assert calls == [case]
+        assert tuple(map(float, case.sample(subject, wrt="x", points=(1,)).values)) == (float(identity),)
+
+
+@pytest.mark.parametrize(("operator", "identity"), ((Sum, S.Zero), (Product, S.One), (Integral, S.Zero)))
+def test_valid_empty_reductions_do_not_check_an_inactive_undefined_derivative(operator, identity):
+    class Scoped(Modello):
+        x = Coordinate("x", real=True)
+        n = Coordinate("n", integer=True)
+        invalid = Subs(Derivative(Abs(x), x), x, 0)
+        value = operator(invalid, (x if operator is Integral else n, 1, 1 if operator is Integral else 0))
+
+    case = ResearchCase.for_model(Scoped)
+    claims = (exact_form("value", identity), nonnegative("value"))
+    result = case.run(Method("empty", lambda current: current.expression("value").doit(), claims))
+    assert result.data == identity
+    assert all(result.report.explain(claim.name).verdict == "strictly true" for claim in claims)
+
+
+@pytest.mark.parametrize(("operator", "identity"), ((Sum, S.Zero), (Product, S.One)))
+def test_valid_empty_discrete_reductions_do_not_require_a_definition_for_their_body(operator, identity):
+    class Scoped(Modello):
+        n = Coordinate("n", integer=True)
+        value = operator(Function("f")(n), (n, 1, 0))
+
+    case = ResearchCase.for_model(Scoped)
+    claims = (exact_form("value", identity), nonnegative("value"))
+    result = case.run(Method("empty", lambda current: current.expression("value").doit(), claims))
+    assert result.data == identity
+    assert all(result.report.explain(claim.name).verdict == "strictly true" for claim in claims)
 
 
 def test_native_local_symbols_are_owned_by_their_model_expression():

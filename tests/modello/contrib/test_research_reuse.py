@@ -307,6 +307,56 @@ def test_replacement_cannot_change_a_recorded_paths_kind(original_kind):
         source.replace("curve", new)
 
 
+@pytest.mark.parametrize("nested", (False, True))
+@pytest.mark.parametrize("derived", (False, True))
+def test_replacement_cannot_turn_a_coordinate_path_into_a_model_field(nested, derived):
+    class OldCurve(Modello):
+        x = Coordinate("x", real=True)
+        value = x**2
+
+    class NewCurve(Modello):
+        parameter = InstanceDummy("parameter", real=True)
+        x = 2 * parameter if derived else InstanceDummy("x", real=True)
+        value = x**2
+
+    class OldWrapper(Modello):
+        inner = component(OldCurve)
+
+    class NewWrapper(Modello):
+        inner = component(NewCurve)
+
+    old, new = (OldWrapper, NewWrapper) if nested else (OldCurve, NewCurve)
+
+    class Parent(Modello):
+        curve = component(old)
+        slope = Derivative(curve.inner.value if nested else curve.value, OldCurve.x)
+
+    source = ResearchCase.for_model(Parent)
+    with pytest.raises(ModelDefinitionError, match="coordinate paths to model fields") as failure:
+        source.replace("curve", new)
+    assert ("inner.x" if nested else "x") in str(failure.value)
+    assert source.expression("slope").doit() == 2 * OldCurve.x
+    assert source.problem.model is Parent
+
+
+def test_replacement_checks_coordinate_alias_paths_even_when_the_primary_path_survives():
+    class Old(Modello):
+        x = Coordinate("x", real=True)
+        argument = x
+        value = x**2
+
+    class New(Modello):
+        x = Coordinate("x", real=True)
+        argument = InstanceDummy("argument", real=True)
+        value = x**2
+
+    class Parent(Modello):
+        curve = component(Old)
+
+    with pytest.raises(ModelDefinitionError, match="coordinate paths to model fields: argument"):
+        ResearchCase.for_model(Parent).replace("curve", New)
+
+
 @pytest.fixture
 def processes():
     class Old(Modello):
