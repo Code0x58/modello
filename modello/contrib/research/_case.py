@@ -359,7 +359,8 @@ class ResearchCase(Generic[ModelT]):
         if not isinstance(coordinate, Symbol):
             raise ModelDefinitionError("wrt must select an independent model symbol or declared coordinate")
         self._require_symbols(coordinate)
-        if self._law(coordinate) != coordinate:
+        law = self._law
+        if coordinate in law.cyclic or law(coordinate) != coordinate:
             raise ModelDefinitionError(
                 "wrt must select an independent model symbol or declared coordinate; "
                 "reparameterize derived quantities explicitly"
@@ -397,6 +398,9 @@ class ResearchCase(Generic[ModelT]):
                 for item in context.residual_sources
                 if item.left in dependencies
             )
+            if protected and any(protected & context.bindings(source, protected).free_symbols for source in sources):
+                # A joint state solution must not freeze a curve's coordinate.
+                context.law._check_calculus(value, protected)
             # Bind free parameters individually. Resolving the entire curve
             # through a specialized family would also substitute its coordinate.
             replacements = {}

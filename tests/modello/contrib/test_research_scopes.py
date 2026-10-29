@@ -15,10 +15,11 @@ from modello.contrib.research import (
     exact_form,
     nonzero,
     positive,
+    requires,
     smooth,
     uniform_bound,
 )
-from modello.errors import ModelValidationError
+from modello.errors import ModelDefinitionError, ModelValidationError
 
 
 @pytest.mark.parametrize(
@@ -510,3 +511,120 @@ def test_coordinate_coupled_assumptions_cannot_select_away_local_operations(ambi
             case.run(Method("read", lambda current: "must not execute", uses=("value",)))
     obligations = tuple(item for item in failure.value.report.checks if item.requirement.consumer == "value")
     assert obligations and all(item.verdict == "unresolved" for item in obligations)
+
+
+@pytest.fixture(params=("self", "mutual"))
+def cyclic_coordinate_case(request):
+    class Implicit(ResearchModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+        if request.param == "mutual":
+            b = 2 * a
+            a = b + 1
+        else:
+            a = 2 * a
+        value = a**2
+
+    return ResearchCase.for_model(Implicit), 1 if request.param == "mutual" else 0
+
+
+@pytest.mark.parametrize("operation", ("expression", "check", "sample", "method"))
+@pytest.mark.parametrize("native", (False, True))
+def test_cyclic_definitions_cannot_supply_independent_coordinates(cyclic_coordinate_case, operation, native):
+    case, expected = cyclic_coordinate_case
+    coordinate = case.symbols.a if native else "a"
+    calls = []
+    for subject in ("value", case.symbols.a**2):
+        claim = exact_form(subject, expected, wrt=coordinate)
+        with pytest.raises(ModelDefinitionError, match="reparameterize derived quantities"):
+            if operation == "expression":
+                case.expression(subject, wrt=coordinate)
+            elif operation == "check":
+                case.check(requirements=(claim,))
+            elif operation == "sample":
+                case.sample(subject, wrt=coordinate, points=(2,))
+            else:
+                case.run(Method("identity", lambda current: calls.append(current), (claim,)))
+    assert not calls
+
+
+def test_cyclic_definition_dependents_are_not_independent_coordinates(cyclic_coordinate_case):
+    case, _ = cyclic_coordinate_case
+    with pytest.raises(ModelDefinitionError, match="reparameterize derived quantities"):
+        case.expression("a", wrt="value")
+
+
+def test_cyclic_coordinates_are_rejected_when_model_requirements_are_attached(cyclic_coordinate_case):
+    case, _ = cyclic_coordinate_case
+    model = case.problem.model
+    previous = model.definition_report()
+    with pytest.raises(ModelDefinitionError, match="reparameterize derived quantities"):
+        requires(model, smooth("value", wrt="a"))
+    assert model.definition_report() is previous
+
+
+def test_implicit_quantities_remain_available_under_an_independent_coordinate(cyclic_coordinate_case):
+    case, expected = cyclic_coordinate_case
+    claims = tuple(
+        exact_form(subject, expected, wrt="x", name=name)
+        for name, subject in (("named", "value"), ("native", case.symbols.a**2))
+    )
+    result = case.run(Method("identity", lambda current: current.expression("value"), claims))
+    assert result.data == expected
+    assert all(result.report.explain(claim.name).verdict == "strictly true" for claim in claims)
+    assert tuple(map(float, case.sample("value", wrt="x", points=(0, 1)).values)) == (float(expected),) * 2
+
+
+@pytest.mark.parametrize("coordinate", ("a", "alias"))
+@pytest.mark.parametrize("observed", ("numeric", "cyclic"))
+def test_observations_preserve_independent_coordinates_and_their_aliases(coordinate, observed):
+    class Parameters(ResearchModel):
+        a = InstanceDummy("a", real=True)
+        alias = a
+        b = InstanceDummy("b", real=True)
+        value = a**2
+
+    case = ResearchCase.for_model(Parameters)
+    case = case.observe(a=3) if observed == "numeric" else case.observe(a=case.symbols.b, b=case.symbols.a)
+    expected = case.symbols.a**2
+    assert case.expression("value", wrt=coordinate) == expected
+    claim = exact_form("value", expected, wrt=coordinate)
+    assert (
+        case.run(Method("identity", lambda current: current.expression("value", wrt=coordinate), (claim,))).data
+        == expected
+    )
+    assert tuple(map(float, case.sample("value", wrt=coordinate, points=(2,)).values)) == (4.0,)
+
+
+@pytest.mark.parametrize("observed", (False, True))
+@pytest.mark.parametrize("binding", ("direct", "observed_alias", "cyclic_observation"))
+@pytest.mark.parametrize("native", (False, True))
+def test_joint_state_solutions_cannot_freeze_a_protected_implicit_curve(binding, observed, native):
+    class Implicit(ResearchModel):
+        b = InstanceDummy("b", real=True)
+        c = InstanceDummy("c", real=True)
+        a = InstanceDummy("a", real=True)
+        a = a / 2 + (b if binding == "direct" else c)
+        value = a**2
+
+    case = ResearchCase.for_model(Implicit)
+    if binding != "direct":
+        c = case.symbols.b if binding == "observed_alias" else 2 * case.symbols.c + case.symbols.b
+        case = case.observe(c=c)
+    if observed:
+        case = case.observe(b=1)
+        assert case.expression("value") == 4
+    subject = case.symbols.a**2 if native else "value"
+    claim = exact_form(subject, 4 * case.symbols.b**2, wrt="b")
+    evidence = case.check(requirements=(claim,)).explain(claim.name)
+    assert evidence.verdict == "unresolved"
+    assert "cyclic model definitions" in " ".join(evidence.steps)
+    assert not evidence.witness
+    with pytest.raises(NotImplementedError, match="cyclic model definitions"):
+        case.expression(subject, wrt="b")
+    with pytest.raises(NotImplementedError, match="cyclic model definitions"):
+        case.sample(subject, wrt="b", points=(2,))
+    calls = []
+    with pytest.raises(ResearchError):
+        case.run(Method("implicit curve", lambda current: calls.append(current), (claim,)))
+    assert not calls

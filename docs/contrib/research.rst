@@ -134,9 +134,16 @@ Use a path or the original symbol identity. A new same-named SymPy symbol is
 rejected as foreign to the case. A defined quantity such as ``doubled = 2*x``
 is rejected as a differentiation coordinate with ``ModelDefinitionError``:
 reparameterize the curve explicitly before asking about its derivatives.
+Quantities in unresolved defining cycles, and quantities that depend on them,
+also need reparameterization before serving as coordinates.
 ``expression`` and ``sample`` apply the same coordinate validation as property
-checks. Parameter observations do not turn an independent quantity into a
-defined coordinate.
+checks. Parameter observations, including cyclic observations, do not turn an
+independent quantity into a defined coordinate.
+
+A curve through unresolved defining cycles also needs reparameterization when
+its sources depend on the selected coordinate. Property checks retain unresolved
+evidence; ``expression`` and ``sample`` raise ``NotImplementedError``. Point
+queries without ``wrt`` can still resolve the joint equations.
 
 Explicit assumptions can be removed on a new branch, with a recorded reason:
 
