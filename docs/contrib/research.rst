@@ -239,7 +239,10 @@ its definition. The polynomial rule can establish strict increase of
 and fails differentiability at zero. Failed C2 certificates alone do not refute
 convexity or twice differentiability. Discontinuity alone does not refute
 positivity, nonzero values, or an identity. Tail-limit claims inspect eventual
-behavior rather than requiring regularity at every finite point.
+behavior rather than requiring regularity at every finite point. Their
+requested domain, after applying source guards, must be established unbounded
+above. A bounded domain or a domain extending only toward negative infinity
+cannot establish a right-tail certificate.
 
 For a parameterized polynomial such as :math:`a x^3`, that rule retains the
 nonconstancy condition. Assuming only :math:`a\geq0` cannot establish strict

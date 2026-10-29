@@ -1,5 +1,6 @@
 """The BSM study distinguishes exact contracts, boundaries, and observations."""
 
+import math
 from dataclasses import replace
 
 import pytest
@@ -11,6 +12,7 @@ from examples.research_models.black_scholes import (
     EuropeanOptions,
     OptionStudy,
     PayoffBoundary,
+    _payoff_integral,
     boundary_checks,
     dividend_free_method,
     normal_cdf,
@@ -301,6 +303,70 @@ def test_case_bound_method_requires_refresh_after_new_observations(cases):
     with pytest.raises(ResearchError, match="different research case") as captured:
         changed.run(method)
     assert captured.value.case is changed
+
+
+@pytest.mark.parametrize(("spot", "strike"), ((100, 1), (1, 100)))
+def test_payoff_quadrature_retains_mass_at_remote_exercise_boundaries(spot, strike):
+    case = study_case(spot=spot, strike=strike, variance=Rational(1, 10000))
+    result = case.run(valuation_method)
+    assert all(item.verdict == "strictly true" for item in result.report.checks)
+    data = result.data
+    assert data.quadrature_call == pytest.approx(data.call, rel=1e-10, abs=1e-9)
+    assert data.quadrature_put == pytest.approx(data.put, rel=1e-10, abs=1e-9)
+    assert min(data.quadrature_call, data.quadrature_put, *data.quadrature_error_estimates) >= 0
+    assert max(data.quadrature_error_estimates) < 1e-8
+
+
+@pytest.mark.parametrize(
+    ("spot", "strike", "variance"),
+    ((100, 100, 0.04), (100, 1, 1e-100), (1, 100, 1e-100), (100, 100, 10000), (1e-200, 1e200, 0.04)),
+)
+def test_gaussian_payoff_kernel_matches_independent_normal_tail_values(spot, strike, variance):
+    rate, dividend, deviation = 0.04, 0.01, math.sqrt(variance)
+    d1 = (math.log(spot) - math.log(strike) + rate - dividend + variance / 2) / deviation
+    d2 = (math.log(spot) - math.log(strike) + rate - dividend - variance / 2) / deviation
+    discounted_spot, discounted_strike = spot * math.exp(-dividend), strike * math.exp(-rate)
+
+    def cdf(z):
+        return math.erfc(-z / math.sqrt(2)) / 2
+
+    expected = (
+        discounted_spot * cdf(d1) - discounted_strike * cdf(d2),
+        discounted_strike * cdf(-d2) - discounted_spot * cdf(-d1),
+    )
+    actual = (
+        _payoff_integral(math.log(spot) - dividend, -d1, deviation),
+        _payoff_integral(math.log(strike) - rate, d2, deviation),
+    )
+    for (value, error), reference in zip(actual, expected, strict=True):
+        assert value == pytest.approx(reference, rel=1e-10, abs=1e-10)
+        assert math.isfinite(error) and 0 <= error <= max(1, reference) * 1e-8
+
+
+@pytest.mark.parametrize("deviation", (1e-10, 1e-50))
+def test_gaussian_payoff_kernel_resolves_tiny_positive_payoffs(deviation):
+    value, error = _payoff_integral(0, -deviation / 2, deviation)
+    expected = math.erf(deviation / (2 * math.sqrt(2)))
+    assert value == pytest.approx(expected, rel=1e-8, abs=0)
+    assert math.isfinite(error) and error >= 0
+
+
+@pytest.mark.parametrize(("lower", "expected"), ((-math.inf, 3.0), (math.inf, 0.0)))
+def test_gaussian_payoff_kernel_handles_infinite_exercise_boundaries(lower, expected):
+    value, error = _payoff_integral(math.log(3), lower, 1)
+    assert value == pytest.approx(expected, abs=1e-10)
+    assert math.isfinite(error) and error >= 0
+
+
+def test_nonfinite_payoff_quadrature_retains_the_case_and_report(cases, monkeypatch):
+    import scipy.integrate
+
+    monkeypatch.setattr(scipy.integrate, "quad", lambda *args, **kwargs: (math.nan, 0.0))
+    case = cases["constant"]
+    with pytest.raises(ResearchError, match="Payoff quadrature produced nonfinite") as captured:
+        case.run(valuation_method)
+    assert captured.value.case is case
+    assert all(item.verdict == "strictly true" for item in captured.value.report.checks)
 
 
 @pytest.mark.parametrize("factory", (symbolic_method, valuation_method))

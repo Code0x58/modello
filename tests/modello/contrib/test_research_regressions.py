@@ -8,6 +8,7 @@ from sympy import (
     Add,
     Derivative,
     Eq,
+    FiniteSet,
     Function,
     Interval,
     Ne,
@@ -420,6 +421,40 @@ def test_tail_limits_do_not_require_interior_regularity():
         value = 1 / x
 
     assert check(ResearchCase.for_model(Pole), vanishes("value", wrt="x")).verdict == "strictly true"
+
+
+@pytest.mark.parametrize("guarded", (False, True))
+@pytest.mark.parametrize("domain", (Interval(1, 2), FiniteSet(1), Interval(S.NegativeInfinity, -1)))
+def test_right_tail_claims_require_an_unbounded_above_domain(guarded, domain):
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        value = 1 / x if guarded else exp(-x)
+
+    claim = replace(vanishes("value", wrt="x"), domain=domain)
+    case = ResearchCase.for_model(Curve)
+    evidence = check(case, claim)
+    assert evidence.verdict == "unresolved"
+    assert not evidence.witness
+    assert "unbounded right-hand" in " ".join(evidence.steps)
+    calls = []
+    with pytest.raises(ResearchError):
+        case.run(Method("tail", lambda current: calls.append(current), (claim,)))
+    assert not calls
+    constrained = requires(Curve, claim)
+    assert constrained.definition_report().explain(claim.name).verdict == "unresolved"
+
+
+@pytest.mark.parametrize("guarded", (False, True))
+@pytest.mark.parametrize("domain", (S.Reals, Interval.open(0, S.Infinity), Interval(1, S.Infinity)))
+def test_right_tail_claims_keep_supported_unbounded_domains(guarded, domain):
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        value = 1 / x if guarded else exp(-x)
+
+    claim = replace(vanishes("value", wrt="x"), domain=domain)
+    case = ResearchCase.for_model(Curve)
+    assert check(case, claim).verdict == "strictly true"
+    assert case.run(Method("tail", lambda current: "established", (claim,))).data == "established"
 
 
 def test_substitution_guards_are_local_for_direct_and_named_curves():

@@ -982,12 +982,13 @@ def attempt(
     elif kind == "limit":
         body = _defined_part(expression)
         guard = _parameter_guards(body, variable)
+        tail_domain, unknown = claim.domain, False
         if body != expression:
             validity = Or(*(condition for _, condition in expression.args[:-1]))
-            parameters, allowed, unknown = _guard_scope(validity, variable, claim.domain)
-            if unknown or allowed.sup != S.Infinity:
-                return Attempt(None, ("An unbounded right-hand source domain has not been established.",))
+            parameters, tail_domain, unknown = _guard_scope(validity, variable, claim.domain)
             guard = conjunction(guard, parameters)
+        if unknown or tail_domain.sup != S.Infinity:
+            return Attempt(None, ("An unbounded right-hand source domain has not been established.",))
         try:
             value = limit(body, variable, S.Infinity)
             condition = None if value.has(Limit, AppliedUndef, AccumBounds) else Eq(value, specialized_expected)

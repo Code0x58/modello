@@ -12,6 +12,7 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
+from itertools import pairwise
 from types import MappingProxyType
 from typing import Any
 
@@ -627,15 +628,39 @@ class NumericalCheck:
     kind: str = "numerical observation"
 
 
+def _payoff_integral(log_scale: float, lower: float, deviation: float) -> tuple[float, float]:
+    """Integrate a positive payoff against a centered Gaussian, retaining tails."""
+    try:
+        from scipy.integrate import quad
+    except ImportError as import_error:
+        raise RuntimeError("Install modello[research] to run the independent SciPy payoff quadrature") from import_error
+
+    if lower == math.inf:
+        return 0.0, 0.0
+    log_normalizer = math.log(2 * math.pi) / 2
+
+    def integrand(z: float) -> float:
+        factor = -math.expm1(-deviation * (z - lower))
+        if factor == 0:
+            return 0.0
+        return math.exp(log_scale - z * z / 2 + math.log(factor) - log_normalizer)
+
+    # Finite panels expose the Gaussian mass even when the exercise boundary
+    # is remote; the infinite tails remain in the integral.
+    edges = [lower, *(point for point in (-8.0, 0.0, 8.0) if point > lower), math.inf]
+    segments = [
+        quad(integrand, start, stop, epsabs=1e-10 / (len(edges) - 1), epsrel=1e-10) for start, stop in pairwise(edges)
+    ]
+    value, error = (math.fsum(segment[index] for segment in segments) for index in (0, 1))
+    if not math.isfinite(value) or not math.isfinite(error) or min(value, error) < 0:
+        raise ValueError("Payoff quadrature produced nonfinite or negative results")
+    return value, error
+
+
 def valuation_method(case: ResearchCase[OptionStudy]) -> Method[NumericalCheck]:
     """Compare the declared formula with discounted lognormal payoff quadrature."""
 
     def execute(current: ResearchCase[OptionStudy]) -> NumericalCheck:
-        try:
-            from scipy.integrate import quad
-        except ImportError as error:
-            raise RuntimeError("Install modello[research] to run the independent SciPy payoff quadrature") from error
-
         def number(path: str) -> float:
             expression = current.expression(path)
             if expression.free_symbols or expression.is_real is not True or expression.is_finite is not True:
@@ -648,19 +673,16 @@ def valuation_method(case: ResearchCase[OptionStudy]) -> Method[NumericalCheck]:
         spot, strike = number("pricing.spot"), number("pricing.strike")
         rate, dividend, variance = (number(f"pricing.carry.{name}_total") for name in ("rate", "yield", "variance"))
         deviation = math.sqrt(variance)
-        threshold = (math.log(strike / spot) - rate + dividend + variance / 2) / deviation
-
-        def integrand(z: float) -> float:
-            # Combine exponentials with the Gaussian density before evaluation,
-            # avoiding overflow at the infinite quadrature endpoints.
-            return (
-                spot * math.exp(rate - dividend - variance / 2 + deviation * z - z * z / 2)
-                - strike * math.exp(-z * z / 2)
-            ) / math.sqrt(2 * math.pi)
-
-        call_integral, call_estimate = quad(integrand, threshold, math.inf, epsabs=1e-10, epsrel=1e-10)
-        put_integral, put_estimate = quad(lambda z: -integrand(z), -math.inf, threshold, epsabs=1e-10, epsrel=1e-10)
-        reference_call, reference_put = math.exp(-rate) * call_integral, math.exp(-rate) * put_integral
+        log_spot, log_strike = math.log(spot), math.log(strike)
+        log_ratio = log_strike - log_spot - rate + dividend
+        # Complete the call's Gaussian square and reflect the put's variable
+        # so both use the same positive kernel with its density centered at zero.
+        reference_call, call_estimate = _payoff_integral(
+            log_spot - dividend, (log_ratio - variance / 2) / deviation, deviation
+        )
+        reference_put, put_estimate = _payoff_integral(
+            log_strike - rate, -(log_ratio + variance / 2) / deviation, deviation
+        )
         call, put = number("pricing.call"), number("pricing.put")
         return NumericalCheck(
             call,
@@ -672,7 +694,7 @@ def valuation_method(case: ResearchCase[OptionStudy]) -> Method[NumericalCheck]:
             reference_put,
             abs(call - reference_call),
             abs(put - reference_put),
-            (math.exp(-rate) * call_estimate, math.exp(-rate) * put_estimate),
+            (call_estimate, put_estimate),
         )
 
     return Method(

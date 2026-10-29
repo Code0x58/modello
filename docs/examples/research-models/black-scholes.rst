@@ -231,8 +231,12 @@ The numerical reference
 ``valuation_method(case)`` integrates the call and put payoffs against a
 standard Gaussian density, using
 :math:`S_T=S\exp(R-Q-W/2+\sqrt W Z)` and discount :math:`e^{-R}`. It splits the
-integrals at the exercise threshold and does not call a normal CDF or reuse
-the closed-form option formula in the reference integrand. Numerical results
+integrals at the exercise threshold and shifts or reflects each integration
+variable to center its Gaussian density at zero. Explicit panels around zero
+keep remote exercise boundaries from hiding the Gaussian mass; both infinite
+tails remain included. Nonnegative payoff factors use ``expm1``, and discounts
+are combined with the density before exponentiation. The reference does not
+call a normal CDF or reuse the closed-form option formula. Numerical results
 include the two quadrature differences and the integrator's error estimates.
 These finite observations do not establish a global approximation bound or
 discharge an unresolved mathematical requirement.
