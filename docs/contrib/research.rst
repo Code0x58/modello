@@ -141,7 +141,8 @@ checks. Parameter observations, including cyclic observations, do not turn an
 independent quantity into a defined coordinate.
 
 A curve through unresolved defining cycles also needs reparameterization when
-its sources depend on the selected coordinate. Property checks retain unresolved
+its sources depend on the selected coordinate, including when observation
+equations refer to that curve indirectly. Property checks retain unresolved
 evidence; ``expression`` and ``sample`` raise ``NotImplementedError``. Point
 queries without ``wrt`` can still resolve the joint equations.
 
@@ -309,8 +310,10 @@ Sampling checks membership using those same restrictions.
 
 Native ``Subs`` and ``Derivative`` expressions on either side of an identity,
 in target bounds, evaluation points, domains, and proposed hints are evaluated
-after checking their own derivative scopes. Undefined evaluation points remain
-failures. An invalid optional hint leaves the attempted proof unresolved; it
+after checking their own derivative scopes. Their local evaluation points
+need an established real neighborhood inside the derivative coordinate's domain.
+Undefined evaluation points remain failures. An invalid optional hint leaves
+the attempted proof unresolved; it
 does not refute the requested bound.
 Native derivative premises in ``Piecewise`` expressions respect the active
 branch's domain. Missing regularity proofs remain unresolved, including when
@@ -340,8 +343,10 @@ A nonzero real coordinate keeps zero excluded even when its sign is unknown.
 An inner derivative cannot borrow an unrelated outer coordinate's domain.
 For a supported two-branch piecewise curve with one constant interior join,
 the checker compares actual assigned values and finite one-sided derivatives
-through order two. Unsupported joins stay unresolved; an included interval
-endpoint with only one active side does not establish ordinary differentiability.
+through order two. A local differentiability check away from the join checks
+the active branch's neighborhood and source guards; matching the other branch
+at the join is unnecessary. Unsupported joins stay unresolved; an included
+interval endpoint with only one active side does not establish ordinary differentiability.
 Pointwise definedness at a guarded boundary is insufficient: an ordinary
 derivative needs a defined neighborhood around every point, including points
 in finite or closed interval domains.

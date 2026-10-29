@@ -81,7 +81,7 @@ from modello._operators import (
 )
 from modello.solutions import _field_domain, _membership
 
-from ._piecewise import piecewise_regular
+from ._piecewise import _join, piecewise_regular
 from ._records import Requirement
 
 
@@ -461,11 +461,23 @@ def _differentiable(expression, variable, domain, order, point=None) -> Attempt:
         if unknown or domain.is_subset(allowed.interior) is not True:
             return Attempt(None, ("Ordinary derivatives require a defined neighborhood around every requested point.",))
     if point is not None:
+        if domain.interior.contains(point) is not S.true:
+            return Attempt(None, ("The requested evaluation point has no established neighborhood inside the domain.",))
         if isinstance(expression, Piecewise):
+            branches = _join(expression, variable)
+            if branches is not None:
+                boundary, left, right, _ = branches
+                for branch, side in (
+                    (left, Interval.open(S.NegativeInfinity, boundary)),
+                    (right, Interval.open(boundary, S.Infinity)),
+                ):
+                    neighborhood = domain.intersect(side)
+                    if neighborhood.interior.contains(point) is S.true:
+                        return _differentiable(branch, variable, neighborhood, order, point)
             joined = piecewise_regular(expression, variable, domain, order, _regular)
             if joined is not None:
                 if joined.condition is not None and joined.condition is not S.false:
-                    if domain.interior.contains(point) is S.true:
+                    if joined.condition is S.true or branches is not None and Eq(point, branches[0]) is S.true:
                         return Attempt(joined.condition, joined.steps)
                 elif joined.failure_order is not None and joined.failure_order <= order:
                     if (variable, point) in joined.witness:

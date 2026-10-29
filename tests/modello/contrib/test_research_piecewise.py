@@ -11,12 +11,13 @@ from modello.contrib.research import (
     ResearchCase,
     ResearchError,
     ResearchModel,
+    Theorem,
     differentiable,
     exact_form,
     smooth,
 )
 from modello.contrib.research._piecewise import piecewise_regular
-from modello.contrib.research._proof import _regular
+from modello.contrib.research._proof import _differentiable, _regular
 
 x = Symbol("x", real=True)
 
@@ -266,6 +267,51 @@ def test_public_local_refutations_cannot_be_carried_to_a_different_point():
     result = public_check(case, differentiable("value", wrt="x", domain=Interval.open(0, S.Infinity), order=2, at=2))
     assert result.condition is not S.false
     assert not result.witness
+
+
+@pytest.mark.parametrize("point", (-1, 1))
+@pytest.mark.parametrize("order", (1, 2))
+@pytest.mark.parametrize("observed", (False, True))
+def test_local_piecewise_requirements_do_not_require_matching_inactive_branches(point, order, observed):
+    class Joined(ResearchModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+        b = InstanceDummy("b", real=True)
+        value = Piecewise((a, x < 0), (b, True))
+
+    case = ResearchCase.for_model(Joined)
+    case = case.observe(a=0, b=1) if observed else case.assume(Ne(case.symbols.a, case.symbols.b))
+    local = differentiable("value", wrt="x", order=order, at=point, name="local")
+    native = exact_form(Subs(Derivative(case.symbols.value, Joined.x, order), Joined.x, point), 0, name="native")
+    conclusion = replace(local, name="reused")
+    case = case.with_theorem(
+        Theorem("reuse local requirement", conclusion, (local,), "The same mathematical proposition is retained.")
+    )
+    result = case.run(Method("local derivative", lambda current: point, (local, native, conclusion)))
+    assert result.data == point
+    assert all(item.verdict == "strictly true" for item in result.report.checks)
+    assert result.report.explain("reused/local").verdict == "strictly true"
+    at_join = replace(local, at=S.Zero)
+    assert case.check(requirements=(at_join,)).explain("local").verdict == "strictly false"
+    global_claim = smooth("value", wrt="x", order=order)
+    assert case.check(requirements=(global_claim,)).explain(global_claim.name).verdict == "strictly false"
+
+
+@pytest.mark.parametrize("point", (-1, 1))
+def test_local_piecewise_checks_retain_only_active_branch_source_guards(point):
+    class Guarded(ResearchModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+        value = Piecewise((1 / a, x < 0), (1, True))
+
+    case = ResearchCase.for_model(Guarded)
+    claim = differentiable("value", wrt="x", at=point)
+    expression = Piecewise((1 / case.symbols.a, Guarded.x < 0), (1, True))
+    evidence = _differentiable(expression, Guarded.x, S.Reals, 1, S(point))
+    expected = Ne(case.symbols.a, 0) if point < 0 else S.true
+    assert evidence.condition == expected
+    evidence = case.observe(a=0).check(requirements=(claim,)).explain(claim.name)
+    assert evidence.condition is (S.false if point < 0 else S.true)
 
 
 def test_public_failure_of_c2_does_not_refute_existing_second_differentiability():

@@ -628,3 +628,90 @@ def test_joint_state_solutions_cannot_freeze_a_protected_implicit_curve(binding,
     with pytest.raises(ResearchError):
         case.run(Method("implicit curve", lambda current: calls.append(current), (claim,)))
     assert not calls
+
+
+@pytest.mark.parametrize("observed", (False, True))
+@pytest.mark.parametrize("binding", ("direct", "nested", "equivalent_equations"))
+@pytest.mark.parametrize("native", (False, True))
+def test_observation_queries_preserve_implicit_curve_scopes(binding, observed, native):
+    class Implicit(ResearchModel):
+        x = Coordinate("x", real=True)
+        b = InstanceDummy("b", real=True)
+        a = InstanceDummy("a", real=True)
+        a = a / 2 + b
+        middle = InstanceDummy("middle", real=True)
+        output = InstanceDummy("output", real=True)
+
+    case = ResearchCase.for_model(Implicit)
+    if binding == "nested":
+        case = case.observe(middle=case.symbols.a, output=case.symbols.middle**2)
+    else:
+        case = case.observe(output=case.symbols.a**2)
+        if binding == "equivalent_equations":
+            case = case.observe(output=2 * case.symbols.a * case.symbols.b)
+    if observed:
+        case = case.observe(b=1)
+        assert case.expression("output") == 4
+        assert case.expression("output", wrt="x") == 4
+        independent = exact_form("output", 4, wrt="x", name="independent")
+        assert case.check(requirements=(independent,)).explain("independent").verdict == "strictly true"
+    subject = case.symbols.output if native else "output"
+    claim = exact_form(subject, 4, wrt="b")
+    evidence = case.check(requirements=(claim,)).explain(claim.name)
+    assert evidence.verdict == "unresolved"
+    assert "cyclic model definitions" in " ".join(evidence.steps)
+    assert not evidence.witness
+    with pytest.raises(NotImplementedError, match="cyclic model definitions"):
+        case.expression(subject, wrt="b")
+    with pytest.raises(NotImplementedError, match="cyclic model definitions"):
+        case.sample(subject, wrt="b", points=(2,))
+    calls = []
+    with pytest.raises(ResearchError):
+        case.run(Method("observed implicit curve", lambda current: calls.append(current), (claim,)))
+    assert not calls
+
+
+@pytest.mark.parametrize(
+    ("point", "expected", "verdict"),
+    (
+        (S.NegativeInfinity, -1, "unresolved"),
+        (S.Infinity, 1, "unresolved"),
+        (S.ImaginaryUnit, S.ImaginaryUnit, "unresolved"),
+        (-1, -1, "strictly true"),
+        (1, 1, "strictly true"),
+        (0, 0, "strictly false"),
+    ),
+)
+def test_native_local_derivative_premises_check_point_domains(point, expected, verdict):
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        value = x
+
+    case = ResearchCase.for_model(Curve)
+    native = Subs(Derivative(Abs(Curve.x), Curve.x, evaluate=False), Curve.x, point)
+    claim = exact_form(native, expected)
+    evidence = case.check(requirements=(claim,)).explain(claim.name)
+    assert evidence.verdict == verdict
+    calls = []
+    method = Method("local derivative", lambda current: calls.append(current), (claim,))
+    if verdict == "strictly true":
+        case.run(method)
+        assert calls == [case]
+    else:
+        with pytest.raises(ResearchError):
+            case.run(method)
+        assert not calls
+
+
+@pytest.mark.parametrize(("assumptions", "domain"), (({"integer": True}, S.Integers), ({"real": True}, FiniteSet(1))))
+def test_local_derivatives_need_a_real_neighborhood_in_their_domain(assumptions, domain):
+    class Curve(ResearchModel):
+        x = Coordinate("x", **assumptions)
+        value = Abs(x)
+
+    case = ResearchCase.for_model(Curve)
+    claim = differentiable("value", wrt="x", domain=domain, at=1)
+    assert case.check(requirements=(claim,)).explain(claim.name).verdict == "unresolved"
+    if domain is S.Integers:
+        native = exact_form(Subs(Derivative(case.symbols.value, Curve.x), Curve.x, 1), 1)
+        assert case.check(requirements=(native,)).explain(native.name).verdict == "unresolved"

@@ -398,9 +398,13 @@ class ResearchCase(Generic[ModelT]):
                 for item in context.residual_sources
                 if item.left in dependencies
             )
-            if protected and any(protected & context.bindings(source, protected).free_symbols for source in sources):
-                # A joint state solution must not freeze a curve's coordinate.
-                context.law._check_calculus(value, protected)
+            if protected:
+                scoped_sources = tuple(context.bindings(source, protected) for source in sources)
+                if any(protected & source.free_symbols for source in scoped_sources):
+                    # A joint state solution must not freeze an implicit curve,
+                    # including one reached through observation equations.
+                    for source in (result, *scoped_sources):
+                        context.law._check_calculus(source, protected)
             # Bind free parameters individually. Resolving the entire curve
             # through a specialized family would also substitute its coordinate.
             replacements = {}
