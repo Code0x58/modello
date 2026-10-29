@@ -1,7 +1,9 @@
 """Declared domains and native premises survive every research input path."""
 
+from contextlib import nullcontext
+
 import pytest
-from sympy import Abs, Add, Derivative, FiniteSet, Interval, Mul, Piecewise, Q, S, Subs, arg, assuming, log, sqrt
+from sympy import Abs, Add, Derivative, Eq, FiniteSet, Interval, Mul, Piecewise, Q, S, Subs, arg, assuming, log, sqrt
 
 from modello import Coordinate, Index, InstanceDummy
 from modello.contrib.research import (
@@ -462,3 +464,49 @@ def test_an_unconditional_use_keeps_its_automatic_requirement_after_a_conditiona
     assert any(item.verdict == "strictly false" for item in obligations)
     with pytest.raises(ResearchError):
         case.run(Method("read", lambda current: "must not execute", uses=("value",)))
+
+
+@pytest.mark.parametrize("ambient", (False, True))
+@pytest.mark.parametrize("form", ("direct", "alias", "predicate"))
+def test_parameter_branch_selection_uses_resolved_assumptions(form, ambient):
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        switch = InstanceDummy("switch", real=True)
+        doubled = 2 * switch
+        value = Piecewise((Derivative(Abs(x), x, evaluate=False), switch < 0), (1, True))
+
+    case = ResearchCase.for_model(Curve)
+    condition = {
+        "direct": case.symbols.switch > 0,
+        "alias": case.symbols.doubled > 0,
+        "predicate": Q.positive(case.symbols.doubled),
+    }[form]
+    context = assuming(condition) if ambient else nullcontext()
+    case = case if ambient else case.assume(condition)
+    with context:
+        result = case.run(Method("read", lambda current: 1, uses=("value",)))
+    assert result.data == 1
+    assert not any(item.requirement.consumer == "value" for item in result.report.checks)
+
+
+@pytest.mark.parametrize("ambient", (False, True))
+@pytest.mark.parametrize("predicates", (False, True))
+def test_coordinate_coupled_assumptions_cannot_select_away_local_operations(ambient, predicates):
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        switch = InstanceDummy("switch", real=True)
+        value = Piecewise((Derivative(Abs(x), x, evaluate=False), switch < 0), (1, True))
+
+    case = ResearchCase.for_model(Curve)
+    conditions = (
+        (Q.zero(case.symbols.switch - Curve.x), Q.positive(Curve.x))
+        if predicates
+        else (Eq(case.symbols.switch, Curve.x), Curve.x > 0)
+    )
+    context = assuming(*conditions) if ambient else nullcontext()
+    case = case if ambient else case.assume(*conditions)
+    with context:
+        with pytest.raises(ResearchError) as failure:
+            case.run(Method("read", lambda current: "must not execute", uses=("value",)))
+    obligations = tuple(item for item in failure.value.report.checks if item.requirement.consumer == "value")
+    assert obligations and all(item.verdict == "unresolved" for item in obligations)

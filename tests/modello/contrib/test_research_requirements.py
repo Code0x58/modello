@@ -3,7 +3,7 @@
 from dataclasses import replace
 
 import pytest
-from sympy import S
+from sympy import Derivative, Function, Interval, S, Subs
 
 import modello.contrib.research as research
 from modello import Coordinate, InstanceDummy, component
@@ -170,3 +170,96 @@ def test_theorem_premise_ids_cannot_collide_with_other_evidence(nested):
         case = case.require(positive("b", name="combined/positive"))
     with pytest.raises(ModelDefinitionError, match="Evidence IDs must be unique"):
         case.check()
+
+
+@pytest.mark.parametrize(
+    "property",
+    (
+        "positive",
+        "nonnegative",
+        "nonzero",
+        "increasing",
+        "decreasing",
+        "convex",
+        "concave",
+        "smooth",
+        "differentiable",
+        "limit",
+        "uniform_bound",
+        "curvature_bound",
+        "exact_form",
+    ),
+)
+def test_empty_requirement_domains_neither_certify_nor_refute_scalar_claims(property):
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        value = S.NegativeOne
+
+    claim = Requirement("empty", "value", property, wrt="x", domain=S.EmptySet, bound=S(2), expected=S.One)
+    evidence = ResearchCase.for_model(Curve).check(requirements=(claim,)).explain(claim.name)
+    assert evidence.verdict == "unresolved"
+    assert not evidence.witness
+    assert "domain is empty" in " ".join(evidence.steps)
+
+
+@pytest.mark.parametrize("trusted", (False, True))
+@pytest.mark.parametrize("domain_source", ("literal", "observed", "native", "unsupported_native"))
+def test_empty_domains_block_methods_after_binding_and_before_theorem_application(domain_source, trusted):
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        start = InstanceDummy("start", real=True)
+        stop = InstanceDummy("stop", real=True)
+        value = S.One
+
+    case = ResearchCase.for_model(Curve)
+    if domain_source == "observed":
+        domain = Interval(case.symbols.start, case.symbols.stop)
+        case = case.observe(start=2, stop=1)
+    elif domain_source == "native":
+        domain = Interval(Subs(Derivative(Curve.x**2, Curve.x, evaluate=False), Curve.x, 1), 1)
+    elif domain_source == "unsupported_native":
+
+        class Missing(Function):
+            def _eval_derivative(self, variable):
+                raise NotImplementedError("No derivative implementation")
+
+        domain = Interval(Subs(Derivative(Missing(Curve.x), Curve.x, evaluate=False), Curve.x, 0), 1)
+    else:
+        domain = Interval(1, 0)
+    claim = positive("value", wrt="x", domain=domain)
+    if trusted:
+        case = case.with_theorem(Theorem("trusted rule", claim, (), "Test rule"))
+    calls = []
+    with pytest.raises(ResearchError) as failure:
+        case.run(Method("read", lambda current: calls.append(current), requirements=(claim,)))
+    evidence = failure.value.report.explain(claim.name)
+    assert not calls
+    assert evidence.verdict == "unresolved"
+    assert ("nonempty" if domain_source == "unsupported_native" else "domain is empty") in " ".join(evidence.steps)
+
+
+def test_empty_declared_domains_remain_open_in_definition_reports():
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        value = requires(S.NegativeOne, positive("value", wrt="x", domain=S.EmptySet))
+
+    assert Curve.definition_report().explain("value/positive").verdict == "unresolved"
+
+
+@pytest.mark.parametrize("value", (-1, 1))
+def test_symbolic_domains_do_not_assume_an_unstated_endpoint_order(value):
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        start = InstanceDummy("start", real=True)
+        stop = InstanceDummy("stop", real=True)
+        value = InstanceDummy("value", real=True)
+
+    case = ResearchCase.for_model(Curve).observe(value=value)
+    claim = positive("value", wrt="x", domain=Interval(case.symbols.start, case.symbols.stop))
+    evidence = case.check(requirements=(claim,)).explain(claim.name)
+    assert evidence.verdict == "unresolved"
+    assert "nonempty" in " ".join(evidence.steps)
+    assert case.observe(start=2, stop=1).check(requirements=(claim,)).explain(claim.name).verdict == "unresolved"
+    assert case.observe(start=0, stop=1).check(requirements=(claim,)).explain(claim.name).verdict == (
+        "strictly true" if value > 0 else "strictly false"
+    )

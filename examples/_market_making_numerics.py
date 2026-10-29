@@ -50,20 +50,14 @@ class QuoteEvaluator:
             raise ValueError("Bind all intensity coefficients before quote optimization")
         scale, decay = (_number(case, f"{side}.intensity.{name}") for name in ("scale", "decay"))
         gamma, step = _number(case, "gamma"), _number(case, "step")
-        if simplify(rate - scale * symbolic_exp(-decay * distance)) == 0:
+        a = case.expression(f"{side}.intensity.scale")
+        k = case.expression(f"{side}.intensity.decay")
+        if simplify(rate - a * symbolic_exp(-k * distance)) == 0:
             family = "exponential"
-        elif simplify(rate - scale / (1 + symbolic_exp(decay * distance))) == 0:
+        elif simplify(rate - a / (1 + symbolic_exp(k * distance))) == 0:
             family = "logistic"
         else:
-            # Match using the exact coefficients, rather than rounded floats.
-            a = case.expression(f"{side}.intensity.scale")
-            k = case.expression(f"{side}.intensity.decay")
-            if simplify(rate - a * symbolic_exp(-k * distance)) == 0:
-                family = "exponential"
-            elif simplify(rate - a / (1 + symbolic_exp(k * distance))) == 0:
-                family = "logistic"
-            else:
-                family = "general"
+            family = "general"
         if min(scale, decay, gamma, step) <= 0:
             raise ValueError("Intensity coefficients, risk aversion, and lot size must be positive")
         evaluator = cls(family, scale, decay, gamma, step)

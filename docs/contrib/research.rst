@@ -246,6 +246,12 @@ The curvature characterization of convexity applies on real intervals with
 nonempty interior. A singleton is checked by its finite real value instead;
 other discrete or disconnected domains remain unsupported by that rule.
 
+Requirement domains must be established to be nonempty. Empty domains, including
+reversed intervals after observing their endpoints, remain unresolved with an
+explicit diagnostic. A symbolic interval with unknown endpoint order also stays
+unresolved. This policy applies before trusted theorem application and prevents
+an empty scope from certifying a computation or supplying a refutation.
+
 Supported proofs cover scalar real functions on real intervals, sign and
 polynomial arguments, supported continuity domains, limits, and checked
 uniform bounds. Unknown functions, mixed derivative regularity, and unsupported
@@ -351,6 +357,9 @@ same context. Unrelated unresolved claims do not block a method.
 
 Reading a field through an alias consumes the same automatic obligations as
 reading its original path, including aliases exposed from nested components.
+Branch selection uses the report's resolved parameter assumptions, including
+assumptions expressed through aliases and active SymPy assumptions. Predicates
+involving local or quantified coordinates cannot select away their operations.
 A locally evaluated expression such as ``Subs(curve, x, 1)`` keeps its own
 scope: its obligations concern that evaluation, while the unevaluated source
 curve can still have a pole elsewhere.

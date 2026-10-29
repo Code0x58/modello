@@ -131,6 +131,10 @@ specialized form has reduced to zero. Repeated scalar proof attempts within a
 report share resolved CAS work while retaining each consumer's evidence and
 the proof-attempt budget.
 
+Evidence pages retain distinct links when branch, computation, or nested-report
+labels produce the same filename. The writer adds numeric suffixes to colliding
+names, including names that differ only by letter case or truncation.
+
 The scalar checker does not establish stochastic verification theorems,
 multivariate positive semidefiniteness, or infinite-dimensional variational
 existence by itself. Source citations identify trusted theory; they do not

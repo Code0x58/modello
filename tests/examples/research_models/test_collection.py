@@ -1,16 +1,18 @@
 """Replay artifacts preserve model branches and distinguish kinds of evidence."""
 
 import json
+import re
 import subprocess
 import sys
+from dataclasses import replace
 
 import pytest
 
 from examples.research_models._reporting import _provenance, write_reports
-from examples.research_models._study import Computation, Study, Variant
+from examples.research_models._study import Blocked, Computation, Study, Variant
 from examples.research_models.study import MODELS, build_collection, write_collection
 from modello import InstanceDummy
-from modello.contrib.research import Method, ResearchCase, ResearchModel
+from modello.contrib.research import Method, ResearchCase, ResearchModel, positive
 
 
 @pytest.fixture(scope="module")
@@ -99,6 +101,51 @@ def test_symbolic_report_writer_escapes_labels_and_never_needs_optional_dependen
     assert payload["studies"]["tiny"]["figures"] == []
     assert payload["selection"] == ["tiny"]
     assert "--models tiny" in (tmp_path / "report.html").read_text()
+
+
+@pytest.mark.parametrize("collision", ("variant", "computation", "nested", "blocked", "combined", "case", "long"))
+def test_collection_links_keep_distinct_evidence_when_output_names_collide(tmp_path, collision):
+    class Tiny(ResearchModel):
+        value = InstanceDummy("value", real=True)
+
+    cases = tuple(
+        ResearchCase.for_model(Tiny).observe(value=value).require(positive("value", name="sign")) for value in (1, -1)
+    )
+    results = tuple(case.run(Method("read", lambda current: current.expression("value"))) for case in cases)
+    case = cases[0]
+    good, bad = results
+    labels = ("cap <= 10%", "cap >= 10%")
+    expected = ("strictly true", "strictly false")
+    if collision == "computation":
+        variants = {"branch": Variant(case, {labels[0]: Computation(good), labels[1]: Computation(bad)})}
+    elif collision in {"nested", "blocked"}:
+        reports = {labels[0]: good.report, labels[1]: bad.report} if collision == "nested" else {"blocked": good.report}
+        computations = {"read": Computation(replace(good, data=reports))}
+        blocked = {} if collision == "nested" else {"read-data": Blocked(bad.report, "Unestablished sign")}
+        variants = {"branch": Variant(case, computations, blocked)}
+        expected = ("strictly true", "strictly true", "strictly false")
+    elif collision == "combined":
+        variants = {"a-b": Variant(case, {"c": Computation(good)}), "a": Variant(cases[1], {"b-c": Computation(bad)})}
+    else:
+        if collision == "case":
+            labels = ("BRANCH", "branch")
+        elif collision == "long":
+            labels = ("branch" * 30 + "left", "branch" * 30 + "right")
+        name = "read" * 40 if collision == "long" else "read"
+        variants = {
+            label: Variant(branch, {name: Computation(result)}) for label, branch, result in zip(labels, cases, results)
+        }
+    study = Study("tiny", "Distinct evidence", "Colliding labels", (), variants)
+    write_reports((study,), tmp_path, numerical=False, compact=True)
+    output = tmp_path / "tiny"
+    html = (output / "report.html").read_text()
+    links = re.findall(r'href="(evidence-[^"]+\.html)"', html)
+    assert len(links) == len({name.casefold() for name in links}) == len(expected)
+    assert len(list(output.glob("evidence-*.html"))) == len(expected)
+    for filename, verdict in zip(links, expected):
+        assert f"<strong>{verdict}</strong>" in (output / filename).read_text()
+    write_reports((study,), tmp_path, numerical=False, compact=True)
+    assert (output / "report.html").read_text() == html
 
 
 def test_collection_imports_are_lightweight_and_module_entrypoint_is_guarded():

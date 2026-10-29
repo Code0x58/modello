@@ -742,7 +742,7 @@ class ResearchCase(Generic[ModelT]):
         records.extend((item.name, item, "") for item in self.requirements)
         return records
 
-    def _automatic(self) -> tuple[list[tuple[str, Requirement, str]], frozenset[str]]:
+    def _automatic(self, assumptions: tuple[Basic, ...]) -> tuple[list[tuple[str, Requirement, str]], frozenset[str]]:
         records: list[tuple[str, Requirement, str]] = []
         conditional: set[str] = set()
         sources: dict[Symbol, list[Basic]] = {}
@@ -822,7 +822,10 @@ class ResearchCase(Generic[ModelT]):
                         if selected.free_symbols & protected or selected.has(*_BINDERS):
                             selected = None
                         else:
-                            selected = truth(selected, self.assumptions)
+                            selected = truth(
+                                selected,
+                                tuple(condition for condition in assumptions if not condition.free_symbols & protected),
+                            )
                         if selected is S.true:
                             visit(branch, points, bound, active, uncertain, scopes)
                             return
@@ -939,7 +942,7 @@ class ResearchCase(Generic[ModelT]):
                     feasible = None
                 observation_issue = "Joint feasibility of the model equations and declared domains remains unresolved."
         records_by_id: dict[str, tuple[str, Requirement, str]] = {}
-        automatic, conditional_operations = self._automatic()
+        automatic, conditional_operations = self._automatic(assumptions)
         if algebra_issue:
             automatic.append(
                 ("model/auto:algebra", Requirement("model_algebra", S.One, "theorem", reason=algebra_issue), "")
@@ -1019,14 +1022,30 @@ class ResearchCase(Generic[ModelT]):
             )
             dependencies = self._dependencies(subject)
             token = (claim._proposition(), prefix)
+            skip_reason = None
             if feasible is False or steps[0] >= max_steps or token in active:
+                skip_reason = "Inconsistent premises, exhausted proof budget, or circular theorem dependency."
+            else:
+                try:
+                    # Evaluating a domain here can only withhold a certificate;
+                    # it never establishes the native operations in its bounds.
+                    empty = evaluate_native(domain).is_empty
+                except (NotImplementedError, ValueError, TypeError):
+                    empty = None
+                if empty is not False:
+                    skip_reason = (
+                        "The requirement domain is empty; no certificate is established."
+                        if empty is True
+                        else "The requirement domain is not established to be nonempty."
+                    )
+            if skip_reason is not None:
                 return Evidence(
                     key,
                     requirement,
                     expression,
                     variable,
                     None,
-                    ("Inconsistent premises, exhausted proof budget, or circular theorem dependency.",),
+                    (skip_reason,),
                     dependencies,
                     resolved=resolved,
                     expected_template=expected_template,

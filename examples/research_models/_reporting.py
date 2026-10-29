@@ -160,7 +160,17 @@ def _counts(report):
     )
 
 
-def _variant(variant: Variant, label: str, directory: Path):
+def _variant(variant: Variant, label: str, directory: Path, filenames: set[str]):
+    def evidence(name, suffix, report):
+        stem = f"evidence-{_slug(label)}-{_slug(name)}-{_slug(suffix)}"[:200]
+        filename, index = f"{stem}.html", 2
+        while filename.casefold() in filenames:
+            filename = f"{stem}-{index}.html"
+            index += 1
+        filenames.add(filename.casefold())
+        (directory / filename).write_text(report.to_html(title=f"{label}: {name}: {suffix}"), encoding="utf-8")
+        return filename
+
     encoded: dict[str, Any] = {
         "case": _case_record(variant.case),
         "computations": {},
@@ -174,8 +184,7 @@ def _variant(variant: Variant, label: str, directory: Path):
         result = computation.result
         links = []
         for suffix, report in (("premises", result.report), *_reports(result.data)):
-            filename = f"evidence-{_slug(label)}-{_slug(name)}-{_slug(suffix)}.html"
-            (directory / filename).write_text(report.to_html(title=f"{label}: {name}: {suffix}"), encoding="utf-8")
+            filename = evidence(name, suffix, report)
             links.append(f'<a href="{filename}">{escape(suffix)}</a>')
         encoded["computations"][name] = {
             "method": result.method,
@@ -192,8 +201,7 @@ def _variant(variant: Variant, label: str, directory: Path):
         fact_rows.extend((label, name, path, value, computation.kind) for path, value in _facts(result.data))
     rejected = []
     for name, blocked in variant.blocked.items():
-        filename = f"evidence-{_slug(label)}-{_slug(name)}-blocked.html"
-        (directory / filename).write_text(blocked.report.to_html(title=f"{label}: {name}: blocked"), encoding="utf-8")
+        filename = evidence(name, "blocked", blocked.report)
         encoded["blocked"][name] = {"message": blocked.message, "evidence": blocked.report.to_dict()}
         rejected.append(
             f"<p class=blocked><strong>{escape(name)} blocked.</strong> {escape(blocked.message)} "
@@ -245,8 +253,9 @@ def write_reports(studies: tuple[Study, ...], directory: Path, *, numerical: boo
         output = directory / key
         output.mkdir(parents=True, exist_ok=True)
         contents, facts, variants = [], [], {}
+        filenames: set[str] = set()
         for label, variant in study.variants.items():
-            data, html, rows = _variant(variant, label, output)
+            data, html, rows = _variant(variant, label, output, filenames)
             variants[label] = data
             contents.append(html)
             facts.extend(rows)

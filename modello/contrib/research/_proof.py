@@ -56,7 +56,6 @@ from sympy import (
     preorder_traversal,
     re,
     reduce_inequalities,
-    refine,
     sign,
     simplify,
     sin,
@@ -276,9 +275,9 @@ def truth(condition: Basic, assumptions: tuple[Basic, ...]) -> Basic:
         if all(parameter.is_finite is True for parameter in parameters) and operand.is_rational_function(*parameters):
             condition = _membership(operand, S.Complexes, parameters)
     try:
-        refined = refine(condition, And(*assumptions))
-        if refined in (S.true, S.false):
-            return refined
+        answer = ask(condition, And(*assumptions), context=AssumptionsContext())
+        if answer is not None:
+            return S.true if answer else S.false
         if satisfiable(And(*assumptions, Not(condition)), use_lra_theory=True) is False:
             return S.true
         if satisfiable(And(*assumptions, condition), use_lra_theory=True) is False:
