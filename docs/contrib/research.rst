@@ -60,6 +60,9 @@ type to construct. The same requirement works in ``case.require(...)``,
 additional model-wide conditions and its refreshed definition report. The
 original model and earlier cases remain unchanged. These conditions follow the
 model into nested components and are consumed by methods that read its fields.
+Coordinate paths follow inheritance: a subclass that shadows a coordinate with
+a regular attribute removes that path from the research interface. Scalar
+fields declared at the same path remain available as model quantities.
 
 Native expressions in declaration annotations are rebound in their component's
 scope. Paths are useful for contracts that should follow a named formula

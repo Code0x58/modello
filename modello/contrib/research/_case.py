@@ -182,19 +182,8 @@ def _schema(model: type[Modello], path: tuple[str, ...]) -> type[Modello]:
 
 
 def _coordinates(model: type[Modello], prefix=""):
-    result = {}
-    names = {
-        name
-        for base in model.__mro__
-        for name, value in getattr(base, "_modello_namespace", {}).items()
-        if isinstance(value, Coordinate)
-    }
-    for name in sorted(names):
-        for base in model.__mro__:
-            value = getattr(base, "_modello_namespace", {}).get(name)
-            if isinstance(value, Coordinate):
-                result[prefix + name] = value
-                break
+    attributes = {name: value for base in reversed(model.__mro__) for name, value in vars(base).items()}
+    result = {prefix + name: value for name, value in sorted(attributes.items()) if isinstance(value, Coordinate)}
     for name, child in model._modello_namespace.nested_models.items():
         result.update(_coordinates(child._modello_model, prefix + name + "."))
     return result
@@ -301,6 +290,10 @@ class ResearchCase(Generic[ModelT]):
         return {".".join(field.path): field.symbol for field in self.problem.fields}
 
     @cached_property
+    def _references(self) -> dict[str, Expr]:
+        return {**_coordinates(self.problem.model), **self._fields}
+
+    @cached_property
     def _labels(self) -> tuple[tuple[Symbol, str], ...]:
         labels: dict[Symbol, str] = {}
         for path, symbol in self._fields.items():
@@ -308,7 +301,9 @@ class ResearchCase(Generic[ModelT]):
             if previous is None or (path.count("."), len(path)) < (previous.count("."), len(previous)):
                 labels[symbol] = path
         paths: dict[Coordinate, str] = {}
-        for path, coordinate in _coordinates(self.problem.model).items():
+        for path, coordinate in self._references.items():
+            if not isinstance(coordinate, Coordinate):
+                continue
             previous = paths.get(coordinate)
             if previous is None or (path.count("."), len(path), path) < (previous.count("."), len(previous), previous):
                 paths[coordinate] = path
@@ -335,20 +330,14 @@ class ResearchCase(Generic[ModelT]):
         return tuple(labels.items())
 
     def _reference(self, path: str) -> Expr:
-        if path in self._fields:
-            return self._fields[path]
-        parts = tuple(path.split("."))
-        model = _schema(self.problem.model, parts[:-1])
-        for base in model.__mro__:
-            namespace = getattr(base, "_modello_namespace", {})
-            value = namespace.get(parts[-1])
-            if isinstance(value, Coordinate):
-                return value
-        raise ModelDefinitionError(f"Unknown scalar or coordinate path: {path}")
+        try:
+            return self._references[path]
+        except KeyError:
+            raise ModelDefinitionError(f"Unknown scalar or coordinate path: {path}") from None
 
     @cached_property
     def _known_symbols(self) -> frozenset[Basic]:
-        allowed: set[Basic] = set(self._fields.values()) | set(_coordinates(self.problem.model).values())
+        allowed: set[Basic] = set(self._references.values())
         for item in self.problem.constraints:
             allowed.update(item.symbols | _scoped_symbols(item.right, include_declarations=True))
         return frozenset(allowed)
@@ -381,9 +370,10 @@ class ResearchCase(Generic[ModelT]):
         mapping = {old: value.xreplace(fields) for old, value in scope._modello_namespace._replacements.items()}
         mapping.update(fields)
         for base in scope.__mro__:
-            for name, coordinate in getattr(base, "_modello_namespace", {}).items():
-                if isinstance(coordinate, Coordinate):
-                    mapping[coordinate] = self._reference(path_prefix + name)
+            for name, coordinate in vars(base).items():
+                target = self._references.get(path_prefix + name)
+                if isinstance(coordinate, Coordinate) and target is not None:
+                    mapping[coordinate] = target
         return mapping
 
     def _bind(self, value: Basic, protected: frozenset[Basic] = frozenset()) -> Basic:

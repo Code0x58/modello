@@ -4,9 +4,18 @@ import pytest
 from sympy import Abs, Derivative, Eq, Integral, Limit, Product, S, Subs, Sum
 
 from modello import ConstraintKind, Coordinate, Index, InstanceDummy, Modello, Recurrence, Series, Vector, component
-from modello.contrib.research import Method, ResearchCase, ResearchError, exact_form, predicate, requires
+from modello.contrib.research import (
+    Method,
+    ResearchCase,
+    ResearchError,
+    exact_form,
+    positive,
+    predicate,
+    requires,
+    smooth,
+)
 from modello.contrib.stochastic import ItoProcess
-from modello.errors import ModelDefinitionError
+from modello.errors import ModelDefinitionError, ModelValidationError
 
 
 @pytest.fixture
@@ -519,3 +528,132 @@ def test_replacement_preserves_alpha_renamed_declaration_aliases(fixed_series, s
         changed = source.replace("curve", New)
         assert changed.expression(changed.symbols.curve.law.at(2)).doit() == 9
         assert changed.expression(changed.symbols.curve.alias.at(2)).doit() == 9
+
+
+@pytest.mark.parametrize("nested", (False, True))
+@pytest.mark.parametrize("shadow", (None, lambda self: None))
+def test_shadowed_coordinate_names_are_not_available_through_research_paths(shadow, nested):
+    class Original(Modello):
+        x = Coordinate("x", real=True)
+        value = x**2
+
+    class Hidden(Original):
+        x = shadow
+        value = S.One
+
+    class Parent(Modello):
+        curve = component(Hidden)
+
+    case = ResearchCase.for_model(Parent if nested else Hidden)
+    prefix = "curve." if nested else ""
+    assert case.expression(prefix + "value") == 1
+    assert case.check(requirements=(positive(prefix + "value"),)).checks[0].verdict == "strictly true"
+    with pytest.raises(ModelDefinitionError, match="Unknown scalar or coordinate path"):
+        case.expression(prefix + "x")
+    with pytest.raises(ModelDefinitionError, match="Unknown scalar or coordinate path"):
+        case.check(requirements=(smooth(prefix + "value", wrt=prefix + "x"),))
+    with pytest.raises(ModelValidationError):
+        case.expression(prefix + "value", wrt=Original.x)
+
+
+def test_coordinate_lookup_preserves_inheritance_and_rebinding_to_an_independent_field():
+    class Original(Modello):
+        x = Coordinate("x", real=True)
+        value = requires(x**2, smooth("value", wrt=x))
+
+    class Inherited(Original):
+        pass
+
+    inherited = ResearchCase.for_model(Inherited)
+    assert inherited.expression("x") == Original.x
+    assert inherited.check().checks[0].verdict == "strictly true"
+
+    class Observable(Original):
+        x = InstanceDummy("x", real=True)
+        value = x**2
+
+    case = ResearchCase.for_model(Observable)
+    evidence = case.check().checks[0]
+    assert case.expression("x") == case.symbols.x
+    assert evidence.coordinate == case.symbols.x
+    assert evidence.verdict == "strictly true"
+
+
+def test_hiding_a_coordinate_name_preserves_explicit_symbols_used_by_the_formula():
+    class Original(Modello):
+        x = Coordinate("x", real=True)
+        value = x**2
+
+    class Hidden(Original):
+        x = None
+
+    case = ResearchCase.for_model(Hidden)
+    with pytest.raises(ModelDefinitionError):
+        case.expression("x")
+    assert case.expression("value", wrt=Original.x) == Original.x**2
+    claim = smooth("value", wrt=Original.x)
+    assert case.check(requirements=(claim,)).checks[0].verdict == "strictly true"
+
+
+@pytest.mark.parametrize("hidden_first", (False, True))
+def test_coordinate_lookup_respects_multiple_inheritance_precedence(hidden_first):
+    class Hidden(Modello):
+        x = None
+
+    class Visible(Modello):
+        x = Coordinate("x", real=True)
+
+    class HiddenFirst(Hidden, Visible):
+        pass
+
+    class VisibleFirst(Visible, Hidden):
+        pass
+
+    case = ResearchCase.for_model(HiddenFirst if hidden_first else VisibleFirst)
+    if hidden_first:
+        with pytest.raises(ModelDefinitionError):
+            case.expression("x")
+    else:
+        assert case.expression("x") == Visible.x
+
+
+@pytest.mark.parametrize("hidden_first", (False, True))
+def test_ordinary_mixin_attributes_take_part_in_coordinate_shadowing(hidden_first):
+    class HiddenMixin:
+        x = None
+
+    class Visible(Modello):
+        x = Coordinate("x", real=True)
+
+    class HiddenFirst(HiddenMixin, Visible):
+        pass
+
+    class VisibleFirst(Visible, HiddenMixin):
+        pass
+
+    case = ResearchCase.for_model(HiddenFirst if hidden_first else VisibleFirst)
+    if hidden_first:
+        with pytest.raises(ModelDefinitionError):
+            case.expression("x")
+    else:
+        assert case.expression("x") == Visible.x
+
+
+def test_native_coordinate_annotations_rebind_coordinates_inherited_from_ordinary_mixins():
+    class CoordinateMixin:
+        x = Coordinate("x", real=True)
+
+    class Original(CoordinateMixin, Modello):
+        value = requires(CoordinateMixin.x**2, smooth("value", wrt=CoordinateMixin.x))
+
+    class Renamed(Original):
+        x = Coordinate("new_x", real=True)
+        value = x**2
+
+    inherited = ResearchCase.for_model(Original)
+    assert inherited.expression("x") == CoordinateMixin.x
+    assert inherited.check().checks[0].verdict == "strictly true"
+    changed = ResearchCase.for_model(Renamed)
+    evidence = changed.check().checks[0]
+    assert evidence.coordinate == Renamed.x
+    assert evidence.verdict == "strictly true"
