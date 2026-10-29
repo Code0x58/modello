@@ -186,11 +186,26 @@ def test_valid_empty_reductions_do_not_check_an_inactive_undefined_derivative(op
     assert all(result.report.explain(claim.name).verdict == "strictly true" for claim in claims)
 
 
-@pytest.mark.parametrize(("operator", "identity"), ((Sum, S.Zero), (Product, S.One)))
-def test_valid_empty_discrete_reductions_do_not_require_a_definition_for_their_body(operator, identity):
+@pytest.mark.parametrize(("operator", "identity"), ((Sum, S.Zero), (Product, S.One), (Integral, S.Zero)))
+def test_valid_empty_reductions_do_not_require_a_definition_for_their_body(operator, identity):
     class Scoped(Modello):
-        n = Coordinate("n", integer=True)
-        value = operator(Function("f")(n), (n, 1, 0))
+        x = Coordinate("x", real=True) if operator is Integral else Coordinate("x", integer=True)
+        value = operator(Function("f")(x), (x, 1, 1 if operator is Integral else 0))
+
+    case = ResearchCase.for_model(Scoped)
+    claims = (exact_form("value", identity), nonnegative("value"))
+    result = case.run(Method("empty", lambda current: current.expression("value").doit(), claims))
+    assert result.data == identity
+    assert all(result.report.explain(claim.name).verdict == "strictly true" for claim in claims)
+
+
+@pytest.mark.parametrize(("operator", "identity"), ((Sum, S.Zero), (Product, S.One), (Integral, S.Zero)))
+def test_valid_empty_reductions_do_not_inspect_inactive_cyclic_algebra(operator, identity):
+    class Scoped(Modello):
+        x = Coordinate("x", real=True)
+        y = InstanceDummy("y", real=True)
+        y = y / 2
+        value = operator(y, (x, 1, 1 if operator is Integral else 0))
 
     case = ResearchCase.for_model(Scoped)
     claims = (exact_form("value", identity), nonnegative("value"))

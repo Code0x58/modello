@@ -280,6 +280,8 @@ cannot recover syntax already simplified away before declaration.
 Empty sums, products, and zero-width integrals skip their inactive bodies, but
 their endpoint operations still need established premises. An undefined endpoint
 derivative cannot certify an identity merely because the resulting range is empty.
+For a supported single-limit scope, an inactive body can contain an unknown
+function or a cyclic model definition without blocking the empty operation.
 
 Parameter observations also retain the source operands' definedness. For
 example, setting ``a=0`` in ``a*log(x)`` does not define its value at ``x=0``.
@@ -358,7 +360,9 @@ at the join is unnecessary. Unsupported joins stay unresolved; an included
 interval endpoint with only one active side does not establish ordinary differentiability.
 Pointwise definedness at a guarded boundary is insufficient: an ordinary
 derivative needs a defined neighborhood around every point, including points
-in finite or closed interval domains.
+in finite or closed interval domains. This requirement also applies to
+``smooth(order=1)`` and ``smooth(order=2)``. Continuity checks remain relative to
+the requested domain.
 
 A uniform-bound hint supplies a sufficient certificate. If its parameter guard
 fails, the attempted proof is unresolved; a loose hint cannot refute the bound.

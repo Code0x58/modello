@@ -226,7 +226,7 @@ def _guard_scope(condition, variable, domain):
         return And(*parameter_guards), domain, True
 
 
-def _source_domain(expression, variable, domain):
+def _source_domain(expression, variable, domain, *, neighborhood=False):
     """Separate a guarded value from its original operand-definedness proof."""
     expression = piecewise_fold(expression)
     if expression.is_finite is False or expression in (S.NaN, S.ComplexInfinity):
@@ -241,11 +241,17 @@ def _source_domain(expression, variable, domain):
                 return body, Attempt(
                     S.false, (f"The original expression is undefined at {point}.",), ((variable, point),)
                 )
-    parameters, allowed, unknown = _guard_scope(validity, variable, domain)
+    parameters, allowed, unknown = _guard_scope(
+        validity, variable, S.Reals if neighborhood and variable is not None else domain
+    )
     if parameters is S.false and not unknown:
         return body, Attempt(S.false, ("The original expression has an undefined source operand.",))
     missing = domain - allowed
     if not unknown and missing.is_empty is True:
+        if neighborhood and variable is not None and domain.is_subset(allowed.interior) is not True:
+            return body, Attempt(
+                None, ("Ordinary derivatives require a defined neighborhood around every requested point.",)
+            )
         return body, Attempt(parameters, ())
     if not validity.has(_SourceFinite) and not unknown and missing.is_empty is False:
         return body, Attempt(S.false, (f"The original expression is undefined on {missing}.",))
@@ -384,7 +390,7 @@ def _singular_witness(expression: Expr, variable: Symbol, domain: Set, missing: 
 def _regular(expression: Expr, variable: Symbol | None, domain: Set, order: int) -> Attempt:
     if order > 0 and (scope := _calculus_scope(variable)) is not None:
         return scope
-    expression, source = _source_domain(expression, variable, domain)
+    expression, source = _source_domain(expression, variable, domain, neighborhood=order > 0)
     if source.condition is None or source.condition is S.false:
         return source
     if isinstance(expression, Piecewise):
@@ -461,19 +467,6 @@ def _differentiable(expression, variable, domain, order, point=None) -> Attempt:
     if (scope := _calculus_scope(variable)) is not None:
         return scope
     expression = piecewise_fold(expression)
-    if (
-        point is None
-        and variable is not None
-        and isinstance(expression, Piecewise)
-        and expression.args[-1] == (S.NaN, S.true)
-    ):
-        _, defined = _source_domain(expression, variable, domain)
-        if defined.condition is None or defined.condition is S.false:
-            return defined
-        validity = Or(*(condition for _, condition in expression.args[:-1]))
-        _, allowed, unknown = _guard_scope(validity, variable, S.Reals)
-        if unknown or domain.is_subset(allowed.interior) is not True:
-            return Attempt(None, ("Ordinary derivatives require a defined neighborhood around every requested point.",))
     if point is not None:
         if domain.interior.contains(point) is not S.true:
             return Attempt(None, ("The requested evaluation point has no established neighborhood inside the domain.",))
@@ -838,11 +831,11 @@ def derivative_premises(value, variable, domain, points=None):
 
 
 def evaluate_native(value):
-    """Normalize native values, pruning inactive discrete bodies first."""
+    """Normalize native values, pruning supported inactive bodies first."""
     if value is None:
         return None
     value = value.replace(
-        lambda part: isinstance(part, (Sum, Product)),
+        lambda part: isinstance(part, (Sum, Product, Integral)),
         lambda part: part if (empty := _empty_reduction(part)) is None else empty,
     )
     return value.replace(
@@ -919,7 +912,7 @@ def attempt(
             derivative_guards.append(regularity.condition)
 
     # Check original local scopes before evaluating substitutions or collapsing
-    # empty discrete reductions.
+    # empty reductions.
     expression = evaluate_native(expression)
     expected = evaluate_native(expected)
     if expression.has(AppliedUndef) and claim.property not in {"predicate", "exact_form"}:
@@ -945,7 +938,13 @@ def attempt(
     specialized_hint = None if hint is None else hint.xreplace(forward)
     kind, expression = claim.property, specialized
     source = Attempt(S.true, ())
-    if isinstance(expression, Expr) and kind not in {"predicate", "limit", "differentiable", "curvature_bound"}:
+    if isinstance(expression, Expr) and kind not in {
+        "predicate",
+        "limit",
+        "smooth",
+        "differentiable",
+        "curvature_bound",
+    }:
         expression, source = _source_domain(expression, variable, claim.domain)
     if kind == "exact_form" and specialized_expected is not None:
         specialized_expected, expected_source = _source_domain(specialized_expected, variable, claim.domain)

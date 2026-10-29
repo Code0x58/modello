@@ -258,6 +258,28 @@ def test_public_included_join_endpoint_cannot_discharge_ordinary_derivative_prem
     assert failure.value.report.explain("ordinary_derivative").condition is None
 
 
+@pytest.mark.parametrize("domain", [Interval(1, 2), FiniteSet(1)])
+@pytest.mark.parametrize("order", [1, 2])
+def test_guarded_smoothness_requires_the_same_neighborhood_as_differentiability(domain, order):
+    class Guarded(ResearchModel):
+        x = Coordinate("x", real=True)
+        value = Piecewise((x**2, x >= 1), (S.NaN, True))
+
+    case = ResearchCase.for_model(Guarded)
+    claim = smooth("value", wrt="x", domain=domain, order=order)
+    evidence = public_check(case, claim)
+    assert evidence.verdict == "unresolved"
+    assert not evidence.witness
+    calls = []
+    with pytest.raises(ResearchError):
+        case.run(Method("guarded derivatives", lambda current: calls.append(current), (claim,)))
+    assert not calls
+    continuity = _regular(Piecewise((x**2, x >= 1), (S.NaN, True)), x, domain, 0)
+    assert continuity.condition is S.true
+    interior = smooth("value", wrt="x", domain=Interval.open(1, 2), order=order)
+    assert public_check(case, interior).verdict == "strictly true"
+
+
 def test_public_local_refutations_cannot_be_carried_to_a_different_point():
     class Joined(ResearchModel):
         x = Coordinate("x", positive=True)

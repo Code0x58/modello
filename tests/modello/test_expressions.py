@@ -57,18 +57,37 @@ def test_undefined_vector_selections_end_reduction_and_ordinary_symbolic_sums_st
 
 
 @pytest.mark.parametrize("indirect", [False, True])
-def test_calculus_rejects_indirect_cyclic_dependencies(indirect):
+@pytest.mark.parametrize(
+    "operator", [Derivative, lambda body, x: Integral(body, (x, 0, 1))], ids=["derivative", "integral"]
+)
+def test_calculus_rejects_indirect_cyclic_dependencies(indirect, operator):
     class Cyclic(Modello):
         x = InstanceDummy("x", real=True)
         y = InstanceDummy("y", real=True)
         y = y + x
         shifted = y + 1
-        slope = Derivative(shifted if indirect else y, x)
+        slope = operator(shifted if indirect else y, x)
 
     with pytest.raises(ModelInputError, match="cyclic"):
         inspect_model(Cyclic, "cycle").solutions()
     with pytest.raises(ModelInputError, match="cyclic"):
         Cyclic("cycle", x=0)
+
+
+@pytest.mark.parametrize("operator,identity", [(Sum, S.Zero), (Product, S.One), (Integral, S.Zero)])
+def test_empty_reductions_do_not_expand_inactive_cyclic_dependencies(operator, identity):
+    class Cyclic(Modello):
+        x = InstanceDummy("x", real=True)
+        y = InstanceDummy("y", real=True)
+        y = y / 2
+        shifted = y + 1
+        value = operator(shifted, (x, 1, 1 if operator is Integral else 0))
+
+    problem = inspect_model(Cyclic, "empty")
+    family = problem.solutions()
+    assert family.expression(problem.symbols.value) == identity
+    assert family.observe(x=0).one().value == identity
+    assert Cyclic("empty", x=0).value == identity
 
 
 def test_calculus_does_not_choose_arbitrarily_between_joint_definitions():

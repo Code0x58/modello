@@ -128,13 +128,16 @@ def _conditioned(expression: Expr, condition: Basic) -> Expr:
 
 
 def _empty_reduction(expression: Basic) -> Expr | None:
-    """Return an empty discrete reduction's identity with its endpoint guards."""
-    if not isinstance(expression, (Sum, Product)) or not any(
-        len(limit) == 3 and simplify(limit[2] - limit[1]) == -1 for limit in expression.limits
-    ):
+    """Return a supported empty reduction's identity with its endpoint guards."""
+    if not isinstance(expression, (Sum, Product, Integral)):
+        return None
+    if isinstance(expression, Integral) and len(expression.limits) != 1:
+        return None
+    width = 0 if isinstance(expression, Integral) else -1
+    if not any(len(limit) == 3 and simplify(limit[2] - limit[1]) == width for limit in expression.limits):
         return None
     condition = And(*(_denominator_condition(bound) for limit in expression.limits for bound in limit[1:]))
-    return _conditioned(S.Zero if isinstance(expression, Sum) else S.One, condition)
+    return _conditioned(S.One if isinstance(expression, Product) else S.Zero, condition)
 
 
 class _ScopedExpression:
