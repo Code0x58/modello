@@ -257,6 +257,16 @@ def coordinate_domain(variable: Symbol | None) -> Set:
     return S.Reals if variable is None else _field_domain(variable).intersect(S.Reals)
 
 
+def _calculus_scope(variable: Symbol | None) -> Attempt | None:
+    """Keep discrete coordinates distinct from discrete samples of a real curve."""
+    try:
+        if coordinate_domain(variable).interior.is_empty is False:
+            return None
+    except (NotImplementedError, TypeError, ValueError):
+        pass
+    return Attempt(None, ("The coordinate's intrinsic domain has no established real interior for differentiation.",))
+
+
 def conjunction(*conditions: Basic | None) -> Basic | None:
     if any(value is S.false for value in conditions):
         return S.false
@@ -372,6 +382,8 @@ def _singular_witness(expression: Expr, variable: Symbol, domain: Set, missing: 
 
 
 def _regular(expression: Expr, variable: Symbol | None, domain: Set, order: int) -> Attempt:
+    if order > 0 and (scope := _calculus_scope(variable)) is not None:
+        return scope
     expression, source = _source_domain(expression, variable, domain)
     if source.condition is None or source.condition is S.false:
         return source
@@ -446,6 +458,8 @@ def _defined(expression: Expr, variable: Symbol | None, domain: Set) -> Attempt:
 
 def _differentiable(expression, variable, domain, order, point=None) -> Attempt:
     """Use Cn as a sufficient certificate and keep local questions local."""
+    if (scope := _calculus_scope(variable)) is not None:
+        return scope
     expression = piecewise_fold(expression)
     if (
         point is None
@@ -1015,6 +1029,8 @@ def attempt(
     elif kind == "uniform_bound":
         result = _uniform(expression, variable, claim.domain, claim.bound, specialized_hint)
     elif kind == "curvature_bound":
+        if (scope := _calculus_scope(variable)) is not None:
+            return scope
         regular = _differentiable(expression, variable, claim.domain, 2)
         curve, curve_source = _source_domain(expression, variable, claim.domain)
         slope = diff(curve, variable)

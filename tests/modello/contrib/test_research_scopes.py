@@ -3,7 +3,25 @@
 from contextlib import nullcontext
 
 import pytest
-from sympy import Abs, Add, Derivative, Eq, FiniteSet, Interval, Mul, Piecewise, Q, S, Subs, arg, assuming, log, sqrt
+from sympy import (
+    Abs,
+    Add,
+    Derivative,
+    Eq,
+    FiniteSet,
+    Interval,
+    Mul,
+    Piecewise,
+    Q,
+    Range,
+    S,
+    Subs,
+    Sum,
+    arg,
+    assuming,
+    log,
+    sqrt,
+)
 
 from modello import Coordinate, Index, InstanceDummy
 from modello.contrib.research import (
@@ -11,8 +29,10 @@ from modello.contrib.research import (
     ResearchCase,
     ResearchError,
     ResearchModel,
+    curvature_bound,
     differentiable,
     exact_form,
+    nonnegative,
     nonzero,
     positive,
     requires,
@@ -715,3 +735,83 @@ def test_local_derivatives_need_a_real_neighborhood_in_their_domain(assumptions,
     if domain is S.Integers:
         native = exact_form(Subs(Derivative(case.symbols.value, Curve.x), Curve.x, 1), 1)
         assert case.check(requirements=(native,)).explain(native.name).verdict == "unresolved"
+
+
+@pytest.mark.parametrize(
+    ("assumptions", "domain", "point"),
+    (
+        ({"integer": True}, S.Integers, S.One),
+        ({"rational": True}, S.Rationals, S.Half),
+        ({"irrational": True}, FiniteSet(sqrt(2)), sqrt(2)),
+        ({"even": True}, FiniteSet(2), S(2)),
+        ({"odd": True}, FiniteSet(1), S.One),
+        ({"zero": True}, FiniteSet(0), S.Zero),
+        ({"prime": True}, FiniteSet(2), S(2)),
+        ({"composite": True}, FiniteSet(4), S(4)),
+    ),
+)
+def test_intrinsically_noncontinuous_coordinates_do_not_supply_ordinary_derivatives(assumptions, domain, point):
+    class Curve(ResearchModel):
+        x = Coordinate("x", **assumptions)
+        value = x**2
+        cusp = Abs(x)
+        slope = Derivative(value, x)
+
+    case = ResearchCase.for_model(Curve)
+    claims = (
+        smooth("value", wrt="x", domain=domain),
+        differentiable("value", wrt="x", domain=domain),
+        differentiable("cusp", wrt="x", domain=domain, name="cusp"),
+        curvature_bound("value", wrt="x", domain=domain),
+        exact_form("slope", 2 * Curve.x),
+    )
+    for claim in claims:
+        evidence = case.check(requirements=(claim,)).explain(claim.name)
+        assert evidence.verdict == "unresolved"
+        assert not evidence.witness
+        calls = []
+        with pytest.raises(ResearchError):
+            case.run(Method("ordinary calculus", lambda current: calls.append(current), (claim,)))
+        assert not calls
+    automatic = case.check().checks
+    assert automatic and all(item.verdict == "unresolved" for item in automatic)
+    with pytest.raises(ResearchError):
+        case.run(Method("slope", lambda current: current.expression("slope").doit(), uses=("slope",)))
+    constrained = requires(Curve, claims[0])
+    assert constrained.definition_report().explain("smooth").verdict == "unresolved"
+    values = (nonnegative("value"), exact_form("value", Curve.x**2))
+    assert all(case.check(requirements=(claim,)).explain(claim.name).verdict == "strictly true" for claim in values)
+    assert float(case.sample("value", wrt="x", points=(point,)).values[0]) == pytest.approx(float(point**2))
+
+
+@pytest.mark.parametrize("domain", (FiniteSet(1, 2), Range(1, 3), S.Integers))
+def test_real_curves_keep_ordinary_derivatives_on_discrete_evaluation_sets(domain):
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        value = x**2
+        slope = Derivative(value, x)
+        total = Sum(slope, (x, 1, 2))
+
+    case = ResearchCase.for_model(Curve)
+    claims = (
+        smooth("value", wrt="x", domain=domain),
+        differentiable("value", wrt="x", domain=domain),
+        exact_form("slope", 2 * Curve.x, wrt="x", domain=domain),
+    )
+    result = case.run(Method("sum slopes", lambda current: current.expression("total").doit(), claims, uses=("total",)))
+    assert result.data == 6
+    assert all(item.verdict == "strictly true" for item in result.report.checks)
+
+
+@pytest.mark.parametrize("nonnegative_coordinate", (False, True))
+def test_ordinary_derivative_certificates_preserve_closed_real_intervals(nonnegative_coordinate):
+    class Curve(ResearchModel):
+        x = Coordinate("x", nonnegative=True) if nonnegative_coordinate else Coordinate("x", real=True)
+        value = x**2
+        slope = Derivative(value, x)
+
+    case = ResearchCase.for_model(Curve)
+    claims = (smooth("value", wrt="x", domain=Interval(0, 1)), differentiable("value", wrt="x", domain=Interval(0, 1)))
+    result = case.run(Method("slope", lambda current: current.expression("slope").doit(), claims, uses=("slope",)))
+    assert result.data == 2 * Curve.x
+    assert all(item.verdict == "strictly true" for item in result.report.checks)

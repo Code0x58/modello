@@ -307,6 +307,12 @@ The same domain rules as solution families retain integer, rational, parity,
 zero, and other declared restrictions. A discrete coordinate is not silently
 treated as a real continuum; unsupported proof scopes remain unresolved.
 Sampling checks membership using those same restrictions.
+Ordinary derivative certificates require an established real interior in the
+coordinate's intrinsic domain. Global regularity claims and native derivatives
+on integer or rational coordinates therefore remain unresolved. Value checks
+and sampling retain their declared restrictions. A real coordinate can still
+be differentiated at a discrete set of evaluation points, and supported closed
+real intervals retain their regularity certificates.
 
 Native ``Subs`` and ``Derivative`` expressions on either side of an identity,
 in target bounds, evaluation points, domains, and proposed hints are evaluated
