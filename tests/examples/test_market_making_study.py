@@ -20,6 +20,11 @@ def comparison():
     return compare(capacity=2, points=21)
 
 
+@pytest.fixture(scope="module")
+def capacity_one_case():
+    return study_case(capacity=1)
+
+
 @pytest.mark.parametrize("family", ["exponential", "logistic"])
 def test_terminal_boundary_symmetry_and_convergence(comparison, family):
     record = comparison[family]
@@ -33,20 +38,14 @@ def test_terminal_boundary_symmetry_and_convergence(comparison, family):
         np.testing.assert_allclose(bid[:-1], ask[:0:-1], atol=1e-9)
     assert record["convergence"]["max_theta_difference"] < 1e-6
     assert record["convergence"]["max_quote_difference"] < 1e-6
+    if family == "exponential":
+        assert record["convergence"]["matrix_exponential_theta_error"] < 1e-8
     diagnostics = data.diagnostics
     assert diagnostics["terminal_error"] == 0
     assert diagnostics["max_root_residual"] < 1e-9
     coarse, fine = diagnostics["time_difference_defects"]
     assert fine < coarse / 2 and fine < 1e-3
     assert all(item.verdict == "strictly true" for item in record["result"].report.checks)
-
-
-def test_exponential_ode_agrees_with_the_independent_linear_transformation(comparison):
-    record = comparison["exponential"]
-    data = record["result"].data
-    reference = exponential_reference(record["case"], data.times)
-    np.testing.assert_allclose(data.theta, reference, rtol=1e-7, atol=1e-8)
-    assert record["convergence"]["matrix_exponential_theta_error"] < 1e-6
 
 
 @pytest.mark.parametrize("cost", [-3.0, 0.0, 2.0])
@@ -92,20 +91,20 @@ def test_changing_utility_or_losing_uniform_evidence_blocks_the_method():
     assert error.value.report.explain("exponential_bid").verdict == "strictly false"
 
 
-def test_invalid_lattice_and_numerical_failure_retain_case_and_report():
+def test_invalid_lattice_and_numerical_failure_retain_case_and_report(capacity_one_case):
     case = study_case(capacity=S(3) / 2)
     with pytest.raises(ResearchError, match="integral number") as error:
         run_quotes(case)
     assert error.value.case is case
     assert error.value.report.checks
     with pytest.raises(ResearchError, match="max_step"):
-        run_quotes(study_case(capacity=1), max_step=0)
+        run_quotes(capacity_one_case, max_step=0)
 
 
 @pytest.mark.parametrize("tolerance", ["rtol", "atol"])
 @pytest.mark.parametrize("value", [0, -1, inf, -inf, nan])
-def test_invalid_solver_tolerances_are_rejected_before_integration(monkeypatch, tolerance, value):
-    case = study_case(capacity=1)
+def test_invalid_solver_tolerances_are_rejected_before_integration(monkeypatch, capacity_one_case, tolerance, value):
+    case = capacity_one_case
     calls = []
 
     def integrate(*args, **kwargs):
@@ -178,14 +177,14 @@ def test_reference_derives_terminal_inputs_and_validates_its_domain():
         exponential_reference(case, (-1, 1))
 
 
-def test_coordinate_renaming_preserves_the_declared_gain_and_numerical_model():
+def test_coordinate_renaming_preserves_the_declared_gain_and_numerical_model(capacity_one_case):
     from examples.market_making import ExponentialIntensity
 
     class Renamed(ExponentialIntensity):
         distance = Coordinate("new_delta", real=True)
         rate = ExponentialIntensity.scale * exp(-ExponentialIntensity.decay * distance)
 
-    case = study_case(capacity=1)
+    case = capacity_one_case
     changed = case.replace("ask.intensity", Renamed)
     gain = changed.expression("ask.gain", wrt="ask.intensity.distance")
     assert ExponentialIntensity.distance not in gain.free_symbols
@@ -210,7 +209,7 @@ def test_git_is_optional_provenance(monkeypatch):
     assert provenance["source_sha256"]
 
 
-def test_numerical_adapter_rechecks_the_declared_neighbor_and_gain_laws():
+def test_numerical_adapter_rechecks_the_declared_neighbor_and_gain_laws(capacity_one_case):
     from examples.market_making import ContinuationValue, QuoteHamiltonian
 
     class WrongNeighbor(ContinuationValue):
@@ -219,7 +218,7 @@ def test_numerical_adapter_rechecks_the_declared_neighbor_and_gain_laws():
     class WrongGain(QuoteHamiltonian):
         gain = -QuoteHamiltonian.gain
 
-    case = study_case(capacity=1)
+    case = capacity_one_case
     for path, replacement, claim in (
         ("continuation", WrongNeighbor, "bid_neighbor_cost"),
         ("bid", WrongGain, "bid_cara_gain"),
@@ -229,8 +228,8 @@ def test_numerical_adapter_rechecks_the_declared_neighbor_and_gain_laws():
         assert error.value.report.explain(claim).verdict != "strictly true"
 
 
-def test_full_ode_rejects_fixed_state_observations_and_assumptions():
-    case = study_case(capacity=1)
+def test_full_ode_rejects_fixed_state_observations_and_assumptions(capacity_one_case):
+    case = capacity_one_case
     for changed, message in (
         (case.observe(inventory=0), "fixed state observations"),
         (case.observe(bid_cost=0), "fixed state observations"),
@@ -247,8 +246,8 @@ def test_full_ode_rejects_fixed_state_observations_and_assumptions():
 @pytest.mark.parametrize(
     "subject", ["inventory", "bid_cost", "terminal.inventory", "bid.intensity.distance", "ask.intensity.distance"]
 )
-def test_full_ode_rejects_global_state_restrictions(subject):
-    case = study_case(capacity=1)
+def test_full_ode_rejects_global_state_restrictions(capacity_one_case, subject):
+    case = capacity_one_case
     coordinate = case._reference(subject)
     condition = coordinate < 0 if subject.endswith("distance") else coordinate >= 0
     with assuming(condition):

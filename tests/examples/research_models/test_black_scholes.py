@@ -295,16 +295,6 @@ def test_compensated_prices_do_not_certify_incorrect_helpers(adversarial_cases, 
         assert report.explain(f"pricing.{field}/{field}_source").verdict == "strictly false"
 
 
-def test_case_bound_method_requires_refresh_after_new_observations(cases):
-    original = cases["constant"]
-    method = symbolic_method(original)
-    assert method.bound_case is original
-    changed = original.observe(now=0)
-    with pytest.raises(ResearchError, match="different research case") as captured:
-        changed.run(method)
-    assert captured.value.case is changed
-
-
 @pytest.mark.parametrize(("spot", "strike"), ((100, 1), (1, 100)))
 def test_payoff_quadrature_retains_mass_at_remote_exercise_boundaries(spot, strike):
     case = study_case(spot=spot, strike=strike, variance=Rational(1, 10000))
@@ -369,8 +359,8 @@ def test_nonfinite_payoff_quadrature_retains_the_case_and_report(cases, monkeypa
     assert all(item.verdict == "strictly true" for item in captured.value.report.checks)
 
 
-@pytest.mark.parametrize("factory", (symbolic_method, valuation_method))
-def test_case_bound_method_rejects_changed_assumptions_with_the_same_problem(cases, factory):
+@pytest.fixture(scope="module")
+def assumption_branches(cases):
     template = cases["constant"]
     base = ResearchCase.for_model(OptionStudy, "unobserved_time").observe(
         spot=100,
@@ -389,6 +379,12 @@ def test_case_bound_method_rejects_changed_assumptions_with_the_same_problem(cas
         base = base.with_theorem(theorem)
     first = base.assume(Eq(base.symbols.now, 0))
     changed = base.assume(Eq(base.symbols.now, Rational(1, 2)))
+    return first, changed
+
+
+@pytest.mark.parametrize("factory", (symbolic_method, valuation_method))
+def test_case_bound_method_rejects_changed_assumptions_with_the_same_problem(assumption_branches, factory):
+    first, changed = assumption_branches
     assert first.problem is changed.problem
     # A factory's already evaluated snapshot expectations must not cross from
     # the first assumption branch to the second, even though the problem is shared.

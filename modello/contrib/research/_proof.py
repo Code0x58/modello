@@ -443,15 +443,17 @@ def _defined(expression: Expr, variable: Symbol | None, domain: Set) -> Attempt:
     body, source = _source_domain(expression, variable, domain)
     if source.condition is None or source.condition is S.false:
         return source
+    finite_steps = ("The expression is finite; continuity is not required for this claim.",)
+    if not body.has(Piecewise) and body.is_finite is True:
+        guard = _parameter_guards(body, variable)
+        if guard is not None:
+            return Attempt(conjunction(source.condition, guard), finite_steps)
     regular = _regular(body, variable, domain, 0)
     if regular.condition is not None and regular.condition is not S.false:
         return Attempt(conjunction(source.condition, regular.condition), regular.steps, regular.witness)
     guard = _parameter_guards(body, variable)
     if body.is_finite is True and guard is not None:
-        return Attempt(
-            conjunction(source.condition, guard),
-            ("The expression is finite; continuity is not required for this claim.",),
-        )
+        return Attempt(conjunction(source.condition, guard), finite_steps)
     if variable is not None:
         for point in _points(domain):
             value = body.subs(variable, point)

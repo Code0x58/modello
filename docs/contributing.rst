@@ -225,7 +225,32 @@ preserving the applied case after rejection. This optional check does not
 replace visual browser review and adds no runtime dependency to the library.
 
 Keep regressions focused on distinct behavior and independent mathematical
-checks. Refresh dependencies with ``uv lock --upgrade`` and commit ``uv.lock``.
+checks. Share immutable cases and baseline results through module-scoped
+fixtures when several tests use the same inputs. Keep fresh execution where
+it checks that replacement or assumption changes preserve the earlier branch.
+Combine overlapping checks instead of repeating full symbolic or numerical
+studies; retain distinct boundary cases and method gates.
+
+CI runs the complete suite on every supported Python version. Coverage is
+collected on Python 3.10 and 3.14, including both sides of the compatibility
+code, while the other jobs run the same tests without tracing overhead. Every
+job still exports its test results. The full local coverage command in
+``AGENTS.md`` remains the required validation before committing.
+
+Measure slow tests before changing their implementation:
+
+.. code-block:: console
+
+   $ uv run --locked --dev pytest --no-cov --durations=25 tests/examples/research_models
+   $ uv run --locked --dev python -m cProfile -o /tmp/research-tests.prof -m pytest --no-cov tests/examples/research_models/test_cir_bond.py
+   $ uv run --locked --dev python -c "import pstats; pstats.Stats('/tmp/research-tests.prof').sort_stats('cumulative').print_stats(25)"
+
+Use the same interpreter and coverage settings for before/after timings.
+Inspect repeated domain proofs, expression binding, and solver work separately;
+profiling overhead itself is not a CI runtime measurement. Performance changes
+must retain source guards, proof scopes, and assumption-context isolation.
+
+Refresh dependencies with ``uv lock --upgrade`` and commit ``uv.lock``.
 Dependabot proposes grouped weekly dependency and GitHub Actions updates.
 Workflows do not schedule rebuilds.
 

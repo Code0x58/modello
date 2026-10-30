@@ -33,6 +33,21 @@ def ordinary_price(ordinary_case):
     return price(ordinary_case)
 
 
+@pytest.fixture(scope="module")
+def high_volatility_case():
+    return cir_case(sigma=Rational(2, 5))
+
+
+@pytest.fixture(scope="module")
+def terminal_case():
+    return cir_case(initial_rate=0, horizon=0)
+
+
+@pytest.fixture(scope="module")
+def changed_assumptions(ordinary_case):
+    return ordinary_case.assume(S.true)
+
+
 def test_price_has_exact_scalar_and_explicit_trusted_stochastic_evidence(ordinary_price):
     report = ordinary_price.report
     for name in (
@@ -63,8 +78,8 @@ def test_verification_reduces_the_actual_riccati_and_generator_identities(ordina
     assert result.report.explain("coefficient_denominator").verdict == "strictly true"
 
 
-def test_feller_rule_is_separate_and_its_failure_does_not_refute_valuation():
-    case = cir_case(sigma=Rational(2, 5))
+def test_feller_rule_is_separate_and_its_failure_does_not_refute_valuation(high_volatility_case):
+    case = high_volatility_case
     valuation = price(case)
     assert case.expression("feller_margin") < 0
     assert valuation.report.explain("affine_valuation").verdict == "strictly true"
@@ -126,13 +141,18 @@ def test_zero_initial_rate_is_a_valid_pricing_input():
     assert caught.value.report.explain("unattainable_zero/strictly_positive_initial_rate").verdict == "strictly false"
 
 
-def test_terminal_bond_is_one_and_does_not_assert_strict_decrease():
-    result = price(cir_case(initial_rate=0, horizon=0))
+def test_terminal_bond_is_one_and_does_not_assert_strict_decrease(terminal_case):
+    result = price(terminal_case)
     assert result.data.price == 1
     assert result.data.b == result.data.log_a == 0
     assert result.report.explain("rate_nonincreasing").verdict == "strictly true"
     with pytest.raises(KeyError):
         result.report.explain("rate_decreasing")
+    numerical = terminal_case.run(numerical_method)
+    assert numerical.data.price == 1 and numerical.data.b == numerical.data.log_a == 0
+    assert numerical.data.diagnostics["ode_nfev"] == 0
+    with pytest.raises(ResearchError, match="strictly positive"):
+        terminal_case.run(numerical_method, rtol=0)
 
 
 def test_a_changed_price_cannot_reuse_the_source_shortcut():
@@ -172,33 +192,24 @@ def test_overridden_generator_or_report_helpers_block_analytic_and_numerical_sho
 @pytest.mark.parametrize(
     "factory", [pricing_method, verification_method, numerical_method, strict_positive_boundary_method]
 )
-def test_case_aware_methods_reject_reuse_after_an_assumption_change(ordinary_case, factory):
+def test_case_aware_methods_reject_reuse_after_an_assumption_change(ordinary_case, changed_assumptions, factory):
     method = factory(ordinary_case)
     assert method.bound_case is ordinary_case
-    changed = ordinary_case.assume(S.true)
+    changed = changed_assumptions
     assert changed.problem is ordinary_case.problem
     with pytest.raises(ResearchError, match="bound to a different research case") as caught:
         changed.run(method)
     assert caught.value.case is changed
 
 
-@pytest.mark.parametrize("sigma", [Rational(1, 5), Rational(2, 5)])
-def test_independent_riccati_integration_and_quadrature_agree_with_the_formula(sigma):
-    case = cir_case(sigma=sigma)
+@pytest.mark.parametrize("case_name", ["ordinary_case", "high_volatility_case"])
+def test_independent_riccati_integration_and_quadrature_agree_with_the_formula(request, case_name):
+    case = request.getfixturevalue(case_name)
     result = case.run(numerical_method(case), rtol=1e-11, atol=1e-13)
     assert result.data.diagnostics["kind"] == "numerical observation"
     for name in ("b_difference", "log_a_difference", "price_difference", "quadrature_log_a_difference"):
         assert result.data.diagnostics[name] < 1e-9
     assert result.data.diagnostics["ode_nfev"] > 0
-
-
-def test_numerical_reference_supports_terminal_data_and_checks_tolerances():
-    case = cir_case(horizon=0)
-    result = case.run(numerical_method(case))
-    assert result.data.price == 1 and result.data.b == result.data.log_a == 0
-    assert result.data.diagnostics["ode_nfev"] == 0
-    with pytest.raises(ResearchError, match="strictly positive"):
-        case.run(numerical_method(case), rtol=0)
 
 
 @pytest.mark.parametrize("value", [S.Infinity, S.NaN, float("nan"), float("inf"), 1 + S.ImaginaryUnit])

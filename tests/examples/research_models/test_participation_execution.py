@@ -27,8 +27,13 @@ def free_case():
     return participation_case()
 
 
-def test_exact_solution_checks_live_identities_uniqueness_and_kkt(free_case):
-    result = free_case.run(analytic_method(free_case))
+@pytest.fixture(scope="module")
+def free_result(free_case):
+    return free_case.run(analytic_method)
+
+
+def test_exact_solution_checks_live_identities_uniqueness_and_kkt(free_result):
+    result = free_result
     solution = result.data
     assert (solution.status, solution.rate, solution.duration, solution.cost) == ("minimum", S.One / 4, 3, S(9) / 4)
     assert solution.active_bounds == ()
@@ -56,14 +61,14 @@ def test_exact_solution_checks_live_identities_uniqueness_and_kkt(free_case):
     assert all(premise.condition is S.true for premise in uniqueness.premises)
 
 
-def test_sublinear_per_share_cost_does_not_require_convexity_in_rate(free_case):
+def test_sublinear_per_share_cost_does_not_require_convexity_in_rate(free_case, free_result):
     rate = free_case.expression("rate", wrt="rate")
     objective = free_case.expression("objective", wrt="rate")
     assert diff(objective, rate, 2).subs(rate, 1) == -S(3) / 8
     claim = convex("objective", wrt="rate", domain=POSITIVE_RATES, name="convex_in_rate")
     report = free_case.require(replace(claim, consumer="test", reason="This objective is not convex in rho.")).check()
     assert report.explain("convex_in_rate").condition is S.false
-    assert free_case.run(analytic_method(free_case)).data.rate == S.One / 4
+    assert free_result.data.rate == S.One / 4
 
 
 @pytest.mark.parametrize(
