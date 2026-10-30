@@ -27,7 +27,7 @@ jobs:
     timeout-minutes: 15
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      COLLECT_COVERAGE: ${{ matrix.python-version == '3.10' || matrix.python-version == '3.14' }}
+      COVERAGE_SOURCE: ${{ matrix.python-version == '3.14' && 'modello' || matrix.python-version == '3.10' && 'modello._problem' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -77,13 +77,19 @@ jobs:
         run: |
           unset PYTEST_DISABLE_PLUGIN_AUTOLOAD
           test_coverage_args=(--no-cov)
-          if [[ "$COLLECT_COVERAGE" == "true" ]]; then
-            test_coverage_args=(--cov=modello --cov-report=xml)
+          if [[ "$COVERAGE_SOURCE" == "modello" ]]; then
+            test_coverage_args=(--cov-reset --cov="$COVERAGE_SOURCE" --cov-report=xml)
           fi
           uv run --dev pytest --verbosity=2 "${test_coverage_args[@]}" --junit-xml=test-results.xml
 
+      - name: Cover minimum-version compatibility
+        if: env.COVERAGE_SOURCE == 'modello._problem'
+        run: |
+          unset PYTEST_DISABLE_PLUGIN_AUTOLOAD
+          uv run --dev pytest --verbosity=2 --cov-reset --cov="$COVERAGE_SOURCE" --cov-report=xml tests/modello/test_problem.py::test_input_constraint_keeps_string_enum_compatibility
+
       - name: Upload coverage to Codecov
-        if: (success() || hashFiles('coverage.xml') != '') && env.CODECOV_TOKEN != '' && env.COLLECT_COVERAGE == 'true'
+        if: (success() || hashFiles('coverage.xml') != '') && env.CODECOV_TOKEN != '' && env.COVERAGE_SOURCE != ''
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ env.CODECOV_TOKEN }}

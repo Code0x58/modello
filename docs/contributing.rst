@@ -231,10 +231,14 @@ it checks that replacement or assumption changes preserve the earlier branch.
 Combine overlapping checks instead of repeating full symbolic or numerical
 studies; retain distinct boundary cases and method gates.
 
-CI runs the complete suite on every supported Python version. Coverage is
-collected on Python 3.10 and 3.14, including both sides of the compatibility
-code, while the other jobs run the same tests without tracing overhead. Every
-job still exports its test results. The full local coverage command in
+CI runs the complete suite on every supported Python version. Python 3.14
+collects full-library coverage. Python 3.10 collects coverage for
+``modello._problem`` through its string-enum compatibility test, after running
+the complete suite without tracing. The other versions run without coverage
+instrumentation. This covers both runtime paths while limiting tracing overhead
+on the oldest interpreter. Keep this check aligned with new version-dependent
+code. Test jobs retain the 15-minute limit and export their full-suite results.
+The full local coverage command in
 ``AGENTS.md`` remains the required validation before committing.
 
 Measure slow tests before changing their implementation:
