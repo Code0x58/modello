@@ -180,8 +180,12 @@ def solve_quotes(case: ResearchCase, *, rtol=1e-8, atol=1e-10, max_step=None, po
     ratio = case.expression("capacity") / case.expression("step")
     if ratio.is_integer is not True or ratio.is_positive is not True:
         raise ValueError("Capacity must be a positive integral number of lots")
-    if type(points) is not int or points < 3 or rtol <= 0 or atol <= 0:
-        raise ValueError("Use at least three output times and positive tolerances")
+    if (
+        type(points) is not int
+        or points < 3
+        or not all(isfinite(tolerance) and tolerance > 0 for tolerance in (rtol, atol))
+    ):
+        raise ValueError("Use at least three output times and finite positive tolerances")
     max_step = horizon / 100 if max_step is None else max_step
     if not isfinite(max_step) or max_step <= 0:
         raise ValueError("max_step must be positive and finite")

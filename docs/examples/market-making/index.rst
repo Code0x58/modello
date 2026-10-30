@@ -236,3 +236,8 @@ time. The exponential case has an independent matrix-exponential reference;
 both families have tighter-tolerance and independent time-difference checks.
 The default comparison matches the rate and slope of the two intensities at
 zero distance, so their differences reflect the changed shape.
+
+``run_quotes`` requires at least three output times, finite positive ``rtol``
+and ``atol``, and a finite positive ``max_step`` when supplied. Invalid settings
+raise ``ResearchError`` with the originating case and report before integration
+starts.

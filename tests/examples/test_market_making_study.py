@@ -1,6 +1,7 @@
 """Independent numerical checks and reproducibility of the complete study."""
 
 import json
+from math import inf, nan
 
 import numpy as np
 import pytest
@@ -99,6 +100,24 @@ def test_invalid_lattice_and_numerical_failure_retain_case_and_report():
     assert error.value.report.checks
     with pytest.raises(ResearchError, match="max_step"):
         run_quotes(study_case(capacity=1), max_step=0)
+
+
+@pytest.mark.parametrize("tolerance", ["rtol", "atol"])
+@pytest.mark.parametrize("value", [0, -1, inf, -inf, nan])
+def test_invalid_solver_tolerances_are_rejected_before_integration(monkeypatch, tolerance, value):
+    case = study_case(capacity=1)
+    calls = []
+
+    def integrate(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("Invalid settings must not reach the integrator")
+
+    monkeypatch.setattr("examples._market_making_numerics.solve_ivp", integrate)
+    with pytest.raises(ResearchError, match="tolerances") as error:
+        run_quotes(case, points=3, **{tolerance: value})
+    assert not calls
+    assert error.value.case is case
+    assert error.value.report.checks
 
 
 def test_asymmetric_intensities_use_independent_component_scopes():
