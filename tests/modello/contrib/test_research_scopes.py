@@ -19,6 +19,7 @@ from sympy import (
     Sum,
     arg,
     assuming,
+    exp,
     log,
     sqrt,
 )
@@ -29,12 +30,14 @@ from modello.contrib.research import (
     ResearchCase,
     ResearchError,
     ResearchModel,
+    Theorem,
     curvature_bound,
     differentiable,
     exact_form,
     nonnegative,
     nonzero,
     positive,
+    predicate,
     requires,
     smooth,
     uniform_bound,
@@ -228,6 +231,105 @@ def test_proof_cache_distinguishes_a_constant_from_an_equal_unestablished_quanti
     report = case.check(requirements=claims[::-1] if reverse else claims)
     assert report.explain("constant").verdict == "strictly true"
     assert report.explain("observation").verdict == "strictly false"
+
+
+@pytest.fixture
+def substitution_scopes():
+    class Axes(ResearchModel):
+        real = Coordinate("x", real=True)
+        positive = Coordinate("p", positive=True)
+        observed = InstanceDummy("observed", real=True)
+
+    values = {
+        name: Subs(Derivative(S.Zero, variable, evaluate=False), variable, 0)
+        for name, variable in (("valid", Axes.real), ("outside_domain", Axes.positive))
+    }
+    assert values["valid"] == values["outside_domain"]
+    return ResearchCase.for_model(Axes), values
+
+
+def substitution_identity(value, payload, name):
+    return exact_form(value, S.Zero, name=name) if payload == "subject" else exact_form(S.Zero, value, name=name)
+
+
+@pytest.mark.parametrize("payload", ("subject", "expected"))
+@pytest.mark.parametrize("reverse", (False, True))
+def test_equal_substitutions_keep_their_own_domains_across_cached_checks(substitution_scopes, payload, reverse):
+    case, values = substitution_scopes
+    claims = tuple(substitution_identity(value, payload, name) for name, value in values.items())
+    if reverse:
+        claims = claims[::-1]
+    report = case.check(requirements=claims)
+    assert report.explain("valid").verdict == "strictly true"
+    assert report.explain("outside_domain").verdict == "unresolved"
+    calls = []
+    for claim in claims:
+        method = Method(claim.name, lambda current: calls.append(current) or 0, (claim,))
+        if claim.name == "valid":
+            assert case.run(method).data == 0
+        else:
+            with pytest.raises(ResearchError):
+                case.run(method)
+    assert calls == [case]
+
+
+@pytest.mark.parametrize("payload", ("subject", "expected"))
+def test_theorems_and_duplicate_ids_distinguish_native_substitution_scopes(substitution_scopes, payload):
+    case, values = substitution_scopes
+    valid = substitution_identity(values["valid"], payload, "identity")
+    invalid = substitution_identity(values["outside_domain"], payload, "identity")
+    with pytest.raises(ModelDefinitionError, match="Requirement IDs"):
+        case.require(valid).check(requirements=(invalid,))
+    with pytest.raises(ModelDefinitionError, match="premise names"):
+        Theorem("duplicate", valid, (valid, invalid), source="Test rule")
+    trusted = case.with_theorem(Theorem("real derivative", valid, (), source="Derivative of a constant"))
+    assert trusted.check(requirements=(valid,)).explain("identity").kind == "theorem"
+    evidence = trusted.check(requirements=(invalid,)).explain("identity")
+    assert evidence.verdict == "unresolved"
+    assert evidence.kind == "symbolic"
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+def test_equal_observations_retain_both_native_source_scopes(substitution_scopes, reverse):
+    case, values = substitution_scopes
+    observations = tuple(values.values())
+    for value in observations[::-1] if reverse else observations:
+        case = case.observe(observed=value)
+    claim = exact_form("observed", S.Zero)
+    report = case.check(requirements=(claim,))
+    evidence = report.explain(claim.name)
+    assert evidence.verdict == "unresolved"
+    assert {value.variables for value in evidence.source_operands} == {value.variables for value in observations}
+    with pytest.raises(ResearchError):
+        case.run(Method("observation", lambda current: 0, (claim,)))
+    with pytest.raises(ModelValidationError):
+        case.sample("observed", wrt="real", points=(1,))
+
+
+@pytest.mark.parametrize("substituted", (False, True))
+def test_predicate_binding_preserves_native_derivative_operands(substituted):
+    class Axes(ResearchModel):
+        x = Coordinate("x", real=True)
+        p = Coordinate("p", positive=True)
+        a = InstanceDummy("a", real=True)
+        b = InstanceDummy("b", real=True)
+
+    case = ResearchCase.for_model(Axes).observe(a=37 if substituted else 1, b=37 if substituted else 1)
+    left = Derivative(case.symbols.a * (Axes.x if substituted else Abs(Axes.x)), Axes.x, evaluate=False)
+    right = Derivative(
+        case.symbols.b * (Axes.p if substituted else Abs(Axes.x)), Axes.p if substituted else Axes.x, evaluate=False
+    )
+    if substituted:
+        left, right = Subs(left, Axes.x, 0), Subs(right, Axes.p, 0)
+        assert (
+            case.check(requirements=(exact_form(exp(left), exp(37)),)).explain("exact_form").verdict == "strictly true"
+        )
+        unsafe = exact_form(exp(right), exp(37))
+        assert case.check(requirements=(unsafe,)).explain(unsafe.name).verdict == "unresolved"
+    claim = predicate(Eq(left, right, evaluate=False))
+    assert case.check(requirements=(claim,)).explain(claim.name).condition is not S.true
+    with pytest.raises(ResearchError):
+        case.run(Method("predicate", lambda current: 0, (claim,)))
 
 
 @pytest.mark.parametrize("point", (0, 1))

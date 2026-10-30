@@ -10,6 +10,7 @@ from sympy import Basic, Expr, S, Set, Symbol, sympify
 from sympy.assumptions import global_assumptions
 
 from modello import Annotation
+from modello._evaluation import _expression_key
 from modello.errors import ModelDefinitionError, ModelValidationError
 
 if TYPE_CHECKING:
@@ -62,16 +63,18 @@ class Requirement:
 
     def _proposition(self) -> tuple:
         """Match mathematical statements independently of their motivation."""
-        return (
-            self.name,
-            self.subject,
-            self.property,
-            self.wrt,
-            self.domain,
-            self.order,
-            self.bound,
-            self.expected,
-            self.at,
+        return _expression_key(
+            (
+                self.name,
+                self.subject,
+                self.property,
+                self.wrt,
+                self.domain,
+                self.order,
+                self.bound,
+                self.expected,
+                self.at,
+            )
         )
 
     def __post_init__(self) -> None:
@@ -393,7 +396,10 @@ class Theorem:
         for requirement in self.premises:
             if not isinstance(requirement, Requirement):
                 raise ModelDefinitionError("Theorem premises must be requirements")
-            if requirement.name in premises and premises[requirement.name] != requirement:
+            if requirement.name in premises and (
+                premises[requirement.name] != requirement
+                or premises[requirement.name]._proposition() != requirement._proposition()
+            ):
                 raise ModelDefinitionError(f"Theorem premise names must be unique: {requirement.name}")
             premises[requirement.name] = requirement
         object.__setattr__(self, "premises", tuple(premises.values()))

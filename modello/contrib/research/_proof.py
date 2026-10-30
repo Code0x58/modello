@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from functools import cache
 
 from sympy import (
     Abs,
@@ -70,7 +69,7 @@ from sympy.logic.boolalg import Boolean
 from sympy.logic.inference import satisfiable
 from sympy.polys.polyerrors import PolynomialError
 
-from modello._evaluation import _BINDERS, _evaluate, _rebuild
+from modello._evaluation import _BINDERS, _cache_by_expression, _construct, _evaluate, _rebuild
 from modello._operators import (
     _bound_coordinates,
     _conditioned,
@@ -156,7 +155,7 @@ def guard_source(expression: Basic) -> Basic:
     Proofs interpret it on their own explicitly quantified domains.
     """
 
-    @cache
+    @_cache_by_expression
     def visit(value):
         if not value.args or isinstance(value, _SourceFinite):
             return value
@@ -164,7 +163,9 @@ def guard_source(expression: Basic) -> Basic:
         if isinstance(value, (Sum, Product, Integral)) and args != value.args:
             # Their constructors fold Piecewise through nested local binders.
             result = _held_reduction(value, args)
-        elif not isinstance(value, Expr) or isinstance(value, (*_BINDERS, Piecewise)):
+        elif not isinstance(value, Expr):
+            result = _construct(value, args)
+        elif isinstance(value, (*_BINDERS, Piecewise)):
             result = value.func(*args) if args != value.args else value
         else:
             result = _rebuild(value, args, _denominator_condition(value)) if args != value.args else value

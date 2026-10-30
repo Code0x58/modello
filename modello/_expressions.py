@@ -22,7 +22,14 @@ from sympy import (
     simplify,
 )
 
-from modello._evaluation import _OPERATORS, _evaluate as _evaluate, _rebuild, _substitute as _substitute
+from modello._evaluation import (
+    _OPERATORS,
+    _construct,
+    _evaluate as _evaluate,
+    _expression_key,
+    _rebuild,
+    _substitute as _substitute,
+)
 from modello._operators import (
     _conditioned,
     _denominator_condition,
@@ -71,8 +78,8 @@ class _DefinitionResolver:
         self.templates = tuple(templates)
         self.evaluate_operators = evaluate_operators
         self.attach_context = attach_context
-        self._memo: dict[tuple[Basic, frozenset[Basic]], Basic] = {}
-        self._active: set[tuple[Basic, frozenset[Basic]]] = set()
+        self._memo: dict[tuple, Basic] = {}
+        self._active: set[tuple] = set()
         self._series_points: dict[tuple[Basic, Basic], list[Integer]] = {}
 
     def symbolic(self) -> _DefinitionResolver:
@@ -94,7 +101,7 @@ class _DefinitionResolver:
         )
 
     def __call__(self, expression: Basic, protected: frozenset[Basic] = frozenset()) -> Basic:
-        key = (expression, protected)
+        key = (_expression_key(expression), protected)
         if key not in self._memo:
             if key in self._active:
                 raise NotImplementedError("Cyclic symbolic queries cannot be evaluated")
@@ -124,7 +131,7 @@ class _DefinitionResolver:
             return self(expression)
         args = tuple(self.operators(arg) for arg in expression.args)
         if not isinstance(expression, Expr):
-            return expression.func(*args) if args != expression.args else expression
+            return _construct(expression, args)
         return _rebuild(expression, args, self.operators(_denominator_condition(expression)))
 
     def _resolve(self, expression: Basic, protected: frozenset[Basic]) -> Basic:
@@ -208,7 +215,7 @@ class _DefinitionResolver:
         else:
             args = tuple(self(arg, protected) for arg in expression.args)
             if not isinstance(expression, Expr):
-                return expression.func(*args) if args != expression.args else expression
+                return _construct(expression, args)
             return _rebuild(expression, args, self(_denominator_condition(expression), protected))
         evaluated = _evaluate(operator) if self.evaluate_operators else operator
         return self(evaluated, protected) if evaluated != operator else operator

@@ -233,6 +233,19 @@ to that global assumption context. Leaving the context checks the original
 branch again without retaining context-dependent simplifications. Use explicit
 ``case.assume(...)`` branches for premises that should persist in the study.
 
+Native substitution coordinates keep their own declared domains in cached
+bindings, proof attempts, and theorem matching. SymPy can consider two ``Subs``
+expressions mathematically equal after renaming their bound variables; that
+equality does not transfer a derivative certificate between their scopes.
+For example, evaluation at zero on a real coordinate does not establish the
+same operation on a positive coordinate whose domain excludes zero.
+Binding and replacement also retain pending native operations before checking
+their premises. If a CAS constructor drops an operation or substitutes a stale
+coordinate scope, ``check()`` reports unresolved evidence and ``run()`` blocks
+methods that need it. ``expression()``, ``sample()``, and replacement raise
+``ModelInputError`` when that scope cannot be preserved; declare the expression
+with its new coordinates instead.
+
 The positive-derivative test is sufficient for strict increase, but it is not
 its definition. The polynomial rule can establish strict increase of
 :math:`x^3` despite its zero derivative at zero. Likewise, :math:`|x|` is convex

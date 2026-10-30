@@ -30,7 +30,7 @@ from sympy.logic.boolalg import Boolean
 from sympy.polys.polyerrors import PolynomialError
 
 from modello import ConstraintKind, Coordinate, Modello, annotate, annotate_model, component, inspect_model
-from modello._evaluation import _BINDERS, _rebind
+from modello._evaluation import _BINDERS, _expression_key, _rebind, _unique_expressions
 from modello._expressions import _definition_resolver, _DefinitionResolver
 from modello._operators import _bound_coordinates, _scalar_atoms, _ScopedExpression, _SymbolicTemplate
 from modello._problem import ModelConstraint
@@ -78,9 +78,7 @@ class _Context:
     problem: ModelProblem
     assumptions: tuple[Basic, ...]
     parameters: dict[Symbol, Expr] = dataclass_field(default_factory=dict)
-    expressions: dict[tuple[Basic, frozenset[Basic]], tuple[Basic, tuple[Basic, ...]]] = dataclass_field(
-        default_factory=dict
-    )
+    expressions: dict[tuple, tuple[Basic, tuple[Basic, ...]]] = dataclass_field(default_factory=dict)
     attempts: dict[tuple, Attempt] = dataclass_field(default_factory=dict)
 
     @cached_property
@@ -90,7 +88,7 @@ class _Context:
         for item in self.problem.constraints:
             if item.kind is ConstraintKind.DEFINITION:
                 value = guard_source(item.right)
-                if item.left in definitions and definitions[item.left] != value:
+                if item.left in definitions and _expression_key(definitions[item.left]) != _expression_key(value):
                     ambiguous.add(item.left)
                 definitions[item.left] = value
         return _definition_resolver(
@@ -127,11 +125,15 @@ class _Context:
     def bindings(self) -> _DefinitionResolver:
         """Keep directed observation formulas until their operations are checked."""
         defined = {item.left for item in self.problem.constraints if item.kind is ConstraintKind.DEFINITION}
-        inputs: dict[Symbol, set[Basic]] = {}
+        inputs: dict[Symbol, list[Basic]] = {}
         for item in self.problem.constraints:
             if item.kind is not ConstraintKind.DEFINITION and item.left not in defined:
-                inputs.setdefault(item.left, set()).add(item.right)
-        direct = {symbol: guard_source(next(iter(values))) for symbol, values in inputs.items() if len(values) == 1}
+                inputs.setdefault(item.left, []).append(item.right)
+        direct = {}
+        for symbol, observations in inputs.items():
+            values = _unique_expressions(observations)
+            if len(values) == 1:
+                direct[symbol] = guard_source(values[0])
         if not direct:
             return self.law
         source = _definition_resolver(
@@ -386,7 +388,7 @@ class ResearchCase(Generic[ModelT]):
 
     def _bind(self, value: Basic, protected: frozenset[Basic] = frozenset()) -> Basic:
         context = self._context
-        key = (value, protected)
+        key = (_expression_key(value), protected)
         if key in context.expressions:
             return context.expressions[key][0]
         result = context.bindings(guard_source(value), protected)
@@ -773,16 +775,17 @@ class ResearchCase(Generic[ModelT]):
             for operator in value.atoms(*_BINDERS)
             for variable in _bound_coordinates(operator)
         )
-        seen_by_path: dict[str, dict[Requirement, str]] = {}
+        seen_by_path: dict[str, dict[tuple, str]] = {}
         for constraint in self.problem.constraints:
             path = ".".join(constraint.path)
             seen = seen_by_path.setdefault(path, {})
 
             def record(claim, reason, uncertain):
-                key = seen.get(claim)
+                proposition = claim._proposition()
+                key = seen.get(proposition)
                 if key is None:
                     key = f"{path}/auto:{len(seen) + 1}"
-                    seen[claim] = key
+                    seen[proposition] = key
                     records.append((key, replace(claim, consumer=path, reason=reason), ""))
                     if uncertain:
                         conditional.add(key)
@@ -964,7 +967,9 @@ class ResearchCase(Generic[ModelT]):
             )
         for record in [*self._declared(), *automatic, *((item.name, item, "") for item in requirements)]:
             key = record[0]
-            if key in records_by_id and records_by_id[key] != record:
+            if key in records_by_id and (
+                records_by_id[key] != record or records_by_id[key][1]._proposition() != record[1]._proposition()
+            ):
                 raise ModelDefinitionError(f"Requirement IDs must be unique within a research case: {key}")
             records_by_id[key] = record
         records = tuple(records_by_id.values())
@@ -1001,7 +1006,7 @@ class ResearchCase(Generic[ModelT]):
 
             def bind(value, *, optional=False):
                 result = self._bind(value, protected)
-                _, operands = self._context.expressions[value, protected]
+                _, operands = self._context.expressions[_expression_key(value), protected]
                 (hint_sources if optional else sources).extend(operands)
                 return result
 
@@ -1064,7 +1069,7 @@ class ResearchCase(Generic[ModelT]):
                     dependencies,
                     resolved=resolved,
                     expected_template=expected_template,
-                    source_operands=tuple(dict.fromkeys(sources)),
+                    source_operands=_unique_expressions(sources),
                 )
             steps[0] += 1
             theorem = next(
@@ -1093,7 +1098,7 @@ class ResearchCase(Generic[ModelT]):
                     premises=premises,
                     resolved=resolved,
                     expected_template=expected_template,
-                    source_operands=tuple(dict.fromkeys(sources)),
+                    source_operands=_unique_expressions(sources),
                 )
             canonical = (
                 (f"{prefix}.{claim.subject}" if prefix else claim.subject) if isinstance(claim.subject, str) else ""
@@ -1103,21 +1108,23 @@ class ResearchCase(Generic[ModelT]):
             if hint is not None:
                 used_hints.add(hint_key)
                 hint = cast(Expr, payload(hint, optional=True))
-            source_operands = tuple(dict.fromkeys(sources))
-            hint_operands = tuple(dict.fromkeys(hint_sources))
-            attempt_key = (
-                resolved.property,
-                expression,
-                variable,
-                expected,
-                resolved.domain,
-                resolved.order,
-                resolved.bound,
-                resolved.at,
-                assumptions,
-                hint,
-                source_operands,
-                hint_operands,
+            source_operands = _unique_expressions(sources)
+            hint_operands = _unique_expressions(hint_sources)
+            attempt_key = _expression_key(
+                (
+                    resolved.property,
+                    expression,
+                    variable,
+                    expected,
+                    resolved.domain,
+                    resolved.order,
+                    resolved.bound,
+                    resolved.at,
+                    assumptions,
+                    hint,
+                    source_operands,
+                    hint_operands,
+                )
             )
             attempts = self._context.attempts
             result = attempts.get(attempt_key)
@@ -1142,7 +1149,7 @@ class ResearchCase(Generic[ModelT]):
                 resolved=resolved,
                 hint=hint,
                 expected_template=expected_template,
-                source_operands=tuple(dict.fromkeys((*source_operands, *hint_operands))),
+                source_operands=_unique_expressions((*source_operands, *hint_operands)),
             )
 
         def prove(key, requirement, prefix):
@@ -1194,7 +1201,7 @@ class ResearchCase(Generic[ModelT]):
         variable = self._coordinate(wrt)
         expression = self.expression(subject, wrt=variable)
         reference = self._reference(subject) if isinstance(subject, str) else subject
-        _, sources = self._context.expressions[reference, frozenset({variable})]
+        _, sources = self._context.expressions[_expression_key(reference), frozenset({variable})]
         if not isinstance(expression, Expr):
             raise ModelValidationError("Sampling needs a scalar expression")
         try:

@@ -1,7 +1,7 @@
 """Reusing a case preserves identities through component changes."""
 
 import pytest
-from sympy import Abs, Derivative, Eq, Integral, Limit, Product, S, Subs, Sum
+from sympy import Abs, Add, Derivative, Eq, Integral, Limit, Mul, Product, S, Subs, Sum, exp
 
 from modello import ConstraintKind, Coordinate, Index, InstanceDummy, Modello, Recurrence, Series, Vector, component
 from modello.contrib.research import (
@@ -15,7 +15,7 @@ from modello.contrib.research import (
     smooth,
 )
 from modello.contrib.stochastic import ItoProcess
-from modello.errors import ModelDefinitionError, ModelValidationError
+from modello.errors import ModelDefinitionError, ModelInputError, ModelValidationError
 
 
 @pytest.fixture
@@ -89,6 +89,54 @@ def test_replacement_rebinds_native_coordinates_in_vector_definitions(curves):
 
     changed = ResearchCase.for_model(Parent).replace("curve", new)
     assert changed.expression("values.0").doit() == -2 * new.x
+
+
+def test_replacement_rebinds_substitutions_inside_equal_parent_expressions(curves):
+    old, new = curves
+
+    class Parent(Modello):
+        curve = component(old)
+
+    native = Subs(Derivative(S.Zero, old.x, evaluate=False), old.x, 1)
+    subject = Add(native, S.One, evaluate=False)
+    source = ResearchCase.for_model(Parent).require(exact_form(subject, S.One))
+    changed = source.replace("curve", new)
+    assert next(iter(changed.requirements[0].subject.atoms(Subs))).variables == (new.x,)
+    assert next(iter(source.requirements[0].subject.atoms(Subs))).variables == (old.x,)
+    assert changed.check().explain("exact_form").verdict == "strictly true"
+
+
+def test_replacement_rejects_stale_substitution_scopes_from_cached_function_constructors(curves):
+    old, new = curves
+
+    class Parent(Modello):
+        curve = component(old)
+
+    native = Subs(Derivative(S(17), old.x, evaluate=False), old.x, 0)
+    source = ResearchCase.for_model(Parent).require(exact_form(exp(native), S.One))
+    assert next(iter(source.requirements[0].subject.atoms(Subs))).variables == (old.x,)
+    with pytest.raises(ModelInputError, match="operation scopes"):
+        source.replace("curve", new)
+    assert next(iter(source.requirements[0].subject.atoms(Subs))).variables == (old.x,)
+
+
+def test_replacement_preserves_derivative_premises_in_a_held_zero_product(curves):
+    old, _ = curves
+
+    class Positive(Modello):
+        x = Coordinate("p", positive=True)
+        value = x**2
+
+    class Parent(Modello):
+        curve = component(old)
+
+    native = Subs(Derivative(S.Zero, old.x, evaluate=False), old.x, 0)
+    source = ResearchCase.for_model(Parent).require(exact_form(Mul(S.Zero, native, evaluate=False), S.Zero))
+    changed = source.replace("curve", Positive)
+    assert changed.check().explain("exact_form").verdict == "unresolved"
+    with pytest.raises(ResearchError):
+        changed.run(Method("zero", lambda current: 0, changed.requirements))
+    assert source.check().explain("exact_form").verdict == "strictly true"
 
 
 @pytest.mark.parametrize("where", ("declaration", "assumption", "requirement", "expected", "hint"))
