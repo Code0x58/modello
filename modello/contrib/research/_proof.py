@@ -69,7 +69,15 @@ from sympy.logic.boolalg import Boolean
 from sympy.logic.inference import satisfiable
 from sympy.polys.polyerrors import PolynomialError
 
-from modello._evaluation import _BINDERS, _cache_by_expression, _construct, _evaluate, _rebuild
+from modello._evaluation import (
+    _BINDERS,
+    _cache_by_expression,
+    _construct,
+    _evaluate,
+    _predicate_parts,
+    _rebuild,
+    _resolve_piecewise,
+)
 from modello._operators import (
     _bound_coordinates,
     _conditioned,
@@ -99,6 +107,9 @@ class _SourceFinite(Boolean):
     """Retain operand definedness without consulting ambient assumptions."""
 
     is_Atom = True
+
+    def _eval_as_set(self):
+        raise NotImplementedError("Source-definedness predicates need their explicit coordinate scope")
 
     def __new__(cls, operand):
         body = _defined_part(operand)
@@ -159,18 +170,18 @@ def guard_source(expression: Basic) -> Basic:
     def visit(value):
         if not value.args or isinstance(value, _SourceFinite):
             return value
+        if isinstance(value, Piecewise):
+            return _resolve_piecewise(value, visit)
         args = tuple(visit(arg) for arg in value.args)
         if isinstance(value, (Sum, Product, Integral)) and args != value.args:
             # Their constructors fold Piecewise through nested local binders.
             result = _held_reduction(value, args)
         elif not isinstance(value, Expr):
             result = _construct(value, args)
-        elif isinstance(value, (*_BINDERS, Piecewise)):
+        elif isinstance(value, _BINDERS):
             result = value.func(*args) if args != value.args else value
         else:
             result = _rebuild(value, args, _denominator_condition(value)) if args != value.args else value
-        if isinstance(result, Piecewise):
-            result = piecewise_fold(result)
         if (
             isinstance(value, Expr)
             and not isinstance(value, (Add, Mul, Piecewise, *_BINDERS))
@@ -913,6 +924,12 @@ def attempt(
             if regularity.condition is None or regularity.condition is S.false:
                 return regularity
             derivative_guards.append(regularity.condition)
+
+    if claim.property == "predicate":
+        expression, predicate_domain = _predicate_parts(expression)
+        derivative_guards.append(predicate_domain)
+        if predicate_domain is S.false:
+            return Attempt(S.false, ("A scalar operand of the predicate is undefined.",))
 
     # Check original local scopes before evaluating substitutions or collapsing
     # empty reductions.

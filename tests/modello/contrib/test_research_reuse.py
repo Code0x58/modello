@@ -114,6 +114,7 @@ def test_replacement_rejects_stale_substitution_scopes_from_cached_function_cons
 
     native = Subs(Derivative(S(17), old.x, evaluate=False), old.x, 0)
     source = ResearchCase.for_model(Parent).require(exact_form(exp(native), S.One))
+    exp(native, evaluate=False)  # Prime the held constructor used while rebinding.
     assert next(iter(source.requirements[0].subject.atoms(Subs))).variables == (old.x,)
     with pytest.raises(ModelInputError, match="operation scopes"):
         source.replace("curve", new)

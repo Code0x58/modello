@@ -6,6 +6,7 @@ from functools import cached_property
 from typing import Iterable, Mapping
 
 from sympy import (
+    And,
     Basic,
     Derivative,
     Expr,
@@ -14,20 +15,22 @@ from sympy import (
     Limit,
     Piecewise,
     Product,
-    S,
     Subs,
     Sum,
     Symbol,
     Tuple,
     simplify,
 )
+from sympy.logic.boolalg import Boolean
 
 from modello._evaluation import (
     _OPERATORS,
     _construct,
     _evaluate as _evaluate,
     _expression_key,
+    _predicate_parts,
     _rebuild,
+    _resolve_piecewise,
     _substitute as _substitute,
 )
 from modello._operators import (
@@ -45,7 +48,7 @@ from modello.vectors import _VectorFormula
 
 def _declaration(expression: Basic) -> Basic:
     """Retain operators in the user-facing definition; simplify ordinary scalars."""
-    if expression.has(*_OPERATORS):
+    if expression.has(*_OPERATORS, Piecewise):
         return expression
     condition = _denominator_condition(expression)
     value = simplify(expression)
@@ -129,6 +132,13 @@ class _DefinitionResolver:
             return expression
         if isinstance(expression, _OPERATORS):
             return self(expression)
+        if (
+            self.evaluate_operators
+            and isinstance(expression, Boolean)
+            and not isinstance(expression, Expr)
+            and not expression.is_Atom
+        ):
+            return And(*_predicate_parts(expression, self.operators))
         args = tuple(self.operators(arg) for arg in expression.args)
         if not isinstance(expression, Expr):
             return _construct(expression, args)
@@ -146,15 +156,7 @@ class _DefinitionResolver:
                 return self(self.definitions[expression], protected)
             return self.observations.get(expression, expression)
         if isinstance(expression, Piecewise):
-            branches = []
-            for value, condition in expression.args:
-                condition = self(condition, protected)
-                if condition is S.false:
-                    continue
-                branches.append((self(value, protected), condition))
-                if condition is S.true:
-                    break
-            return Piecewise(*branches)
+            return _resolve_piecewise(expression, lambda value: self(value, protected))
         if isinstance(expression, _ScopedExpression):
             if isinstance(expression, _SymbolicTemplate) and not expression._has_context:
                 expression = next(

@@ -226,6 +226,13 @@ claim that condition is necessary unless separately established.
 missing proof, unsupported operation, exhausted attempt budget, or inapplicable
 theorem. Contradictory assumptions do not produce successful proofs.
 
+Boolean predicates also require defined scalar operands. Negation, disjunction,
+and implication do not turn a comparison with an undefined operand into a proof.
+For example, ``predicate(Eq(1/a, 1/a, evaluate=False))`` retains ``Ne(a, 0)``;
+observing ``a=0`` cannot establish it. Explicit and active SymPy assumptions
+retain these domains too. Unsupported comparisons remain inspectable and block
+methods that need them.
+
 Checks also bind active SymPy ``assuming(...)`` predicates through observations
 and record them in their report, checking the combined premises for consistency.
 Cached expression bindings, solution families, and proof attempts remain scoped
@@ -404,6 +411,9 @@ reading its original path, including aliases exposed from nested components.
 Branch selection uses the report's resolved parameter assumptions, including
 assumptions expressed through aliases and active SymPy assumptions. Predicates
 involving local or quantified coordinates cannot select away their operations.
+Piecewise selectors retain their scalar domains before choosing a branch.
+Only selectors reached in branch order need to be defined. Their checks keep
+local substitution points and the full domains of unevaluated curves separate.
 A locally evaluated expression such as ``Subs(curve, x, 1)`` keeps its own
 scope: its obligations concern that evaluation, while the unevaluated source
 curve can still have a pole elsewhere.

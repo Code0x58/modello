@@ -8,30 +8,41 @@ from typing import Callable, Iterable, Mapping, NamedTuple
 from sympy import (
     Add,
     And,
+    AtomicExpr,
     Basic,
+    Complement,
     Contains,
     Derivative,
     Dummy,
     Eq,
     Expr,
+    Function,
     Integer,
     Integral,
+    Intersection,
     Interval,
     Limit,
+    Max,
+    Min,
     Mul,
     Ne,
     Or,
     Piecewise,
+    Pow,
     Product,
     S,
+    Set,
     Subs,
     Sum,
     Symbol,
+    Tuple,
+    Union,
     preorder_traversal,
     simplify,
     solveset,
 )
 from sympy.core.relational import Relational
+from sympy.logic.boolalg import Boolean, BooleanFunction
 
 from modello._operators import (
     _bound_coordinates,
@@ -87,18 +98,70 @@ def _unique_expressions(values: Iterable[Basic]) -> tuple[Basic, ...]:
     return tuple({_expression_key(value): value for value in values}.values())
 
 
-def _native_keys(value):
+def _operation_keys(value, operators, *, exclude=()):
     """Operands that must survive reconstruction until their premises are checked."""
     if isinstance(value, tuple):
-        return set().union(*(_native_keys(item) for item in value))
-    if not isinstance(value, Basic) or not value.has(*_NATIVE_OPERATORS):
+        return set().union(*(_operation_keys(item, operators, exclude=exclude) for item in value))
+    if not isinstance(value, Basic) or not value.has(*operators):
         return set()
-    return {_expression_key(part) for part in preorder_traversal(value) if isinstance(part, _NATIVE_OPERATORS)}
+    return {
+        _expression_key(part)
+        for part in preorder_traversal(value)
+        if isinstance(part, operators) and not isinstance(part, exclude)
+    }
+
+
+def _source_keys(value):
+    """Potential partial sources, including symbols whose definitions are still unknown."""
+    if isinstance(value, tuple):
+        return set().union(*(_source_keys(item) for item in value))
+    if not isinstance(value, Basic):
+        return set()
+    return (
+        set(value.free_symbols)
+        | _operation_keys(value, (Expr,), exclude=(Add, Mul, AtomicExpr))
+        | {part for part in (S.NaN, S.ComplexInfinity) if value.has(part)}
+    )
 
 
 class _ConditionalValue(NamedTuple):
-    value: Expr
+    value: Basic
     condition: Basic
+
+
+def _predicate_parts(expression: Basic, resolve: Callable[[Basic], Basic] | None = None) -> _ConditionalValue:
+    """Separate Boolean truth from the domains of its whole scalar operands."""
+    if isinstance(expression, Expr):
+        expression = resolve(expression) if resolve is not None else expression
+        return _ConditionalValue(_defined_part(expression), _denominator_condition(expression))
+    if not expression.args or expression.is_Atom:
+        return _ConditionalValue(resolve(expression) if resolve is not None else expression, S.true)
+    parts = tuple(_predicate_parts(arg, resolve) for arg in expression.args)
+    condition = And(*(part.condition for part in parts))
+    if condition is S.false:
+        return _ConditionalValue(expression, condition)
+    args = tuple(part.value for part in parts)
+    value = _construct(expression, args, domains_separated=True)
+    return _ConditionalValue(value, condition)
+
+
+def _resolve_piecewise(expression: Piecewise, resolve: Callable[[Basic], Basic]) -> Basic:
+    """Resolve selectors in order, keeping scalar domains outside Boolean truth."""
+    branches = []
+    validity = S.true
+    for value, condition in expression.args:
+        condition, domain = _predicate_parts(condition, resolve)
+        validity = And(validity, domain)
+        if validity is S.false:
+            break
+        if condition is S.false:
+            continue
+        branches.append((resolve(value), And(validity, condition)))
+        if condition is S.true:
+            break
+    if validity is not S.true:
+        branches.append((S.NaN, S.true))
+    return Piecewise(*branches, evaluate=False)
 
 
 def _evaluate_scalar(expression: Expr) -> _ConditionalValue:
@@ -145,23 +208,63 @@ def _evaluate(expression: Basic) -> Basic:
     return _rebuild(expression, args, _denominator_condition(expression))
 
 
-def _construct(expression: Basic, args: tuple[Basic, ...]) -> Basic:
+def _construct(expression: Basic, args: tuple[Basic, ...], *, domains_separated: bool = False) -> Basic:
     """Reconstruct a node while retaining operations that still need checking."""
-    pending = _native_keys(args)
-    if isinstance(expression, (Add, Mul)) and any(_pending(arg) for arg in args):
-        # Cached constructors can merge equal Subs with different coordinates.
-        value = expression.func._from_args(args)
-    elif isinstance(expression, (Sum, Product, Integral)) and pending:
-        value = _held_reduction(expression, args)
-    elif isinstance(expression, Relational) and pending:
-        value = expression.func(*args, evaluate=False)
-    else:
-        value = expression.func(*args) if _expression_key(args) != _expression_key(expression.args) else expression
-    if pending and not pending.issubset(_native_keys(value)):
+    pending = _operation_keys(args, _NATIVE_OPERATORS)
+    sources = (
+        _source_keys(args)
+        if not domains_separated
+        and isinstance(expression, (Expr, Boolean, Set, Tuple))
+        and not isinstance(expression, (*_BINDERS, _VectorElement))
+        and not (isinstance(expression, Boolean) and expression.is_Atom)
+        else set()
+    )
+    domain = (
+        And(*(_predicate_parts(arg).condition for arg in args))
+        if not domains_separated
+        and isinstance(expression, Boolean)
+        and not isinstance(expression, Expr)
+        and not expression.is_Atom
+        else S.true
+    )
+    try:
+        if isinstance(expression, (Add, Mul)) and any(_pending(arg) for arg in args):
+            # Cached constructors can merge equal Subs with different coordinates.
+            value = expression.func._from_args(args)
+        elif isinstance(expression, (Sum, Product, Integral)) and pending:
+            value = _held_reduction(expression, args)
+        elif isinstance(expression, Piecewise):
+            value = Piecewise(*args, evaluate=False)
+        elif not domains_separated and isinstance(expression, (Add, Mul, Pow, Function, Min, Max)):
+            # Renaming alone must not erase retained sources such as 0*log(a).
+            value = expression.func(*args, evaluate=False)
+            if isinstance(expression, (Add, Mul)) and not pending:
+                canonical = expression.func(*args)
+                if sources.issubset(_source_keys(canonical)):
+                    value = canonical
+        elif isinstance(expression, (Relational, BooleanFunction, Contains)) and (pending or not domains_separated):
+            # Symbols can still expand to partial functions after rebinding.
+            value = expression.func(*args, evaluate=False)
+        elif not domains_separated and isinstance(expression, (Complement, Intersection, Union)):
+            value = expression.func(*args, evaluate=False)
+        else:
+            value = (
+                expression.func(*args)
+                if (domains_separated and isinstance(expression, Boolean) and bool(args))
+                or _expression_key(args) != _expression_key(expression.args)
+                else expression
+            )
+    except (TypeError, ValueError) as error:
+        raise ModelInputError("The resolved operands cannot reconstruct this symbolic expression") from error
+    if pending and not pending.issubset(_operation_keys(value, _NATIVE_OPERATORS)):
         raise ModelInputError(
             "Native operation scopes could not be preserved during rebinding; "
             "declare the expression with its new coordinates"
         )
+    if sources and not sources.issubset(_source_keys(value)):
+        raise ModelInputError("Scalar operand sources could not be preserved during rebinding")
+    if domain is not S.true and _expression_key(_predicate_parts(value).condition) != _expression_key(domain):
+        raise ModelInputError("Boolean reconstruction could not preserve its scalar operand domains")
     return value
 
 
@@ -171,7 +274,7 @@ def _rebuild(expression: Expr, args: tuple[Basic, ...], condition: Basic) -> Exp
     if condition is S.false:
         return S.NaN
     args = tuple(_defined_part(arg) if isinstance(arg, Expr) else arg for arg in args)
-    return _conditioned(_construct(expression, args), condition)
+    return _conditioned(_construct(expression, args, domains_separated=True), condition)
 
 
 def _pending(expression: Basic) -> bool:

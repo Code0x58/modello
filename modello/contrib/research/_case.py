@@ -30,7 +30,7 @@ from sympy.logic.boolalg import Boolean
 from sympy.polys.polyerrors import PolynomialError
 
 from modello import ConstraintKind, Coordinate, Modello, annotate, annotate_model, component, inspect_model
-from modello._evaluation import _BINDERS, _expression_key, _rebind, _unique_expressions
+from modello._evaluation import _BINDERS, _expression_key, _predicate_parts, _rebind, _unique_expressions
 from modello._expressions import _definition_resolver, _DefinitionResolver
 from modello._operators import _bound_coordinates, _scalar_atoms, _ScopedExpression, _SymbolicTemplate
 from modello._problem import ModelConstraint
@@ -65,6 +65,7 @@ from ._records import (
     _Requirements,
     differentiable,
     nonzero,
+    predicate,
 )
 
 ModelT = TypeVar("ModelT", bound=Modello)
@@ -836,8 +837,35 @@ class ResearchCase(Generic[ModelT]):
                     for branch, condition in value.args:
                         visit(condition, points, bound, active, uncertain, scopes)
                         protected = frozenset((*quantified, *bound))
+                        _, source_domain = _predicate_parts(guard_source(self._law(condition, protected)))
+                        source_domain = source_domain.subs(points, simultaneous=True)
+                        if source_domain is not S.true:
+                            coordinates = set(source_domain.atoms(Coordinate)) | (
+                                set(bound) & source_domain.free_symbols
+                            )
+                            claim = predicate(source_domain, name="selector_defined")
+                            if coordinates:
+                                variable = next(iter(coordinates)) if len(coordinates) == 1 else None
+                                claim = Requirement(
+                                    "selector_defined",
+                                    Piecewise((S.One, source_domain), (S.NaN, S.true), evaluate=False),
+                                    "exact_form" if variable is not None else "theorem",
+                                    wrt=variable,
+                                    domain=scopes.get(variable, coordinate_domain(variable)),
+                                    expected=S.One,
+                                )
+                            record(
+                                claim,
+                                "A branch selector requires defined scalar operands before choosing its value.",
+                                uncertain,
+                            )
                         selected = self._bind(condition, protected).subs(points, simultaneous=True)
-                        if selected.free_symbols & protected or selected.has(*_BINDERS):
+                        selected, source_domain = _predicate_parts(selected)
+                        if source_domain is S.false:
+                            return
+                        if source_domain is not S.true:
+                            selected = None
+                        if selected is None or selected.free_symbols & protected or selected.has(*_BINDERS):
                             selected = None
                         else:
                             selected = truth(
@@ -940,7 +968,7 @@ class ResearchCase(Generic[ModelT]):
         supplied = (*self.assumptions, *sorted(global_assumptions, key=default_sort_key))
         algebra_issue = ""
         try:
-            assumptions = tuple(self._bind(condition) for condition in supplied)
+            assumptions = tuple(conjunction(*_predicate_parts(self._bind(condition))) for condition in supplied)
         except (NotImplementedError, ModelInputError) as error:
             assumptions = supplied
             algebra_issue = f"Joint model algebra remains unresolved: {error}"
