@@ -115,9 +115,11 @@ then receives checks when explicitly inspected.
 Run a method with established premises
 --------------------------------------
 
-A ``Method`` names a computation and the field paths it reads. Its ``uses``
-paths connect it to the requirements on those fields. This symbolic valuation
-reads the utility curve from whichever case is supplied:
+A ``Method`` pairs a computation with an explicit contract. Set ``uses`` to
+the model fields the computation reads directly; the runner follows their
+model dependencies. State extra mathematical premises in ``requirements``.
+This symbolic valuation reads the utility curve from whichever case is
+supplied:
 
 >>> from modello.contrib.research import Method, ResearchError
 >>> valuation = Method(
@@ -585,6 +587,14 @@ obligations before executing it. Settings go to the computation, not the
 factory. A blocked computation raises
 ``ResearchError`` with ``case`` and ``report``; numerical failures retain the
 same context. Unrelated unresolved claims do not block a method.
+
+``Method.execute`` is ordinary Python code. Automatic obligations come from
+the model expressions and retained native operands inspected by the research
+checker. Add mathematical premises needed only by the callback to
+``Method.requirements``. The callback implementation is part of the trust
+boundary. The study supplies checks connecting its proposed answer to the
+model, such as exact identities or optimality certificates; numerical
+comparisons remain observations.
 
 Reading a field through an alias consumes the same automatic obligations as
 reading its original path, including aliases exposed from nested components.
