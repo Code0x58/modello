@@ -233,6 +233,16 @@ observing ``a=0`` cannot establish it. Explicit and active SymPy assumptions
 retain these domains too. Unsupported comparisons remain inspectable and block
 methods that need them.
 
+Scalar declarations retain their operands before simplification too. A held
+``0*log(x)`` or ``exp(log(x))`` therefore keeps the hole at zero when inspected,
+checked, or sampled. Native operations in assumptions use the same premise
+checks as property subjects. A refuted native premise makes the case
+inconsistent; an unestablished premise blocks methods until supported
+parameter facts establish it. The native assumption cannot establish its own
+operation's premises.
+If an upstream CAS proof or assumption-consistency check exhausts its recursion
+limit, the report keeps an unresolved obligation and blocks dependent methods.
+
 Checks also bind active SymPy ``assuming(...)`` predicates through observations
 and record them in their report, checking the combined premises for consistency.
 Cached expression bindings, solution families, and proof attempts remain scoped
@@ -244,6 +254,8 @@ Native substitution coordinates keep their own declared domains in cached
 bindings, proof attempts, and theorem matching. SymPy can consider two ``Subs``
 expressions mathematically equal after renaming their bound variables; that
 equality does not transfer a derivative certificate between their scopes.
+Coordinate discovery for component replacement visits every retained scope,
+including mathematically equal substitutions with different bound coordinates.
 For example, evaluation at zero on a real coordinate does not establish the
 same operation on a positive coordinate whose domain excludes zero.
 Binding and replacement also retain pending native operations before checking

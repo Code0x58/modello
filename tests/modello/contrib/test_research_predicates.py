@@ -4,6 +4,7 @@ from contextlib import nullcontext
 
 import pytest
 from sympy import (
+    Abs,
     Add,
     And,
     Complement,
@@ -21,16 +22,27 @@ from sympy import (
     Or,
     Piecewise,
     Pow,
+    Product,
     Q,
     S,
     Subs,
     arg,
     assuming,
+    exp,
     log,
 )
 
 from modello import Coordinate, InstanceDummy, Modello
-from modello.contrib.research import Method, ResearchCase, ResearchError, exact_form, positive, predicate
+from modello.contrib.research import (
+    Method,
+    ResearchCase,
+    ResearchError,
+    ResearchModel,
+    exact_form,
+    positive,
+    predicate,
+    requires,
+)
 from modello.errors import ModelValidationError
 
 
@@ -45,6 +57,121 @@ def assert_blocked(case, *, claim=None, uses=()):
     with pytest.raises(ResearchError):
         case.run(method)
     assert not calls
+
+
+@pytest.mark.parametrize("function", (log, arg))
+@pytest.mark.parametrize(
+    ("formula", "expected"),
+    (
+        (lambda value: Mul(0, value, evaluate=False), 0),
+        (lambda value: Add(value, -value, evaluate=False), 0),
+        (lambda value: Pow(value, 0, evaluate=False), 1),
+    ),
+)
+def test_scalar_declarations_retain_partial_sources_before_simplification(function, formula, expected):
+    class Curve(Modello):
+        x = Coordinate("x", real=True)
+        value = formula(function(x))
+
+    case = ResearchCase.for_model(Curve)
+    claim = exact_form("value", expected, wrt="x")
+    assert case.check(requirements=(claim,)).explain(claim.name).verdict == "strictly false"
+    assert_blocked(case, claim=claim, uses=("value",))
+    with pytest.raises(ModelValidationError):
+        case.sample("value", wrt="x", points=(0,))
+    assert tuple(map(float, case.sample("value", wrt="x", points=(1,)).values)) == (float(expected),)
+    assert case.expression("value", wrt="x").subs(Curve.x, 0).doit() is S.NaN
+
+
+def test_definition_reports_keep_declared_function_sources_before_inverse_simplification():
+    class Curve(ResearchModel):
+        x = Coordinate("x", real=True)
+        value = requires(exp(log(x), evaluate=False), exact_form("value", x, wrt=x))
+
+    assert Curve.definition_report().explain("value/exact_form").verdict == "strictly false"
+    case = ResearchCase.for_model(Curve)
+    with pytest.raises(ModelValidationError):
+        case.sample("value", wrt="x", points=(0,))
+    assert case.sample("value", wrt="x", points=(-1, 1)).values == (-1.0, 1.0)
+
+
+@pytest.mark.parametrize("ambient", (False, True))
+@pytest.mark.parametrize("point", (0, 1))
+def test_assumptions_validate_native_derivatives_before_certifying_other_requirements(ambient, point):
+    class Curve(Modello):
+        x = Coordinate("x", real=True)
+
+    base = ResearchCase.for_model(Curve)
+    premise = Eq(Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, point), int(bool(point)), evaluate=False)
+    case = base if ambient else base.assume(premise)
+    claim = positive(S.One)
+    with assuming(premise) if ambient else nullcontext():
+        report = case.check(requirements=(claim,))
+        if point == 0:
+            assert report.consistent is False
+            assert report.explain(claim.name).verdict == "unresolved"
+            assert any("undefined native operation" in issue for issue in report.issues)
+            assert_blocked(case, claim=claim)
+            assert_blocked(case)
+        else:
+            assert report.consistent is True
+            assert report.explain(claim.name).verdict == "strictly true"
+            assert case.run(Method("native", lambda current: 1, (claim,))).data == 1
+    if ambient:
+        assert base.check().consistent is True
+        assert base.run(Method("left_context", lambda current: 1)).data == 1
+
+
+def test_assumptions_cannot_certify_their_own_conditional_native_premises():
+    class Curve(Modello):
+        x = Coordinate("x", real=True)
+        point = InstanceDummy("p", real=True)
+
+    case = ResearchCase.for_model(Curve)
+    p = case.symbols.point
+    premise = Eq(Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, p), 1, evaluate=False)
+    uncertain = case.assume(premise)
+    assert uncertain.check().consistent is None
+    assert uncertain.check().explain("model/auto:algebra").verdict == "unresolved"
+    assert_blocked(uncertain)
+    established = case.assume(And(p > 0, premise, evaluate=False))
+    assert established.run(Method("positive_point", lambda current: 1)).data == 1
+
+
+def test_assumptions_check_native_sources_erased_by_joint_observation_solving():
+    class Curve(Parameters):
+        x = Coordinate("x", real=True)
+
+    base = ResearchCase.for_model(Curve)
+    a, b = base.symbols.a, base.symbols.b
+    undefined = Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, 0)
+    case = base.observe(a=b, b=2 * a + undefined).assume(Eq(a, 0, evaluate=False))
+    report = case.check()
+    assert report.consistent is False
+    assert any("undefined native operation" in issue for issue in report.issues)
+    assert_blocked(case)
+
+
+@pytest.mark.parametrize("entry", ("requirement", "assumption", "ambient"))
+def test_recursive_upstream_predicates_remain_inspectable_and_block_methods(entry):
+    class Curve(Modello):
+        i = Coordinate("i", integer=True)
+
+    base = ResearchCase.for_model(Curve)
+    value = Product(log(Curve.i), (Curve.i, 0, 1))
+    condition = Ne(value, 1, evaluate=False)
+    case = base.assume(condition) if entry == "assumption" else base
+    claim = predicate(condition)
+    with assuming(condition) if entry == "ambient" else nullcontext():
+        report = case.check(requirements=(claim,))
+        assert report.explain(claim.name).verdict == "unresolved"
+        assert_blocked(case, claim=claim)
+        if entry != "requirement":
+            assert report.consistent is None
+            assert report.explain("model/auto:algebra").verdict == "unresolved"
+            assert_blocked(case)
+    finite = predicate(Eq(Product(Curve.i, (Curve.i, 1, 2)), 2, evaluate=False))
+    assert base.check(requirements=(finite,)).explain(finite.name).verdict == "strictly true"
 
 
 @pytest.mark.parametrize(

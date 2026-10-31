@@ -121,6 +121,49 @@ def test_replacement_rejects_stale_substitution_scopes_from_cached_function_cons
     assert next(iter(source.requirements[0].subject.atoms(Subs))).variables == (old.x,)
 
 
+@pytest.mark.parametrize("declaration", (False, True))
+@pytest.mark.parametrize("reverse", (False, True))
+def test_replacement_discovers_each_coordinate_of_equal_native_substitutions(declaration, reverse):
+    class A(Modello):
+        x = Coordinate("x", real=True)
+        value = x**2
+
+    class B(Modello):
+        x = Coordinate("y", real=True)
+        value = x**2
+
+    class Positive(Modello):
+        x = Coordinate("p", positive=True)
+        value = x**2
+
+    first = Subs(Derivative(S.Zero, A.x, evaluate=False), A.x, 0)
+    second = Subs(Derivative(S.Zero, B.x, evaluate=False), B.x, 0)
+    assert first == second
+    # Retain the requested argument order despite native mathematical equality.
+    held = Add._from_args((second, first) if reverse else (first, second))
+
+    class Parent(Modello):
+        a = component(A)
+        b = component(B)
+        value = held if declaration else S.Zero
+
+    claim = exact_form("value" if declaration else held, S.Zero)
+    source = ResearchCase.for_model(Parent).require(claim)
+    assert source.check().explain(claim.name).verdict == "strictly true"
+    try:
+        changed = source.replace("a", Positive)
+    except ModelInputError as error:
+        assert "operation scopes" in str(error)
+    else:
+        assert changed.check().explain(claim.name).verdict == "unresolved"
+        expression = changed.expression("value") if declaration else changed.requirements[0].subject
+        assert not expression.has(A.x)
+        assert expression.has(Positive.x)
+        with pytest.raises(ResearchError):
+            changed.run(Method("changed", lambda current: 0, changed.requirements, uses=("value",)))
+    assert source.check().explain(claim.name).verdict == "strictly true"
+
+
 def test_replacement_preserves_derivative_premises_in_a_held_zero_product(curves):
     old, _ = curves
 

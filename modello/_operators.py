@@ -114,7 +114,7 @@ def _conditioned(expression: Expr, condition: Basic) -> Expr:
     if condition is not S.true:
         try:
             condition = refine(condition)
-        except (NotImplementedError, ValueError):
+        except (NotImplementedError, ValueError, RecursionError):
             # An unsupported assumption proof must leave the domain intact.
             pass
     if condition is S.true:

@@ -31,6 +31,7 @@ from modello._evaluation import (
     _predicate_parts,
     _rebuild,
     _resolve_piecewise,
+    _source_keys,
     _substitute as _substitute,
 )
 from modello._operators import (
@@ -47,11 +48,13 @@ from modello.vectors import _VectorFormula
 
 
 def _declaration(expression: Basic) -> Basic:
-    """Retain operators in the user-facing definition; simplify ordinary scalars."""
+    """Simplify declarations without losing retained sources or operation scopes."""
     if expression.has(*_OPERATORS, Piecewise):
         return expression
     condition = _denominator_condition(expression)
     value = simplify(expression)
+    if not _source_keys(expression).issubset(_source_keys(value)):
+        return expression
     return value if _denominator_condition(value) == condition else _conditioned(value, condition)
 
 

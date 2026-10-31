@@ -10,6 +10,7 @@ from types import MappingProxyType, new_class
 from typing import ClassVar, Generic, TypeVar, cast
 
 from sympy import (
+    And,
     Basic,
     Derivative,
     Expr,
@@ -23,6 +24,7 @@ from sympy import (
     Symbol,
     SympifyError,
     default_sort_key,
+    preorder_traversal,
     sympify,
 )
 from sympy.assumptions import global_assumptions
@@ -194,14 +196,18 @@ def _coordinates(model: type[Modello], prefix=""):
 
 def _scoped_symbols(value: Basic, *, include_declarations: bool = False) -> set[Basic]:
     """Track scalar scopes without borrowing a named declaration's binders."""
-    operators = value.atoms(*_BINDERS) if include_declarations else _scalar_atoms(value, _BINDERS)
-    return value.free_symbols | {
-        symbol
-        for operator in operators
-        if include_declarations or not isinstance(operator, _ScopedExpression) or operator.scoped_arguments
-        for variable in _bound_coordinates(operator)
-        for symbol in variable.free_symbols | {variable}
-    }
+    symbols = set(value.free_symbols)
+    operators = preorder_traversal(value)
+    for operator in operators:
+        if not include_declarations and isinstance(operator, _SymbolicTemplate):
+            operators.skip()
+            continue
+        if isinstance(operator, _BINDERS) and (
+            include_declarations or not isinstance(operator, _ScopedExpression) or operator.scoped_arguments
+        ):
+            for variable in _bound_coordinates(operator):
+                symbols.update(variable.free_symbols | {variable})
+    return symbols
 
 
 def _replace_component(model: type[Modello], path: tuple[str, ...], replacement: type[Modello]) -> type[Modello]:
@@ -967,12 +973,37 @@ class ResearchCase(Generic[ModelT]):
             raise ModelInputError("max_steps must be positive")
         supplied = (*self.assumptions, *sorted(global_assumptions, key=default_sort_key))
         algebra_issue = ""
+        assumption_issue = ""
         try:
-            assumptions = tuple(conjunction(*_predicate_parts(self._bind(condition))) for condition in supplied)
+            bound = tuple(self._bind(condition) for condition in supplied)
+            assumptions = tuple(conjunction(*_predicate_parts(condition)) for condition in bound)
+            facts = tuple(
+                clause for condition in assumptions for clause in And.make_args(condition) if not clause.has(*_BINDERS)
+            )
+            operands = _unique_expressions(
+                operand
+                for original, condition in zip(supplied, bound)
+                for operand in (condition, *self._context.expressions[_expression_key(original), frozenset()][1])
+            )
+            for operand in operands:
+                for premise in derivative_premises(operand, None, S.Reals):
+                    if premise.condition is S.false:
+                        assumptions = (*assumptions, S.false)
+                        assumption_issue = "An assumption uses an undefined native operation. " + " ".join(
+                            premise.steps
+                        )
+                    elif premise.condition is None or truth(premise.condition, facts) is not S.true:
+                        algebra_issue = "An assumption has unestablished native premises. " + " ".join(premise.steps)
         except (NotImplementedError, ModelInputError) as error:
             assumptions = supplied
             algebra_issue = f"Joint model algebra remains unresolved: {error}"
-        feasible = consistency(assumptions)
+        try:
+            feasible = consistency(assumptions)
+        except RecursionError as error:
+            feasible = None
+            algebra_issue = f"Assumption consistency remains unresolved: {type(error).__name__}"
+        if algebra_issue and feasible is True:
+            feasible = None
         observation_issue = ""
         if self._context.needs_solutions:
             try:
@@ -1002,6 +1033,8 @@ class ResearchCase(Generic[ModelT]):
             records_by_id[key] = record
         records = tuple(records_by_id.values())
         issues = [] if feasible is not False else ["The assumptions are inconsistent; proofs were skipped."]
+        if assumption_issue:
+            issues.append(assumption_issue)
         if observation_issue:
             issues.append(observation_issue)
         issues.extend(self.changes)
@@ -1161,7 +1194,7 @@ class ResearchCase(Generic[ModelT]):
                     result = attempt(
                         resolved, expression, variable, expected, assumptions, hint, source_operands, hint_operands
                     )
-                except (NotImplementedError, ValueError, TypeError, PolynomialError) as error:
+                except (NotImplementedError, ValueError, TypeError, PolynomialError, RecursionError) as error:
                     result = Attempt(None, (f"Unsupported CAS proof attempt: {type(error).__name__}: {error}",))
                 attempts[attempt_key] = result
             return Evidence(
