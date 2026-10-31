@@ -75,6 +75,16 @@ The GUI separates layout and permissions, MathML printing, bounded input parsing
 and vector summaries under ``_gui/``. Finance and time-series examples stay above
 these layers.
 
+``contrib/research`` binds scoped claims to immutable problem snapshots and
+refreshes definition reports through an opt-in ``ResearchModel`` subclass hook.
+Proof attempts retain parameter guards, theorem premises, and unresolved
+outcomes. Method contracts select the evidence they consume. Numerical and
+plotting dependencies remain in optional example methods; the symbolic
+extension imports neither. Report JSON is an audit export rather than a case
+deserializer. The market-making study compiles its RHS from the shared HJB and
+checks it against independent time differences and an exponential linear
+reference.
+
 ``series.py`` declares relative recurrences. ``contrib/stochastic.py`` provides
 the opt-in Itô extension; the core resolver uses scoped declaration hooks without
 importing domain extensions.
@@ -215,7 +225,36 @@ preserving the applied case after rejection. This optional check does not
 replace visual browser review and adds no runtime dependency to the library.
 
 Keep regressions focused on distinct behavior and independent mathematical
-checks. Refresh dependencies with ``uv lock --upgrade`` and commit ``uv.lock``.
+checks. Share immutable cases and baseline results through module-scoped
+fixtures when several tests use the same inputs. Keep fresh execution where
+it checks that replacement or assumption changes preserve the earlier branch.
+Combine overlapping checks instead of repeating full symbolic or numerical
+studies; retain distinct boundary cases and method gates.
+
+CI runs the complete suite on every supported Python version. Python 3.14
+collects full-library coverage. Python 3.10 collects coverage for
+``modello._problem`` through its string-enum compatibility test, after running
+the complete suite without tracing. The other versions run without coverage
+instrumentation. This covers both runtime paths while limiting tracing overhead
+on the oldest interpreter. Keep this check aligned with new version-dependent
+code. Test jobs retain the 15-minute limit and export their full-suite results.
+The full local coverage command in
+``AGENTS.md`` remains the required validation before committing.
+
+Measure slow tests before changing their implementation:
+
+.. code-block:: console
+
+   $ uv run --locked --dev pytest --no-cov --durations=25 tests/examples/research_models
+   $ uv run --locked --dev python -m cProfile -o /tmp/research-tests.prof -m pytest --no-cov tests/examples/research_models/test_cir_bond.py
+   $ uv run --locked --dev python -c "import pstats; pstats.Stats('/tmp/research-tests.prof').sort_stats('cumulative').print_stats(25)"
+
+Use the same interpreter and coverage settings for before/after timings.
+Inspect repeated domain proofs, expression binding, and solver work separately;
+profiling overhead itself is not a CI runtime measurement. Performance changes
+must retain source guards, proof scopes, and assumption-context isolation.
+
+Refresh dependencies with ``uv lock --upgrade`` and commit ``uv.lock``.
 Dependabot proposes grouped weekly dependency and GitHub Actions updates.
 Workflows do not schedule rebuilds.
 

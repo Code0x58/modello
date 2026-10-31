@@ -92,6 +92,14 @@ assert ItoProcess(x, 0, 1, t).drift(x**2).doit() == 1
 
 from modello.contrib.validation import WindowValidator
 assert not {'pandas', 'polars', 'numpy'} & sys.modules.keys()
+
+from modello.contrib.research import ResearchCase, ResearchModel, requires, increasing
+class ResearchCurve(ResearchModel):
+    x = modello.Coordinate('x', real=True)
+    value = requires(x**3, increasing('value', wrt='x', consumer='test', reason='Order matters'))
+assert ResearchCurve.definition_report().checks[0].verdict == 'strictly true'
+assert ResearchCase.for_model(ResearchCurve).check().to_dict()['checks']
+assert not {'numpy', 'scipy', 'matplotlib'} & sys.modules.keys()
 """
     result = subprocess.run(
         [sys.executable, "-c", program], cwd=pytestconfig.rootpath, capture_output=True, text=True, timeout=30

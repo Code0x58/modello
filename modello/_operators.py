@@ -61,7 +61,7 @@ def _scalar_expression(
     return expression
 
 
-def _scalar_atoms(expression: Basic, kind: type[_Atom]) -> set[_Atom]:
+def _scalar_atoms(expression: Basic, kind: type[_Atom] | tuple[type[_Atom], ...]) -> set[_Atom]:
     """Find scalar terms without entering the local bodies of declarations."""
     found: set[_Atom] = set()
     pending = [expression]
@@ -103,16 +103,41 @@ def _defined_part(expression: Expr) -> Expr:
     return expression
 
 
+def _held_reduction(expression: Expr, args: tuple[Basic, ...]) -> Expr:
+    """Rebuild validated reduction arguments without folding inner binders."""
+    result = Expr.__new__(expression.func, *args)
+    result.is_commutative = args[0].is_commutative
+    return result
+
+
 def _conditioned(expression: Expr, condition: Basic) -> Expr:
     if condition is not S.true:
         try:
             condition = refine(condition)
-        except (NotImplementedError, ValueError):
+        except (NotImplementedError, ValueError, RecursionError):
             # An unsupported assumption proof must leave the domain intact.
             pass
     if condition is S.true:
         return expression
-    return piecewise_fold(Piecewise((expression, condition), (S.NaN, True)))
+    result = Piecewise((expression, condition), (S.NaN, True))
+    if expression.has(_SymbolicTemplate, _ScopedOperator, Sum, Product, Integral, Derivative, Limit, Subs):
+        # Folding through a binder lifts its local branch conditions outside
+        # their scope, and can create derivatives of inactive undefined values.
+        return result
+    return piecewise_fold(result)
+
+
+def _empty_reduction(expression: Basic) -> Expr | None:
+    """Return a supported empty reduction's identity with its endpoint guards."""
+    if not isinstance(expression, (Sum, Product, Integral)):
+        return None
+    if isinstance(expression, Integral) and len(expression.limits) != 1:
+        return None
+    width = 0 if isinstance(expression, Integral) else -1
+    if not any(len(limit) == 3 and simplify(limit[2] - limit[1]) == width for limit in expression.limits):
+        return None
+    condition = And(*(_denominator_condition(bound) for limit in expression.limits for bound in limit[1:]))
+    return _conditioned(S.One if isinstance(expression, Product) else S.Zero, condition)
 
 
 class _ScopedExpression:

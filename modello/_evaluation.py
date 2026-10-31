@@ -2,55 +2,168 @@
 
 from __future__ import annotations
 
-from functools import cache
-from typing import Mapping, NamedTuple
+from functools import cache, wraps
+from typing import Callable, Iterable, Mapping, NamedTuple
 
 from sympy import (
     Add,
     And,
+    AtomicExpr,
     Basic,
+    Complement,
     Contains,
     Derivative,
     Dummy,
     Eq,
     Expr,
+    Function,
     Integer,
     Integral,
+    Intersection,
     Interval,
     Limit,
+    Max,
+    Min,
     Mul,
     Ne,
     Or,
     Piecewise,
+    Pow,
     Product,
     S,
+    Set,
     Subs,
     Sum,
     Symbol,
+    Tuple,
+    Union,
+    preorder_traversal,
     simplify,
     solveset,
 )
+from sympy.core.relational import Relational
+from sympy.logic.boolalg import Boolean, BooleanFunction
 
 from modello._operators import (
     _bound_coordinates,
     _conditioned,
     _defined_part,
     _denominator_condition,
+    _held_reduction,
     _scalar_atoms,
     _ScopedExpression,
     _ScopedOperator,
     _SymbolicTemplate,
 )
 from modello._symbols import Index
+from modello.errors import ModelInputError
 from modello.vectors import _VectorElement, _VectorFormula
 
-_OPERATORS = (Sum, Product, Integral, Derivative, Limit, Subs, _VectorElement, _ScopedOperator)
-_BINDERS = (Sum, Product, Integral, Derivative, Limit, Subs, _VectorFormula, _SymbolicTemplate, _ScopedOperator)
+_NATIVE_OPERATORS = (Sum, Product, Integral, Derivative, Limit, Subs)
+_OPERATORS = (*_NATIVE_OPERATORS, _VectorElement, _ScopedOperator)
+_BINDERS = (*_NATIVE_OPERATORS, _VectorFormula, _SymbolicTemplate, _ScopedOperator)
+
+
+def _expression_key(value):
+    """Retain substitution scopes when matching expressions or their contexts."""
+    if isinstance(value, tuple):
+        return tuple(_expression_key(item) for item in value)
+    if isinstance(value, frozenset):
+        return frozenset(_expression_key(item) for item in value)
+    scopes = _substitution_scopes(value)
+    return (value, scopes) if scopes else value
+
+
+def _substitution_scopes(value):
+    if isinstance(value, tuple):
+        return tuple(scope for item in value for scope in _substitution_scopes(item))
+    if not isinstance(value, Basic) or not value.has(Subs):
+        return ()
+    return tuple(part.args for part in preorder_traversal(value) if isinstance(part, Subs))
+
+
+def _cache_by_expression(function: Callable[[Basic], Basic]) -> Callable[[Basic], Basic]:
+    """Memoize tree rewrites without merging native substitution scopes."""
+
+    @cache
+    def cached(key: tuple) -> Basic:
+        return function(key[0])
+
+    @wraps(function)
+    def resolved(value: Basic) -> Basic:
+        return cached((value, _expression_key(value)))
+
+    return resolved
+
+
+def _unique_expressions(values: Iterable[Basic]) -> tuple[Basic, ...]:
+    return tuple({_expression_key(value): value for value in values}.values())
+
+
+def _operation_keys(value, operators, *, exclude=()):
+    """Operands that must survive reconstruction until their premises are checked."""
+    if isinstance(value, tuple):
+        return set().union(*(_operation_keys(item, operators, exclude=exclude) for item in value))
+    if not isinstance(value, Basic) or not value.has(*operators):
+        return set()
+    return {
+        _expression_key(part)
+        for part in preorder_traversal(value)
+        if isinstance(part, operators) and not isinstance(part, exclude)
+    }
+
+
+def _source_keys(value):
+    """Potential partial sources, including symbols whose definitions are still unknown."""
+    if isinstance(value, tuple):
+        return set().union(*(_source_keys(item) for item in value))
+    if not isinstance(value, Basic):
+        return set()
+    return (
+        set(value.free_symbols)
+        | _operation_keys(value, (Expr,), exclude=(Add, Mul, AtomicExpr))
+        | {part for part in (S.NaN, S.ComplexInfinity) if value.has(part)}
+    )
 
 
 class _ConditionalValue(NamedTuple):
-    value: Expr
+    value: Basic
     condition: Basic
+
+
+def _predicate_parts(expression: Basic, resolve: Callable[[Basic], Basic] | None = None) -> _ConditionalValue:
+    """Separate Boolean truth from the domains of its whole scalar operands."""
+    if isinstance(expression, Expr):
+        expression = resolve(expression) if resolve is not None else expression
+        return _ConditionalValue(_defined_part(expression), _denominator_condition(expression))
+    if not expression.args or expression.is_Atom:
+        return _ConditionalValue(resolve(expression) if resolve is not None else expression, S.true)
+    parts = tuple(_predicate_parts(arg, resolve) for arg in expression.args)
+    condition = And(*(part.condition for part in parts))
+    if condition is S.false:
+        return _ConditionalValue(expression, condition)
+    args = tuple(part.value for part in parts)
+    value = _construct(expression, args, domains_separated=True)
+    return _ConditionalValue(value, condition)
+
+
+def _resolve_piecewise(expression: Piecewise, resolve: Callable[[Basic], Basic]) -> Basic:
+    """Resolve selectors in order, keeping scalar domains outside Boolean truth."""
+    branches = []
+    validity = S.true
+    for value, condition in expression.args:
+        condition, domain = _predicate_parts(condition, resolve)
+        validity = And(validity, domain)
+        if validity is S.false:
+            break
+        if condition is S.false:
+            continue
+        branches.append((resolve(value), And(validity, condition)))
+        if condition is S.true:
+            break
+    if validity is not S.true:
+        branches.append((S.NaN, S.true))
+    return Piecewise(*branches, evaluate=False)
 
 
 def _evaluate_scalar(expression: Expr) -> _ConditionalValue:
@@ -97,17 +210,73 @@ def _evaluate(expression: Basic) -> Basic:
     return _rebuild(expression, args, _denominator_condition(expression))
 
 
+def _construct(expression: Basic, args: tuple[Basic, ...], *, domains_separated: bool = False) -> Basic:
+    """Reconstruct a node while retaining operations that still need checking."""
+    pending = _operation_keys(args, _NATIVE_OPERATORS)
+    sources = (
+        _source_keys(args)
+        if not domains_separated
+        and isinstance(expression, (Expr, Boolean, Set, Tuple))
+        and not isinstance(expression, (*_BINDERS, _VectorElement))
+        and not (isinstance(expression, Boolean) and expression.is_Atom)
+        else set()
+    )
+    domain = (
+        And(*(_predicate_parts(arg).condition for arg in args))
+        if not domains_separated
+        and isinstance(expression, Boolean)
+        and not isinstance(expression, Expr)
+        and not expression.is_Atom
+        else S.true
+    )
+    try:
+        if isinstance(expression, (Add, Mul)) and any(_pending(arg) for arg in args):
+            # Cached constructors can merge equal Subs with different coordinates.
+            value = expression.func._from_args(args)
+        elif isinstance(expression, (Sum, Product, Integral)) and pending:
+            value = _held_reduction(expression, args)
+        elif isinstance(expression, Piecewise):
+            value = Piecewise(*args, evaluate=False)
+        elif not domains_separated and isinstance(expression, (Add, Mul, Pow, Function, Min, Max)):
+            # Renaming alone must not erase retained sources such as 0*log(a).
+            value = expression.func(*args, evaluate=False)
+            if isinstance(expression, (Add, Mul)) and not pending:
+                canonical = expression.func(*args)
+                if sources.issubset(_source_keys(canonical)):
+                    value = canonical
+        elif isinstance(expression, (Relational, BooleanFunction, Contains)) and (pending or not domains_separated):
+            # Symbols can still expand to partial functions after rebinding.
+            value = expression.func(*args, evaluate=False)
+        elif not domains_separated and isinstance(expression, (Complement, Intersection, Union)):
+            value = expression.func(*args, evaluate=False)
+        else:
+            value = (
+                expression.func(*args)
+                if (domains_separated and isinstance(expression, Boolean) and bool(args))
+                or _expression_key(args) != _expression_key(expression.args)
+                else expression
+            )
+    except (TypeError, ValueError) as error:
+        raise ModelInputError("The resolved operands cannot reconstruct this symbolic expression") from error
+    if pending and not pending.issubset(_operation_keys(value, _NATIVE_OPERATORS)):
+        raise ModelInputError(
+            "Native operation scopes could not be preserved during rebinding; "
+            "declare the expression with its new coordinates"
+        )
+    if sources and not sources.issubset(_source_keys(value)):
+        raise ModelInputError("Scalar operand sources could not be preserved during rebinding")
+    if domain is not S.true and _expression_key(_predicate_parts(value).condition) != _expression_key(domain):
+        raise ModelInputError("Boolean reconstruction could not preserve its scalar operand domains")
+    return value
+
+
 def _rebuild(expression: Expr, args: tuple[Basic, ...], condition: Basic) -> Expr:
     """Rebuild resolved arguments without dropping domains or pending operations."""
     condition = And(condition, *(_denominator_condition(arg) for arg in args if isinstance(arg, Expr)))
     if condition is S.false:
         return S.NaN
     args = tuple(_defined_part(arg) if isinstance(arg, Expr) else arg for arg in args)
-    if isinstance(expression, (Add, Mul)) and any(_pending(arg) for arg in args):
-        value = expression.func(*args, evaluate=False)
-    else:
-        value = expression.func(*args) if args != expression.args else expression
-    return _conditioned(value, condition)
+    return _conditioned(_construct(expression, args, domains_separated=True), condition)
 
 
 def _pending(expression: Basic) -> bool:
@@ -328,14 +497,14 @@ def _rebind(expression: Basic, values: Mapping[Basic, Basic]) -> Basic:
     if not values:
         return expression
 
-    @cache
+    @_cache_by_expression
     def replace(value: Basic) -> Basic:
         if value in values:
             return values[value]
         args = tuple(replace(arg) for arg in value.args)
-        if args == value.args:
+        if _expression_key(args) == _expression_key(value.args):
             return value
-        result = value.func(*args)
+        result = _construct(value, args)
         condition = _denominator_condition(value) if isinstance(value, Expr) else S.true
         if condition is not S.true and isinstance(result, Expr):
             condition = condition.xreplace(values)
