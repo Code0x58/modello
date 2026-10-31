@@ -1,10 +1,10 @@
 Perpetual American put and optimal stopping
 ===========================================
 
-A model can support a calculation even when a stronger smoothness requirement
-fails. This study checks an American put's exercise and continuation branches,
-shows C1 smooth fit with a jump in the second derivative, and compares the
-methods that consume those different regularity requirements.
+Examine a put with no expiry, whose holder may exercise at any time. Check a
+candidate exercise boundary and how its exercise and continuation prices
+join. The candidate price has C1 smooth fit with a jump in the second
+derivative, which lets you compare methods that require different regularity.
 
 The economic setting is constant-coefficient Black--Scholes--Merton with
 positive interest, volatility, and strike, and zero dividends. Scalar

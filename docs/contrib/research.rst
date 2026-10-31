@@ -55,6 +55,11 @@ the variable; ``reason`` explains why the computation needs that property.
 Here ``smooth(order=2)`` requires continuous first and second derivatives,
 the usual C2 condition.
 
+In this declaration, ``wealth`` is the curve's argument, represented by a
+``Coordinate``. These properties are checked over the real line. ``gamma`` is
+a parameter represented by ``InstanceDummy``. An assumption restricts its
+allowed values; an observation can fix it for a particular case.
+
 Interpret the first verdict
 ---------------------------
 

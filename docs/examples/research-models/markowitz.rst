@@ -1,9 +1,9 @@
 Markowitz allocation with changing restrictions
 ===============================================
 
-Start here to explore changing constraints on one scalar decision. Allocate a
-two-asset portfolio, add a return target or concentration cap, and compare the
-new allocation with the earlier case. Then relax strict curvature and inspect
+Choose the weights of a fully invested two-asset portfolio to minimize its
+variance. Add a return target or concentration cap and compare the new
+allocation with the earlier case. Then relax strict curvature and inspect
 what remains true when the optimum is no longer unique.
 
 The inputs are illustrative expected returns, variances, and covariance. The

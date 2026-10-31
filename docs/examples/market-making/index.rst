@@ -1,11 +1,12 @@
 Market making with component requirements
 =========================================
 
-Connect utility, inventory risk, and liquidity components, then inspect the
-properties a quote optimizer needs from them. This page first checks the
-components and evaluates one state of the pricing equation. It then solves
-the coupled inventory equations over time and compares exponential and
-logistic trade-arrival intensities.
+Choose bid and ask quotes for a single asset to maximize expected utility of
+terminal wealth after an inventory penalty. Connect utility, inventory risk,
+and liquidity components, then inspect the properties a quote optimizer needs
+from them. This page first checks the components and evaluates one state of
+the pricing equation. It then solves the coupled inventory equations over
+time and compares exponential and logistic trade-arrival intensities.
 
 Time is continuous and inventory changes in discrete lots. The pricing
 equation is a Hamilton--Jacobi--Bellman (HJB) equation for continuation values.
@@ -71,7 +72,8 @@ Here :math:`\ell(q)=\eta q^2` specializes the paper's :math:`\ell(|q|)`.
 
 ``QuadraticInventoryRisk``: :math:`R(q)=\gamma\sigma^2q^2/2`
    Nonnegative, convex, and :math:`C^2` in signed inventory. This reuses
-   ``InventoryRisk`` from the optimal-execution example.
+   ``InventoryRisk`` from the
+   :ref:`fixed-horizon execution study <portfolio-continuous-execution>`.
 
 ``QuadraticTerminalPenalty``: :math:`\ell(q)=\eta q^2`, :math:`\eta\geq0`
    Nonnegative, convex, and :math:`C^2`. It need not increase on all signed

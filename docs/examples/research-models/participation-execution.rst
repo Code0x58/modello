@@ -68,9 +68,9 @@ The unconstrained solution is
 
 This is optimal among the scalar family of constant-participation POV
 strategies. It does not establish optimality among arbitrary time-dependent
-execution schedules. The existing
-:doc:`portfolio execution example <../portfolio/index>` studies
-a different, quadratic fixed-horizon scheduling problem.
+execution schedules. The
+:ref:`continuous execution study <portfolio-continuous-execution>` instead
+uses a quadratic cost law and a fixed liquidation horizon.
 
 Check a solution and its evidence
 ---------------------------------
