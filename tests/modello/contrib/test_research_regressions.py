@@ -629,27 +629,30 @@ def test_aliases_consume_the_same_automatic_obligations(field, nested, alias):
     assert failure.value.report.explain(origin).verdict == "strictly false"
 
 
-def test_alias_consumption_preserves_local_substitution_scopes():
+@pytest.mark.parametrize("point", (0, 1))
+def test_alias_consumption_preserves_local_substitution_scopes(point):
     class Curve(ResearchModel):
         x = Coordinate("x", real=True)
         pole = 1 / x
-        value = Subs(pole, x, 1)
-        slope = Subs(Derivative(pole, x), x, 1)
-        bad = Subs(pole, x, 0)
+        value = Subs(pole, x, point)
+        slope = Subs(Derivative(pole, x), x, point)
 
     class Parent(ResearchModel):
         curve = component(Curve)
         value = curve.value
         slope = curve.slope
-        bad = curve.bad
 
     case = ResearchCase.for_model(Parent)
+    if point == 0:
+        assert case.check().consistent is False
+        for path in ("value", "slope"):
+            with pytest.raises(ResearchError):
+                case.run(Method("evaluate", lambda current: "must not execute", uses=(path,)))
+        return
     for path, expected in (("value", 1), ("slope", -1)):
         result = case.run(Method("evaluate", lambda current: current.expression(path).doit(), uses=(path,)))
         assert result.data == expected
         assert result.report.explain("curve.pole/auto:1").verdict == "strictly false"
-    with pytest.raises(ResearchError):
-        case.run(Method("evaluate", lambda current: "must not execute", uses=("bad",)))
 
 
 @pytest.mark.parametrize("operation", ("check", "expression", "sample"))

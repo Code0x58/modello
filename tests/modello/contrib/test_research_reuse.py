@@ -1,13 +1,14 @@
 """Reusing a case preserves identities through component changes."""
 
 import pytest
-from sympy import Abs, Add, Derivative, Eq, Integral, Limit, Mul, Product, S, Subs, Sum, exp
+from sympy import Abs, Add, Derivative, Eq, Integral, Limit, Mul, Product, S, Subs, Sum, Symbol, exp
 
 from modello import ConstraintKind, Coordinate, Index, InstanceDummy, Modello, Recurrence, Series, Vector, component
 from modello.contrib.research import (
     Method,
     ResearchCase,
     ResearchError,
+    Theorem,
     exact_form,
     positive,
     predicate,
@@ -447,6 +448,341 @@ def test_replacement_checks_coordinate_alias_paths_even_when_the_primary_path_su
 
     with pytest.raises(ModelDefinitionError, match="coordinate paths to model fields: argument"):
         ResearchCase.for_model(Parent).replace("curve", New)
+
+
+@pytest.mark.parametrize("nested", (False, True))
+@pytest.mark.parametrize("aliases", ("unchanged", "separate", "preserved", "retained", "removed"))
+def test_replacement_preserves_coordinate_alias_joins(nested, aliases):
+    class Old(Modello):
+        x = Coordinate("x", real=True)
+        argument = x
+        value = x**2
+
+    if aliases == "unchanged":
+
+        class New(Old):
+            argument = Coordinate("new_argument", real=True)
+
+    elif aliases in {"retained", "removed"}:
+
+        class New(Old):
+            x = None
+            argument = None
+            y = Old.x if aliases == "retained" else Coordinate("y", real=True)
+            value = y**2
+
+    else:
+
+        class New(Modello):
+            x = Coordinate("new_x", real=True)
+            argument = x if aliases == "preserved" else Coordinate("new_argument", real=True)
+            value = x**2
+
+    class OldWrapper(Modello):
+        inner = component(Old)
+
+    class NewWrapper(Modello):
+        inner = component(New)
+
+    class Parent(Modello):
+        curve = component(OldWrapper if nested else Old)
+        slope = Derivative(curve.inner.value if nested else curve.value, Old.x)
+
+    source = ResearchCase.for_model(Parent)
+    replacement = NewWrapper if nested else New
+    if aliases in {"preserved", "retained"}:
+        changed = source.replace("curve", replacement)
+        coordinate = New.x if aliases == "preserved" else New.y
+        assert changed.expression("slope").doit() == 2 * coordinate
+        assert changed.expression("curve.inner.value" if nested else "curve.value").doit() == coordinate**2
+    else:
+        with pytest.raises(
+            ModelDefinitionError,
+            match="removed a coordinate" if aliases == "removed" else "splits aliased coordinates",
+        ):
+            source.replace("curve", replacement)
+    assert source.expression("slope").doit() == 2 * Old.x
+    assert source.problem.model is Parent
+
+
+@pytest.mark.parametrize(
+    "payload", ("requirement", "hint", "assumption", "observation", "theorem", "annotation", "coordinate_path")
+)
+def test_replacement_rejects_removed_coordinates_in_retained_payloads(payload):
+    class Old(Modello):
+        x = Coordinate("x", real=True)
+        value = x**2
+
+    class New(Old):
+        x = None
+        y = Coordinate("y", real=True)
+        value = y**2
+
+    class Parent(Modello):
+        curve = component(Old)
+        observed = InstanceDummy("observed", real=True)
+        if payload == "annotation":
+            value = requires(curve.value, exact_form(Derivative(curve.value, Old.x, evaluate=False), 0))
+
+    source = ResearchCase.for_model(Parent)
+    native = Derivative(source.symbols.curve.value, Old.x, evaluate=False)
+    claim = exact_form(native, S.Zero)
+    if payload == "requirement":
+        source = source.require(claim)
+    elif payload == "hint":
+        source = source.with_hint("unused", upper=native)
+    elif payload == "assumption":
+        source = source.assume(Eq(native, 0, evaluate=False))
+    elif payload == "observation":
+        source = source.observe(observed=native)
+    elif payload == "theorem":
+        source = source.with_theorem(Theorem("scoped", claim, (), "Explicit scope-handling test rule"))
+    elif payload == "coordinate_path":
+        source = source.require(smooth("curve.value", wrt="curve.x"))
+    with pytest.raises(ModelDefinitionError, match="removed.*coordinate"):
+        source.replace("curve", New)
+    assert source.problem.model is Parent
+    assert source.expression("curve.value").doit() == Old.x**2
+
+
+@pytest.mark.parametrize(
+    "capture, removed",
+    (("coordinate", False), ("coordinate", True), ("quantity", False), ("annotation", False), ("annotation", True)),
+)
+def test_callable_expected_formulas_validate_captured_binders_lazily(capture, removed):
+    class Old(Modello):
+        x = Coordinate("x", real=True)
+        value = x**2
+
+    class New(Old):
+        x = None if removed else Coordinate("new_x", real=True)
+        y = Coordinate("y", real=True)
+        value = y**2 if removed else x**2
+
+    captured = [Old.x]
+    calls = []
+    body = "x" if capture == "quantity" else "curve.value"
+    axis = "x" if capture == "quantity" else ("curve.y" if removed else "curve.x")
+
+    def expected(get):
+        calls.append("expected")
+        variable = get(axis) if captured[0] is None else captured[0]
+        expression = get(body) ** 2 if capture == "quantity" else get(body)
+        return Derivative(expression, variable, evaluate=False)
+
+    class Parent(Modello):
+        curve = component(Old)
+        x = InstanceDummy("x", real=True)
+        value = requires(S.Zero, exact_form("value", expected, name="captured")) if capture == "annotation" else S.Zero
+
+    source = ResearchCase.for_model(Parent)
+    if capture == "quantity":
+        captured[0] = source.symbols.x
+    if capture != "annotation":
+        source = source.require(exact_form(S.Zero, expected, name="captured"))
+    assert (
+        source.check().explain("value/captured" if capture == "annotation" else "captured").verdict
+        == "conditionally true"
+    )
+    calls.clear()
+    changed = source.replace("curve", New)
+    assert calls == []
+    executed = []
+    method = Method("read", lambda current: executed.append(current), changed.requirements, uses=("value",))
+    with pytest.raises((ModelDefinitionError, ModelValidationError), match="coordinate interface|case's symbols"):
+        changed.run(method)
+    assert calls == ["expected"]
+    assert executed == []
+
+    # Factories stay live: resolve the new interface instead of freezing a
+    # formula during replacement, then check the original case independently.
+    original = captured[0]
+    captured[0] = None
+    assert (
+        changed.check().explain("value/captured" if capture == "annotation" else "captured").verdict
+        == "conditionally true"
+    )
+    captured[0] = original
+    assert (
+        source.check().explain("value/captured" if capture == "annotation" else "captured").verdict
+        == "conditionally true"
+    )
+
+
+@pytest.mark.parametrize("payload", ("requirement", "callable", "annotation", "declaration"))
+@pytest.mark.parametrize("retained_sibling", (False, True))
+def test_removed_coordinate_scope_cannot_be_hidden_by_a_sibling(payload, retained_sibling):
+    class Old(Modello):
+        x = Coordinate("x", real=True)
+        value = x**2
+
+    class Removed(Old):
+        x = None
+        y = Coordinate("y", real=True)
+        value = y**2
+
+    class Renamed(Old):
+        x = Coordinate("new_x", real=True)
+        value = x**2
+
+    class OldWrapper(Modello):
+        a = component(Old)
+        b = component(Old)
+
+    class NewWrapper(Modello):
+        a = component(Removed)
+        b = component(Old if retained_sibling else Renamed)
+
+    class Parent(Modello):
+        wrapper = component(OldWrapper)
+        if payload == "annotation":
+            value = requires(wrapper.a.value, exact_form(Derivative(wrapper.a.value, Old.x, evaluate=False), S.Zero))
+        elif payload == "declaration":
+            value = Derivative(wrapper.a.value, Old.x, evaluate=False)
+
+    source = ResearchCase.for_model(Parent)
+    if payload == "callable":
+        claim = exact_form(S.Zero, lambda get: Derivative(get("wrapper.a.value"), Old.x, evaluate=False))
+        changed = source.require(claim).replace("wrapper", NewWrapper)
+        with pytest.raises(ModelDefinitionError, match="coordinate interface"):
+            changed.check()
+    else:
+        if payload == "requirement":
+            source = source.require(
+                exact_form(Derivative(source.symbols.wrapper.a.value, Old.x, evaluate=False), S.Zero)
+            )
+        with pytest.raises(ModelDefinitionError, match="removed a .*coordinate"):
+            source.replace("wrapper", NewWrapper)
+
+
+@pytest.mark.parametrize("expected", (False, True))
+def test_replacement_rebinds_native_coordinate_scopes_in_retained_annotations(curves, expected):
+    old, new = curves
+
+    class Parent(Modello):
+        curve = component(old)
+        value = requires(
+            curve.value,
+            exact_form(
+                S.Zero if expected else Derivative(curve.value, old.x, evaluate=False),
+                Derivative(curve.value, old.x, evaluate=False) if expected else S.Zero,
+            ),
+        )
+
+    source = ResearchCase.for_model(Parent)
+    changed = source.replace("curve", new)
+    evidence = changed.check().explain("value/exact_form")
+    assert evidence.verdict == "conditionally true"
+    formula = evidence.resolved.expected if expected else evidence.expression
+    assert formula.doit() == -2 * new.x
+    with pytest.raises(ResearchError):
+        changed.run(Method("read", lambda current: "must not execute", uses=("value",)))
+    assert source.check().explain("value/exact_form").verdict == "conditionally true"
+
+
+@pytest.mark.parametrize("local", (Symbol("local", real=True), Coordinate("local", real=True)))
+def test_callable_expected_formulas_can_use_fresh_local_binders(curves, local):
+    old, new = curves
+
+    class Parent(Modello):
+        curve = component(old)
+        value = S(2)
+
+    claim = exact_form("value", lambda get: Subs(Derivative(local**2, local), local, 1))
+    changed = ResearchCase.for_model(Parent).require(claim).replace("curve", new)
+    assert changed.check().explain("exact_form").verdict == "strictly true"
+    assert changed.run(Method("read", lambda current: current.expression("value"), changed.requirements)).data == 2
+
+
+@pytest.mark.parametrize("payload", ("none", "hint", "assumption"))
+def test_replacement_keeps_independent_named_argument_scopes(payload):
+    class Old(Modello):
+        n = Index("n")
+        values = Series("values", n)
+        law = Recurrence(values[n], 2 * values[n - 1], initial={0: 1})
+
+    class A(Modello):
+        n = Index("a")
+        values = Series("values", n)
+        law = Recurrence(values[n], 3 * values[n - 1], initial={0: 1})
+
+    class B(Modello):
+        n = Index("b")
+        values = Series("values", n)
+        law = Recurrence(values[n], 4 * values[n - 1], initial={0: 1})
+
+    class OldWrapper(Modello):
+        a = component(Old)
+        b = component(Old)
+
+    class NewWrapper(Modello):
+        a = component(A)
+        b = component(B)
+
+    class Parent(Modello):
+        wrapper = component(OldWrapper)
+        total = wrapper.a.values[2] + wrapper.b.values[2]
+
+    source = ResearchCase.for_model(Parent)
+    if payload == "hint":
+        source = source.with_hint("unused", upper=source.symbols.wrapper.a.law.at(2))
+    elif payload == "assumption":
+        source = source.assume(Eq(source.symbols.wrapper.a.law.at(0), 1, evaluate=False))
+    changed = source.replace("wrapper", NewWrapper)
+    assert changed.expression("total").doit() == 25
+    assert changed.run(Method("read", lambda current: current.expression("total").doit(), uses=("total",))).data == 25
+    if payload == "hint":
+        assert changed.expression(dict(changed.hints)["unused"]).doit() == 9
+    assert source.expression("total").doit() == 8
+
+
+@pytest.mark.parametrize("observed", ("inverse", "forward", "both"))
+def test_replacement_recomputes_inferred_constructor_results_in_both_directions(observed):
+    class Old(Modello):
+        factor = S(2)
+
+    class New(Modello):
+        factor = S(4)
+
+    class Calculation(Modello):
+        scale = component(Old)
+        x = InstanceDummy("x", real=True)
+        total = scale.factor * x
+
+    class Wrapper(Modello):
+        calculation = component(Calculation)
+        sibling = component(Calculation)
+
+    inputs = {"total": 10} if observed == "inverse" else {"x": 5}
+    if observed == "both":
+        inputs["total"] = 10
+    source = ResearchCase.for_model(Wrapper).observe(
+        calculation=Calculation("point", **inputs), sibling=Calculation("sibling", total=6)
+    )
+    changed = source.replace("calculation.scale", New)
+    for path, value in inputs.items():
+        assert any(
+            item.kind is ConstraintKind.INPUT and item.path == ("calculation", path) and item.right == value
+            for item in changed.problem.constraints
+        )
+
+    def sibling_rows(case):
+        return tuple((item.path, item.kind, item.right) for item in case.problem.constraints if item.input == "sibling")
+
+    assert sibling_rows(changed) == sibling_rows(source)
+    assert changed.expression("sibling.x") == 3
+    if observed == "both":
+        assert changed.check().consistent is False
+        with pytest.raises(ResearchError):
+            changed.run(Method("read", lambda current: 1, uses=("calculation.total",)))
+    else:
+        assert changed.check().consistent is True
+        assert changed.expression("calculation.x") == (S(5) / 2 if observed == "inverse" else 5)
+        assert changed.expression("calculation.total") == (10 if observed == "inverse" else 20)
+        assert any("Invalidated inferred observation" in item for item in changed.changes)
+    assert source.expression("calculation.x") == 5
+    assert source.expression("calculation.total") == 10
+    assert source.check().consistent is True
 
 
 @pytest.fixture

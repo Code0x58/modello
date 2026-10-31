@@ -52,17 +52,30 @@ def test_native_substitution_identities_evaluate_without_losing_their_domains():
         curve = x**2
         evaluated = Subs(curve, x, at)
         residual = evaluated - at**2
-        bad = Subs(1 / x, x, 0)
 
     case = ResearchCase.for_model(Evaluated)
-    report = case.require(
+    inspected = case.require(
         exact_form(
             "residual", S.Zero, name="substitution_identity", consumer="test", reason="Evaluate a native substitution."
         ),
-        exact_form("bad", S.Zero, name="undefined_point", consumer="test", reason="The pole cannot be erased."),
-    ).check()
+        exact_form(
+            Subs(1 / Evaluated.x, Evaluated.x, 0),
+            S.Zero,
+            name="undefined_point",
+            consumer="test",
+            reason="The pole cannot be erased.",
+        ),
+    )
+    report = inspected.check()
+    assert report.consistent is True
     assert report.explain("substitution_identity").verdict == "strictly true"
     assert report.explain("undefined_point").verdict == "strictly false"
+    assert (
+        inspected.run(
+            Method("valid_identity", lambda current: current.expression("residual").doit(), uses=("residual",))
+        ).data
+        == 0
+    )
 
 
 def test_native_expected_derivatives_and_scalar_equalities_keep_their_premises():

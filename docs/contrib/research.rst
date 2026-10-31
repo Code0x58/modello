@@ -73,19 +73,31 @@ derivative and reduction variables, even when they do not occur freely.
 Keep component field references in reusable native claims and hints: expanded
 expressions cannot identify which component owns a shared coordinate, so
 replacement rejects that ambiguity.
-Replacement cannot split previously aliased fields into independent quantities:
-start a new model and case to give those quantities separate observations and
-contracts. Named symbolic declarations, such as series and recurrence laws,
+Replacement cannot split previously aliased fields or coordinate paths into
+independent quantities within the same component. Start a new model and case
+to give them separate observations, argument scopes, and contracts.
+Named symbolic declarations, such as series and recurrence laws,
 follow the same path-based rebinding as fields in observations, claims, and
 hints. Recorded declaration paths and argument signatures must remain
 compatible; removing or changing that interface requires a new model and case.
+Local argument names in independent declarations can change independently.
 Coordinate paths also retain their argument role during replacement. Changing
 one into an observed or derived model field requires a new model and case;
 replacement rejects that change before it can alter an inherited derivative.
+Coordinates used by inherited calculations, observations, assumptions, claims,
+or hints must remain available through a compatible path or coordinate alias.
+Callable expected formulas are evaluated when a claim is checked. Resolve
+coordinates through their reference callback so the formula follows the current
+component interface. A callback that captures a coordinate from a changed
+interface, or a scalar symbol from an earlier case, must be rebuilt before it
+can establish a claim. Fresh local variables in native operations remain valid.
 
-Replacement preserves explicit observations. Copied inferred values whose
-definitions depend on the replaced component are invalidated and listed in
-the report, so an old calculated intensity cannot constrain its replacement.
+Replacement preserves explicit observations. Inferred values copied from an
+affected constructor snapshot are invalidated and listed in the report, so
+its equations can be solved again in either direction. Inferred values whose
+definitions depend on the replaced component are invalidated too. Unrelated
+constructor snapshots retain their inferred observations. An old calculated
+intensity therefore cannot constrain its replacement.
 Dependencies include named laws and composed series queries, even when they
 have no free scalar parameters. Methods also consume the component contracts
 reached through those declarations. Selecting one recurrence explicitly does
@@ -122,6 +134,12 @@ inspection. It retains the original equations and input provenance through the
 existing solution-family machinery. Observations accumulate; use a new branch
 from the earlier case to change one. Exact research uses exact values, such as
 ``Rational("0.1")``; numerical tolerances belong to a numerical method's settings.
+
+Fully bound native values, including reductions, retain the model field's
+declared domain. ``Subs(log(x), x, 0)`` leaves no admissible finite complex value
+and blocks execution, while substitution at ``-1`` preserves the finite complex
+result. This admissibility check does not replace the native operation's own
+premises, such as differentiability at an evaluation point.
 
 A quantified curve coordinate is protected from scalar observations. Observing
 inventory at 3 specializes a state, while a convexity claim about the risk law

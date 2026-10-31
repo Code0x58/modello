@@ -94,6 +94,63 @@ def test_intrinsic_domains_apply_to_definitions_without_observations(assumptions
         case.run(Method("read", lambda current: current.expression("a"), uses=("a",)))
 
 
+@pytest.mark.parametrize(
+    ("operator", "expected"),
+    (
+        (lambda x: Subs(log(x), x, -1), S.ImaginaryUnit * S.Pi),
+        (lambda x: Subs(log(x), x, 0), None),
+        (lambda x: Subs(log(x), x, 1), S.Zero),
+        (lambda x: Subs(1 / x, x, -1), -S.One),
+        (lambda x: Subs(1 / x, x, 0), None),
+        (lambda x: Subs(1 / x, x, 1), S.One),
+        (lambda x: Sum(log(x), (x, 0, 0)), None),
+        (lambda x: Product(log(x), (x, 0, 0)), None),
+        (lambda x: Integral(log(S.Zero), (x, 0, 1)), None),
+        (lambda x: Integral(x, (x, 0, 1)), S.Half),
+        (lambda x: Integral(log(x), (x, 0, 0)), S.Zero),
+        (lambda x: Limit(sin(x) / x, x, 0, dir="+"), S.One),
+        (lambda x: Limit(1 / x, x, 0, dir="+"), None),
+    ),
+    ids=(
+        "complex-log",
+        "undefined-log",
+        "zero-log",
+        "negative-reciprocal",
+        "undefined-reciprocal",
+        "positive-reciprocal",
+        "undefined-sum",
+        "undefined-product",
+        "nonfinite-integral",
+        "finite-integral",
+        "empty-integral",
+        "finite-limit",
+        "nonfinite-limit",
+    ),
+)
+def test_closed_native_values_obey_model_domains_before_method_execution(operator, expected):
+    class Scoped(ResearchModel):
+        x = Coordinate("x", real=True)
+        value = operator(x)
+
+    case = ResearchCase.for_model(Scoped)
+    assert Scoped.definition_report().consistent is (expected is not None)
+    assert case.check().consistent is (expected is not None)
+    assert case.family.is_empty is (expected is None)
+    calls = []
+    method = Method(
+        "read",
+        lambda current: calls.append(current) or current.family.expression(current.symbols.value),
+        uses=("value",),
+    )
+    if expected is None:
+        with pytest.raises(ResearchError):
+            case.run(method)
+        assert not calls
+    else:
+        assert case.run(method).data == expected
+        assert calls == [case]
+
+
 @pytest.mark.parametrize("base", (Modello, ResearchModel))
 def test_unsupported_cyclic_calculus_remains_inspectable_and_blocks_execution(base):
     class Cyclic(base):
@@ -317,8 +374,8 @@ def test_guarded_curvature_uses_the_defined_body_after_checking_ordinary_neighbo
 def test_limit_premises_use_a_punctured_scope_without_refuting_other_neighborhoods():
     class Scoped(ResearchModel):
         x = Coordinate("x", real=True)
-        near = Limit(1 / x, x, 0, dir="+")
-        far = Limit(1 / (x - 1), x, 0, dir="+")
+        near = Limit(sin(x) / x, x, 0, dir="+")
+        far = Limit(sin(x) / (x - 1), x, 0, dir="+")
 
     report = ResearchCase.for_model(Scoped).check()
     assert report.explain("near/auto:1").verdict == "strictly true"
