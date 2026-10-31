@@ -426,7 +426,9 @@ class Method(Generic[ResultT]):
         would not recompute the expressions that captured the earlier case.
         """
         context = frozenset(global_assumptions)
-        if self.bound_case is not None and (self.bound_case is not case or self.bound_assumptions != context):
+        if self.bound_case is not None and (
+            self.bound_case is not case or _expression_key(self.bound_assumptions) != _expression_key(context)
+        ):
             raise ModelDefinitionError("Rebuild a case-bound method after changing its case or SymPy assumptions")
         return self if self.bound_case is case else replace(self, bound_case=case, bound_assumptions=context)
 

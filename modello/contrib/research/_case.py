@@ -287,13 +287,13 @@ class ResearchCase(Generic[ModelT]):
 
     @property
     def _context(self) -> _Context:
-        key = frozenset(global_assumptions)
+        key = _expression_key(frozenset(global_assumptions))
         if key not in self._contexts:
             self._contexts[key] = _Context(self.problem, self.assumptions)
         return self._contexts[key]
 
     @cached_property
-    def _contexts(self) -> dict[frozenset[Basic], _Context]:
+    def _contexts(self) -> dict[frozenset[object], _Context]:
         return {}
 
     @property
@@ -473,13 +473,17 @@ class ResearchCase(Generic[ModelT]):
         """
         if not isinstance(reason, str) or not reason.strip():
             raise ModelInputError("Record a reason when removing assumptions")
-        removed = tuple(dict.fromkeys(sympify(condition) for condition in conditions))
-        missing = tuple(condition for condition in removed if condition not in self.assumptions)
+        removed = _unique_expressions(sympify(condition) for condition in conditions)
+        recorded = {_expression_key(condition) for condition in self.assumptions}
+        missing = tuple(condition for condition in removed if _expression_key(condition) not in recorded)
         if missing:
             raise ModelInputError(f"These assumptions were not recorded in this case: {missing}")
+        removed_keys = {_expression_key(condition) for condition in removed}
         return replace(
             self,
-            assumptions=tuple(condition for condition in self.assumptions if condition not in removed),
+            assumptions=tuple(
+                condition for condition in self.assumptions if _expression_key(condition) not in removed_keys
+            ),
             changes=(*self.changes, *(f"Removed assumption {condition}: {reason.strip()}" for condition in removed)),
         )
 
@@ -956,7 +960,7 @@ class ResearchCase(Generic[ModelT]):
             # can cancel an original division or erase a local derivative.
             try:
                 visit(constraint.right)
-            except (NotImplementedError, ModelInputError) as error:
+            except (NotImplementedError, ModelInputError, RecursionError) as error:
                 record(Requirement("unsupported_algebra", constraint.left, "theorem"), str(error), False)
         return records, frozenset(conditional)
 
@@ -994,7 +998,7 @@ class ResearchCase(Generic[ModelT]):
                         )
                     elif premise.condition is None or truth(premise.condition, facts) is not S.true:
                         algebra_issue = "An assumption has unestablished native premises. " + " ".join(premise.steps)
-        except (NotImplementedError, ModelInputError) as error:
+        except (NotImplementedError, ModelInputError, RecursionError) as error:
             assumptions = supplied
             algebra_issue = f"Joint model algebra remains unresolved: {error}"
         try:
@@ -1005,19 +1009,18 @@ class ResearchCase(Generic[ModelT]):
         if algebra_issue and feasible is True:
             feasible = None
         observation_issue = ""
-        if self._context.needs_solutions:
-            try:
-                empty = self.family.is_empty
-            except (NotImplementedError, ModelInputError) as error:
-                empty = None
-                algebra_issue = f"Joint model algebra remains unresolved: {error}"
-            if empty is True:
-                feasible = False
-                observation_issue = "The model equations and declared domains have no admissible state."
-            elif empty is None:
-                if feasible is True:
-                    feasible = None
-                observation_issue = "Joint feasibility of the model equations and declared domains remains unresolved."
+        try:
+            empty = self.family.is_empty if self._context.needs_solutions else False
+        except (NotImplementedError, ModelInputError, RecursionError) as error:
+            empty = None
+            algebra_issue = f"Joint model algebra remains unresolved: {error}"
+        if empty is True:
+            feasible = False
+            observation_issue = "The model equations and declared domains have no admissible state."
+        elif empty is None:
+            if feasible is True:
+                feasible = None
+            observation_issue = "Joint feasibility of the model equations and declared domains remains unresolved."
         records_by_id: dict[str, tuple[str, Requirement, str]] = {}
         automatic, conditional_operations = self._automatic(assumptions)
         if algebra_issue:
@@ -1216,7 +1219,7 @@ class ResearchCase(Generic[ModelT]):
         def prove(key, requirement, prefix):
             try:
                 return prove_supported(key, requirement, prefix)
-            except (NotImplementedError, ModelInputError) as error:
+            except (NotImplementedError, ModelInputError, RecursionError) as error:
                 subject = requirement.subject
                 expression = (
                     self._reference(f"{prefix}.{subject}" if prefix else subject)
@@ -1318,7 +1321,8 @@ class ResearchCase(Generic[ModelT]):
                     "A method factory must return a Method; pass its computation as Method.execute"
                 )
         if method.bound_case is not None and (
-            method.bound_case is not self or method.bound_assumptions != frozenset(global_assumptions)
+            method.bound_case is not self
+            or _expression_key(method.bound_assumptions) != _expression_key(frozenset(global_assumptions))
         ):
             raise ResearchError(
                 f"{method.name} is bound to a different research case or SymPy assumption context; rebuild it",

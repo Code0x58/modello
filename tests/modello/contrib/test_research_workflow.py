@@ -3,7 +3,7 @@
 from dataclasses import replace
 
 import pytest
-from sympy import Derivative, FiniteSet, Interval, Q, S, Subs, assuming, log
+from sympy import Derivative, Eq, FiniteSet, Interval, Q, S, Subs, assuming, log
 
 from modello import Coordinate, InstanceDummy
 from modello.contrib.research import (
@@ -384,6 +384,63 @@ def test_case_bound_methods_require_the_same_global_assumption_context():
     with pytest.raises(ModelDefinitionError, match="Rebuild"):
         method.bind(case)
     with assuming(Q.positive(case.symbols.a)):
+        assert method.bind(case) is method
+        assert case.run(method).data == 1
+
+
+@pytest.fixture(params=(0, 1))
+def equal_native_assumptions(request):
+    class Coordinates(ResearchModel):
+        x = Coordinate("x", real=True)
+        p = Coordinate("p", positive=True)
+
+    conditions = tuple(
+        Eq(Subs(Derivative(S.Zero, coordinate, evaluate=False), coordinate, request.param), 0, evaluate=False)
+        for coordinate in (Coordinates.x, Coordinates.p)
+    )
+    assert conditions[0] == conditions[1]
+    assert conditions[0].lhs.variables != conditions[1].lhs.variables
+    return ResearchCase.for_model(Coordinates), conditions, request.param
+
+
+@pytest.mark.parametrize("removed", (0, 1))
+def test_assumption_removal_preserves_distinct_native_scopes(equal_native_assumptions, removed):
+    base, conditions, point = equal_native_assumptions
+    case = base.assume(*conditions)
+    selected, other = conditions[removed], conditions[1 - removed]
+    relaxed = case.without_assumptions(selected, selected, reason="Remove just this native scope.")
+    assert len(relaxed.assumptions) == 1
+    assert relaxed.assumptions[0].lhs.variables == other.lhs.variables
+    with pytest.raises(ModelInputError, match="not recorded"):
+        relaxed.without_assumptions(selected, reason="This scope is already absent.")
+    method = Method("read", lambda current: 1)
+    if point == 0 and removed == 0:
+        assert relaxed.check().consistent is None
+        with pytest.raises(ResearchError):
+            relaxed.run(method)
+    else:
+        assert relaxed.run(method).data == 1
+    empty = case.without_assumptions(*conditions, *conditions, reason="Remove both recorded scopes.")
+    assert not empty.assumptions
+    assert len(empty.changes) == 2
+    assert empty.run(method).data == 1
+    assert len(case.assumptions) == 2
+    assert case.check().consistent is (None if point == 0 else True)
+
+
+def test_bound_methods_distinguish_equal_native_assumption_scopes(equal_native_assumptions):
+    case, conditions, _ = equal_native_assumptions
+    calls = []
+    with assuming(conditions[0]):
+        method = Method("captured", lambda current: calls.append(current) or 1).bind(case)
+        assert case.run(method).data == 1
+    with assuming(conditions[1]):
+        with pytest.raises(ModelDefinitionError, match="Rebuild"):
+            method.bind(case)
+        with pytest.raises(ResearchError, match="SymPy assumption context"):
+            case.run(method)
+    assert calls == [case]
+    with assuming(conditions[0]):
         assert method.bind(case) is method
         assert case.run(method).data == 1
 

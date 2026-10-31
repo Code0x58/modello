@@ -155,9 +155,11 @@ Explicit assumptions can be removed on a new branch, with a recorded reason:
 >>> positive_risk.check().explain("value/increasing").verdict
 'strictly true'
 
-``without_assumptions`` removes only explicitly recorded predicates. To change
-an intrinsic symbol domain or an observation, change the declaration or branch
-before that observation. ``without_requirements(*ids, reason=...)`` removes
+``without_assumptions`` removes only explicitly recorded predicates, matching
+their retained native scopes. Mathematically equal substitutions with different
+coordinate domains remain separate assumptions. To change an intrinsic symbol
+domain or an observation, change the declaration or branch before that
+observation. ``without_requirements(*ids, reason=...)`` removes
 requirements added with ``case.require`` and records their retirement in the
 report. Declaration annotations and automatic operation obligations are changed
 at their source. Removing an exploratory requirement never removes a method's
@@ -240,15 +242,19 @@ checks as property subjects. A refuted native premise makes the case
 inconsistent; an unestablished premise blocks methods until supported
 parameter facts establish it. The native assumption cannot establish its own
 operation's premises.
-If an upstream CAS proof or assumption-consistency check exhausts its recursion
-limit, the report keeps an unresolved obligation and blocks dependent methods.
+If upstream CAS source binding, proof, or assumption-consistency checks exhaust
+their recursion limit, the report keeps an unresolved obligation and blocks
+dependent methods. A branch selector with unsupported source binding also
+leaves an inspectable report, including during ``ResearchModel`` declaration.
 
 Checks also bind active SymPy ``assuming(...)`` predicates through observations
 and record them in their report, checking the combined premises for consistency.
 Cached expression bindings, solution families, and proof attempts remain scoped
-to that global assumption context. Leaving the context checks the original
-branch again without retaining context-dependent simplifications. Use explicit
-``case.assume(...)`` branches for premises that should persist in the study.
+to that global assumption context, including its retained native coordinate
+scopes. Case-bound methods distinguish those scopes too. Leaving the context
+checks the original branch again without retaining context-dependent
+simplifications. Use explicit ``case.assume(...)`` branches for premises that
+should persist in the study.
 
 Native substitution coordinates keep their own declared domains in cached
 bindings, proof attempts, and theorem matching. SymPy can consider two ``Subs``

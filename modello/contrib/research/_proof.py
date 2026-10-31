@@ -191,7 +191,10 @@ def guard_source(expression: Basic) -> Basic:
             return _conditioned(result, _SourceFinite(value))
         return result
 
-    return visit(expression)
+    try:
+        return visit(expression)
+    except RecursionError as error:
+        raise NotImplementedError("The CAS could not retain scalar source domains: RecursionError") from error
 
 
 def _guard_scope(condition, variable, domain):

@@ -152,10 +152,14 @@ def test_assumptions_check_native_sources_erased_by_joint_observation_solving():
     assert_blocked(case)
 
 
-@pytest.mark.parametrize("entry", ("requirement", "assumption", "ambient"))
+@pytest.mark.parametrize("entry", ("requirement", "assumption", "ambient", "selector", "definition"))
 def test_recursive_upstream_predicates_remain_inspectable_and_block_methods(entry):
-    class Curve(Modello):
+    model = ResearchModel if entry == "definition" else Modello
+
+    class Curve(model):
         i = Coordinate("i", integer=True)
+        if entry in {"selector", "definition"}:
+            value = Piecewise((1, Ne(Product(log(i), (i, 0, 1)), 1, evaluate=False)), (0, True), evaluate=False)
 
     base = ResearchCase.for_model(Curve)
     value = Product(log(Curve.i), (Curve.i, 0, 1))
@@ -170,6 +174,23 @@ def test_recursive_upstream_predicates_remain_inspectable_and_block_methods(entr
             assert report.consistent is None
             assert report.explain("model/auto:algebra").verdict == "unresolved"
             assert_blocked(case)
+        if entry in {"selector", "definition"}:
+            assert_blocked(case, uses=("value",))
+            assert "unresolved" in report.to_json()
+            with pytest.raises(NotImplementedError, match="source domains: RecursionError"):
+                case.expression("value")
+    if entry in {"selector", "definition"}:
+        if entry == "definition":
+            assert Curve.definition_report().consistent is None
+
+        class Finite(model):
+            i = Coordinate("i", integer=True)
+            value = Piecewise((1, Eq(Product(i, (i, 1, 2)), 2, evaluate=False)), (0, True), evaluate=False)
+
+        finite_case = ResearchCase.for_model(Finite)
+        finite = exact_form("value", S.One)
+        assert finite_case.run(Method("finite", lambda current: 1, (finite,), uses=("value",))).data == 1
+        return
     finite = predicate(Eq(Product(Curve.i, (Curve.i, 1, 2)), 2, evaluate=False))
     assert base.check(requirements=(finite,)).explain(finite.name).verdict == "strictly true"
 

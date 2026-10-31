@@ -65,9 +65,11 @@ _BINDERS = (*_NATIVE_OPERATORS, _VectorFormula, _SymbolicTemplate, _ScopedOperat
 
 
 def _expression_key(value):
-    """Retain substitution scopes that SymPy's mathematical equality ignores."""
+    """Retain substitution scopes when matching expressions or their contexts."""
     if isinstance(value, tuple):
         return tuple(_expression_key(item) for item in value)
+    if isinstance(value, frozenset):
+        return frozenset(_expression_key(item) for item in value)
     scopes = _substitution_scopes(value)
     return (value, scopes) if scopes else value
 
