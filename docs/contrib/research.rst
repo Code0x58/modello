@@ -39,11 +39,11 @@ declaration, and ``requires`` attaches the properties the valuation needs:
 ...     value = requires(
 ...         -exp(-gamma*wealth),
 ...         increasing(
-...             "value", wrt="wealth", consumer="valuation",
+...             "value", wrt="wealth",
 ...             reason="More wealth must be preferred.",
 ...         ),
 ...         smooth(
-...             "value", wrt="wealth", consumer="price_curvature",
+...             "value", wrt="wealth", order=2,
 ...             reason="This calculation uses C2 regularity.",
 ...         ),
 ...     )
@@ -52,6 +52,8 @@ declaration, and ``requires`` attaches the properties the valuation needs:
 
 Each property function returns a ``Requirement``. The ``wrt`` path selects
 the variable; ``reason`` explains why the computation needs that property.
+Here ``smooth(order=2)`` requires continuous first and second derivatives,
+the usual C2 condition.
 
 Interpret the first verdict
 ---------------------------
@@ -85,6 +87,9 @@ Create an early case as a common branch point, then use its actual symbols
 when stating assumptions:
 
 >>> case = ResearchCase.for_model(Utility)
+>>> needed = case.explain("value/increasing")
+>>> needed.condition == (case.symbols.gamma > 0)
+True
 >>> risk_requirement = positive("gamma", name="positive_risk")
 >>> case.require(risk_requirement).check().explain("positive_risk").verdict
 'conditionally true'
@@ -199,7 +204,14 @@ Evidence includes the claim, coordinate domain, condition and its strength,
 derivation steps, dependencies, counterexamples, and recursively checked
 theorem premises. Expected forms, target bounds, and checked hints retain their
 specialized values in the audit and its fingerprint. ``to_json()`` and
-``to_html()`` export the report.
+``to_html()`` return text strings that you can save to files. Export the
+successful computation's report:
+
+>>> audit_json = valued.report.to_json()
+>>> html_page = valued.report.to_html(title="Utility valuation")
+>>> import json
+>>> json.loads(audit_json)["assumptions_consistent"]
+True
 
 Exports retain the declared subject and the expected formula before parameter
 observations, alongside the specialized expression actually checked. This
@@ -237,11 +249,13 @@ rebinds its requirements. The stored annotations describe claims, not old
 verdicts. Definition checking does not construct a model or select a solver
 candidate. Failed and unresolved requirements remain available for exploration.
 
-``consumer``, ``reason``, and ``source`` are optional metadata accepted by every
-property function. They describe why a condition is needed; they do not change
-its mathematical meaning. The same ``Requirement`` works in
-``case.require(...)``,
-``Method.requirements``, and ``Theorem.premises``.
+Every property function accepts optional ``consumer``, ``reason``, and
+``source`` metadata. ``reason`` and ``source`` describe the claim's purpose and
+provenance. ``consumer`` can associate a claim with a method name or field path
+for execution. Methods also consume the requirements declared on the fields
+in ``Method.uses`` and their dependencies. These labels leave the mathematical
+property being checked unchanged. The same ``Requirement`` works in
+``case.require(...)``, ``Method.requirements``, and ``Theorem.premises``.
 
 ``Constrained = requires(Model, *requirements)`` returns a subclass carrying
 additional model-wide conditions. For a ``ResearchModel`` subclass, it also

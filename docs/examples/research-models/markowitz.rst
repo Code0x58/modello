@@ -73,8 +73,9 @@ the case and its mathematical report in ``ResearchError``.
 
 The optimizer rejects assumptions restricting the quantified weight and scalar
 observations of weight-dependent outputs. Put those restrictions in
-``PortfolioRestrictions`` so that the candidate and its KKT certificate use the
-same admissible interval. Observing market moments remains supported.
+``PortfolioRestrictions`` so that the candidate and its
+Karush--Kuhn--Tucker (KKT) certificate use the same admissible interval.
+Observing market moments remains supported.
 The same check applies to ``case.assume(...)`` and active SymPy
 ``assuming(...)`` contexts; ambient predicates cannot silently narrow the
 weight interval used by the certificate.
@@ -105,8 +106,7 @@ The checked certificate
 The model follows the quadratic portfolio problem in `Boyd and Vandenberghe,
 Convex Optimization, section 4.4
 <https://www.stanford.edu/~boyd/cvxbook/bv_cvxbook.pdf>`_. Section 5.5.3 supplies
-the trusted convex
-Karush--Kuhn--Tucker (KKT) sufficiency rule used below. The implementation checks
+the trusted convex KKT sufficiency rule used below. The implementation checks
 that rule's algebraic premises; it is not a general matrix optimization engine.
 
 For :math:`a>0`, the unconstrained minimizer is

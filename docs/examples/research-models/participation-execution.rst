@@ -30,9 +30,9 @@ pricing with optimal constant rate of participation
 The paper assumes a positive initial inventory :math:`Q`, continuous positive
 deterministic market volume, Brownian price volatility :math:`\sigma>0`, a
 constant absolute risk aversion (CARA) parameter :math:`\gamma>0`, and an
-increasing, strictly convex execution
-function :math:`L` with :math:`L(0)=0` and superlinear growth. Its POV strategy
-trades at :math:`v_t=\rho V_t` until liquidation, with one constant
+increasing, strictly convex execution function :math:`L` with :math:`L(0)=0`
+and superlinear growth. Its percentage of volume (POV) strategy trades at
+:math:`v_t=\rho V_t` until liquidation, with one constant
 :math:`\rho>0`. Market volume excludes the trader's own trades, so participation
 need not be bounded by 1.
 

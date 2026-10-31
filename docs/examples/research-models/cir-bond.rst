@@ -2,14 +2,15 @@ CIR valuation and the Feller condition
 ======================================
 
 A condition used by one theorem need not be required by every calculation in
-the model. This study prices a unit zero-coupon bond, then adds and removes the
-Feller condition to compare the resulting boundary and valuation evidence.
+the model. In the Cox--Ingersoll--Ross (CIR) short-rate model, price a unit
+zero-coupon bond, then add and remove the Feller condition to compare the
+resulting boundary and valuation evidence.
 
 The parameters specify risk-neutral mean reversion: positive speed
 :math:`\kappa`, long-run level :math:`\theta`, and volatility :math:`\sigma`,
 and a nonnegative initial rate :math:`R_0`. Stochastic valuation and boundary
-conclusions use explicitly registered CIR rules;
-separate scalar checks verify the coefficient and pricing identities.
+conclusions use explicitly registered CIR rules; separate scalar checks verify
+the coefficient and pricing identities.
 
 Run the symbolic example with Modello installed:
 
@@ -24,17 +25,25 @@ Check valuation before changing the boundary condition
 ------------------------------------------------------
 
 The price method applies the case's registered affine-valuation rule and
-checks the shape of the current rate curve:
+checks the shape of the current rate curve. The defaults are
+:math:`\kappa=3/5,\theta=1/20,\sigma=1/5`:
 
 >>> from examples.research_models.cir_bond import (
 ...     cir_case, price, verification_method,
 ... )
 >>> case = cir_case()
 >>> result = price(case)
+>>> result.data.initial_rate, result.data.horizon
+(1/25, 5)
+>>> result.data.price.evalf(8)
+0.79632654
 >>> result.report.explain("rate_decreasing").verdict
 'strictly true'
 >>> result.report.explain("rate_convex").verdict
 'strictly true'
+
+This is the price of a unit payment after five time units, displayed to eight
+significant digits. The formula and its checked premises retain exact inputs.
 
 Feller is a boundary requirement
 --------------------------------

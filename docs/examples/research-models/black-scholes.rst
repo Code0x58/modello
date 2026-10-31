@@ -3,9 +3,10 @@ Black--Scholes--Merton with changing carry
 
 Explore a model change that preserves general pricing identities while
 invalidating a shortcut. Begin with European call and put formulas, add
-dividends or replace a constant coefficient schedule, and check which parity,
-Greek, and PDE identities survive. The maturity payoff is examined separately
-because its regularity differs from the interior pricing formula.
+dividends or replace a constant coefficient schedule, and check which pricing
+relationships survive: put--call parity, price sensitivities (Greeks), and the
+pricing partial differential equation (PDE). The maturity payoff is examined
+separately because its regularity differs from the interior pricing formula.
 
 This study builds on the case and component workflow in
 :doc:`../../contrib/research`. It uses exact rational inputs for the symbolic
