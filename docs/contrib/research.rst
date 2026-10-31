@@ -15,8 +15,8 @@ installation; numerical and plotting dependencies are needed for the later
 worked studies.
 
 Work through one small loop first: declare a requirement, inspect its verdict,
-add an assumption or observation, and run a method that consumes the result.
-Then try a proof hint and follow a :doc:`worked model
+add an assumption or observation, run a method, and export its evidence.
+Then revise a premise or try a proof hint before following a :doc:`worked model
 <../examples/research-models/index>`. Detailed replacement and proof-domain
 rules follow the walkthrough as reference material.
 
@@ -28,7 +28,7 @@ wealth. Keep risk aversion as an unrestricted real parameter so you can ask
 which values make the method applicable. ``ResearchModel`` checks each
 declaration, and ``requires`` attaches the properties the valuation needs:
 
->>> from sympy import exp, S
+>>> from sympy import exp
 >>> from modello import Coordinate, InstanceDummy
 >>> from modello.contrib.research import (
 ...     ResearchCase, ResearchModel, increasing, positive, requires, smooth,
@@ -90,9 +90,6 @@ when stating assumptions:
 >>> needed = case.explain("value/increasing")
 >>> needed.condition == (case.symbols.gamma > 0)
 True
->>> risk_requirement = positive("gamma", name="positive_risk")
->>> case.require(risk_requirement).check().explain("positive_risk").verdict
-'conditionally true'
 >>> positive_case = case.assume(case.symbols.gamma > 0)
 >>> positive_case.check().explain("value/increasing").verdict
 'strictly true'
@@ -100,9 +97,6 @@ True
 'strictly false'
 >>> case.check().explain("value/increasing").verdict
 'conditionally true'
->>> impossible = case.assume(case.symbols.gamma > 0, case.symbols.gamma < 0).check()
->>> impossible.consistent, impossible.checks[0].verdict
-(False, 'unresolved')
 
 ``observe`` accepts the same scalar and component observations as model
 inspection. It retains the original equations and input provenance through the
@@ -149,6 +143,31 @@ requirements before executing. Unrelated open claims remain available in the
 report. Case-specific method factories and trusted theorem rules are described
 under :ref:`research-method-reference`.
 
+Inspect and export evidence
+---------------------------
+
+Use ``valued.report.explain(id)`` to inspect the premises checked for that
+computation. ``case.explain(id)`` or ``case.check().explain(id)`` instead checks
+the case with its own observations and assumptions.
+Evidence includes the claim, coordinate domain, condition and its strength,
+derivation steps, dependencies, counterexamples, and recursively checked
+theorem premises. Expected forms, target bounds, and checked hints retain their
+specialized values in the audit and its fingerprint. ``to_json()`` and
+``to_html()`` return text strings that you can save to files. Export the
+successful computation's report:
+
+>>> audit_json = valued.report.to_json()
+>>> html_page = valued.report.to_html(title="Utility valuation")
+>>> import json
+>>> json.loads(audit_json)["assumptions_consistent"]
+True
+
+Exports retain the declared subject and the expected formula before parameter
+observations, alongside the specialized expression actually checked. This
+keeps a successful equality readable even when both evaluated sides become
+the same number. The JSON remains descriptive; it cannot reconstruct a case
+or execute a stored formula.
+
 Revise an assumption or requirement
 -----------------------------------
 
@@ -162,9 +181,29 @@ Explicit assumptions can be removed on a new branch, with a recorded reason:
 'strictly true'
 
 The report records why an explicit premise changed. Declared symbol domains
-and existing observations remain part of the case. Use
-``without_requirements(*ids, reason=...)`` to retire a case-added requirement;
-a method still checks the premises its computation needs.
+and existing observations remain part of the case.
+
+An exploratory requirement can also be added and retired on a branch:
+
+>>> exploratory = case.require(positive("gamma", name="positive_risk"))
+>>> exploratory.check().explain("positive_risk").verdict
+'conditionally true'
+>>> restored = exploratory.without_requirements(
+...     "positive_risk", reason="Compare using only the declared utility requirements.")
+>>> len(exploratory.requirements), len(restored.requirements)
+(1, 0)
+>>> restored.check().explain("value/increasing").verdict
+'conditionally true'
+
+Retiring this case-added claim leaves the utility's declared requirements in
+place. A method still checks the premises its computation needs.
+
+Check consistency when combining assumptions. Contradictory premises produce
+an inconsistent report and cannot establish a result:
+
+>>> impossible = case.assume(case.symbols.gamma > 0, case.symbols.gamma < 0).check()
+>>> impossible.consistent, impossible.checks[0].verdict
+(False, 'unresolved')
 
 Check a proposed proof
 ----------------------
@@ -195,29 +234,6 @@ A coordinate-dependent target is a ``ModelDefinitionError``; it cannot become
 a uniform bound by assuming a predicate about that coordinate.
 Parameter poles are also retained. For example, regularity of :math:`e^{x/a}`
 cannot be unconditional when the declaration allows :math:`a=0`.
-
-Inspect and export evidence
----------------------------
-
-Read the proof through ``case.explain(id)`` or ``case.check().explain(id)``.
-Evidence includes the claim, coordinate domain, condition and its strength,
-derivation steps, dependencies, counterexamples, and recursively checked
-theorem premises. Expected forms, target bounds, and checked hints retain their
-specialized values in the audit and its fingerprint. ``to_json()`` and
-``to_html()`` return text strings that you can save to files. Export the
-successful computation's report:
-
->>> audit_json = valued.report.to_json()
->>> html_page = valued.report.to_html(title="Utility valuation")
->>> import json
->>> json.loads(audit_json)["assumptions_consistent"]
-True
-
-Exports retain the declared subject and the expected formula before parameter
-observations, alongside the specialized expression actually checked. This
-keeps a successful equality readable even when both evaluated sides become
-the same number. The JSON remains descriptive; it cannot reconstruct a case
-or execute a stored formula.
 
 Continue with a worked model
 ----------------------------

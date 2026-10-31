@@ -43,7 +43,8 @@ The reusable kernel
      - :math:`\int_t^T \sigma(u)^2\,du`
 
 ``EuropeanOptions`` shares these inputs, spot :math:`S`, and strike :math:`K`
-between both options. With :math:`\Phi` the standard normal CDF, define
+between both options. With :math:`\Phi` the standard normal cumulative
+distribution function (CDF), define
 
 .. math::
 

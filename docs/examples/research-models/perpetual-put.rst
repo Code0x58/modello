@@ -28,7 +28,7 @@ The model follows Robert C. Merton, `Theory of Rational Option Pricing (1973),
 Section 8, pages 173--174, equations (49)--(52)
 <https://finance.martinsewell.com/option-pricing/Merton1973.pdf#page=34>`_.
 
-Under the risk-neutral measure, assume
+Under the risk-neutral measure, assume geometric Brownian motion (GBM),
 :math:`dS_t=rS_t\,dt+\sigma S_t\,dW_t`, with :math:`r,\sigma,K>0` and no
 dividends. Define
 
@@ -84,7 +84,7 @@ the second derivative jumps. In general the right gamma at the boundary is
 :math:`2rK/(\sigma^2B^2)>0`, whereas the left gamma is zero.
 
 ``certificate.boundary_report`` retains the checked positive jump.
-``certificate.regularity`` now establishes C1 and refutes C2 through a narrow
+``certificate.regularity`` establishes C1 and refutes C2 through a narrow
 scalar rule for two branches with one finite constant join:
 
 >>> certificate.regularity.explain("global_c1").verdict
