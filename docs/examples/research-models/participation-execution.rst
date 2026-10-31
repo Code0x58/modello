@@ -1,38 +1,36 @@
 Constant participation execution
 ================================
 
-``examples.research_models.participation_execution`` reproduces the scalar
-execution problem in Olivier Guéant, `Execution and block trade pricing with
-optimal constant rate of participation <https://arxiv.org/html/1210.7608>`_, Section 2.1,
-Propositions 1--4. It varies participation caps, completion deadlines, risk
-aversion, and the execution-cost component while retaining evidence for every
-method's requirements.
+Choose one participation rate for selling an initial inventory, then ask how
+a cap, completion deadline, or changed impact law affects that choice. This
+study extends the scalar constraint workflow in :doc:`markowitz`: limits are
+model components, and replacing the cost function can preserve a numerical
+method while invalidating a closed-form shortcut.
 
-Run the exact examples with the core SymPy dependency:
+The exact result includes a proposed rate, its completion time and cost, and a
+separate certificate checking the optimality conditions. The risk-neutral
+branch also shows a valid problem whose infimum has no attained optimizer.
 
-.. code-block:: console
-
-   $ uv run --locked python -m examples.research_models.participation_execution
-
-Install the research extra to compare independent SciPy minimization and
-inventory-risk quadrature:
+Run the exact example with the core SymPy dependency:
 
 .. code-block:: console
 
-   $ pip install 'modello[research]'
-   $ python -m examples.research_models.participation_execution --numerical
+   $ python -m examples.research_models.participation_execution
 
-The Python ``compare(numerical=True)`` function returns the original cases,
-``ResearchResult`` objects, and reports explaining blocked computations. It
-does not replace exact certificates with numerical samples. Importing the
-module loads no NumPy, SciPy, or plotting packages.
+For the independent minimization and inventory-risk quadrature, install
+``modello[research]`` and add ``--numerical`` to that command.
 
 The precise optimization problem
 --------------------------------
 
+The scalar execution model follows Olivier Guéant's `Execution and block trade
+pricing with optimal constant rate of participation
+<https://arxiv.org/html/1210.7608>`_, Section 2.1, Propositions 1--4.
+
 The paper assumes a positive initial inventory :math:`Q`, continuous positive
-deterministic market volume, Brownian price volatility :math:`\sigma>0`, CARA
-risk aversion :math:`\gamma>0`, and an increasing, strictly convex execution
+deterministic market volume, Brownian price volatility :math:`\sigma>0`, a
+constant absolute risk aversion (CARA) parameter :math:`\gamma>0`, and an
+increasing, strictly convex execution
 function :math:`L` with :math:`L(0)=0` and superlinear growth. Its POV strategy
 trades at :math:`v_t=\rho V_t` until liquidation, with one constant
 :math:`\rho>0`. Market volume excludes the trader's own trades, so participation
@@ -217,6 +215,13 @@ resulting cost, and reports a numerical KKT defect. The default ``xatol`` is
 ``1e-12``. These diagnostics are observations, not certified error bounds.
 The risk-neutral open-endpoint case is classified by checked symbolic limits
 instead of returning a small positive rate as a supposed optimizer.
+
+``compare(numerical=True)`` retains the original cases, completed results, and
+reports explaining blocked computations. Importing the module uses SymPy;
+numerical dependencies are loaded by the numerical method.
+
+Continue with :doc:`black-scholes` to replace deterministic coefficient
+schedules while keeping pricing identities and method requirements live.
 
 API
 ---

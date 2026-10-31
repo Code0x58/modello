@@ -1,10 +1,39 @@
 Market making with component requirements
 =========================================
 
-When a model consumes utility, risk, and liquidity components, their shapes
-can matter as much as their values. An optimizer might need decreasing trade
-intensity to obtain a unique quote, or two derivatives to evaluate curvature.
-This example makes those obligations explicit before solving a trading model.
+Connect utility, inventory risk, and liquidity components, then inspect the
+properties a quote optimizer needs from them. This page first checks the
+components and evaluates one state of the pricing equation. It then solves
+the coupled inventory equations over time and compares exponential and
+logistic trade-arrival intensities.
+
+Time is continuous and inventory changes in discrete lots. The pricing
+equation is a Hamilton--Jacobi--Bellman (HJB) equation for continuation values.
+The utility has constant absolute risk aversion (CARA), which supplies the
+reduction used below. For the case, evidence, and method API, first work through
+:doc:`/contrib/research`; :doc:`../research-models/markowitz` offers a smaller
+scalar example of changing constraints.
+
+With Modello installed, run the one-state symbolic calculation:
+
+.. code-block:: console
+
+   $ python -m examples.market_making
+
+For the full numerical study, install the research dependencies and generate
+an offline report:
+
+.. code-block:: console
+
+   $ pip install 'modello[research]'
+   $ python -m examples.market_making --study --output artefacts/market-making
+
+Open ``artefacts/market-making/report.html``. An HTML documentation build also
+generates a `complete study report <study/report.html>`_, with evidence pages,
+CSV tables, JSON audit, and figures in the same directory.
+
+The model and its requirements
+-----------------------------------
 
 The starting point is the continuous-time market-making framework near the
 end of Olivier Guéant's *The Financial Mathematics of Market Liquidity: From
@@ -14,31 +43,6 @@ Optimal Execution to Market Making* (2016), chapter 11, especially sections
 For publicly accessible equations, this implementation follows the single-asset
 CARA formulation, Model A, in Guéant's `Optimal market making
 <https://arxiv.org/html/1605.01862>`_, sections 2--3 and Lemma 3.1.
-
-Time is continuous; inventory changes in discrete lots. The lightweight runner
-represents one state of the reduced HJB and its exact exponential-intensity
-quote optimizer. The complete :doc:`research workflow </contrib/research>` adds
-live contracts, checked theorem premises, the coupled terminal-value ODEs, and
-an exponential/logistic comparison.
-
-Run it from the repository:
-
-.. code-block:: console
-
-   $ uv run --locked --dev python -m examples.market_making
-
-Run the complete study and open its report:
-
-.. code-block:: console
-
-   $ uv run --locked --extra research python -m examples.market_making --study --output artefacts/market-making
-
-An HTML documentation build also generates a `complete study report
-<study/report.html>`_. Its evidence pages, CSV tables, JSON audit, and figures
-are available offline from the same directory.
-
-The model and its requirements
------------------------------------
 
 The reference price follows :math:`dS_t=\sigma\,dW_t`. Buying or selling one
 lot changes inventory by :math:`\Delta`, and cash by the corresponding traded
@@ -118,8 +122,9 @@ terminal penalty at the selected state inventory.
 
 These formulas use real quote distances, including negative ones. Adding
 nonnegative quote constraints or switching to risk-neutral utility requires
-changing the optimizer. The example assumes the stated inventory lattice;
-it does not enforce lattice membership or supply a stochastic simulator.
+changing the optimizer. The one-state calculation assumes the stated inventory
+lattice. The numerical study below checks that capacity is an integral number
+of lots. Neither runner supplies a stochastic simulator.
 
 Check the component definitions
 -----------------------------------
@@ -138,8 +143,7 @@ model. Nested composition scopes those requirements to their component paths:
 >>> all(check.verdict == "strictly true" for check in report.checks)
 True
 
-A check has one of the requested three truth classifications, or an explicit
-unresolved result when no proof or parameter condition has been established:
+A check reports one of four verdicts:
 
 ``strictly true``
    Established over the declared domain and parameter assumptions.
@@ -172,33 +176,13 @@ True
 >>> case.observe(gamma=0).check().explain("value/increasing").verdict
 'strictly false'
 
-Checks quantify whole declared domains. A sampled slope supplies an observation;
-strict increase needs a global argument. The shared checker can prove strict
-increase of a nonconstant polynomial such as :math:`w^3` even though its slope
-vanishes at zero. Likewise, :math:`|w|` is convex and fails differentiability at
-zero. A failed smoothness certificate alone does not refute convexity.
-
-``smooth`` asks SymPy for continuity domains of the expression and its
-derivatives, retaining guards for parameter poles. For example,
-:math:`e^{w/a}` with unrestricted real :math:`a` retains :math:`a\ne0`.
-``curvature_bound`` checks that the slope never vanishes before simplifying
-the ratio. A coordinate-independent upper-bound hint can certify a nonconstant
-ratio; the checker establishes that hint and its strict gap below the target.
-An unevaluated derivative of an unknown function supplies no such certificate:
-
->>> from sympy import Function
->>> from modello.contrib.research import smooth
->>> formal = smooth(Function("theta")(CARAUtility.wealth), wrt=CARAUtility.wealth,
-...                 order=1, name="formal_regularity")
->>> ResearchCase.for_model(CARAUtility).check(requirements=(formal,)).explain("formal_regularity").verdict
-'unresolved'
-
-Definition reports and case reports share the same proof engine. Subclasses
-refresh definition reports; observations and assumptions create new cases whose
-checks use the current data. Failed or unresolved definitions remain available
-for exploration. :doc:`Guarded methods </contrib/research>` consume the evidence
-they need before computing. Substituting another utility family also requires
-reconsidering the CARA ansatz and its exact-form contract.
+Checks concern whole declared domains; sampled slopes are numerical
+observations. The :doc:`research guide </contrib/research>` explains supported
+regularity arguments, unresolved derivatives, and checked hints for uniform
+curvature bounds. Failed or unresolved definitions remain available for
+exploration, while methods require the evidence they consume. Substituting
+another utility family also requires reconsidering the CARA ansatz and its
+exact-form contract.
 
 Evaluate a state of the HJB
 -----------------------------------
@@ -229,15 +213,60 @@ Observing ``residual=0`` infers the time derivative from the other quantities.
 This calculation verifies one equation; it does not establish that arbitrary
 continuation values solve the terminal-value problem.
 
-Continue with :doc:`/contrib/research` for immutable cases and live evidence.
-The full study preserves this HJB declaration, replaces the specialized quote
-components with general Hamiltonian inputs, and integrates forward in remaining
-time. The exponential case has an independent matrix-exponential reference;
-both families have tighter-tolerance and independent time-difference checks.
-The default comparison matches the rate and slope of the two intensities at
-zero distance, so their differences reflect the changed shape.
+The next step is to preserve this HJB declaration, replace the specialized quote
+components with general Hamiltonian inputs, and integrate in remaining time.
+
+Run the time-dependent study
+----------------------------
+
+``study_case`` constructs that branch. ``run_quotes`` returns continuation
+values, quotes, and diagnostics on a time and inventory grid. Boundary gates
+leave the inventory-increasing quotes absent throughout the grid:
+
+>>> from examples.market_making_study import study_case
+>>> from examples._market_making_numerics import run_quotes
+>>> result = run_quotes(study_case(logistic=True, capacity=1), points=5)
+>>> result.data.bid[0][-1] is None, result.data.ask[0][0] is None
+(True, True)
+>>> result.data.diagnostics["terminal_error"]
+0.0
+
+The full runner compares exponential :math:`A=2,k=1` with logistic
+:math:`A=4,k=2`, matching rate and slope at zero. Defaults are
+:math:`T=1`, :math:`\Delta=1`, :math:`Q=5`, :math:`\gamma=0.1`,
+:math:`\sigma=1`, and :math:`\eta=0.05`.
+
+Both sides consume the general Hamiltonian interface. A separate exact-form
+contract protects the exponential shortcut; changing intensity does not carry
+that formula into the new model. The CARA reduction has its own exact-utility
+contract. Additional contracts protect the nearest-neighbor continuation
+differences, CARA gain, boundary gates, and HJB structure used by the numerical
+adapter. Shape properties alone do not establish these identities.
+
+The solver integrates in remaining time using SciPy Radau with an analytic
+tridiagonal Jacobian. The general quote method brackets the unique
+first-order-condition root; exponential and logistic expressions use stable
+numerical evaluations. Inventory boundary gates come from the shared HJB.
+Inactive quotes are absent values in reports. Invalid lattice membership,
+nonfinite values, failed bracketing, and solver failures retain diagnostics.
+The full ODE requires independent state inputs and parameter observations;
+observations or assumptions fixing a state are rejected because the study
+traverses the entire inventory and time grid.
+These checks include active SymPy ``assuming(...)`` predicates as well as
+``case.assume(...)``. Parameter-only assumptions remain supported.
+Quote-distance and terminal-inventory coordinates are included in the check;
+a predicate on a locally substituted argument cannot narrow the solver's domain.
 
 ``run_quotes`` requires at least three output times, finite positive ``rtol``
 and ``atol``, and a finite positive ``max_step`` when supplied. Invalid settings
 raise ``ResearchError`` with the originating case and report before integration
 starts.
+
+Default tolerances are ``rtol=1e-8``, ``atol=1e-10``, and a maximum time step
+of ``T/100``. The report compares a tighter run, measures independent central
+time-difference defects, and checks the exponential case against its linear
+matrix-exponential transformation. Both calculations use the case's declared
+risk and terminal laws, including supported component replacements. The
+comparisons record numerical differences and residuals; they do not prove
+error bounds. Source fingerprints, exact parameters, solver settings, and
+dependency versions accompany the results.

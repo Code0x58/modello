@@ -83,13 +83,20 @@ the API and diagnostic guarantees are separate reference material.
 
    recipes/dataframe-validation
 
+For research that changes a model's components or assumptions, start with the
+:doc:`research workflow <contrib/research>`. Follow the
+:doc:`worked studies <examples/research-models/index>` from scalar constraints
+to stochastic and piecewise models, then the
+:doc:`market-making application <examples/market-making/index>` for a coupled
+time-dependent study.
+
 .. toctree::
    :caption: Applications
    :maxdepth: 1
 
    examples/applications/index
-   examples/market-making/index
    examples/research-models/index
+   examples/market-making/index
    examples/portfolio/index
    examples/reconciliation/index
    examples/solution_families/index

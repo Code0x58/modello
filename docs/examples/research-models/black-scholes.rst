@@ -1,26 +1,23 @@
-Black--Scholes--Merton: carry, Greeks, and a nonsmooth boundary
-===============================================================
+Black--Scholes--Merton with changing carry
+==========================================
 
-This study composes a European call and put with deterministic integrated
-interest, dividend yield, and variance. It checks exact identities, replaces a
-constant schedule with an affine schedule, rejects an obsolete dividend-free
-shortcut, and treats the zero-variance payoff separately.
+Explore a model change that preserves general pricing identities while
+invalidating a shortcut. Begin with European call and put formulas, add
+dividends or replace a constant coefficient schedule, and check which parity,
+Greek, and PDE identities survive. The maturity payoff is examined separately
+because its regularity differs from the interior pricing formula.
 
-Run the complete example from the checkout:
+This study builds on the case and component workflow in
+:doc:`../../contrib/research`. It uses exact rational inputs for the symbolic
+checks and an optional independent payoff quadrature for numerical comparison.
+Run the symbolic example with Modello installed:
 
 .. code-block:: console
 
-   $ uv run --locked --dev python -m examples.research_models.black_scholes
-   constant: 18 exact zero residuals; report {'strictly true': 56}
-   affine: 18 exact zero residuals; report {'strictly true': 56}
-   constant: call=9.3197384552, put=6.3936989955, delta=0.5927490982, gamma=0.0191410352
-   ...
-   Dividend-free shortcut after adding yield: strictly false
+   $ python -m examples.research_models.black_scholes --symbolic-only
 
-``--symbolic-only`` skips the independent SciPy quadrature. Importing the module
-uses SymPy alone; the numerical method imports SciPy when executed. The exact
-inputs are rational numbers, so the symbolic results do not depend on floating
-point tolerances.
+Install ``modello[research]`` and omit ``--symbolic-only`` to include the SciPy
+comparison. Importing the module requires only SymPy.
 
 The reusable kernel
 -------------------
@@ -68,6 +65,43 @@ declarations. Spot claims quantify the explicit open domain
 ``case.expression("pricing.call", wrt="pricing.spot")`` still retains the
 entire spot curve. The method also checks that the observed spot is positive.
 No interior contract includes :math:`S=0` or :math:`W=0`.
+
+Branching and replacement
+-------------------------
+
+``study_case()`` builds the constant-coefficient case. The schedule branch
+uses affine curves and checks its pricing snapshot at ``now``. Read computed
+identities from ``data`` and their premises from ``report``. The case explicitly
+registers a Gaussian smoothness rule, described in the following section.
+
+.. code-block:: python
+
+   from sympy import Rational
+   from examples.research_models.black_scholes import (
+       AffineSchedule, study_case, symbolic_method,
+   )
+
+   constant = study_case()
+   changing = study_case(schedule=True, now=Rational(1, 4))
+   exact = changing.run(symbolic_method)
+   assert all(value == 0 for value in exact.data.residuals.values())
+
+   # This immutable replacement leaves the explicit pricing snapshot in place.
+   stale = constant.replace("schedule", AffineSchedule).observe(
+       schedule=AffineSchedule("schedule", rate_slope=Rational(1, 100)),
+   )
+   # stale.run(symbolic_method) raises ResearchError: its totals disagree.
+
+``case.run(symbolic_method)`` builds a fresh method for the current branch,
+evaluating its schedule at ``now``. Prepared
+methods use ``Method.bind(case)`` and reject reuse on a different case, even
+when it shares the same problem object. Earlier branches remain unchanged.
+
+``dividend_free_method()`` has the additional exact contract
+:math:`C-P=S-Ke^{-R}`. It runs when cumulative dividend yield is zero. Adding the
+positive yield in the baseline produces a checked counterexample to that
+identity and blocks the method. General discounted parity still holds. Shape
+properties or a successful earlier run do not preserve this shortcut.
 
 Exact checks and their trust boundary
 -------------------------------------
@@ -171,40 +205,6 @@ integration, self-financing replication, admissibility, and uniqueness of the
 pricing measure are external mathematical theory here. A zero PDE residual
 does not machine-prove those results.
 
-Branching and replacement
--------------------------
-
-.. code-block:: python
-
-   from sympy import Rational
-   from examples.research_models.black_scholes import (
-       AffineSchedule, study_case, symbolic_method, valuation_method,
-   )
-
-   constant = study_case()
-   changing = study_case(schedule=True, now=Rational(1, 4))
-   exact = changing.run(symbolic_method)
-   reference = changing.run(valuation_method)
-   assert all(value == 0 for value in exact.data.residuals.values())
-   assert reference.data.call_error < 1e-9  # a numerical comparison
-
-   # This immutable replacement leaves the explicit pricing snapshot in place.
-   stale = constant.replace("schedule", AffineSchedule).observe(
-       schedule=AffineSchedule("schedule", rate_slope=Rational(1, 100)),
-   )
-   # stale.run(symbolic_method) raises ResearchError: its totals disagree.
-
-``case.run(symbolic_method)`` and ``case.run(valuation_method)`` build a fresh
-method for the current branch, evaluating its schedule at ``now``. Prepared
-methods use ``Method.bind(case)`` and reject reuse on a different case, even
-when it shares the same problem object. Earlier branches remain unchanged.
-
-``dividend_free_method()`` has the additional exact contract
-:math:`C-P=S-Ke^{-R}`. It runs when cumulative dividend yield is zero. Adding the
-positive yield in the baseline produces a checked counterexample to that
-identity and blocks the method. General discounted parity still holds. Shape
-properties or a successful earlier run do not preserve this shortcut.
-
 The boundary is a different calculation
 ---------------------------------------
 
@@ -228,6 +228,18 @@ inputs without first constructing and solving a singular option instance.
 The numerical reference
 -----------------------
 
+With the research dependencies installed, run the numerical method on the
+same branch:
+
+.. code-block:: python
+
+   from sympy import Rational
+   from examples.research_models.black_scholes import study_case, valuation_method
+
+   changing = study_case(schedule=True, now=Rational(1, 4))
+   reference = changing.run(valuation_method)
+   assert reference.data.call_error < 1e-9  # a numerical comparison
+
 ``valuation_method(case)`` integrates the call and put payoffs against a
 standard Gaussian density, using
 :math:`S_T=S\exp(R-Q-W/2+\sqrt W Z)` and discount :math:`e^{-R}`. It splits the
@@ -244,6 +256,9 @@ discharge an unresolved mathematical requirement.
 ``run_demo()`` retains raw cases, symbolic and numerical method results,
 the accepted and rejected shortcut reports, and the boundary slopes. It is
 suitable for the collection runner as well as direct interactive inspection.
+
+Continue with :doc:`cir-bond` to distinguish a stochastic model's optional
+boundary condition from the assumptions needed for valuation.
 
 API
 ---

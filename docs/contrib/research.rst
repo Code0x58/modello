@@ -1,33 +1,32 @@
 Research with requirements and evidence
 =======================================
 
-An optimization method consumes more than component values: it may need a
-function to be monotone, convex, or differentiable on a particular domain.
-``modello.contrib.research`` records those obligations, checks supported scalar
-claims, and explains which conclusions depend on them. Numerical observations
-remain separate from mathematical evidence. The :doc:`model collection
-<../examples/research-models/index>` applies the same workflow to pricing,
-execution, and allocation with changing restrictions.
+A model change can preserve a useful formula while invalidating the method that
+uses it. A new utility function may need a different reduction; an execution
+law may retain convexity while losing a closed-form optimizer.
+``modello.contrib.research`` helps you keep those questions explicit: declare
+the properties a computation needs, branch the model or its assumptions, and
+inspect the evidence before running the computation.
 
-The symbolic API requires only SymPy. Install optional numerical and plotting
-dependencies for the complete example:
+This guide is for researchers who use Python and SymPy to express models.
+:doc:`/getting-started` introduces Modello's quantities, components, and
+observations. The symbolic workflow below uses the regular ``modello``
+installation; numerical and plotting dependencies are needed for the later
+worked studies.
 
-.. code-block:: console
+Work through one small loop first: declare a requirement, inspect its verdict,
+add an assumption or observation, and run a method that consumes the result.
+Then try a proof hint and follow a :doc:`worked model
+<../examples/research-models/index>`. Detailed replacement and proof-domain
+rules follow the walkthrough as reference material.
 
-   $ pip install 'modello[research]'
-   $ python -m examples.market_making --study --output market-making
+Declare a function and its requirements
+---------------------------------------
 
-Open ``market-making/report.html``. The directory also contains JSON evidence,
-CSV results, separate evidence pages, and SVG/PNG figures. The executable Python
-study is the replayable source; report JSON is descriptive and is never loaded
-as Python or symbolic expressions.
-
-Declare the consumer's requirements
------------------------------------
-
-Use ``ResearchModel`` to refresh declaration checks automatically for every
-subclass. Every property function returns a ``Requirement``. Attach those
-requirements to a declaration with ``requires``:
+Suppose a valuation needs a smooth utility function that prefers more
+wealth. Keep risk aversion as an unrestricted real parameter so you can ask
+which values make the method applicable. ``ResearchModel`` checks each
+declaration, and ``requires`` attaches the properties the valuation needs:
 
 >>> from sympy import exp, S
 >>> from modello import Coordinate, InstanceDummy
@@ -37,12 +36,200 @@ requirements to a declaration with ``requires``:
 >>> class Utility(ResearchModel):
 ...     wealth = Coordinate("w", real=True)
 ...     gamma = InstanceDummy("gamma", real=True)
-...     value = requires(-exp(-gamma*wealth),
-...         increasing("value", wrt="wealth", consumer="valuation", reason="More wealth must be preferred."),
-...         smooth("value", wrt="wealth", consumer="price_curvature", reason="This calculation uses C2 regularity."),
+...     value = requires(
+...         -exp(-gamma*wealth),
+...         increasing(
+...             "value", wrt="wealth", consumer="valuation",
+...             reason="More wealth must be preferred.",
+...         ),
+...         smooth(
+...             "value", wrt="wealth", consumer="price_curvature",
+...             reason="This calculation uses C2 regularity.",
+...         ),
 ...     )
 >>> Utility.definition_report().explain("value/increasing").verdict
 'conditionally true'
+
+Each property function returns a ``Requirement``. The ``wrt`` path selects
+the variable; ``reason`` explains why the computation needs that property.
+
+Interpret the first verdict
+---------------------------
+
+The utility's increase is conditional because ``gamma`` is still unrestricted.
+Read a verdict in the context of its coordinate domain and current assumptions:
+
+``strictly true``
+   The property is established under those premises.
+
+``conditionally true``
+   ``condition`` gives a sufficient parameter condition. It need not be the
+   only condition under which the property holds.
+
+``strictly false``
+   A checked refutation establishes that the stated property fails.
+
+``unresolved``
+   The checker has an open obligation: for example, an unsupported operation,
+   a missing proof, an exhausted attempt budget, or an inapplicable theorem.
+
+Definition checks keep all four outcomes available for exploration. A method
+can run once the premises it consumes are established. The next step is to
+make the utility's parameter condition explicit on a case.
+
+Branch assumptions and observations
+-----------------------------------
+
+A ``ResearchCase`` combines a declaration with assumptions and observations.
+Create an early case as a common branch point, then use its actual symbols
+when stating assumptions:
+
+>>> case = ResearchCase.for_model(Utility)
+>>> risk_requirement = positive("gamma", name="positive_risk")
+>>> case.require(risk_requirement).check().explain("positive_risk").verdict
+'conditionally true'
+>>> positive_case = case.assume(case.symbols.gamma > 0)
+>>> positive_case.check().explain("value/increasing").verdict
+'strictly true'
+>>> case.observe(gamma=0).check().explain("value/increasing").verdict
+'strictly false'
+>>> case.check().explain("value/increasing").verdict
+'conditionally true'
+>>> impossible = case.assume(case.symbols.gamma > 0, case.symbols.gamma < 0).check()
+>>> impossible.consistent, impossible.checks[0].verdict
+(False, 'unresolved')
+
+``observe`` accepts the same scalar and component observations as model
+inspection. It retains the original equations and input provenance through the
+existing solution-family machinery. Observations accumulate; use a new branch
+from the earlier case to change one. Exact research uses exact values, such as
+``Rational("0.1")``; numerical tolerances belong to a numerical method's settings.
+
+``ResearchCase.for_model`` also accepts an ordinary ``Modello`` class, which
+then receives checks when explicitly inspected.
+
+Run a method with established premises
+--------------------------------------
+
+A ``Method`` names a computation and the field paths it reads. Its ``uses``
+paths connect it to the requirements on those fields. This symbolic valuation
+reads the utility curve from whichever case is supplied:
+
+>>> from modello.contrib.research import Method, ResearchError
+>>> valuation = Method(
+...     "symbolic valuation",
+...     lambda current: current.expression("value", wrt="wealth"),
+...     uses=("value",),
+... )
+>>> valued = positive_case.observe(gamma=1).run(valuation)
+>>> valued.data.subs(Utility.wealth, 0)
+-1
+>>> valued.report.explain("value/increasing").verdict
+'strictly true'
+
+The result's ``data`` is a SymPy utility curve; here it is evaluated at zero
+wealth. Its ``report`` retains the premises that permitted the computation.
+Running the same method on the unrestricted case exposes the premise still
+needed:
+
+>>> try:
+...     case.run(valuation)
+... except ResearchError as error:
+...     print(error.report.explain("value/increasing").verdict)
+conditionally true
+
+``ResearchError`` retains both the case and its report. Methods check their
+explicit requirements and the relevant declaration and automatic-operation
+requirements before executing. Unrelated open claims remain available in the
+report. Case-specific method factories and trusted theorem rules are described
+under :ref:`research-method-reference`.
+
+Revise an assumption or requirement
+-----------------------------------
+
+Explicit assumptions can be removed on a new branch, with a recorded reason:
+
+>>> relaxed = positive_case.without_assumptions(
+...     case.symbols.gamma > 0, reason="Compare zero and negative risk aversion.")
+>>> relaxed.check().explain("value/increasing").verdict
+'conditionally true'
+>>> positive_case.check().explain("value/increasing").verdict
+'strictly true'
+
+The report records why an explicit premise changed. Declared symbol domains
+and existing observations remain part of the case. Use
+``without_requirements(*ids, reason=...)`` to retire a case-added requirement;
+a method still checks the premises its computation needs.
+
+Check a proposed proof
+----------------------
+
+An unresolved result can call for a mathematical argument rather than a new
+parameter value. A logistic trade-arrival intensity has a curvature-bound
+requirement that illustrates this distinction:
+
+>>> from examples.market_making_study import LogisticIntensity
+>>> logistic = ResearchCase.for_model(LogisticIntensity)
+>>> logistic.check().explain("rate/curvature_bound").verdict
+'unresolved'
+>>> bounded = logistic.with_hint("rate/curvature_bound", upper=1)
+>>> bounded.check().explain("rate/curvature_bound").verdict
+'strictly true'
+
+For :math:`\Lambda(\delta)=A/(1+e^{k\delta})`, with :math:`A,k>0`, the checker
+derives :math:`\Lambda\Lambda''/(\Lambda')^2=1-e^{-k\delta}`. It verifies the
+proposed uniform upper bound 1 and that :math:`1<2`. The nonzero derivative
+premise is checked before cancellation. A pointwise inequality strictly below
+2 would not by itself establish a supremum strictly below 2.
+
+An incorrect hint leaves the requirement unresolved; it does not refute the property.
+The ``upper`` value is a proposed proof aid, not an assumption or a requirement
+that is accepted without checking. A uniform target bound must also be
+independent of the quantified coordinate, including after resolving aliases.
+A coordinate-dependent target is a ``ModelDefinitionError``; it cannot become
+a uniform bound by assuming a predicate about that coordinate.
+Parameter poles are also retained. For example, regularity of :math:`e^{x/a}`
+cannot be unconditional when the declaration allows :math:`a=0`.
+
+Inspect and export evidence
+---------------------------
+
+Read the proof through ``case.explain(id)`` or ``case.check().explain(id)``.
+Evidence includes the claim, coordinate domain, condition and its strength,
+derivation steps, dependencies, counterexamples, and recursively checked
+theorem premises. Expected forms, target bounds, and checked hints retain their
+specialized values in the audit and its fingerprint. ``to_json()`` and
+``to_html()`` export the report.
+
+Exports retain the declared subject and the expected formula before parameter
+observations, alongside the specialized expression actually checked. This
+keeps a successful equality readable even when both evaluated sides become
+the same number. The JSON remains descriptive; it cannot reconstruct a case
+or execute a stored formula.
+
+Continue with a worked model
+----------------------------
+
+Start with :doc:`Markowitz allocation
+<../examples/research-models/markowitz>` to compare economic restrictions on
+one scalar decision. The :doc:`model collection
+<../examples/research-models/index>` then develops component replacement,
+deterministic schedules, stochastic premises, and piecewise regularity.
+
+For the complete utility/risk/liquidity application, continue with
+:doc:`market making <../examples/market-making/index>`. It connects checked
+component requirements to the coupled time-dependent numerical study and its
+offline reports.
+
+Reference: contracts, domains, and proof limits
+-----------------------------------------------
+
+Use these rules when a replacement or proof attempt needs closer inspection.
+The :ref:`API reference <research-api>` below lists the workflow objects and
+property functions.
+
+Model and component contracts
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Requirements use relative paths. Nested components acquire their parent path
 when inspected; replacing a component or redefining an inherited formula
@@ -52,14 +239,16 @@ candidate. Failed and unresolved requirements remain available for exploration.
 
 ``consumer``, ``reason``, and ``source`` are optional metadata accepted by every
 property function. They describe why a condition is needed; they do not change
-its mathematical meaning. There is no separate claim or declaration-wrapper
-type to construct. The same requirement works in ``case.require(...)``,
+its mathematical meaning. The same ``Requirement`` works in
+``case.require(...)``,
 ``Method.requirements``, and ``Theorem.premises``.
 
 ``Constrained = requires(Model, *requirements)`` returns a subclass carrying
-additional model-wide conditions and its refreshed definition report. The
-original model and earlier cases remain unchanged. These conditions follow the
-model into nested components and are consumed by methods that read its fields.
+additional model-wide conditions. For a ``ResearchModel`` subclass, it also
+refreshes the definition report automatically. For an ordinary ``Modello``
+class, inspect the conditions with ``ResearchCase.for_model(Constrained).check()``.
+The original model and earlier cases remain unchanged. These conditions follow
+the model into nested components and are consumed by methods that read its fields.
 Coordinate paths follow inheritance: a subclass that shadows a coordinate with
 a regular attribute removes that path from the research interface. Scalar
 fields declared at the same path remain available as model quantities.
@@ -105,35 +294,33 @@ not consume an alternative law merely because it targets the same series.
 Equivalent declarations with renamed local variables share their contracts;
 ambiguous series queries remain unresolved until a law is selected explicitly.
 
-``ResearchCase.for_model`` also accepts an ordinary ``Modello`` class, which
-then receives checks when explicitly inspected.
+Independent coordinates with the same name receive distinct scoped labels in
+exports, such as ``a.x`` and ``b.x``. Deliberately shared coordinates retain one
+identity even when reached through several component paths. Report printers
+label the original symbolic tree without substituting or simplifying it, so
+formatting cannot turn a difference of independent coordinates into zero.
 
-Branch assumptions and observations
------------------------------------
+Retire explicit assumptions and requirements
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Cases are immutable. Use their actual symbols, preserving identities across
-branches:
+``without_assumptions`` removes only explicitly recorded predicates, matching
+their retained native scopes. Mathematically equal substitutions with different
+coordinate domains remain separate assumptions. To change an intrinsic symbol
+domain or an observation, change the declaration or branch before that
+observation. ``without_requirements(*ids, reason=...)`` removes
+requirements added with ``case.require`` and records their retirement in the
+report. Declaration annotations and automatic operation obligations are changed
+at their source. Removing an exploratory requirement never removes a method's
+own contract; the method checks that requirement again when it runs. Identical
+requirement records shared by a case and a method reuse one check, while
+conflicting uses of an ID remain definition errors.
+The same policy applies to theorem premises: identical requirements reuse one
+check, while conflicting conditions need distinct ``name`` values.
+All evidence IDs, including nested theorem premise paths, must be unique within
+a report; a collision is a definition error.
 
->>> case = ResearchCase.for_model(Utility)
->>> risk_positive = positive("gamma", name="positive_risk")
->>> case.require(risk_positive).check().explain("positive_risk").verdict
-'conditionally true'
->>> positive_risk = case.assume(case.symbols.gamma > 0)
->>> positive_risk.check().explain("value/increasing").verdict
-'strictly true'
->>> case.observe(gamma=0).check().explain("value/increasing").verdict
-'strictly false'
->>> case.check().explain("value/increasing").verdict
-'conditionally true'
->>> impossible = case.assume(case.symbols.gamma > 0, case.symbols.gamma < 0).check()
->>> impossible.consistent, impossible.checks[0].verdict
-(False, 'unresolved')
-
-``observe`` accepts the same scalar and component observations as model
-inspection. It retains the original equations and input provenance through the
-existing solution-family machinery. Observations accumulate; use a new branch
-from the earlier case to change one. Exact research uses exact values, such as
-``Rational("0.1")``; numerical tolerances belong to a numerical method's settings.
+Coordinates and observation domains
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Fully bound native values, including reductions, retain the model field's
 declared domain. ``Subs(log(x), x, 0)`` leaves no admissible finite complex value
@@ -164,87 +351,8 @@ equations refer to that curve indirectly. Property checks retain unresolved
 evidence; ``expression`` and ``sample`` raise ``NotImplementedError``. Point
 queries without ``wrt`` can still resolve the joint equations.
 
-Explicit assumptions can be removed on a new branch, with a recorded reason:
-
->>> relaxed = positive_risk.without_assumptions(
-...     case.symbols.gamma > 0, reason="Compare zero and negative risk aversion.")
->>> relaxed.check().explain("value/increasing").verdict
-'conditionally true'
->>> positive_risk.check().explain("value/increasing").verdict
-'strictly true'
-
-``without_assumptions`` removes only explicitly recorded predicates, matching
-their retained native scopes. Mathematically equal substitutions with different
-coordinate domains remain separate assumptions. To change an intrinsic symbol
-domain or an observation, change the declaration or branch before that
-observation. ``without_requirements(*ids, reason=...)`` removes
-requirements added with ``case.require`` and records their retirement in the
-report. Declaration annotations and automatic operation obligations are changed
-at their source. Removing an exploratory requirement never removes a method's
-own contract; the method checks that requirement again when it runs. Identical
-requirement records shared by a case and a method reuse one check, while
-conflicting uses of an ID remain definition errors.
-The same policy applies to theorem premises: identical requirements reuse one
-check, while conflicting conditions need distinct ``name`` values.
-All evidence IDs, including nested theorem premise paths, must be unique within
-a report; a collision is a definition error.
-
-Check a proposed proof
-----------------------
-
-The logistic intensity makes a useful research substitution:
-
->>> from examples.market_making_study import LogisticIntensity
->>> logistic = ResearchCase.for_model(LogisticIntensity)
->>> logistic.check().explain("rate/curvature_bound").verdict
-'unresolved'
->>> bounded = logistic.with_hint("rate/curvature_bound", upper=1)
->>> bounded.check().explain("rate/curvature_bound").verdict
-'strictly true'
-
-For :math:`\Lambda(\delta)=A/(1+e^{k\delta})`, with :math:`A,k>0`, the checker
-derives :math:`\Lambda\Lambda''/(\Lambda')^2=1-e^{-k\delta}`. It verifies the
-proposed uniform upper bound 1 and that :math:`1<2`. The nonzero derivative
-premise is checked before cancellation. A pointwise inequality strictly below
-2 would not by itself establish a supremum strictly below 2.
-
-An incorrect hint leaves the requirement unresolved; it does not refute the property.
-The ``upper`` value is a proposed proof aid, not an assumption or a requirement
-that is accepted without checking. A uniform target bound must also be
-independent of the quantified coordinate, including after resolving aliases.
-A coordinate-dependent target is a ``ModelDefinitionError``; it cannot become
-a uniform bound by assuming a predicate about that coordinate.
-Parameter poles are also retained. For example, regularity of :math:`e^{x/a}`
-cannot be unconditional when the declaration allows :math:`a=0`.
-
-Read the proof through ``case.explain(id)`` or ``case.check().explain(id)``.
-Evidence includes the claim, coordinate domain, condition and its strength,
-derivation steps, dependencies, counterexamples, and recursively checked
-theorem premises. Expected forms, target bounds, and checked hints retain their
-specialized values in the audit and its fingerprint. ``to_json()`` and
-``to_html()`` export the report.
-
-Exports retain the declared subject and the expected formula before parameter
-observations, alongside the specialized expression actually checked. This
-keeps a successful equality readable even when both evaluated sides become
-the same number. The JSON remains descriptive; it cannot reconstruct a case
-or execute a stored formula.
-
-Independent coordinates with the same name receive distinct scoped labels in
-exports, such as ``a.x`` and ``b.x``. Deliberately shared coordinates retain one
-identity even when reached through several component paths. Report printers
-label the original symbolic tree without substituting or simplifying it, so
-formatting cannot turn a difference of independent coordinates into zero.
-
 Property truth and proof attempts
----------------------------------
-
-``strictly true`` means established under the current assumptions.
-``conditionally true`` retains a sufficient parameter condition; it does not
-claim that condition is necessary unless separately established.
-``strictly false`` requires a checked refutation. ``unresolved`` preserves a
-missing proof, unsupported operation, exhausted attempt budget, or inapplicable
-theorem. Contradictory assumptions do not produce successful proofs.
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Boolean predicates also require defined scalar operands. Negation, disjunction,
 and implication do not turn a comparison with an undefined operand into a proof.
@@ -430,11 +538,12 @@ A named quantity acts as a symbol while the class body is collected, so eager
 ``diff`` can treat it as independent of the coordinate. Differentiate a resolved
 ``case.expression`` when performing a calculation outside the declaration.
 
-Methods and theorems
---------------------
+.. _research-method-reference:
 
-``Method`` records a computation, its explicit requirements, and the field
-paths it reads. Pass either a prepared method or a method factory to
+Methods and theorems
+~~~~~~~~~~~~~~~~~~~~
+
+Pass either a prepared method or a method factory to
 ``case.run(method, **settings)``. A factory receives the current case and returns
 a ``Method``; the runner then checks its premises and relevant automatic
 obligations before executing it. Settings go to the computation, not the
@@ -457,8 +566,10 @@ curve can still have a pole elsewhere.
 >>> from modello.contrib.research import Method
 >>> def valuation(current):
 ...     curve = current.expression("value", wrt="wealth")
-...     return Method("symbolic valuation", lambda inner: curve, uses=("value",)).bind(current)
->>> positive_risk.run(valuation).report.explain("value/increasing").verdict
+...     return Method(
+...         "symbolic valuation", lambda inner: curve, uses=("value",),
+...     ).bind(current)
+>>> positive_case.run(valuation).report.explain("value/increasing").verdict
 'strictly true'
 
 Use ``case.run(valuation)`` after branching: it builds the method from the
@@ -485,50 +596,7 @@ declared domain, and their evaluated values must be fully bound, finite, and
 real. Invalid points and unresolved symbolic values raise
 ``ModelValidationError``.
 
-Complete the time-dependent study
----------------------------------
-
->>> from examples.market_making_study import study_case
->>> from examples._market_making_numerics import run_quotes
->>> result = run_quotes(study_case(logistic=True, capacity=1), points=5)
->>> result.data.bid[0][-1] is None, result.data.ask[0][0] is None
-(True, True)
->>> result.data.diagnostics["terminal_error"]
-0.0
-
-The full runner compares exponential :math:`A=2,k=1` with logistic
-:math:`A=4,k=2`, matching rate and slope at zero. Defaults are
-:math:`T=1`, :math:`\Delta=1`, :math:`Q=5`, :math:`\gamma=0.1`,
-:math:`\sigma=1`, and :math:`\eta=0.05`.
-
-Both sides consume the general Hamiltonian interface. A separate exact-form
-contract protects the exponential shortcut; changing intensity does not carry
-that formula into the new model. The CARA reduction has its own exact-utility
-contract. Additional contracts protect the nearest-neighbor continuation
-differences, CARA gain, boundary gates, and HJB structure used by the numerical
-adapter. Shape properties alone do not establish these identities.
-
-The solver integrates in remaining time using SciPy Radau with an analytic
-tridiagonal Jacobian. The general quote method brackets the unique
-first-order-condition root; exponential and logistic expressions use stable
-numerical evaluations. Inventory boundary gates come from the shared HJB.
-Inactive quotes are absent values in reports. Invalid lattice membership,
-nonfinite values, failed bracketing, and solver failures retain diagnostics.
-The full ODE requires independent state inputs and parameter observations;
-observations or assumptions fixing a state are rejected because the study
-traverses the entire inventory and time grid.
-These checks include active SymPy ``assuming(...)`` predicates as well as
-``case.assume(...)``. Parameter-only assumptions remain supported.
-Quote-distance and terminal-inventory coordinates are included in the check;
-a predicate on a locally substituted argument cannot narrow the solver's domain.
-
-Default tolerances are ``rtol=1e-8``, ``atol=1e-10``, and a maximum time step
-of ``T/100``. The report compares a tighter run, measures independent central
-time-difference defects, and checks the exponential case against its linear
-matrix-exponential transformation. Both calculations use the case's declared
-risk and terminal laws, including supported component replacements. These are numerical checks rather than
-proofs of error bounds. Source fingerprints, exact parameters, solver settings,
-and dependency versions accompany the results.
+.. _research-api:
 
 API
 ----

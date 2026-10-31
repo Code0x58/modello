@@ -1,24 +1,32 @@
 Perpetual American put and optimal stopping
 ===========================================
 
-This example uses the constant-coefficient Black--Scholes--Merton economic
-setting with positive interest, volatility, and strike, and zero dividends.
-It follows Robert C. Merton, `Theory of Rational Option Pricing (1973),
-Section 8, pages 173--174, equations (49)--(52)
-<https://finance.martinsewell.com/option-pricing/Merton1973.pdf#page=34>`_.
-The scalar calculations, numerical barrier search, and explicitly trusted
-stochastic verification rule are separate results.
+A model can support a calculation even when a stronger smoothness requirement
+fails. This study checks an American put's exercise and continuation branches,
+shows C1 smooth fit with a jump in the second derivative, and compares the
+methods that consume those different regularity requirements.
+
+The economic setting is constant-coefficient Black--Scholes--Merton with
+positive interest, volatility, and strike, and zero dividends. Scalar
+certificates and numerical barrier searches are reported separately from the
+explicitly adopted stochastic optimal-stopping rule. This continues the
+separation of method premises developed in :doc:`cir-bond`.
+
+Run the symbolic example with Modello installed:
 
 .. code-block:: console
 
-   $ uv run --locked python -m examples.research_models.perpetual_put
-   $ uv run --locked --dev python -m examples.research_models.perpetual_put --numerical
+   $ python -m examples.research_models.perpetual_put
 
-Importing the module requires only SymPy. The numerical method imports SciPy
-inside its execution; it is available through ``modello[research]``.
+Install ``modello[research]`` and add ``--numerical`` to compare an independent
+SciPy barrier search.
 
 Normalize the exercise boundary
 -------------------------------
+
+The model follows Robert C. Merton, `Theory of Rational Option Pricing (1973),
+Section 8, pages 173--174, equations (49)--(52)
+<https://finance.martinsewell.com/option-pricing/Merton1973.pdf#page=34>`_.
 
 Under the risk-neutral measure, assume
 :math:`dS_t=rS_t\,dt+\sigma S_t\,dW_t`, with :math:`r,\sigma,K>0` and no
@@ -55,33 +63,6 @@ The defaults are :math:`r=1/25,\sigma=1/5,K=100,S_0=100`:
 (-2, 200/3, 400/27)
 >>> algebra.report.explain("continuation_pricing_generator").verdict
 'strictly true'
-
-The checked scalar conditions
------------------------------
-
-The live contracts protect the exponent, boundary, normalized spot, branch
-values, derivatives, piecewise assembly, and generator formulas. Replacing a
-helper by a constant cannot silently provide a stale certificate. The model's
-discounted pricing generator is
-
-.. math::
-
-   (\mathcal L-r)f(x)
-       =\tfrac12\sigma^2x^2f''(x)+(r-q)xf'(x)-rf(x).
-
-The zero-dividend contract requires :math:`q=0`. The continuation residual is
-zero; the exercise residual is :math:`-rK<0`. The method checks
-:math:`0\leq P\leq K`, equality with the exercise payoff below the boundary,
-and continuation dominance over both zero and :math:`K-S` above it. It also
-checks decay at infinity and the deterministic transversality envelope
-:math:`K e^{-rt}\to0`.
-
-For the continuation obstacle inequality, a separate, elementary trusted
-calculus lemma uses the gap :math:`h(x)=P(Bx)-(K-Bx)`. Its checked premises are
-C2 regularity on :math:`[1,\infty)`, nonnegative curvature, and
-:math:`h(1)=h'(1)=0`. The convex tangent inequality then gives :math:`h(x)\geq0`
-for :math:`x>1`. These premises are recursive evidence in the report; no grid
-of numerical samples substitutes for the global inequality.
 
 Smooth fit does not give C2
 ---------------------------
@@ -121,8 +102,34 @@ parameter-dependent joins remain unresolved. At an included domain endpoint,
 one-sided continuity alone cannot discharge an ordinary derivative premise.
 The separate exact certificate still exports derivatives in spot units.
 ``c2_consumer_method()`` demands global C2 and is blocked. ``algebra_method``
-removes that excessive consumer restriction and instead checks piecewise
-regularity, value matching, and smooth fit.
+uses a contract based on piecewise regularity, value matching, and smooth fit.
+
+The checked scalar conditions
+-----------------------------
+
+The live contracts protect the exponent, boundary, normalized spot, branch
+values, derivatives, piecewise assembly, and generator formulas. Replacing a
+helper by a constant cannot silently provide a stale certificate. The model's
+discounted pricing generator is
+
+.. math::
+
+   (\mathcal L-r)f(x)
+       =\tfrac12\sigma^2x^2f''(x)+(r-q)xf'(x)-rf(x).
+
+The zero-dividend contract requires :math:`q=0`. The continuation residual is
+zero; the exercise residual is :math:`-rK<0`. The method checks
+:math:`0\leq P\leq K`, equality with the exercise payoff below the boundary,
+and continuation dominance over both zero and :math:`K-S` above it. It also
+checks decay at infinity and the deterministic transversality envelope
+:math:`K e^{-rt}\to0`.
+
+For the continuation obstacle inequality, a separate, elementary trusted
+calculus lemma uses the gap :math:`h(x)=P(Bx)-(K-Bx)`. Its checked premises are
+C2 regularity on :math:`[1,\infty)`, nonnegative curvature, and
+:math:`h(1)=h'(1)=0`. The convex tangent inequality then gives :math:`h(x)\geq0`
+for :math:`x>1`. These premises are recursive evidence in the report; no grid
+of numerical samples substitutes for the global inequality.
 
 Where stochastic verification enters
 ------------------------------------
@@ -199,6 +206,9 @@ an error bound nor replace verification over all stopping times.
 ``run_demo(numerical=True)`` returns the raw cases, scalar and trusted results,
 blocked-method reports, and numerical comparisons for continuation and
 immediate exercise.
+
+Continue with :doc:`../market-making/index` to combine component requirements
+with a coupled system of time-dependent inventory values.
 
 API
 ---

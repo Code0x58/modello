@@ -1,16 +1,17 @@
 Markowitz allocation with changing restrictions
 ===============================================
 
-This sub-example optimizes a two-asset portfolio and retains an exact scalar
-optimality certificate. It complements the portfolio GUI, which displays the
-relationships without optimizing them. The input moments are illustrative;
-there is no estimation from market data.
+Start here to explore changing constraints on one scalar decision. Allocate a
+two-asset portfolio, add a return target or concentration cap, and compare the
+new allocation with the earlier case. Then relax strict curvature and inspect
+what remains true when the optimum is no longer unique.
 
-The model follows the quadratic portfolio problem in `Boyd and Vandenberghe,
-Convex Optimization, section 4.4
-<https://www.stanford.edu/~boyd/cvxbook/bv_cvxbook.pdf>`_. Section 5.5.3 supplies
-the trusted convex KKT sufficiency rule used below. The implementation checks
-that rule's algebraic premises; it is not a general matrix optimization engine.
+The inputs are illustrative expected returns, variances, and covariance. The
+budget leaves one free weight, making this a small example of the
+:doc:`research workflow <../../contrib/research>`: propose a candidate, check
+its exact certificate, and keep the evidence for each restriction set.
+
+Run the exact example with Modello installed:
 
 .. code-block:: console
 
@@ -38,6 +39,9 @@ the budget line, even when the covariance matrix itself is singular.
 quantified coordinate. The live variance annotation checks convexity and C2
 regularity; the optimizer additionally checks the exact quadratic and linear
 return formulas that it consumes.
+
+The optimality conclusion uses an explicitly registered convex sufficiency
+rule. Its checked scalar premises are detailed under the certificate below.
 
 >>> from sympy import Rational, S
 >>> from examples.research_models.markowitz import (
@@ -98,6 +102,13 @@ incorrect certificate pass after subclassing.
 The checked certificate
 -----------------------
 
+The model follows the quadratic portfolio problem in `Boyd and Vandenberghe,
+Convex Optimization, section 4.4
+<https://www.stanford.edu/~boyd/cvxbook/bv_cvxbook.pdf>`_. Section 5.5.3 supplies
+the trusted convex
+Karush--Kuhn--Tucker (KKT) sufficiency rule used below. The implementation checks
+that rule's algebraic premises; it is not a general matrix optimization engine.
+
 For :math:`a>0`, the unconstrained minimizer is
 :math:`(v_2-c)/a`; the constrained candidate is its projection onto the feasible
 interval. Each inequality is represented as :math:`a_iw\geq b_i`. The code
@@ -142,3 +153,6 @@ using the optional ``research`` dependencies. It compares objective values and
 weights with the exact certificate and is labelled a numerical observation.
 The example does not establish multivariate convexity for larger covariance
 matrices, estimate moments, or prove a stochastic investment policy optimal.
+
+Continue with :doc:`participation-execution` to express limits as model
+components and see a formula replacement block a closed-form optimizer.
