@@ -2,6 +2,7 @@
 
 import json
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import replace
@@ -10,7 +11,7 @@ import pytest
 
 from examples.research_models._reporting import _provenance, write_reports
 from examples.research_models._study import Blocked, Computation, Study, Variant
-from examples.research_models.study import MODELS, build_collection, write_collection
+from examples.research_models.study import MODELS, build_collection, main, write_collection
 from modello import InstanceDummy
 from modello.contrib.research import Method, ResearchCase, ResearchModel, positive
 
@@ -26,7 +27,7 @@ def _check(report, name):
     return next(item for item in report["checks"] if item["id"] == name)
 
 
-def test_all_model_subdirectories_export_evidence_results_figures_and_provenance(compact_collection):
+def test_all_model_subdirectories_export_evidence_results_figures_and_provenance(compact_collection, monkeypatch):
     directory, payload = compact_collection
     assert set(payload["studies"]) == set(MODELS)
     assert payload["selection"] == list(MODELS)
@@ -43,7 +44,17 @@ def test_all_model_subdirectories_export_evidence_results_figures_and_provenance
         assert {"overview.svg", "overview.png"} == set(study["figures"])
         for filename in study["figures"]:
             assert (output / "figures" / filename).stat().st_size > 1000
-    assert "deserialized or executed" in (directory / "report.html").read_text()
+    html = (directory / "report.html").read_text()
+    assert "deserialized or executed" in html
+    command = re.search(r"<pre>(python -m examples\.research_models[^<]*)</pre>", html)
+    assert command is not None
+    calls = []
+    monkeypatch.setattr(
+        "examples.research_models.study.write_collection", lambda output, **settings: calls.append((output, settings))
+    )
+    main(shlex.split(command.group(1))[3:])
+    assert len(calls) == 1 and calls[0][0].name == "OUTPUT_DIRECTORY"
+    assert calls[0][1] == {"models": list(MODELS), "numerical": True, "compact": True}
 
 
 def test_bsm_keeps_exact_identities_and_numerical_quadrature_separate(compact_collection):
@@ -84,23 +95,26 @@ def test_piecewise_regularity_and_nested_certificates_are_exported(compact_colle
     assert "untrusted_stopping" in variant["blocked"]
 
 
-def test_symbolic_report_writer_escapes_labels_and_never_needs_optional_dependencies(tmp_path):
+@pytest.mark.parametrize("key", ("tiny", "markowitz"))
+def test_symbolic_report_writer_escapes_labels_and_never_needs_optional_dependencies(tmp_path, key):
     class Tiny(ResearchModel):
         value = InstanceDummy("value", real=True)
 
     case = ResearchCase.for_model(Tiny).observe(value=2)
     result = case.run(Method("scalar result", lambda current: current.expression("value")))
     study = Study(
-        "tiny", "<script>bad title</script>", "a < b", (), {"<branch>": Variant(case, {"result": Computation(result)})}
+        key, "<script>bad title</script>", "a < b", (), {"<branch>": Variant(case, {"result": Computation(result)})}
     )
     payload = write_reports((study,), tmp_path, numerical=False, compact=True)
-    html = (tmp_path / "tiny" / "report.html").read_text()
+    html = (tmp_path / key / "report.html").read_text()
     assert "<script>" not in html and "&lt;script&gt;" in html
     assert "&lt;branch&gt;" in html
-    assert payload["studies"]["tiny"]["variants"]["<branch>"]["computations"]["result"]["data"] == "2"
-    assert payload["studies"]["tiny"]["figures"] == []
-    assert payload["selection"] == ["tiny"]
-    assert "--models tiny" in (tmp_path / "report.html").read_text()
+    assert payload["studies"][key]["variants"]["<branch>"]["computations"]["result"]["data"] == "2"
+    assert payload["studies"][key]["figures"] == []
+    assert payload["selection"] == [key]
+    index = (tmp_path / "report.html").read_text()
+    assert "python -m examples.research_models" not in index
+    assert "constructing Python code" in index
 
 
 @pytest.mark.parametrize("collision", ("variant", "computation", "nested", "blocked", "combined", "case", "long"))

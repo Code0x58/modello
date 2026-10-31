@@ -276,7 +276,14 @@ def write_collection(directory: Path, *, models: Iterable[str] = MODELS, numeric
     from ._reporting import write_reports
 
     studies = build_collection(models=models, numerical=numerical, compact=compact)
-    return write_reports(studies, Path(directory), numerical=numerical, compact=compact)
+    command = (
+        "python -m examples.research_models --output OUTPUT_DIRECTORY"
+        + " --models "
+        + " ".join(study.key for study in studies)
+        + (" --compact" if compact else "")
+        + (" --symbolic-only" if not numerical else "")
+    )
+    return write_reports(studies, Path(directory), numerical=numerical, compact=compact, replay_command=command)
 
 
 def main(argv: list[str] | None = None) -> None:

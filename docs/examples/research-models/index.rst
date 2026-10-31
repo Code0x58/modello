@@ -31,6 +31,11 @@ also have their own runners. JSON is an audit export, not an executable case
 file; replay uses the Python source and records dependency versions, exact
 inputs, source fingerprints, and numerical settings.
 
+The collection runner supplies its replay command to the report writer. A custom
+study's key labels its output directory; replay uses the Python code that
+constructed its cases and computations. When reusing ``write_reports``, pass
+``replay_command`` to document that code's entry point.
+
 .. toctree::
    :maxdepth: 1
 

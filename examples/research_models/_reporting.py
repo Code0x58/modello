@@ -232,8 +232,10 @@ def _variant(variant: Variant, label: str, directory: Path, filenames: set[str])
     return encoded, html, fact_rows
 
 
-def write_reports(studies: tuple[Study, ...], directory: Path, *, numerical: bool, compact: bool):
-    """Write each model to its own subdirectory and one collection index."""
+def write_reports(
+    studies: tuple[Study, ...], directory: Path, *, numerical: bool, compact: bool, replay_command: str | None = None
+):
+    """Write studies and an optional caller-supplied command for constructing them."""
     directory.mkdir(parents=True, exist_ok=True)
     payload: dict[str, Any] = {
         "schema_version": 1,
@@ -320,18 +322,16 @@ def write_reports(studies: tuple[Study, ...], directory: Path, *, numerical: boo
         if numerical
         else "Symbolic replay using SymPy"
     )
-    command = (
-        "python -m examples.research_models --output OUTPUT_DIRECTORY"
-        + " --models "
-        + " ".join(study.key for study in studies)
-        + (" --compact" if compact else "")
-        + (" --symbolic-only" if not numerical else "")
+    replay = (
+        f"<pre>{escape(replay_command)}</pre>"
+        if replay_command is not None
+        else "<p>Replay custom studies with their constructing Python code.</p>"
     )
     body = (
         f"<p>{selection}. {mode}.</p><p>Each sub-example separates mathematical validity, "
         "optional economic restrictions, and method contracts. Exact identities, trusted theorem premises, "
         "numerical comparisons, and blocked computations remain distinct in the evidence.</p>"
-        f"{''.join(cards)}<h2>Replay and provenance</h2><pre>{escape(command)}</pre>"
+        f"{''.join(cards)}<h2>Replay and provenance</h2>{replay}"
         '<p><a href="collection.json">Complete JSON audit, source fingerprints, versions and solver settings</a></p>'
         f"<p>Source revision: <code>{escape(str(payload['provenance']['git_revision']))}</code>; "
         f"working tree dirty: {payload['provenance']['working_tree_dirty']}.</p>"
