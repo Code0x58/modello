@@ -6,9 +6,9 @@ Start with the locked environment and validation commands, then follow the PR
 review steps. Use the architecture sections to locate the implementation of a
 behavior; the final sections cover documentation hosting and releases.
 
-Use uv 0.13.1 or newer. The library and CI support Python 3.10 through 3.15.
-Documentation tooling requires Python 3.12 or newer; notebook tooling has its
-own optional Python 3.11+ group. All environments share the root ``uv.lock``.
+Use uv 0.13.1 or newer. The library and CI support Python 3.11 through 3.15.
+Documentation tooling requires Python 3.12 or newer. Notebook tooling is an
+optional dependency group. All environments share the root ``uv.lock``.
 The ``docs`` group includes pandas and Polars for Sphinx-tested recipes, which
 the ordinary pytest suite excludes.
 
@@ -57,12 +57,8 @@ Combine overlapping checks instead of repeating full symbolic or numerical
 studies; retain distinct boundary cases and method gates.
 
 CI runs the complete suite on every supported Python version. Python 3.14
-collects full-library coverage. Python 3.10 collects coverage for
-``modello._enums`` through the string-enum compatibility checks, after running
-the complete suite without tracing. The other versions run without coverage
-instrumentation. This covers both runtime paths while limiting tracing overhead
-on the oldest interpreter. Keep this check aligned with new version-dependent
-code. Test jobs retain the 15-minute limit and export their full-suite results.
+collects full-library coverage; the other versions run without tracing.
+Test jobs retain the 15-minute limit and export their full-suite results.
 The full local coverage command in
 ``AGENTS.md`` remains the required validation before committing.
 
@@ -194,7 +190,9 @@ Text and LaTeX contexts receive the explicit vector schema, including public and
 chart aliases. They choose names within the current component without guessing
 vector identities from their scalar coordinate paths.
 
-``_enums.py`` shares string-enum compatibility between core modules.
+Keep behavior for a closed enum on the enum itself. Use ``match`` with a final
+``assert_never`` case so type checking rejects a missing implementation when a
+member is added. Python 3.11 provides native ``StrEnum`` and ``assert_never``.
 ``_values.py`` holds structural input types; ``_symbols.py`` owns independent
 quantity identities and local indices. ``vectors.py`` implements immutable
 scalar containers and finite comprehensions without importing model or GUI

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, TypeVar, assert_never, cast
 
 from sympy import (
     And,
@@ -35,7 +36,6 @@ from sympy import (
     sympify,
 )
 
-from modello._enums import StrEnum
 from modello.errors import ModelInputError
 
 if TYPE_CHECKING:
@@ -260,15 +260,23 @@ class _SignPredicate(StrEnum):
     ZERO = "zero"
     NONZERO = "nonzero"
 
-
-_SIGN_RELATIONS: Mapping[str, Callable[[Expr], Basic]] = {
-    _SignPredicate.POSITIVE: lambda value: value > 0,
-    _SignPredicate.NONNEGATIVE: lambda value: value >= 0,
-    _SignPredicate.NEGATIVE: lambda value: value < 0,
-    _SignPredicate.NONPOSITIVE: lambda value: value <= 0,
-    _SignPredicate.ZERO: lambda value: Eq(value, 0),
-    _SignPredicate.NONZERO: lambda value: ~Eq(value, 0),
-}
+    def condition(self, value: Expr) -> Basic:
+        """Express this sign assumption as a relation on a real scalar."""
+        match self:
+            case _SignPredicate.POSITIVE:
+                return value > 0
+            case _SignPredicate.NONNEGATIVE:
+                return value >= 0
+            case _SignPredicate.NEGATIVE:
+                return value < 0
+            case _SignPredicate.NONPOSITIVE:
+                return value <= 0
+            case _SignPredicate.ZERO:
+                return Eq(value, 0)
+            case _SignPredicate.NONZERO:
+                return ~Eq(value, 0)
+            case _ as unexpected:
+                assert_never(unexpected)
 
 
 def _value_condition(assumptions: Mapping[str, bool], value: Expr) -> Basic:
@@ -284,12 +292,15 @@ def _value_condition(assumptions: Mapping[str, bool], value: Expr) -> Basic:
             continue
         if not hasattr(Q, predicate):
             raise ModelInputError(f"Symbolic laws do not support the {predicate!r} assumption")
-        relation = _SIGN_RELATIONS.get(predicate)
-        if value.is_real is True and relation is not None:
-            # Solvers can consume these relations directly. For other values
-            # or assumptions, retain SymPy's predicate without an order claim.
-            condition = relation(value)
-        else:
-            condition = getattr(Q, predicate)(value)
+        sign = None
+        if value.is_real is True:
+            try:
+                sign = _SignPredicate(predicate)
+            except ValueError:
+                # SymPy's assumption vocabulary also includes non-sign keys.
+                pass
+        # Solvers can consume real sign relations directly. Other values or
+        # assumptions retain SymPy's predicate without an order claim.
+        condition = sign.condition(value) if sign is not None else getattr(Q, predicate)(value)
         conditions.append(condition if expected else ~condition)
     return And(*conditions)

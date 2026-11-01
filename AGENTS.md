@@ -12,7 +12,7 @@ Use uv 0.13.1 or newer. Before committing, run the relevant checks from CI:
 
 Format code with `uv run --dev ruff format .`. Keep `docs/` up to date with
 user-facing behavior, API, and workflow changes. Test and document new behavior;
-documentation must compile without warnings. The library supports Python 3.10+.
+documentation must compile without warnings. The library supports Python 3.11+.
 
 Commit `uv.lock` after dependency updates. Release publishing must validate the
 release commit and tag, then publish only the validated distribution artifact

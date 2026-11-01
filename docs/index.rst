@@ -5,7 +5,7 @@ Express a problem as named quantities and relationships, then supply the
 observations you have. The same model can calculate results, infer missing
 inputs, or keep a formula while an input is unknown.
 
-Install with Python 3.10 or newer:
+Install with Python 3.11 or newer:
 
 .. code-block:: console
 

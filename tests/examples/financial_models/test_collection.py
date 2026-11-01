@@ -179,8 +179,12 @@ def test_collection_imports_are_lightweight_and_module_entrypoint_is_guarded():
     subprocess.run([sys.executable, "-c", program], check=True, capture_output=True, text=True)
 
 
-def test_invalid_model_selections_fail_before_running_unrelated_studies():
-    for selected in ((), ("unknown-model",)):
+def test_invalid_model_selections_fail_before_running_unrelated_studies(monkeypatch):
+    def unexpected_builder(**settings):
+        pytest.fail("Invalid selections must be rejected before any study is built")
+
+    monkeypatch.setattr("examples.financial_models.study._markowitz", unexpected_builder)
+    for selected in ((), ("unknown-model",), ("markowitz", "unknown-model")):
         with pytest.raises(ValueError, match="Select one or more"):
             build_collection(models=selected, numerical=False)
 

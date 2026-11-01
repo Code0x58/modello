@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "modello"
 description = "sympy expressions in models"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT AND OFL-1.1"
 license-files = ["LICENSE", "modello/_gui/static/fonts/OFL.txt"]
 authors = [{name = "Oliver Bristow", email = "github+pypi@oliverbristow.co.uk"}]
@@ -19,7 +19,6 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -75,7 +74,6 @@ modello = { workspace = true }
 
 [tool.uv.dependency-groups]
 docs = { requires-python = ">=3.12" }
-notebooks = { requires-python = ">=3.11" }
 
 [tool.setuptools.packages.find]
 include = ["modello", "modello._gui", "modello.contrib", "modello.contrib.verification", "examples", "examples.*"]
@@ -104,7 +102,7 @@ branch = true
 directory = "artefacts/reports/coverage-html"
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 ignore_missing_imports = true
 cache_dir = "artefacts/reports/.mypy_cache"
 exclude = ["^build/", "^docs/_build/", "^artefacts/", "^dist/"]
@@ -117,7 +115,7 @@ disallow_untyped_decorators = true
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]

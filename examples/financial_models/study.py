@@ -15,9 +15,10 @@ from sympy import Rational, S
 
 from modello.contrib.verification import VerificationContext, VerificationError, VerificationReport, VerificationResult
 
+from ._models import _BuiltinModel
 from ._study import Blocked, Computation, Study, Variant
 
-MODELS = ("black-scholes", "participation-execution", "markowitz", "cir-bond", "perpetual-put")
+MODELS = tuple(model.value for model in _BuiltinModel)
 
 
 def _attempt(call: Callable[[], VerificationResult], *, kind="exact scalar verification"):
@@ -263,11 +264,14 @@ def _perpetual(*, numerical: bool, compact: bool) -> Study:
 
 def build_collection(*, models: Iterable[str] = MODELS, numerical=True, compact=False) -> tuple[Study, ...]:
     """Build named studies without importing unrelated model modules."""
-    builders = dict(zip(MODELS, (_black_scholes, _participation, _markowitz, _cir, _perpetual), strict=True))
     selected = tuple(dict.fromkeys(models))
-    if not selected or any(name not in builders for name in selected):
+    if not selected:
         raise ValueError(f"Select one or more model names from {MODELS}")
-    return tuple(builders[name](numerical=numerical, compact=compact) for name in selected)
+    try:
+        builtins = tuple(_BuiltinModel(name) for name in selected)
+    except ValueError:
+        raise ValueError(f"Select one or more model names from {MODELS}") from None
+    return tuple(model.build(numerical=numerical, compact=compact) for model in builtins)
 
 
 def write_collection(directory: Path, *, models: Iterable[str] = MODELS, numerical=True, compact=False):

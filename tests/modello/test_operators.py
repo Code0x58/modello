@@ -27,10 +27,12 @@ def test_real_sign_assumptions_preserve_relational_guards(predicate, truth_at_ne
         assert negative.subs(value, point) is (S.false if truth else S.true)
 
 
-def test_other_assumptions_retain_the_native_sympy_predicate():
-    value = Symbol("value")
-    assert _value_condition({"finite": True}, value) == Q.finite(value)
-    assert _value_condition({"finite": False}, value) == ~Q.finite(value)
+@pytest.mark.parametrize("predicate,assumptions", (("finite", {}), ("integer", {"real": True})))
+def test_other_assumptions_retain_the_native_sympy_predicate(predicate, assumptions):
+    value = Symbol("value", **assumptions)
+    condition = getattr(Q, predicate)(value)
+    assert _value_condition({predicate: True}, value) == condition
+    assert _value_condition({predicate: False}, value) == ~condition
 
 
 def test_sign_assumptions_do_not_order_an_unestablished_real_value():

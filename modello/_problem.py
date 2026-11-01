@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, Mapping, TypeVar
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, Mapping, TypeVar, assert_never
 
 from sympy import Basic, Expr, FiniteSet, Interval, S, Set, Symbol
 from sympy.printing.str import StrPrinter
 
-from modello._enums import StrEnum
 from modello._expressions import _DefinitionResolver, _expand_definitions
 from modello._operators import _scalar_expression, _SymbolicTemplate
 from modello._paths import FieldPath as FieldPath, _path_label
@@ -23,7 +23,26 @@ if TYPE_CHECKING:
 ModelT = TypeVar("ModelT", bound="Modello")
 
 Status = Literal["consistent", "inconsistent", "unknown"]
-Verdict = Literal["satisfied", "violated", "unknown"]
+
+
+class Verdict(StrEnum):
+    """A candidate check's string label and three-valued truth."""
+
+    SATISFIED = "satisfied"
+    VIOLATED = "violated"
+    UNKNOWN = "unknown"
+
+    def truth_value(self) -> bool | None:
+        """Return True for satisfaction, False for violation, None if undecided."""
+        match self:
+            case Verdict.SATISFIED:
+                return True
+            case Verdict.VIOLATED:
+                return False
+            case Verdict.UNKNOWN:
+                return None
+            case _ as unexpected:
+                assert_never(unexpected)
 
 
 class ConstraintKind(StrEnum):
@@ -145,6 +164,9 @@ class ResidualCheck:
     residual: Basic
     verdict: Verdict
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "verdict", Verdict(self.verdict))
+
 
 @dataclass(frozen=True)
 class AssumptionCheck:
@@ -165,11 +187,14 @@ class CandidateCheck:
     assumptions: tuple[AssumptionCheck, ...]
     verdict: Verdict
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "verdict", Verdict(self.verdict))
+
 
 def _assumptions_verdict(checks: tuple[AssumptionCheck, ...]) -> Verdict:
     if any(check.actual is not None and check.actual != check.expected for check in checks):
-        return "violated"
-    return "satisfied" if all(check.actual == check.expected for check in checks) else "unknown"
+        return Verdict.VIOLATED
+    return Verdict.SATISFIED if all(check.actual == check.expected for check in checks) else Verdict.UNKNOWN
 
 
 def _common_prefix(left: FieldPath, right: FieldPath) -> FieldPath:

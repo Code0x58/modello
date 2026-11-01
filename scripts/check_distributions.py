@@ -26,7 +26,7 @@ assert Path(modello.__file__).resolve().is_relative_to(Path(sys.prefix).resolve(
 distribution = metadata.distribution("modello")
 assert distribution.metadata["License-Expression"] == "MIT AND OFL-1.1"
 assert distribution.metadata.get_all("License-File")
-assert distribution.metadata["Requires-Python"] == ">=3.10"
+assert distribution.metadata["Requires-Python"] == ">=3.11"
 assert Path(modello.__file__).with_name("py.typed").is_file()
 assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
 assert "gui" in distribution.metadata.get_all("Provides-Extra", ())

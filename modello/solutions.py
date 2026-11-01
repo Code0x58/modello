@@ -575,11 +575,11 @@ class SolutionFamily(Generic[ModelT]):
             _evaluate_predicates(_evaluate(_substitute(self._formulae.resolve.operators(condition), assignment)))
             for condition in self.conditions
         )
-        if check.verdict == "violated" or any(condition is S.false for condition in conditions):
-            return check, "violated"
-        if check.verdict == "satisfied" and all(condition is S.true for condition in conditions):
-            return check, "satisfied"
-        return check, "unknown"
+        if check.verdict == Verdict.VIOLATED or any(condition is S.false for condition in conditions):
+            return check, Verdict.VIOLATED
+        if check.verdict == Verdict.SATISFIED and all(condition is S.true for condition in conditions):
+            return check, Verdict.SATISFIED
+        return check, Verdict.UNKNOWN
 
     def section(self, *controls: SymbolicScalar, through: ModelT) -> SolutionFamily[ModelT]:
         """Vary chosen coordinates and fix all other coordinates at a checked case.
@@ -612,9 +612,9 @@ class SolutionFamily(Generic[ModelT]):
             values.append(FieldValue(field, _exact_scalar(value)))
         candidate = Candidate(tuple(values))
         check, verdict = self._check_state(candidate)
-        if verdict == "violated":
+        if verdict == Verdict.VIOLATED:
             raise ModelValidationError("The reference state must satisfy the model and all family observations")
-        if verdict != "satisfied":
+        if verdict != Verdict.SATISFIED:
             raise UnresolvedSolutionError(self, "The reference state could not be verified.", check)
         fixed = tuple(Eq(field.symbol, candidate.value(field)) for field in self.parameters if field not in selected)
         return self._prepare(self.problem, tuple(selected), (*self.conditions, *fixed)) if fixed else self
@@ -641,7 +641,7 @@ class SolutionFamily(Generic[ModelT]):
             )
             candidate = Candidate(values)
             check, verdict = self._check_state(candidate)
-            if verdict != "satisfied":
+            if verdict != Verdict.SATISFIED:
                 raise UnresolvedSolutionError(self, "A state could not be verified against the original model.", check)
             fresh = self.problem._fresh()
             fields = {field.path: field.symbol for field in fresh.fields}

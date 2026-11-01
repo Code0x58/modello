@@ -423,7 +423,7 @@ class WindowValidator:
                 candidate, atol=self._atol, rtol=self._rtol
             )
             verdict = _assumptions_verdict(evidence.assumptions) if is_domain else evidence.residuals[0].verdict
-            valid = {"satisfied": True, "violated": False, "unknown": None}[verdict]
+            valid = verdict.truth_value()
             if is_domain:
                 reason = observation.problem or "unresolved numeric value"
                 if observation.problem:

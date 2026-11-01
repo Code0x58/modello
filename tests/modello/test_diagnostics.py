@@ -16,7 +16,7 @@ from modello import (
     component,
     inspect_model,
 )
-from modello.diagnostics import Candidate, FieldValue
+from modello.diagnostics import Candidate, FieldValue, Verdict
 
 from ._models import Check, Operators, Reading, Scalar, Sum, Wave
 
@@ -348,17 +348,20 @@ def test_parameter_conditions_and_floats_are_not_generic_rank_proofs():
 
 
 @pytest.mark.parametrize(
-    "value, verdict",
+    "value, verdict, truth",
     [
-        pytest.param(S.One, "satisfied", id="positive"),
-        pytest.param(S.Zero, "violated", id="outside-domain"),
-        pytest.param(S.NaN, "violated", id="undefined"),
-        pytest.param(Symbol("unknown"), "unknown", id="undecided"),
+        pytest.param(S.One, "satisfied", True, id="positive"),
+        pytest.param(S.Zero, "violated", False, id="outside-domain"),
+        pytest.param(S.NaN, "violated", False, id="undefined"),
+        pytest.param(Symbol("unknown"), "unknown", None, id="undecided"),
     ],
 )
-def test_candidate_audits_check_domains_and_definedness(positive_problem, value, verdict):
+def test_candidate_audits_check_domains_and_definedness(positive_problem, value, verdict, truth):
     candidate = Candidate((FieldValue(positive_problem.field("x"), value),))
-    assert positive_problem.check(candidate).verdict == verdict
+    audit = positive_problem.check(candidate)
+    assert audit.verdict == verdict
+    assert isinstance(audit.verdict, Verdict)
+    assert audit.verdict.truth_value() is truth
 
 
 def test_a_derived_pole_is_an_undefined_deduction():

@@ -10,7 +10,7 @@ a symbolic formula. [SymPy](https://www.sympy.org/) handles the algebra.
 pip install modello
 ```
 
-Requires Python 3.10+ and SymPy 1.14+.
+Requires Python 3.11+ and SymPy 1.14+.
 
 ## Start with a relationship
 

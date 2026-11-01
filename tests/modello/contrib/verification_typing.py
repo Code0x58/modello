@@ -21,7 +21,7 @@ class TypedCurve(VerificationModel):
 
 
 if TYPE_CHECKING:
-    from typing_extensions import assert_type
+    from typing import assert_type
 
     context = VerificationContext.for_model(TypedCurve)
     assert_type(context, VerificationContext[TypedCurve])

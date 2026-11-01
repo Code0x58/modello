@@ -77,14 +77,13 @@ def _join(expression: Piecewise, variable: Symbol):
     condition = first.cond
     if not isinstance(condition, Relational) or condition.rel_op not in {"<", "<=", ">", ">="}:
         return None
-    operation = condition.rel_op
-    if condition.lhs == variable:
-        point = condition.rhs
-    elif condition.rhs == variable:
-        point = condition.lhs
-        operation = {"<": ">", "<=": ">=", ">": "<", ">=": "<="}[operation]
-    else:
+    # Let SymPy reverse the relation while putting the join variable on the left.
+    if condition.rhs == variable:
+        condition = condition.reversed
+    if condition.lhs != variable:
         return None
+    point = condition.rhs
+    operation = condition.rel_op
     if point.free_symbols or point.is_real is not True or point.is_finite is not True:
         return None
     if first.expr.has(Piecewise) or final.expr.has(Piecewise):

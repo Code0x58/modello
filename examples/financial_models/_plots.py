@@ -10,10 +10,10 @@ from math import erf, erfc, isfinite
 from pathlib import Path
 from typing import Any
 
+from ._models import _BuiltinModel
 from ._study import Study, Variant
 
 _COLORS = ("#2563eb", "#d97706", "#0f766e", "#7c3aed", "#be185d", "#475569")
-_SUPPORTED = frozenset({"black-scholes", "participation-execution", "markowitz", "cir-bond", "perpetual-put"})
 
 
 class _Unresolved(ValueError):
@@ -565,8 +565,10 @@ def write_figure(study: Study, directory: Path) -> tuple[str, ...]:
     expressions. Unsupported study keys raise ``ValueError`` before optional
     dependencies are loaded or files are created.
     """
-    if study.key not in _SUPPORTED:
-        raise ValueError(f"Unsupported study key: {study.key!r}")
+    try:
+        model = _BuiltinModel(study.key)
+    except ValueError:
+        raise ValueError(f"Unsupported study key: {study.key!r}") from None
 
     import numpy as np
     from matplotlib import rc_context
@@ -574,13 +576,6 @@ def write_figure(study: Study, directory: Path) -> tuple[str, ...]:
     from matplotlib.figure import Figure
     from sympy import diff, lambdify
 
-    renderers = {
-        "black-scholes": _black_scholes,
-        "participation-execution": _participation,
-        "markowitz": _markowitz,
-        "cir-bond": _cir,
-        "perpetual-put": _perpetual,
-    }
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     with rc_context(
@@ -612,7 +607,7 @@ def write_figure(study: Study, directory: Path) -> tuple[str, ...]:
         FigureCanvasAgg(figure)
         try:
             plot = _Plot(figure, np, lambdify, diff)
-            renderers[study.key](study, plot)
+            model.render(study, plot)
             plot.finish(study)
             figure.savefig(
                 directory / "overview.svg", metadata={"Date": None, "Creator": "Modello financial model studies"}

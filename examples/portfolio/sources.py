@@ -16,8 +16,8 @@ from examples.portfolio.models import Equity
 
 
 def timestamp(value: str) -> datetime:
-    """Read an ISO timestamp with an explicit offset, including Z on Python 3.10."""
-    return utc_time(datetime.fromisoformat(value.replace("Z", "+00:00")))
+    """Read an ISO timestamp with an explicit offset or UTC designator Z."""
+    return utc_time(datetime.fromisoformat(value))
 
 
 def finite(*values: float) -> None:
