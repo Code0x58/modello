@@ -9,32 +9,28 @@ from a model's definitions, observations, and assumptions. These properties
 become **proof obligations**: statements to establish before a computation
 that needs them can run.
 
-This is deductive verification of mathematical model properties. A
-``VerificationContext`` supplies the premises :math:`\Gamma`; an
-``Obligation`` states a proposition :math:`P`. The verifier attempts to
-establish :math:`\Gamma\vdash P` using supported scalar rules and explicitly
-registered inference rules. It checks context consistency separately and
-retains conditional, refuted, and unresolved results for exploration.
-
 This guide is for researchers who use Python and SymPy to express models.
 :doc:`/getting-started` introduces Modello's quantities, components, and
 observations. The symbolic workflow below uses the regular ``modello``
 installation; numerical and plotting dependencies are needed for the later
 worked studies.
 
-Work through one small loop first: declare a requirement, inspect its verdict,
+Work through one small loop first: specify a property, inspect its verdict,
 add an assumption or observation, run a method, and export its evidence.
-Then revise a premise or try a proof hint before following a :doc:`worked model
+Then revise a premise or try a bound hint before following a :doc:`worked model
 <../examples/financial-models/index>`. Detailed replacement and proof-domain
 rules follow the walkthrough as reference material.
 
-Declare a function and its requirements
----------------------------------------
+.. _declare-a-function-and-its-requirements:
 
-Suppose a valuation needs a smooth utility function that prefers more
-wealth. Keep risk aversion as an unrestricted real parameter so you can ask
-which values make the method applicable. ``VerificationModel`` checks each
-declaration, and ``specifies`` attaches the properties the valuation needs:
+Specify a function and its properties
+-------------------------------------
+
+Suppose a valuation needs a utility function that prefers more wealth and has
+continuous first and second derivatives. Keep risk aversion unrestricted so
+you can ask which values make the method applicable. ``VerificationModel``
+checks each declaration, and ``specifies`` attaches the properties the
+valuation needs:
 
 >>> from sympy import exp
 >>> from modello import Coordinate, InstanceDummy
@@ -61,8 +57,8 @@ declaration, and ``specifies`` attaches the properties the valuation needs:
 
 Each property function returns an ``Obligation``. The ``wrt`` path selects
 the variable; ``reason`` explains why the computation needs that property.
-Here ``continuously_differentiable(order=2)`` requires continuous first and second derivatives,
-the usual C2 condition.
+Here ``continuously_differentiable(order=2)`` requires continuous first and
+second derivatives, the usual C2 condition.
 
 In this declaration, ``wealth`` is the curve's argument, represented by a
 ``Coordinate``. These properties are checked over the real line. ``gamma`` is
@@ -96,9 +92,9 @@ make the utility's parameter condition explicit on a case.
 Branch assumptions and observations
 -----------------------------------
 
-A ``VerificationContext`` combines a declaration with assumptions and observations.
-Create an early case as a common branch point, then use its actual symbols
-when stating assumptions:
+A ``VerificationContext`` combines a model declaration with the assumptions
+and observations for one case. Create it as a common branch point, then use
+its actual symbols when stating assumptions:
 
 >>> case = VerificationContext.for_model(Utility)
 >>> needed = case.explain("value/strictly_increasing")
@@ -115,8 +111,9 @@ True
 ``observe`` accepts the same scalar and component observations as model
 inspection. It retains the original equations and input provenance through the
 existing solution-family machinery. Observations accumulate; use a new branch
-from the earlier case to change one. Exact research uses exact values, such as
-``Rational("0.1")``; numerical tolerances belong to a numerical method's settings.
+from the earlier case to change one. Use exact values, such as
+``Rational("0.1")``, for symbolic checks. Numerical tolerances belong to a
+numerical method's settings.
 
 ``VerificationContext.for_model`` also accepts an ordinary ``Modello`` class, which
 then receives checks when explicitly inspected.
@@ -153,11 +150,13 @@ needed:
 ...     print(error.report.explain("value/strictly_increasing").verdict)
 conditionally true
 
-``VerificationError`` retains both the case and its report. Methods check their
-explicit requirements and the relevant declaration and automatic-operation
-requirements before executing. Unrelated open claims remain available in the
-report. Case-specific method factories and trusted inference rules are described
-under :ref:`verification-method-reference`.
+``VerificationError`` retains the originating context in ``context`` and its
+evidence in ``report``. Before calling ``Method.execute``, ``run`` requires
+established evidence for the method's explicit preconditions and the
+applicable obligations from declarations and symbolic operations. Unrelated
+open claims remain available in the report. Context-specific method factories
+and trusted inference rules are described under
+:ref:`verification-method-reference`.
 
 Inspect and export evidence
 ---------------------------
@@ -184,8 +183,10 @@ keeps a successful equality readable even when both evaluated sides become
 the same number. The JSON remains descriptive; it cannot reconstruct a case
 or execute a stored formula.
 
-Revise an assumption or requirement
------------------------------------
+.. _revise-an-assumption-or-requirement:
+
+Revise assumptions and obligations
+----------------------------------
 
 Explicit assumptions can be removed on a new branch, with a recorded reason:
 
@@ -199,7 +200,7 @@ Explicit assumptions can be removed on a new branch, with a recorded reason:
 The report records why an explicit premise changed. Declared symbol domains
 and existing observations remain part of the case.
 
-An exploratory requirement can also be added and retired on a branch:
+You can add a proof obligation for exploration, then retire it on a new branch:
 
 >>> exploratory = case.with_obligations(positive("gamma", name="positive_risk"))
 >>> exploratory.verify().explain("positive_risk").verdict
@@ -211,8 +212,8 @@ An exploratory requirement can also be added and retired on a branch:
 >>> restored.verify().explain("value/strictly_increasing").verdict
 'conditionally true'
 
-Retiring this case-added claim leaves the utility's declared requirements in
-place. A method still checks the premises its computation needs.
+Retiring this added obligation leaves the utility's declared obligations
+in place. A method still needs evidence for its preconditions.
 
 Check consistency when combining assumptions. Contradictory premises produce
 an inconsistent report and cannot establish a result:
@@ -221,12 +222,14 @@ an inconsistent report and cannot establish a result:
 >>> impossible.consistent, impossible.checks[0].verdict
 (False, 'unresolved')
 
-Check a proposed proof
-----------------------
+.. _check-a-proposed-proof:
+
+Propose a uniform bound
+-----------------------
 
 An unresolved result can call for a mathematical argument rather than a new
-parameter value. A logistic trade-arrival intensity has a curvature-bound
-requirement that illustrates this distinction:
+parameter value. A logistic trade-arrival intensity has a uniform
+derivative-ratio obligation that illustrates this distinction:
 
 >>> from examples.market_making_study import LogisticIntensity
 >>> logistic = VerificationContext.for_model(LogisticIntensity)
@@ -242,7 +245,7 @@ proposed uniform upper bound 1 and that :math:`1<2`. The nonzero derivative
 premise is checked before cancellation. A pointwise inequality strictly below
 2 would not by itself establish a supremum strictly below 2.
 
-An incorrect hint leaves the requirement unresolved; it does not refute the property.
+An incorrect hint leaves the obligation unresolved; it does not refute the property.
 The ``upper`` value is a proposed proof aid, not an assumption or a requirement
 that is accepted without checking. A uniform target bound must also be
 independent of the quantified coordinate, including after resolving aliases.
@@ -270,7 +273,8 @@ Reference: contracts, domains, and proof limits
 
 Use these rules when a replacement or proof attempt needs closer inspection.
 The :ref:`API reference <verification-api>` below lists the workflow objects and
-property functions.
+property functions. For a study written against the earlier draft, see the
+:ref:`name migration tables <verification-draft-migration>`.
 
 Specifications, obligations, and inference rules
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -280,6 +284,13 @@ The terminology follows deductive verification, as used in the
 Here the verified subjects are mathematical expressions and their domains.
 ``Method.execute`` is ordinary Python code whose implementation remains part
 of the study's trust boundary.
+
+This is deductive verification of mathematical model properties. A
+``VerificationContext`` supplies the premises :math:`\Gamma`; an
+``Obligation`` states a proposition :math:`P`. The verifier attempts to
+establish :math:`\Gamma\vdash P` using supported scalar rules and explicitly
+registered inference rules. It checks context consistency separately and
+retains conditional, refuted, and unresolved results for exploration.
 
 * A **specification** states desired properties of a declaration.
   ``specifies`` attaches these properties to a field or model; their truth
@@ -305,76 +316,6 @@ obligation unresolved. ``VerificationModel`` automatically checks declarations;
 its name does not assert that every declaration has been established.
 ``expression``, ``observe``, ``replace``, ``sample``, ``explain``, and ``run``
 retain their names because they describe distinct operations on the context.
-
-Names changed from the draft research API
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The earlier ``modello.contrib.research`` namespace was a draft on this branch.
-Use the following names throughout code, reports, and studies. The extension
-has one public vocabulary, without compatibility aliases for the draft names.
-
-.. list-table:: Workflow terminology
-   :header-rows: 1
-   :widths: 45 55
-
-   * - Draft name
-     - Current name
-   * - ``ResearchModel``
-     - ``VerificationModel``
-   * - ``ResearchCase``
-     - ``VerificationContext``
-   * - ``Requirement``
-     - ``Obligation``
-   * - ``ResearchReport``
-     - ``VerificationReport``
-   * - ``ResearchResult``
-     - ``VerificationResult``
-   * - ``ResearchError``
-     - ``VerificationError``
-   * - ``Theorem``
-     - ``InferenceRule``
-   * - ``with_theorem``
-     - ``with_rule``
-   * - ``Experiment``
-     - ``Sample``
-   * - ``requires``
-     - ``specifies``
-   * - ``require``
-     - ``with_obligations``
-   * - ``without_requirements``
-     - ``without_obligations``
-   * - ``check``
-     - ``verify``
-   * - ``with_hint``
-     - ``with_bound_hint``
-   * - ``Method.requirements``
-     - ``Method.preconditions``
-   * - ``ResearchError.case``
-     - ``VerificationError.context``
-
-.. list-table:: Mathematical property terminology
-   :header-rows: 1
-   :widths: 45 55
-
-   * - Draft name
-     - Current name
-   * - ``increasing``
-     - ``strictly_increasing``
-   * - ``decreasing``
-     - ``strictly_decreasing``
-   * - ``smooth``
-     - ``continuously_differentiable``
-   * - ``uniform_bound``
-     - ``supremum_below``
-   * - ``curvature_bound``
-     - ``derivative_ratio_bound``
-   * - ``exact_form``
-     - ``equal_to``
-   * - ``vanishes``
-     - ``tends_to_zero``
-
-The numerical extra is now ``modello[numerics]``. The example collection is
-``examples.financial_models``; its reports live under ``financial-models``.
 
 Model and component contracts
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -466,8 +407,8 @@ requirement records shared by a case and a method reuse one check, while
 conflicting uses of an ID remain definition errors.
 The same policy applies to rule premises: identical requirements reuse one
 check, while conflicting conditions need distinct ``name`` values.
-All evidence IDs, including nested theorem premise paths, must be unique within
-a report; a collision is a definition error.
+All evidence IDs, including nested inference-rule premise paths, must be unique
+within a report; a collision is a definition error.
 
 Coordinates and observation domains
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -533,9 +474,10 @@ simplifications. Use explicit ``case.assume(...)`` branches for premises that
 should persist in the study.
 
 Native substitution coordinates keep their own declared domains in cached
-bindings, proof attempts, and theorem matching. SymPy can consider two ``Subs``
-expressions mathematically equal after renaming their bound variables; that
-equality does not transfer a derivative certificate between their scopes.
+bindings, proof attempts, and inference-rule matching. SymPy can consider
+two ``Subs`` expressions mathematically equal after renaming their bound
+variables; that equality does not transfer a derivative certificate between
+their scopes.
 Coordinate discovery for component replacement visits every retained scope,
 including mathematically equal substitutions with different bound coordinates.
 For example, evaluation at zero on a real coordinate does not establish the
@@ -577,8 +519,8 @@ other discrete or disconnected domains remain unsupported by that rule.
 Obligation domains must be established to be nonempty. Empty domains, including
 reversed intervals after observing their endpoints, remain unresolved with an
 explicit diagnostic. A symbolic interval with unknown endpoint order also stays
-unresolved. This policy applies before trusted theorem application and prevents
-an empty scope from certifying a computation or supplying a refutation.
+unresolved. This policy applies before applying a trusted inference rule and
+prevents an empty scope from certifying a computation or supplying a refutation.
 
 Supported proofs cover scalar real functions on real intervals, sign and
 polynomial arguments, supported continuity domains, limits, and checked
@@ -680,8 +622,8 @@ the requested domain.
 
 A uniform-bound hint supplies a sufficient certificate. If its parameter guard
 fails, the attempted proof is unresolved; a loose hint cannot refute the bound.
-Consumed hint keys, including canonical paths and theorem-premise hints, are
-excluded from unused-hint diagnostics.
+Consumed hint keys, including canonical paths and inference-rule premise hints,
+are excluded from unused-hint diagnostics.
 
 Use deferred ``Derivative(named_quantity, coordinate)`` inside declarations.
 A named quantity acts as a symbol while the class body is collected, so eager
@@ -743,7 +685,7 @@ that resolve expressions from the supplied ``current`` case can remain unbound.
 ``InferenceRule`` registers a trusted implication with a conclusion, named premises, source,
 and version. ``with_rule`` adds it to a context. The engine recursively checks
 the premises and retains them in the conclusion's evidence. Failed premises
-make a sufficient theorem inapplicable; they do not refute its conclusion.
+make a sufficient rule inapplicable; they do not refute its conclusion.
 Circular rules remain unresolved. The inference-rule implementation and CAS form the
 trust boundary; a citation or user assertion alone supplies no proof.
 
@@ -855,3 +797,75 @@ ways to declare a requirement.
 .. autoclass:: Sample
 
 .. autoexception:: VerificationError
+
+.. _verification-draft-migration:
+
+Names changed from the draft research API
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The earlier ``modello.contrib.research`` namespace was a draft on this branch.
+Use the following names throughout code, reports, and studies. The extension
+has one public vocabulary, without compatibility aliases for the draft names.
+
+.. list-table:: Workflow terminology
+   :header-rows: 1
+   :widths: 45 55
+
+   * - Draft name
+     - Current name
+   * - ``ResearchModel``
+     - ``VerificationModel``
+   * - ``ResearchCase``
+     - ``VerificationContext``
+   * - ``Requirement``
+     - ``Obligation``
+   * - ``ResearchReport``
+     - ``VerificationReport``
+   * - ``ResearchResult``
+     - ``VerificationResult``
+   * - ``ResearchError``
+     - ``VerificationError``
+   * - ``Theorem``
+     - ``InferenceRule``
+   * - ``with_theorem``
+     - ``with_rule``
+   * - ``Experiment``
+     - ``Sample``
+   * - ``requires``
+     - ``specifies``
+   * - ``require``
+     - ``with_obligations``
+   * - ``without_requirements``
+     - ``without_obligations``
+   * - ``check``
+     - ``verify``
+   * - ``with_hint``
+     - ``with_bound_hint``
+   * - ``Method.requirements``
+     - ``Method.preconditions``
+   * - ``ResearchError.case``
+     - ``VerificationError.context``
+
+.. list-table:: Mathematical property terminology
+   :header-rows: 1
+   :widths: 45 55
+
+   * - Draft name
+     - Current name
+   * - ``increasing``
+     - ``strictly_increasing``
+   * - ``decreasing``
+     - ``strictly_decreasing``
+   * - ``smooth``
+     - ``continuously_differentiable``
+   * - ``uniform_bound``
+     - ``supremum_below``
+   * - ``curvature_bound``
+     - ``derivative_ratio_bound``
+   * - ``exact_form``
+     - ``equal_to``
+   * - ``vanishes``
+     - ``tends_to_zero``
+
+The numerical extra is now ``modello[numerics]``. The example collection is
+``examples.financial_models``; its reports live under ``financial-models``.

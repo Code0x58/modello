@@ -83,15 +83,15 @@ Work through a model change
 
 ``case.run(method_factory)`` prepares a method for the current branch. A
 prepared method that captures case-specific expressions uses
-``Method.bind(case)``. Removing an exploratory case requirement leaves the
-method's own premises and automatic operation requirements in place.
+``Method.bind(case)``. Retiring an exploratory obligation leaves the method's
+preconditions and the obligations from symbolic operations in place.
 
 Read and compare the reports
 ----------------------------
 
 Each study report keeps case inputs, completed computations, and blocked
-attempts together. Open a computation's premises link to see the requirement,
-coordinate domain, conditions, and any counterexample or nested theorem
+attempts together. Open a computation's premises link to see the obligation,
+coordinate domain, conditions, and any counterexample or nested inference-rule
 premises. The report retains the declared formula alongside the specialized
 expression, so an identity remains understandable after numerical substitution.
 
