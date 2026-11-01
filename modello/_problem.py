@@ -192,9 +192,13 @@ class CandidateCheck:
 
 
 def _assumptions_verdict(checks: tuple[AssumptionCheck, ...]) -> Verdict:
-    if any(check.actual is not None and check.actual != check.expected for check in checks):
-        return Verdict.VIOLATED
-    return Verdict.SATISFIED if all(check.actual == check.expected for check in checks) else Verdict.UNKNOWN
+    verdict = Verdict.SATISFIED
+    for check in checks:
+        if check.actual is None:
+            verdict = Verdict.UNKNOWN
+        elif check.actual != check.expected:
+            return Verdict.VIOLATED
+    return verdict
 
 
 def _common_prefix(left: FieldPath, right: FieldPath) -> FieldPath:

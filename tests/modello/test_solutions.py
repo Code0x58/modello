@@ -258,6 +258,34 @@ def test_continuous_and_empty_families_retain_selection_error_context(check_prob
         band.section(through=reference)
 
 
+@pytest.mark.parametrize(
+    "invalid_model, unknown_first, evaluations",
+    [(True, True, 0), (False, False, 1), (False, True, 2)],
+    ids=["model-violation", "first-condition-false", "unknown-before-false"],
+)
+def test_section_short_circuits_on_definite_violations(monkeypatch, invalid_model, unknown_first, evaluations):
+    problem = inspect_model(Reading, "reference audit")
+    unknown = Symbol("bound", real=True) > 0
+    negative = problem.symbols.x < 0
+    conditions = (unknown, negative) if unknown_first else (negative, unknown)
+    family = problem.solutions().where(*conditions)
+    reference = Reading("reference", x=2)
+    if invalid_model:
+        reference.squared = 5
+
+    evaluated = []
+    evaluate = solutions._evaluate_predicates
+
+    def counted(condition):
+        evaluated.append(condition)
+        return evaluate(condition)
+
+    monkeypatch.setattr(solutions, "_evaluate_predicates", counted)
+    with pytest.raises(ModelValidationError):
+        family.section(through=reference)
+    assert len(evaluated) == evaluations
+
+
 def test_typed_symbol_tree_and_nested_observations_share_constructor_provenance():
     class Joined(Modello):
         left = component(Check)

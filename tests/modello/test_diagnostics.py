@@ -50,6 +50,29 @@ def test_candidate_audit_rejects_fields_from_another_problem(positive_problem):
         p.check(foreign)
 
 
+@pytest.mark.parametrize("unknown_first", [True, False])
+@pytest.mark.parametrize("known", [(2, 5, Verdict.VIOLATED), (-1, 1, Verdict.SATISFIED)], ids=["equation", "domain"])
+def test_candidate_audit_retains_mixed_evidence_with_violation_precedence(unknown_first, known):
+    class PositivePair(Modello):
+        x = InstanceDummy("x", positive=True)
+        y = InstanceDummy("y", positive=True)
+        first = x**2
+        second = y**2
+
+    problem = inspect_model(PositivePair, "mixed evidence")
+    unresolved = (Symbol("input", real=True), Symbol("output", real=True), Verdict.UNKNOWN)
+    first, second = (unresolved, known) if unknown_first else (known, unresolved)
+    candidate = Candidate(
+        tuple(
+            FieldValue(problem.field(name), value)
+            for name, value in (("x", first[0]), ("first", first[1]), ("y", second[0]), ("second", second[1]))
+        )
+    )
+    audit = problem.check(candidate)
+    assert audit.verdict is Verdict.VIOLATED
+    assert tuple(check.verdict for check in audit.residuals) == (first[2], second[2])
+
+
 def test_numeric_candidate_checks_are_explicit_and_do_not_infer_values():
     problem = inspect_model(Sum, "rounded")
     candidate = Candidate(

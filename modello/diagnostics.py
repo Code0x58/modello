@@ -520,6 +520,7 @@ def _audit(
             raise ModelValidationError("Candidate contains conflicting values for aliases")
         bindings[item.field.symbol] = item.value
     residuals = []
+    residuals_verdict = Verdict.SATISFIED
     for c, (lhs, rhs) in zip(constraints, _algebra(constraints, problem.templates.values()).equations, strict=True):
         left, right = lhs.xreplace(bindings), _substitute(rhs, bindings)
         verdict: Verdict
@@ -557,6 +558,11 @@ def _audit(
                     else Verdict.UNKNOWN
                 )
         residuals.append(ResidualCheck(c, residual, verdict))
+        # Retain every residual, even after the overall audit is known to fail.
+        if verdict is Verdict.VIOLATED:
+            residuals_verdict = Verdict.VIOLATED
+        elif verdict is Verdict.UNKNOWN and residuals_verdict is Verdict.SATISFIED:
+            residuals_verdict = Verdict.UNKNOWN
     assumptions = tuple(
         AssumptionCheck(item, predicate, expected, getattr(item.value, f"is_{predicate}", None))
         for item in candidate.values
@@ -574,19 +580,21 @@ def _audit(
         )
         for item in candidate.values
     )
-    closed = all(
-        field.symbol in bindings
-        and not bindings[field.symbol].free_symbols
-        and bindings[field.symbol].is_number is True
-        and bindings[field.symbol].is_finite is True
-        for field in _canonical_fields(problem)
-    )
     domains = _assumptions_verdict(assumptions)
-    violated = domains == Verdict.VIOLATED or any(check.verdict == Verdict.VIOLATED for check in residuals)
-    satisfied = (
-        closed and domains == Verdict.SATISFIED and all(check.verdict == Verdict.SATISFIED for check in residuals)
-    )
-    verdict = Verdict.VIOLATED if violated else Verdict.SATISFIED if satisfied else Verdict.UNKNOWN
+    if domains is Verdict.VIOLATED or residuals_verdict is Verdict.VIOLATED:
+        verdict = Verdict.VIOLATED
+    elif domains is Verdict.UNKNOWN or residuals_verdict is Verdict.UNKNOWN:
+        verdict = Verdict.UNKNOWN
+    else:
+        # Only a satisfied audit needs a closed, finite numerical assignment.
+        closed = all(
+            field.symbol in bindings
+            and not bindings[field.symbol].free_symbols
+            and bindings[field.symbol].is_number is True
+            and bindings[field.symbol].is_finite is True
+            for field in _canonical_fields(problem)
+        )
+        verdict = Verdict.SATISFIED if closed else Verdict.UNKNOWN
     return CandidateCheck(candidate, tuple(residuals), assumptions, verdict)
 
 

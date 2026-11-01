@@ -570,16 +570,19 @@ class SolutionFamily(Generic[ModelT]):
     def _check_state(self, candidate: Candidate) -> tuple[CandidateCheck, Verdict]:
         """Combine the original model audit with the family's added relations."""
         check = self.problem.check(candidate)
+        verdict = check.verdict
+        if verdict is Verdict.VIOLATED or not self.conditions:
+            return check, verdict
         assignment = {value.field.symbol: value.value for value in candidate.values}
-        conditions = tuple(
-            _evaluate_predicates(_evaluate(_substitute(self._formulae.resolve.operators(condition), assignment)))
-            for condition in self.conditions
-        )
-        if check.verdict == Verdict.VIOLATED or any(condition is S.false for condition in conditions):
-            return check, Verdict.VIOLATED
-        if check.verdict == Verdict.SATISFIED and all(condition is S.true for condition in conditions):
-            return check, Verdict.SATISFIED
-        return check, Verdict.UNKNOWN
+        for condition in self.conditions:
+            evaluated = _evaluate_predicates(
+                _evaluate(_substitute(self._formulae.resolve.operators(condition), assignment))
+            )
+            if evaluated is S.false:
+                return check, Verdict.VIOLATED
+            if evaluated is not S.true:
+                verdict = Verdict.UNKNOWN
+        return check, verdict
 
     def section(self, *controls: SymbolicScalar, through: ModelT) -> SolutionFamily[ModelT]:
         """Vary chosen coordinates and fix all other coordinates at a checked case.
