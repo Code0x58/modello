@@ -1,10 +1,11 @@
 Perpetual American put and optimal stopping
 ===========================================
 
-Examine a put with no expiry, whose holder may exercise at any time. Check a
-candidate exercise boundary and how its exercise and continuation prices
-join. The candidate price has C1 smooth fit with a jump in the second
-derivative, which lets you compare methods that require different regularity.
+Examine a put that lets its holder sell the asset at a fixed strike price at
+any time, with no expiry. Check a candidate exercise boundary and how its
+exercise and continuation prices join. The candidate price has C1 smooth fit
+with a jump in the second derivative, which lets you compare methods that
+require different regularity.
 
 The economic setting is constant-coefficient Black--Scholes--Merton with
 positive interest, volatility, and strike, and zero dividends. Scalar

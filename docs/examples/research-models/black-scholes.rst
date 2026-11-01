@@ -23,7 +23,15 @@ comparison. Importing the module requires only SymPy.
 The reusable kernel
 -------------------
 
-``IntegratedCarry`` supplies three real scalar inputs:
+A European call pays :math:`\max(S_T-K,0)` at a fixed maturity :math:`T`;
+the put pays :math:`\max(K-S_T,0)`. Here :math:`S_T` is the asset price at
+maturity and :math:`K` is the strike price. Both contracts can be exercised
+only at :math:`T`.
+
+For valuation at :math:`t<T`, let :math:`r(u)` be the risk-free interest rate,
+:math:`q(u)` the continuous dividend yield, and :math:`\sigma(u)` the return
+volatility. These are deterministic functions of time. ``IntegratedCarry``
+summarizes them in three real scalar inputs:
 
 .. list-table:: Deterministic tail integrals
    :header-rows: 1
