@@ -1,4 +1,4 @@
-"""Optional numerical methods; each result retains its research premises."""
+"""Optional numerical methods; each result retains its verification preconditions."""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from scipy.special import expit
 from sympy import Symbol, diff, exp as symbolic_exp, lambdify, simplify
 
 from examples._market_making_models import exponential_requirement, solver_requirements
-from examples._research_checks import require_parameter_assumptions
+from examples._verification_checks import require_parameter_assumptions
 from modello import ConstraintKind
-from modello.contrib.research import Method, ResearchCase, ResearchResult
+from modello.contrib.verification import Method, VerificationContext, VerificationResult
 
 
 def _number(case, path):
@@ -173,7 +173,7 @@ def _state_roles(case):
     )
 
 
-def solve_quotes(case: ResearchCase, *, rtol=1e-8, atol=1e-10, max_step=None, points=101) -> QuoteSolution:
+def solve_quotes(case: VerificationContext, *, rtol=1e-8, atol=1e-10, max_step=None, points=101) -> QuoteSolution:
     """Integrate in remaining time, using the declared HJB's RHS and gates."""
     _state_roles(case)
     horizon, capacity, step = (_number(case, name) for name in ("horizon", "capacity", "step"))
@@ -282,7 +282,7 @@ def solve_quotes(case: ResearchCase, *, rtol=1e-8, atol=1e-10, max_step=None, po
     )
 
 
-def run_quotes(case: ResearchCase, **settings) -> ResearchResult[QuoteSolution]:
+def run_quotes(case: VerificationContext, **settings) -> VerificationResult[QuoteSolution]:
     method = Method(
         "CARA inventory ODE",
         solve_quotes,
@@ -292,7 +292,7 @@ def run_quotes(case: ResearchCase, **settings) -> ResearchResult[QuoteSolution]:
     return case.run(method, **settings)
 
 
-def exponential_reference(case: ResearchCase, times) -> np.ndarray:
+def exponential_reference(case: VerificationContext, times) -> np.ndarray:
     """Independent linear transformation, equation (3.13) in Guéant's paper."""
 
     def compute(current):
@@ -335,5 +335,5 @@ def exponential_reference(case: ResearchCase, times) -> np.ndarray:
             rows.append(step / k * np.log(value))
         return np.array(rows)
 
-    requirements = (*solver_requirements(case), exponential_requirement("bid"), exponential_requirement("ask"))
-    return case.run(Method("Exponential linear reference", compute, requirements)).data
+    obligations = (*solver_requirements(case), exponential_requirement("bid"), exponential_requirement("ask"))
+    return case.run(Method("Exponential linear reference", compute, obligations)).data

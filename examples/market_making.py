@@ -1,7 +1,7 @@
 """Explore Guéant's continuous-time CARA market maker and its component requirements.
 
 Run ``python -m examples.market_making`` for the lightweight baseline, or add
-``--study --output DIRECTORY`` for the time-dependent researcher workflow.
+``--study --output DIRECTORY`` for the time-dependent verification study.
 """
 
 from __future__ import annotations
@@ -12,25 +12,25 @@ from sympy import Piecewise, Subs, exp, log, simplify
 
 from examples.portfolio.optimal_execution import InventoryRisk
 from modello import Coordinate, InstanceDummy, Modello, component
-from modello.contrib.research import (
-    Requirement,
-    ResearchModel,
+from modello.contrib.verification import (
+    Obligation,
+    VerificationModel,
     concave,
+    continuously_differentiable,
     convex,
-    curvature_bound,
-    decreasing,
-    increasing,
+    derivative_ratio_bound,
     nonnegative,
     positive,
-    requires,
-    smooth,
-    vanishes,
+    specifies,
+    strictly_decreasing,
+    strictly_increasing,
+    tends_to_zero,
 )
 
 SOURCE = "https://arxiv.org/html/1605.01862"
 
 
-def intensity_contracts(prefix="") -> tuple[Requirement, ...]:
+def intensity_contracts(prefix="") -> tuple[Obligation, ...]:
     """Use the same intensity hypotheses for declarations and quote theorems."""
     path = f"{prefix}." if prefix else ""
     rate, distance = path + "rate", path + "distance"
@@ -38,60 +38,62 @@ def intensity_contracts(prefix="") -> tuple[Requirement, ...]:
         replace(claim, consumer="quote_uniqueness", reason=reason, source=SOURCE)
         for claim, reason in (
             (positive(rate, wrt=distance), "Trades need a positive arrival intensity."),
-            (smooth(rate, wrt=distance), "Guéant's quote theorem requires C2 intensity."),
-            (decreasing(rate, wrt=distance), "Increasing distance must strictly reduce the arrival rate."),
-            (vanishes(rate, wrt=distance), "The intensity must vanish at large positive quote distance."),
-            (curvature_bound(rate, wrt=distance), "A uniform curvature bound establishes a unique maximizer."),
+            (continuously_differentiable(rate, wrt=distance), "Guéant's quote theorem requires C2 intensity."),
+            (strictly_decreasing(rate, wrt=distance), "Increasing distance must strictly reduce the arrival rate."),
+            (tends_to_zero(rate, wrt=distance), "The intensity must vanish at large positive quote distance."),
+            (derivative_ratio_bound(rate, wrt=distance), "A uniform curvature bound establishes a unique maximizer."),
         )
     )
 
 
-class CARAUtility(ResearchModel):
+class CARAUtility(VerificationModel):
     """Increasing, concave utility of wealth; gamma is inverse currency."""
 
     wealth = Coordinate("w", real=True)
-    gamma = requires(
+    gamma = specifies(
         InstanceDummy("gamma", positive=True),
         positive("gamma", consumer="CARA_reduction", reason="The CARA reduction uses positive risk aversion."),
     )
-    value = requires(
+    value = specifies(
         -exp(-gamma * wealth),
-        smooth("value", wrt="wealth", consumer="CARA_reduction", reason="The reduction uses price curvature."),
-        increasing("value", wrt="wealth", consumer="valuation", reason="More wealth must be preferred."),
+        continuously_differentiable(
+            "value", wrt="wealth", consumer="CARA_reduction", reason="The reduction uses price curvature."
+        ),
+        strictly_increasing("value", wrt="wealth", consumer="valuation", reason="More wealth must be preferred."),
         concave("value", wrt="wealth", consumer="valuation", reason="The utility expresses risk aversion."),
     )
 
 
-class ExponentialIntensity(ResearchModel):
+class ExponentialIntensity(VerificationModel):
     """Trade arrival rate A exp(-k delta), for any real quote distance."""
 
     distance = Coordinate("delta", real=True)
     scale = InstanceDummy("A", positive=True)
     decay = InstanceDummy("k", positive=True)
-    rate = requires(scale * exp(-decay * distance), *intensity_contracts())
+    rate = specifies(scale * exp(-decay * distance), *intensity_contracts())
 
 
-class QuadraticInventoryRisk(ResearchModel, InventoryRisk):
+class QuadraticInventoryRisk(VerificationModel, InventoryRisk):
     """Reuse the execution example's gamma sigma² q² / 2 diffusion cost."""
 
-    cost = requires(
+    cost = specifies(
         InventoryRisk.gamma * InventoryRisk.variance / 2,
         nonnegative("cost", wrt="inventory", reason="Inventory risk is a nonnegative running cost."),
         convex("cost", wrt="inventory", reason="The risk cost is convex in signed inventory."),
-        smooth("cost", wrt="inventory", reason="The diffusion contribution is C2 in inventory."),
+        continuously_differentiable("cost", wrt="inventory", reason="The diffusion contribution is C2 in inventory."),
     )
 
 
-class QuadraticTerminalPenalty(ResearchModel):
+class QuadraticTerminalPenalty(VerificationModel):
     """A smooth convex terminal cost of signed inventory."""
 
     inventory = Coordinate("q", real=True)
     eta = InstanceDummy("eta", nonnegative=True)
-    cost = requires(
+    cost = specifies(
         eta * inventory**2,
         nonnegative("cost", wrt="inventory", reason="The terminal inventory penalty is nonnegative."),
         convex("cost", wrt="inventory", reason="Both long and short inventories carry a convex cost."),
-        smooth("cost", wrt="inventory", reason="The terminal cost is C2 in inventory."),
+        continuously_differentiable("cost", wrt="inventory", reason="The terminal cost is C2 in inventory."),
     )
 
 
@@ -107,7 +109,7 @@ class ContinuationValue(Modello):
     ask_cost = (current - after_ask) / step
 
 
-class QuoteHamiltonian(ResearchModel):
+class QuoteHamiltonian(VerificationModel):
     """A CARA gain function and an independently supplied Hamiltonian value."""
 
     intensity = component(ExponentialIntensity)
@@ -131,7 +133,7 @@ class ExponentialQuote(QuoteHamiltonian):
     value = Subs(QuoteHamiltonian.gain, QuoteHamiltonian.distance, optimal_distance)
 
 
-class MarketMakingState(ResearchModel):
+class MarketMakingState(VerificationModel):
     """A single-asset CARA HJB state, accepting general Hamiltonian values.
 
     Observe residual=0 to infer theta_t from neighboring continuation values.
@@ -179,14 +181,14 @@ def main() -> None:
     from pathlib import Path
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--study", action="store_true", help="Run the complete time-dependent research comparison")
+    parser.add_argument("--study", action="store_true", help="Run the complete time-dependent comparison")
     parser.add_argument("--output", type=Path, default=Path("artefacts/market-making"))
     arguments = parser.parse_args()
     if arguments.study:
         from examples.market_making_study import write_study
 
         write_study(arguments.output)
-        print(f"Research report: {arguments.output / 'report.html'}")
+        print(f"Verification report: {arguments.output / 'report.html'}")
         return
     print(MarketMaker.definition_report())
     quote = ExponentialQuote(

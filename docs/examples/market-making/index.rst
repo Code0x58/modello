@@ -12,7 +12,7 @@ Time is continuous and inventory changes in discrete lots. The pricing
 equation is a Hamilton--Jacobi--Bellman (HJB) equation for continuation values.
 The utility has constant absolute risk aversion (CARA), which supplies the
 reduction used below. For the case, evidence, and method API, first work through
-:doc:`/contrib/research`; :doc:`../research-models/markowitz` offers a smaller
+:doc:`/contrib/verification`; :doc:`../financial-models/markowitz` offers a smaller
 scalar example of changing constraints.
 
 With Modello installed, run the one-state symbolic calculation:
@@ -21,12 +21,12 @@ With Modello installed, run the one-state symbolic calculation:
 
    $ python -m examples.market_making
 
-For the full numerical study, install the research dependencies and generate
+For the full numerical study, install the numerical dependencies and generate
 an offline report:
 
 .. code-block:: console
 
-   $ pip install 'modello[research]'
+   $ pip install 'modello[numerics]'
    $ python -m examples.market_making --study --output artefacts/market-making
 
 Open ``artefacts/market-making/report.html``. An HTML documentation build also
@@ -131,16 +131,16 @@ of lots. Neither runner supplies a stochastic simulator.
 Check the component definitions
 -----------------------------------
 
-The components use the shared ``modello.contrib.research`` interface.
-``ResearchModel`` checks their declarations after each class body, including
-subclasses. ``requires`` attaches mathematical requirements to a field or a
+The components use the shared ``modello.contrib.verification`` interface.
+``VerificationModel`` checks their declarations after each class body, including
+subclasses. ``specifies`` attaches mathematical requirements to a field or a
 model. Nested composition scopes those requirements to their component paths:
 
 >>> from examples.market_making import MarketMaker
 >>> report = MarketMaker.definition_report()
->>> report.explain("utility.value/increasing").verdict
+>>> report.explain("utility.value/strictly_increasing").verdict
 'strictly true'
->>> report.explain("bid.intensity.rate/curvature_bound").verdict
+>>> report.explain("bid.intensity.rate/derivative_ratio_bound").verdict
 'strictly true'
 >>> all(check.verdict == "strictly true" for check in report.checks)
 True
@@ -164,22 +164,22 @@ any consumer. The subclass automatically refreshes the inherited requirements:
 
 >>> from examples.market_making import CARAUtility
 >>> from modello import InstanceDummy
->>> from modello.contrib.research import ResearchCase
+>>> from modello.contrib.verification import VerificationContext
 >>> class UnrestrictedUtility(CARAUtility):
 ...     gamma = InstanceDummy("gamma", real=True)
 >>> checks = UnrestrictedUtility.definition_report()
->>> checks.explain("gamma/positive").verdict, checks.explain("value/increasing").verdict
+>>> checks.explain("gamma/positive").verdict, checks.explain("value/strictly_increasing").verdict
 ('conditionally true', 'conditionally true')
 >>> condition = checks.explain("gamma/positive").condition
 >>> gamma = next(iter(condition.free_symbols))
 >>> condition == (gamma > 0)
 True
->>> case = ResearchCase.for_model(UnrestrictedUtility)
->>> case.observe(gamma=0).check().explain("value/increasing").verdict
+>>> case = VerificationContext.for_model(UnrestrictedUtility)
+>>> case.observe(gamma=0).verify().explain("value/strictly_increasing").verdict
 'strictly false'
 
 Checks concern whole declared domains; sampled slopes are numerical
-observations. The :doc:`research guide </contrib/research>` explains supported
+observations. The :doc:`verification guide </contrib/verification>` explains supported
 regularity arguments, unresolved derivatives, and checked hints for uniform
 curvature bounds. Failed or unresolved definitions remain available for
 exploration, while methods require the evidence they consume. Substituting
@@ -261,7 +261,7 @@ a predicate on a locally substituted argument cannot narrow the solver's domain.
 
 ``run_quotes`` requires at least three output times, finite positive ``rtol``
 and ``atol``, and a finite positive ``max_step`` when supplied. Invalid settings
-raise ``ResearchError`` with the originating case and report before integration
+raise ``VerificationError`` with the originating case and report before integration
 starts.
 
 Default tolerances are ``rtol=1e-8``, ``atol=1e-10``, and a maximum time step

@@ -77,7 +77,7 @@ formulas while using the same observations and modelling interface.
 
 - [Documentation](https://modello.readthedocs.io/) and [API reference](docs/api.rst).
 - [Practical applications](docs/examples/applications/index.rst): invoices, production, and circuits.
-- [Research workflow](docs/contrib/research.rst): inspect mathematical requirements as assumptions and components change; follow the [pricing, execution, and allocation studies](docs/examples/research-models/index.rst).
+- [Verification of model properties](docs/contrib/verification.rst): establish mathematical properties and method preconditions as assumptions and components change; follow the [pricing, execution, and allocation studies](docs/examples/financial-models/index.rst).
 - [Account executions](docs/examples/portfolio/index.rst): track shares and cash, or infer missing execution terms.
 - [Reconciliation](docs/examples/reconciliation/index.rst): compare source data and infer suspect inputs.
 - [Observed data validation](docs/contrib/validation.rst): check recurrence histories and follow [pandas/Polars recipes](docs/recipes/dataframe-validation.rst).

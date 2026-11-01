@@ -1,4 +1,4 @@
-"""Research contracts and general Hamiltonian inputs for Guéant's Model A."""
+"""Verification specifications and general Hamiltonian inputs for Guéant's Model A."""
 
 from __future__ import annotations
 
@@ -13,15 +13,15 @@ from examples.market_making import (
     intensity_contracts,
 )
 from modello import InstanceDummy
-from modello.contrib.research import (
-    Requirement,
-    ResearchCase,
-    Theorem,
+from modello.contrib.verification import (
+    InferenceRule,
+    Obligation,
+    VerificationContext,
     concave,
-    exact_form,
-    increasing,
+    equal_to,
     nonnegative,
     positive,
+    strictly_increasing,
 )
 
 
@@ -55,20 +55,20 @@ class CARAMarketMaker(MarketMakingState):
     horizon = InstanceDummy("T", positive=True)
 
 
-def study_case(*, logistic=False, capacity=5) -> ResearchCase[CARAMarketMaker]:
+def study_case(*, logistic=False, capacity=5) -> VerificationContext[CARAMarketMaker]:
     """Match both the zero-distance intensity and slope across the two families."""
-    case = ResearchCase.for_model(CARAMarketMaker, "market_making")
+    case = VerificationContext.for_model(CARAMarketMaker, "market_making")
     if logistic:
         case = case.replace("bid.intensity", LogisticIntensity).replace("ask.intensity", LogisticIntensity)
     for side in ("bid", "ask"):
-        conclusion = Requirement(f"unique_{side}", f"{side}.intensity.rate", "theorem")
-        case = case.with_theorem(
-            Theorem(
+        conclusion = Obligation(f"unique_{side}", f"{side}.intensity.rate", "rule")
+        case = case.with_rule(
+            InferenceRule(
                 f"gueant_unique_{side}", conclusion, intensity_contracts(f"{side}.intensity"), SOURCE + "#S3.SS2", "1"
             )
         )
         if logistic:
-            case = case.with_hint(f"{side}.intensity.rate/curvature_bound", upper=1)
+            case = case.with_bound_hint(f"{side}.intensity.rate/derivative_ratio_bound", upper=1)
     gamma, eta = S.One / 10, S.One / 20
     scale, decay = (4, 2) if logistic else (2, 1)
     # Constructor-compatible partial components retain shared parameter links.
@@ -91,9 +91,9 @@ def study_case(*, logistic=False, capacity=5) -> ResearchCase[CARAMarketMaker]:
     )
 
 
-def solver_requirements(case: ResearchCase) -> tuple[Requirement, ...]:
-    requirements = [
-        exact_form(
+def solver_requirements(case: VerificationContext) -> tuple[Obligation, ...]:
+    obligations = [
+        equal_to(
             "utility.value",
             lambda get: -exp(-get("gamma") * get("utility.wealth")),
             wrt="utility.wealth",
@@ -102,7 +102,7 @@ def solver_requirements(case: ResearchCase) -> tuple[Requirement, ...]:
             reason="The reduction uses exact exponential utility.",
             source=SOURCE,
         ),
-        increasing(
+        strictly_increasing(
             "utility.value",
             wrt="utility.wealth",
             name="utility_increasing",
@@ -120,12 +120,12 @@ def solver_requirements(case: ResearchCase) -> tuple[Requirement, ...]:
         ),
     ]
     for name in ("gamma", "step", "capacity", "horizon", "risk.sigma"):
-        requirements.append(
+        obligations.append(
             positive(
                 name, name=f"positive_{name}", consumer="ODE_solver", reason=f"{name} must be positive.", source=SOURCE
             )
         )
-    requirements.append(
+    obligations.append(
         nonnegative(
             "terminal.eta",
             name="terminal_cost",
@@ -136,8 +136,8 @@ def solver_requirements(case: ResearchCase) -> tuple[Requirement, ...]:
     )
     for side in ("bid", "ask"):
         neighbor = "after_bid" if side == "bid" else "after_ask"
-        requirements.append(
-            exact_form(
+        obligations.append(
+            equal_to(
                 f"continuation.{side}_cost",
                 _neighbor_formula(neighbor),
                 name=f"{side}_neighbor_cost",
@@ -146,8 +146,8 @@ def solver_requirements(case: ResearchCase) -> tuple[Requirement, ...]:
                 source=SOURCE,
             )
         )
-        requirements.append(
-            exact_form(
+        obligations.append(
+            equal_to(
                 f"{side}.gain",
                 _gain_formula(side),
                 wrt=f"{side}.intensity.distance",
@@ -157,19 +157,19 @@ def solver_requirements(case: ResearchCase) -> tuple[Requirement, ...]:
                 source=SOURCE,
             )
         )
-        requirements.append(
-            Requirement(
+        obligations.append(
+            Obligation(
                 f"unique_{side}",
                 f"{side}.intensity.rate",
-                "theorem",
+                "rule",
                 consumer="quote_optimizer",
                 reason="The general optimizer requires a unique quote.",
                 source=SOURCE,
             )
         )
-    requirements.extend(
+    obligations.extend(
         (
-            exact_form(
+            equal_to(
                 "bid_term",
                 lambda get: Piecewise((get("bid.value"), get("inventory") < get("capacity")), (0, True)),
                 name="bid_boundary_gate",
@@ -177,7 +177,7 @@ def solver_requirements(case: ResearchCase) -> tuple[Requirement, ...]:
                 reason="The bid gate disables inventory-increasing trades at Q.",
                 source=SOURCE,
             ),
-            exact_form(
+            equal_to(
                 "ask_term",
                 lambda get: Piecewise((get("ask.value"), get("inventory") > -get("capacity")), (0, True)),
                 name="ask_boundary_gate",
@@ -185,7 +185,7 @@ def solver_requirements(case: ResearchCase) -> tuple[Requirement, ...]:
                 reason="The ask gate disables inventory-decreasing trades at -Q.",
                 source=SOURCE,
             ),
-            exact_form(
+            equal_to(
                 "residual",
                 lambda get: -get("continuation.time_derivative") + get("risk.cost") - get("bid_term") - get("ask_term"),
                 name="hjb_structure",
@@ -195,11 +195,11 @@ def solver_requirements(case: ResearchCase) -> tuple[Requirement, ...]:
             ),
         )
     )
-    return tuple(requirements)
+    return tuple(obligations)
 
 
-def exponential_requirement(side: str) -> Requirement:
-    return exact_form(
+def exponential_requirement(side: str) -> Obligation:
+    return equal_to(
         f"{side}.intensity.rate",
         lambda get: (
             get(f"{side}.intensity.scale") * exp(-get(f"{side}.intensity.decay") * get(f"{side}.intensity.distance"))

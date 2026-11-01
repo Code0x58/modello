@@ -2503,7 +2503,7 @@ dependencies = [
 gui = [
     { name = "flask" },
 ]
-research = [
+numerics = [
     { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "matplotlib", version = "3.11.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2521,7 +2521,7 @@ test = [
 [package.dev-dependencies]
 dev = [
     { name = "build" },
-    { name = "modello", extra = ["gui", "research", "test"] },
+    { name = "modello", extra = ["gui", "numerics", "test"] },
     { name = "mypy" },
     { name = "packaging" },
     { name = "ruff" },
@@ -2530,7 +2530,7 @@ dev = [
     { name = "twine" },
 ]
 docs = [
-    { name = "modello", extra = ["research"], marker = "python_full_version >= '3.12'" },
+    { name = "modello", extra = ["numerics"], marker = "python_full_version >= '3.12'" },
     { name = "pandas", marker = "python_full_version >= '3.12'" },
     { name = "polars", marker = "python_full_version >= '3.12'" },
     { name = "sphinx", marker = "python_full_version >= '3.12'" },
@@ -2550,19 +2550,19 @@ notebooks = ">=3.11"
 [package.metadata]
 requires-dist = [
     { name = "flask", marker = "extra == 'gui'", specifier = ">=3.1.3" },
-    { name = "matplotlib", marker = "extra == 'research'", specifier = ">=3.7" },
-    { name = "numpy", marker = "extra == 'research'", specifier = ">=1.23" },
+    { name = "matplotlib", marker = "extra == 'numerics'", specifier = ">=3.7" },
+    { name = "numpy", marker = "extra == 'numerics'", specifier = ">=1.23" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.1.1" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=7.1.0" },
-    { name = "scipy", marker = "extra == 'research'", specifier = ">=1.10" },
+    { name = "scipy", marker = "extra == 'numerics'", specifier = ">=1.10" },
     { name = "sympy", specifier = ">=1.14.0" },
 ]
-provides-extras = ["examples", "gui", "research", "test"]
+provides-extras = ["examples", "gui", "numerics", "test"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "build", specifier = ">=1.6.1" },
-    { name = "modello", extras = ["examples", "gui", "research", "test"], editable = "." },
+    { name = "modello", extras = ["examples", "gui", "numerics", "test"], editable = "." },
     { name = "mypy", specifier = ">=2.4.0" },
     { name = "packaging", specifier = ">=26.3" },
     { name = "ruff", specifier = ">=0.17.1" },
@@ -2571,7 +2571,7 @@ dev = [
     { name = "twine", specifier = ">=7.0.0" },
 ]
 docs = [
-    { name = "modello", extras = ["examples", "research"], marker = "python_full_version >= '3.12'", editable = "." },
+    { name = "modello", extras = ["examples", "numerics"], marker = "python_full_version >= '3.12'", editable = "." },
     { name = "pandas", marker = "python_full_version >= '3.12'", specifier = ">=3.0.6" },
     { name = "polars", marker = "python_full_version >= '3.12'", specifier = ">=2.0.0" },
     { name = "sphinx", marker = "python_full_version >= '3.12'", specifier = ">=9.1.0" },

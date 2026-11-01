@@ -12,7 +12,7 @@ from examples._market_making_numerics import QuoteEvaluator, exponential_referen
 from examples.market_making import CARAUtility, QuadraticTerminalPenalty
 from examples.market_making_study import _provenance, compare, write_study
 from modello import Coordinate
-from modello.contrib.research import ResearchError
+from modello.contrib.verification import VerificationError
 
 
 @pytest.fixture(scope="module")
@@ -78,26 +78,26 @@ def test_changing_utility_or_losing_uniform_evidence_blocks_the_method():
         value = exp(CARAUtility.gamma * CARAUtility.wealth)
 
     case = study_case(capacity=2)
-    with pytest.raises(ResearchError) as error:
+    with pytest.raises(VerificationError) as error:
         run_quotes(case.replace("utility", ConvexUtility))
     assert error.value.report.explain("cara_form").verdict == "strictly false"
     logistic = study_case(logistic=True, capacity=2)
     from dataclasses import replace
 
-    with pytest.raises(ResearchError):
-        run_quotes(replace(logistic, hints=()))
-    with pytest.raises(ResearchError) as error:
+    with pytest.raises(VerificationError):
+        run_quotes(replace(logistic, bound_hints=()))
+    with pytest.raises(VerificationError) as error:
         exponential_reference(logistic, (0, 1))
     assert error.value.report.explain("exponential_bid").verdict == "strictly false"
 
 
 def test_invalid_lattice_and_numerical_failure_retain_case_and_report(capacity_one_case):
     case = study_case(capacity=S(3) / 2)
-    with pytest.raises(ResearchError, match="integral number") as error:
+    with pytest.raises(VerificationError, match="integral number") as error:
         run_quotes(case)
-    assert error.value.case is case
+    assert error.value.context is case
     assert error.value.report.checks
-    with pytest.raises(ResearchError, match="max_step"):
+    with pytest.raises(VerificationError, match="max_step"):
         run_quotes(capacity_one_case, max_step=0)
 
 
@@ -112,17 +112,17 @@ def test_invalid_solver_tolerances_are_rejected_before_integration(monkeypatch, 
         raise AssertionError("Invalid settings must not reach the integrator")
 
     monkeypatch.setattr("examples._market_making_numerics.solve_ivp", integrate)
-    with pytest.raises(ResearchError, match="tolerances") as error:
+    with pytest.raises(VerificationError, match="tolerances") as error:
         run_quotes(case, points=3, **{tolerance: value})
     assert not calls
-    assert error.value.case is case
+    assert error.value.context is case
     assert error.value.report.checks
 
 
 def test_asymmetric_intensities_use_independent_component_scopes():
     case = study_case(capacity=2).replace("ask.intensity", LogisticIntensity)
     # Replacement preserves the recorded scale=2, decay=1 on the ask side.
-    case = case.with_hint("ask.intensity.rate/curvature_bound", upper=1)
+    case = case.with_bound_hint("ask.intensity.rate/derivative_ratio_bound", upper=1)
     data = run_quotes(case, points=5).data
     assert data.diagnostics["bid_family"] == "exponential"
     assert data.diagnostics["ask_family"] == "logistic"
@@ -147,7 +147,7 @@ def test_report_artifacts_are_complete_and_replayable(tmp_path):
     assert len(list((tmp_path / "figures").glob("*.svg"))) == 4
     assert saved["provenance"]["versions"]["scipy"]
     assert saved["provenance"]["source_sha256"]
-    assert "examples/_research_checks.py" in saved["provenance"]["source_sha256"]
+    assert "examples/_verification_checks.py" in saved["provenance"]["source_sha256"]
     replayed = compare(capacity=1, points=5)
     for name, record in replayed.items():
         np.testing.assert_allclose(payload["cases"][name]["theta"], record["result"].data.theta, atol=1e-10)
@@ -171,9 +171,9 @@ def test_reference_derives_terminal_inputs_and_validates_its_domain():
     np.testing.assert_allclose(reference[-1], [-0.8, -0.05, 0, -0.05, -0.8], atol=1e-12)
     actual = run_quotes(case, points=3).data
     np.testing.assert_allclose(actual.theta[0], reference[0], atol=1e-6)
-    with pytest.raises(ResearchError, match="integral number"):
+    with pytest.raises(VerificationError, match="integral number"):
         exponential_reference(study_case(capacity=S(3) / 2), (0, 1))
-    with pytest.raises(ResearchError, match="within the model horizon"):
+    with pytest.raises(VerificationError, match="within the model horizon"):
         exponential_reference(case, (-1, 1))
 
 
@@ -223,7 +223,7 @@ def test_numerical_adapter_rechecks_the_declared_neighbor_and_gain_laws(capacity
         ("continuation", WrongNeighbor, "bid_neighbor_cost"),
         ("bid", WrongGain, "bid_cara_gain"),
     ):
-        with pytest.raises(ResearchError) as error:
+        with pytest.raises(VerificationError) as error:
             run_quotes(case.replace(path, replacement), points=3)
         assert error.value.report.explain(claim).verdict != "strictly true"
 
@@ -239,7 +239,7 @@ def test_full_ode_rejects_fixed_state_observations_and_assumptions(capacity_one_
         (case.assume(case._reference("bid.intensity.distance") < 0), "state coordinates vary"),
         (case.assume(case._reference("ask.intensity.distance") < 0), "state coordinates vary"),
     ):
-        with pytest.raises(ResearchError, match=message):
+        with pytest.raises(VerificationError, match=message):
             run_quotes(changed, points=3)
 
 
@@ -251,6 +251,6 @@ def test_full_ode_rejects_global_state_restrictions(capacity_one_case, subject):
     coordinate = case._reference(subject)
     condition = coordinate < 0 if subject.endswith("distance") else coordinate >= 0
     with assuming(condition):
-        with pytest.raises(ResearchError, match="state coordinates vary") as failure:
+        with pytest.raises(VerificationError, match="state coordinates vary") as failure:
             run_quotes(case, points=3)
         assert failure.value.report.assumptions

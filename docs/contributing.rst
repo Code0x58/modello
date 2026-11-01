@@ -71,12 +71,12 @@ Measure slow tests before changing their implementation:
 .. code-block:: console
 
    $ uv run --locked --dev pytest --no-cov --durations=25 \
-       tests/examples/research_models
-   $ uv run --locked --dev python -m cProfile -o /tmp/research-tests.prof \
-       -m pytest --no-cov tests/examples/research_models/test_cir_bond.py
+       tests/examples/financial_models
+   $ uv run --locked --dev python -m cProfile -o /tmp/financial-tests.prof \
+       -m pytest --no-cov tests/examples/financial_models/test_cir_bond.py
    $ uv run --locked --dev python -c \
        "import pstats; \
-       pstats.Stats('/tmp/research-tests.prof').sort_stats('cumulative').print_stats(25)"
+       pstats.Stats('/tmp/financial-tests.prof').sort_stats('cumulative').print_stats(25)"
 
 Use the same interpreter and coverage settings for before/after timings.
 Inspect repeated domain proofs, expression binding, and solver work separately;
@@ -208,8 +208,8 @@ The GUI separates layout and permissions, MathML printing, bounded input parsing
 and vector summaries under ``_gui/``. Finance and time-series examples stay above
 these layers.
 
-``contrib/research`` binds scoped claims to immutable problem snapshots and
-refreshes definition reports through an opt-in ``ResearchModel`` subclass hook.
+``contrib/verification`` binds scoped claims to immutable problem snapshots and
+refreshes definition reports through an opt-in ``VerificationModel`` subclass hook.
 Proof attempts retain parameter guards, theorem premises, and unresolved
 outcomes. Method contracts select the evidence they consume. Numerical and
 plotting dependencies remain in optional example methods; the symbolic

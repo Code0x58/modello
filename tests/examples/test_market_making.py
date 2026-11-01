@@ -13,19 +13,19 @@ from examples.market_making import (
     QuadraticTerminalPenalty,
 )
 from modello import InstanceDummy
-from modello.contrib.research import ResearchCase
+from modello.contrib.verification import VerificationContext
 
 
 def test_default_component_contracts_are_proved_and_scoped_in_the_parent():
     report = MarketMaker.definition_report()
     for path in (
         "utility.gamma/positive",
-        "utility.value/increasing",
+        "utility.value/strictly_increasing",
         "utility.value/concave",
         "risk.cost/convex",
         "terminal.cost/nonnegative",
-        "bid.intensity.rate/curvature_bound",
-        "ask.intensity.rate/decreasing",
+        "bid.intensity.rate/derivative_ratio_bound",
+        "ask.intensity.rate/strictly_decreasing",
     ):
         assert report.explain(path).verdict == "strictly true"
     assert all(check.verdict == "strictly true" for check in report.checks)
@@ -38,14 +38,18 @@ def test_parameter_conditions_refresh_after_subclassing_and_observations():
     report = UnrestrictedUtility.definition_report()
     condition = report.explain("gamma/positive").condition
     assert report.explain("gamma/positive").verdict == "conditionally true"
-    assert report.explain("value/increasing").verdict == "conditionally true"
+    assert report.explain("value/strictly_increasing").verdict == "conditionally true"
     assert len(condition.free_symbols) == 1
     parameter = next(iter(condition.free_symbols))
     assert condition == (parameter > 0)
-    assert report.explain("value/smooth").verdict == report.explain("value/concave").verdict == "strictly true"
-    case = ResearchCase.for_model(UnrestrictedUtility)
+    assert (
+        report.explain("value/continuously_differentiable").verdict
+        == report.explain("value/concave").verdict
+        == "strictly true"
+    )
+    case = VerificationContext.for_model(UnrestrictedUtility)
     for gamma, expected in ((2, "strictly true"), (0, "strictly false"), (-1, "strictly false")):
-        assert case.observe(gamma=gamma).check().explain("value/increasing").verdict == expected
+        assert case.observe(gamma=gamma).verify().explain("value/strictly_increasing").verdict == expected
     assert all(check.verdict == "strictly true" for check in CARAUtility.definition_report().checks)
 
 
@@ -58,8 +62,16 @@ def test_incompatible_components_refresh_inherited_requirements_automatically():
 
     assert ConvexUtility.definition_report().explain("value/concave").verdict == "strictly false"
     report = IncreasingIntensity.definition_report()
-    assert report.explain("rate/positive").verdict == report.explain("rate/smooth").verdict == "strictly true"
-    assert report.explain("rate/decreasing").verdict == report.explain("rate/right_tail").verdict == "strictly false"
+    assert (
+        report.explain("rate/positive").verdict
+        == report.explain("rate/continuously_differentiable").verdict
+        == "strictly true"
+    )
+    assert (
+        report.explain("rate/strictly_decreasing").verdict
+        == report.explain("rate/right_tail").verdict
+        == "strictly false"
+    )
 
 
 def test_quote_is_the_cara_stationary_maximum_and_matches_the_closed_hamiltonian():

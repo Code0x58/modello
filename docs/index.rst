@@ -75,7 +75,7 @@ the API and diagnostic guarantees are separate reference material.
 
    contrib/stochastic
    contrib/validation
-   contrib/research
+   contrib/verification
 
 .. toctree::
    :caption: Recipes
@@ -84,8 +84,8 @@ the API and diagnostic guarantees are separate reference material.
    recipes/dataframe-validation
 
 For research that changes a model's components or assumptions, start with the
-:doc:`research workflow <contrib/research>`. Follow the
-:doc:`worked studies <examples/research-models/index>` from scalar constraints
+:doc:`verification workflow <contrib/verification>`. Follow the
+:doc:`worked studies <examples/financial-models/index>` from scalar constraints
 to stochastic and piecewise models, then the
 :doc:`market-making application <examples/market-making/index>` for a coupled
 time-dependent study.
@@ -95,7 +95,7 @@ time-dependent study.
    :maxdepth: 1
 
    examples/applications/index
-   examples/research-models/index
+   examples/financial-models/index
    examples/market-making/index
    examples/portfolio/index
    examples/reconciliation/index

@@ -16,7 +16,7 @@ from examples._market_making_models import (
     LogisticIntensity as LogisticIntensity,
     study_case,
 )
-from modello.contrib.research import ResearchError
+from modello.contrib.verification import VerificationError
 
 
 def compare(*, capacity=5, points=101):
@@ -68,7 +68,7 @@ def compare(*, capacity=5, points=101):
 
 
 def _provenance():
-    import modello.contrib.research as research
+    import modello.contrib.verification as verification
 
     root = Path(__file__).resolve().parents[1]
     try:
@@ -78,10 +78,10 @@ def _provenance():
         revision = status = None
     source_files = [
         Path(__file__),
-        *Path(research.__file__).parent.glob("*.py"),
+        *Path(verification.__file__).parent.glob("*.py"),
         Path(__file__).with_name("_market_making_models.py"),
         Path(__file__).with_name("_market_making_numerics.py"),
-        Path(__file__).with_name("_research_checks.py"),
+        Path(__file__).with_name("_verification_checks.py"),
         Path(__file__).with_name("market_making.py"),
     ]
     return {
@@ -200,7 +200,7 @@ def write_study(directory: Path, *, capacity=5, points=101):
     directory.mkdir(parents=True, exist_ok=True)
     try:
         results = compare(capacity=capacity, points=points)
-    except ResearchError as error:
+    except VerificationError as error:
         (directory / "report.json").write_text(error.report.to_json())
         (directory / "report.html").write_text(error.report.to_html(title=str(error)))
         raise
@@ -271,11 +271,11 @@ def write_study(directory: Path, *, capacity=5, points=101):
     html = (
         '<!doctype html><html lang="en"><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        "<title>Market-making research study</title><style>"
+        "<title>Market-making verification study</title><style>"
         "body{max-width:72rem;margin:2rem auto;padding:0 1rem;font:17px/1.6 system-ui;color:#182a3b}"
         "img{width:100%;height:auto}figure{margin:2rem 0}table{width:100%;border-collapse:collapse}"
         "td,th{text-align:left;padding:.6rem;border-bottom:1px solid #cbd4db}code{overflow-wrap:anywhere}"
-        "a{color:#075a8c}</style><h1>Market-making research study</h1>"
+        "a{color:#075a8c}</style><h1>Market-making verification study</h1>"
         f'<p>A single-asset CARA model following <a href="{SOURCE}">Guéant, Model A</a>. '
         "Time is continuous and inventory changes in lots. Both intensity families have the same "
         "arrival rate and slope at zero distance.</p><p>The linked evidence reports retain the assumptions, "
@@ -289,7 +289,7 @@ def write_study(directory: Path, *, capacity=5, points=101):
         f"{figures}<h2>Reproduce and inspect</h2>"
         '<p><a href="report.json">Complete JSON audit</a> · <a href="theta.csv">Values CSV</a> · '
         '<a href="quotes.csv">Quotes CSV</a></p>'
-        "<pre>uv run --locked --extra research python -m examples.market_making --study --output OUTPUT_DIRECTORY</pre>"
+        "<pre>uv run --locked --extra numerics python -m examples.market_making --study --output OUTPUT_DIRECTORY</pre>"
         f"<p>Source revision: <code>{escape(str(payload['provenance']['git_revision']))}</code>. "
         f"Working tree dirty: {payload['provenance']['working_tree_dirty']}. "
         "Exact source fingerprints and dependency versions are in the JSON audit.</p></html>"
