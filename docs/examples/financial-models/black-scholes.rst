@@ -8,7 +8,7 @@ relationships survive: put--call parity, price sensitivities (Greeks), and the
 pricing partial differential equation (PDE). The maturity payoff is examined
 separately because its regularity differs from the interior pricing formula.
 
-This study builds on the case and component workflow in
+This study builds on the context and component workflow in
 :doc:`../../contrib/verification`. It uses exact rational inputs for the symbolic
 checks and an optional independent payoff quadrature for numerical comparison.
 Run the symbolic example with Modello installed:
@@ -72,27 +72,27 @@ All input symbols are declared real. ``specifies`` records :math:`K>0` and
 :math:`W>0` as live premises, rather than building positivity into their symbol
 declarations. Spot claims quantify the explicit open domain
 :math:`S\in(0,\infty)`. Observing ``spot=100`` selects a valuation state;
-``case.expression("pricing.call", wrt="pricing.spot")`` still retains the
+``context.expression("pricing.call", wrt="pricing.spot")`` still retains the
 entire spot curve. The method also checks that the observed spot is positive.
 No interior contract includes :math:`S=0` or :math:`W=0`.
 
 Branching and replacement
 -------------------------
 
-``study_case()`` builds the constant-coefficient case. The schedule branch
+``study_context()`` builds the constant-coefficient context. The schedule branch
 uses affine curves and checks its pricing snapshot at ``now``. Read computed
-identities from ``data`` and their premises from ``report``. The case explicitly
+identities from ``data`` and their premises from ``report``. The context explicitly
 registers a Gaussian smoothness rule, described in the following section.
 
 .. code-block:: python
 
    from sympy import Rational
    from examples.financial_models.black_scholes import (
-       AffineSchedule, study_case, symbolic_method,
+       AffineSchedule, study_context, symbolic_method,
    )
 
-   constant = study_case()
-   changing = study_case(schedule=True, now=Rational(1, 4))
+   constant = study_context()
+   changing = study_context(schedule=True, now=Rational(1, 4))
    exact = changing.run(symbolic_method)
    assert all(value == 0 for value in exact.data.residuals.values())
 
@@ -102,9 +102,9 @@ registers a Gaussian smoothness rule, described in the following section.
    )
    # stale.run(symbolic_method) raises VerificationError: its totals disagree.
 
-``case.run(symbolic_method)`` builds a fresh method for the current branch,
+``context.run(symbolic_method)`` builds a fresh method for the current branch,
 evaluating its schedule at ``now``. Prepared
-methods use ``Method.bind(case)`` and reject reuse on a different case, even
+methods use ``Method.bind(context)`` and reject reuse on a different context, even
 when it shares the same problem object. Earlier branches remain unchanged.
 
 ``dividend_free_method()`` has the additional exact contract
@@ -116,7 +116,7 @@ properties or a successful earlier run do not preserve this shortcut.
 Exact checks and their trust boundary
 -------------------------------------
 
-``symbolic_method(case)`` differentiates the current declared formulas and
+``symbolic_method(context)`` differentiates the current declared formulas and
 checks zero residuals for parity and both options' delta and gamma:
 
 .. math::
@@ -135,24 +135,24 @@ the Gaussian density balance
 
 The verification engine currently cannot establish the continuity domain of
 ``erf`` compositions by itself. Without an added rule, the C2 claim is
-``unresolved``. Each study case therefore registers a narrowly scoped trusted
-composition theorem. Its checked premises include the exact declared option
+``unresolved``. Each study context therefore registers a narrowly scoped trusted
+composition rule. Its checked premises include the exact declared option
 formula, positive strike and total variance, and C2 regularity of both Gaussian
 arguments and elementary discount factors on the spot domain. Separate source
 contracts link those arguments and factors to the actual primitive inputs;
 smoothness of a field with a familiar name would not establish that identity.
 `NIST DLMF section 7.2(i) <https://dlmf.nist.gov/7.2#i>`_ supplies the mathematical
-fact that the error function is entire. The theorem and SymPy are part of the
+fact that the error function is entire. The inference rule and SymPy are part of the
 trust boundary; the source citation alone is not a proof. The rule supplies no
 regularity conclusion for arbitrary unknown functions or for the maturity
 payoff.
 
-The formulas, Greek forms, and parity are live requirements. ``d1``, ``d2``,
+The formulas, Greek forms, and parity are live obligations. ``d1``, ``d2``,
 ``discounted_spot``, and ``discounted_strike`` each have an exact source
 contract, and ``call_minus_put`` must equal the actual declared call minus put.
 Both adapters consume these contracts explicitly. A subclass that compensates
 for several incorrect helpers to retain correct final prices still fails the
-helper contracts. Redefining an inherited field refreshes its requirements; a
+helper contracts. Redefining an inherited field refreshes its obligations; a
 copied earlier verdict cannot certify the replacement.
 
 A changing deterministic schedule
@@ -224,7 +224,7 @@ At :math:`W=0`, the deterministic discounted call payoff is
 :math:`x=S e^{-Q}-K e^{-R}` and writes the two payoffs as
 :math:`(x+|x|)/2` and :math:`(-x+|x|)/2`.
 
-``boundary_checks()`` computes exact one-sided slopes at :math:`x=0`: the call
+``boundary_slopes()`` computes exact one-sided slopes at :math:`x=0`: the call
 has slopes 0 and 1, and the put has slopes -1 and 0. Consequently neither payoff
 is differentiable there, and neither is C2. The verification check for the absolute
 value kink also refutes C2 regularity. Away from the kink the payoff is affine.
@@ -244,13 +244,13 @@ same branch:
 .. code-block:: python
 
    from sympy import Rational
-   from examples.financial_models.black_scholes import study_case, valuation_method
+   from examples.financial_models.black_scholes import study_context, valuation_method
 
-   changing = study_case(schedule=True, now=Rational(1, 4))
+   changing = study_context(schedule=True, now=Rational(1, 4))
    reference = changing.run(valuation_method)
    assert reference.data.call_error < 1e-9  # a numerical comparison
 
-``valuation_method(case)`` integrates the call and put payoffs against a
+``valuation_method(context)`` integrates the call and put payoffs against a
 standard Gaussian density, using
 :math:`S_T=S\exp(R-Q-W/2+\sqrt W Z)` and discount :math:`e^{-R}`. It splits the
 integrals at the exercise threshold and shifts or reflects each integration
@@ -261,9 +261,9 @@ are combined with the density before exponentiation. The reference does not
 call a normal CDF or reuse the closed-form option formula. Numerical results
 include the two quadrature differences and the integrator's error estimates.
 These finite observations do not establish a global approximation bound or
-discharge an unresolved mathematical requirement.
+discharge an unresolved mathematical obligation.
 
-``run_demo()`` retains raw cases, symbolic and numerical method results,
+``run_demo()`` retains raw contexts, symbolic and numerical method results,
 the accepted and rejected shortcut reports, and the boundary slopes. It is
 suitable for the collection runner as well as direct interactive inspection.
 
@@ -274,5 +274,5 @@ API
 ---
 
 .. automodule:: examples.financial_models.black_scholes
-   :members: IntegratedCarry, EuropeanOptions, ConstantSchedule, AffineSchedule, OptionStudy, PayoffBoundary, SymbolicChecks, NumericalCheck, symbolic_case, study_case, symbolic_method, valuation_method, dividend_free_method, boundary_checks, run_demo
+   :members: IntegratedCarry, EuropeanOptions, ConstantSchedule, AffineSchedule, OptionStudy, PayoffBoundary, SymbolicVerification, NumericalComparison, symbolic_context, study_context, symbolic_method, valuation_method, dividend_free_method, boundary_slopes, run_demo
    :member-order: bysource

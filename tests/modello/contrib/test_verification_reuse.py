@@ -1,4 +1,4 @@
-"""Reusing a case preserves identities through component changes."""
+"""Reusing a context preserves identities through component changes."""
 
 import pytest
 from sympy import Abs, Add, Derivative, Eq, Integral, Limit, Mul, Product, S, Subs, Sum, Symbol, exp
@@ -60,7 +60,7 @@ def test_replacement_rebinds_coordinates_used_only_inside_native_operators(curve
     assert source.expression("value").has(old.x)
 
 
-def test_replacement_rebinds_native_observations_and_requirement_payloads(curves):
+def test_replacement_rebinds_native_observations_and_obligation_payloads(curves):
     old, new = curves
 
     class Parent(Modello):
@@ -186,7 +186,7 @@ def test_replacement_preserves_derivative_premises_in_a_held_zero_product(curves
     assert source.verify().explain("equal_to").verdict == "strictly true"
 
 
-@pytest.mark.parametrize("where", ("declaration", "assumption", "requirement", "expected", "hint"))
+@pytest.mark.parametrize("where", ("declaration", "assumption", "obligation", "expected", "hint"))
 def test_replacement_rejects_ambiguous_shared_native_coordinates(curves, where):
     old, new = curves
 
@@ -196,21 +196,21 @@ def test_replacement_rejects_ambiguous_shared_native_coordinates(curves, where):
         if where == "declaration":
             slope = Derivative(a.value, old.x)
 
-    case = VerificationContext.for_model(Parent)
-    shared = Derivative(case.symbols.b.value, old.x)
+    context = VerificationContext.for_model(Parent)
+    shared = Derivative(context.symbols.b.value, old.x)
     if where == "assumption":
-        case = case.assume(Eq(shared, 0))
-    elif where == "requirement":
-        case = case.with_obligations(equal_to(case.symbols.a.value + shared, 0, name="joined"))
+        context = context.assume(Eq(shared, 0))
+    elif where == "obligation":
+        context = context.with_obligations(equal_to(context.symbols.a.value + shared, 0, name="joined"))
     elif where == "expected":
-        case = case.with_obligations(equal_to("a.value", shared, name="joined"))
+        context = context.with_obligations(equal_to("a.value", shared, name="joined"))
     elif where == "hint":
-        case = case.with_bound_hint("bound", upper=case.symbols.a.value + shared)
+        context = context.with_bound_hint("bound", upper=context.symbols.a.value + shared)
     with pytest.raises(ModelDefinitionError, match="shared|joins"):
-        case.replace("a", new)
+        context.replace("a", new)
 
 
-@pytest.mark.parametrize("where", ("requirement", "hint"))
+@pytest.mark.parametrize("where", ("obligation", "hint"))
 def test_replacement_rejects_ambiguous_expanded_native_payloads(curves, where):
     old, new = curves
 
@@ -220,7 +220,7 @@ def test_replacement_rejects_ambiguous_expanded_native_payloads(curves, where):
 
     source = VerificationContext.for_model(Parent)
     expanded = Derivative(source.expression("b.value"), old.x)
-    if where == "requirement":
+    if where == "obligation":
         source = source.with_obligations(equal_to(expanded, 0))
     else:
         source = source.with_bound_hint("bound", upper=expanded)
@@ -281,7 +281,7 @@ def test_replacement_preserves_aliases_and_their_observations():
 
 
 @pytest.mark.parametrize("query", ("series", "recurrence"))
-def test_replacement_rebinds_named_declarations_in_case_payloads(query):
+def test_replacement_rebinds_named_declarations_in_context_payloads(query):
     class Old(Modello):
         n = Index("n")
         opening = InstanceDummy("opening", real=True)
@@ -436,7 +436,7 @@ def test_replacement_cannot_turn_a_coordinate_path_into_a_model_field(nested, de
     assert source.problem.model is Parent
 
 
-def test_replacement_checks_coordinate_alias_paths_even_when_the_primary_path_survives():
+def test_replacement_verifies_coordinate_alias_paths_even_when_the_primary_path_survives():
     class Old(Modello):
         x = Coordinate("x", real=True)
         argument = x
@@ -510,7 +510,7 @@ def test_replacement_preserves_coordinate_alias_joins(nested, aliases):
 
 
 @pytest.mark.parametrize(
-    "payload", ("requirement", "hint", "assumption", "observation", "rule", "annotation", "coordinate_path")
+    "payload", ("obligation", "hint", "assumption", "observation", "rule", "annotation", "coordinate_path")
 )
 def test_replacement_rejects_removed_coordinates_in_retained_payloads(payload):
     class Old(Modello):
@@ -531,7 +531,7 @@ def test_replacement_rejects_removed_coordinates_in_retained_payloads(payload):
     source = VerificationContext.for_model(Parent)
     native = Derivative(source.symbols.curve.value, Old.x, evaluate=False)
     claim = equal_to(native, S.Zero)
-    if payload == "requirement":
+    if payload == "obligation":
         source = source.with_obligations(claim)
     elif payload == "hint":
         source = source.with_bound_hint("unused", upper=native)
@@ -599,7 +599,7 @@ def test_callable_expected_formulas_validate_captured_binders_lazily(capture, re
     assert executed == []
 
     # Factories stay live: resolve the new interface instead of freezing a
-    # formula during replacement, then check the original case independently.
+    # formula during replacement, then check the original context independently.
     original = captured[0]
     captured[0] = None
     assert (
@@ -613,7 +613,7 @@ def test_callable_expected_formulas_validate_captured_binders_lazily(capture, re
     )
 
 
-@pytest.mark.parametrize("payload", ("requirement", "callable", "annotation", "declaration"))
+@pytest.mark.parametrize("payload", ("obligation", "callable", "annotation", "declaration"))
 @pytest.mark.parametrize("retained_sibling", (False, True))
 def test_removed_coordinate_scope_cannot_be_hidden_by_a_sibling(payload, retained_sibling):
     class Old(Modello):
@@ -651,7 +651,7 @@ def test_removed_coordinate_scope_cannot_be_hidden_by_a_sibling(payload, retaine
         with pytest.raises(ModelDefinitionError, match="coordinate interface"):
             changed.verify()
     else:
-        if payload == "requirement":
+        if payload == "obligation":
             source = source.with_obligations(
                 equal_to(Derivative(source.symbols.wrapper.a.value, Old.x, evaluate=False), S.Zero)
             )
@@ -770,8 +770,10 @@ def test_replacement_recomputes_inferred_constructor_results_in_both_directions(
             for item in changed.problem.constraints
         )
 
-    def sibling_rows(case):
-        return tuple((item.path, item.kind, item.right) for item in case.problem.constraints if item.input == "sibling")
+    def sibling_rows(context):
+        return tuple(
+            (item.path, item.kind, item.right) for item in context.problem.constraints if item.input == "sibling"
+        )
 
     assert sibling_rows(changed) == sibling_rows(source)
     assert changed.expression("sibling.x") == 3
@@ -901,12 +903,12 @@ def test_native_series_queries_retain_the_same_observation_sources_as_fields(nat
         first = law.at(1)
 
     source = VerificationContext.for_model(Curve)
-    case = source.observe(
+    context = source.observe(
         a=source.symbols.b, b=2 * source.symbols.a + Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, 0)
     )
-    subject = case.symbols.values[1] if native else "first"
+    subject = context.symbols.values[1] if native else "first"
     claim = equal_to(subject, S.Zero, wrt="x")
-    evidence = case.verify(obligations=(claim,)).explain(claim.name)
+    evidence = context.verify(obligations=(claim,)).explain(claim.name)
     assert evidence.verdict == "strictly false"
     assert evidence.source_operands
 
@@ -919,10 +921,10 @@ def test_a_method_consumes_component_contracts_reached_through_named_laws(fixed_
         curve = component(restricted)
         value = curve.values[2]
 
-    case = VerificationContext.for_model(Parent)
+    context = VerificationContext.for_model(Parent)
     calls = []
     with pytest.raises(VerificationError) as failure:
-        case.run(Method("read", lambda current: calls.append(current), uses=("value",)))
+        context.run(Method("read", lambda current: calls.append(current), uses=("value",)))
     assert failure.value.report.explain("curve/admissible").verdict == "strictly false"
     assert not calls
 
@@ -940,8 +942,8 @@ def test_explicit_named_law_selection_does_not_consume_an_alternative_laws_contr
         )
         value = chosen.at(2)
 
-    case = VerificationContext.for_model(Curve)
-    result = case.run(Method("read", lambda current: current.expression("value").doit(), uses=("value",)))
+    context = VerificationContext.for_model(Curve)
+    result = context.run(Method("read", lambda current: current.expression("value").doit(), uses=("value",)))
     assert result.data == 4
     assert result.report.explain("alternative/not_selected").verdict == "strictly false"
 
@@ -955,16 +957,18 @@ def test_ambiguous_series_queries_remain_inspectable_and_block_required_methods(
         second = Recurrence(values[n], 3 * values[n - 1], initial={0: 1})
         input = InstanceDummy("input")
 
-    case = VerificationContext.for_model(Curve)
-    subject = case.symbols.values[2]
+    context = VerificationContext.for_model(Curve)
+    subject = context.symbols.values[2]
     if observed:
-        case = case.observe(input=subject)
+        context = context.observe(input=subject)
         subject = "input"
     claim = equal_to(subject, 4)
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
     calls = []
     with pytest.raises(VerificationError) as failure:
-        case.run(Method("read", lambda current: calls.append(current), (claim,), uses=("input",) if observed else ()))
+        context.run(
+            Method("read", lambda current: calls.append(current), (claim,), uses=("input",) if observed else ())
+        )
     assert failure.value.report.explain(claim.name).verdict == "unresolved"
     assert not calls
 
@@ -977,10 +981,10 @@ def test_alpha_renamed_declaration_aliases_consume_the_same_contracts():
         alias = specifies(chosen.as_dummy(), predicate(S.false, name="required"))
         value = chosen.at(2)
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     calls = []
     with pytest.raises(VerificationError) as failure:
-        case.run(Method("read", lambda current: calls.append(current), uses=("value",)))
+        context.run(Method("read", lambda current: calls.append(current), uses=("value",)))
     assert failure.value.report.explain("alias/required").verdict == "strictly false"
     assert not calls
 
@@ -1026,16 +1030,16 @@ def test_shadowed_coordinate_names_are_not_available_through_verification_paths(
     class Parent(Modello):
         curve = component(Hidden)
 
-    case = VerificationContext.for_model(Parent if nested else Hidden)
+    context = VerificationContext.for_model(Parent if nested else Hidden)
     prefix = "curve." if nested else ""
-    assert case.expression(prefix + "value") == 1
-    assert case.verify(obligations=(positive(prefix + "value"),)).checks[0].verdict == "strictly true"
+    assert context.expression(prefix + "value") == 1
+    assert context.verify(obligations=(positive(prefix + "value"),)).evidence[0].verdict == "strictly true"
     with pytest.raises(ModelDefinitionError, match="Unknown scalar or coordinate path"):
-        case.expression(prefix + "x")
+        context.expression(prefix + "x")
     with pytest.raises(ModelDefinitionError, match="Unknown scalar or coordinate path"):
-        case.verify(obligations=(continuously_differentiable(prefix + "value", wrt=prefix + "x"),))
+        context.verify(obligations=(continuously_differentiable(prefix + "value", wrt=prefix + "x"),))
     with pytest.raises(ModelValidationError):
-        case.expression(prefix + "value", wrt=Original.x)
+        context.expression(prefix + "value", wrt=Original.x)
 
 
 def test_coordinate_lookup_preserves_inheritance_and_rebinding_to_an_independent_field():
@@ -1048,16 +1052,16 @@ def test_coordinate_lookup_preserves_inheritance_and_rebinding_to_an_independent
 
     inherited = VerificationContext.for_model(Inherited)
     assert inherited.expression("x") == Original.x
-    assert inherited.verify().checks[0].verdict == "strictly true"
+    assert inherited.verify().evidence[0].verdict == "strictly true"
 
     class Observable(Original):
         x = InstanceDummy("x", real=True)
         value = x**2
 
-    case = VerificationContext.for_model(Observable)
-    evidence = case.verify().checks[0]
-    assert case.expression("x") == case.symbols.x
-    assert evidence.coordinate == case.symbols.x
+    context = VerificationContext.for_model(Observable)
+    evidence = context.verify().evidence[0]
+    assert context.expression("x") == context.symbols.x
+    assert evidence.coordinate == context.symbols.x
     assert evidence.verdict == "strictly true"
 
 
@@ -1069,12 +1073,12 @@ def test_hiding_a_coordinate_name_preserves_explicit_symbols_used_by_the_formula
     class Hidden(Original):
         x = None
 
-    case = VerificationContext.for_model(Hidden)
+    context = VerificationContext.for_model(Hidden)
     with pytest.raises(ModelDefinitionError):
-        case.expression("x")
-    assert case.expression("value", wrt=Original.x) == Original.x**2
+        context.expression("x")
+    assert context.expression("value", wrt=Original.x) == Original.x**2
     claim = continuously_differentiable("value", wrt=Original.x)
-    assert case.verify(obligations=(claim,)).checks[0].verdict == "strictly true"
+    assert context.verify(obligations=(claim,)).evidence[0].verdict == "strictly true"
 
 
 @pytest.mark.parametrize("hidden_first", (False, True))
@@ -1091,12 +1095,12 @@ def test_coordinate_lookup_respects_multiple_inheritance_precedence(hidden_first
     class VisibleFirst(Visible, Hidden):
         pass
 
-    case = VerificationContext.for_model(HiddenFirst if hidden_first else VisibleFirst)
+    context = VerificationContext.for_model(HiddenFirst if hidden_first else VisibleFirst)
     if hidden_first:
         with pytest.raises(ModelDefinitionError):
-            case.expression("x")
+            context.expression("x")
     else:
-        assert case.expression("x") == Visible.x
+        assert context.expression("x") == Visible.x
 
 
 @pytest.mark.parametrize("hidden_first", (False, True))
@@ -1113,12 +1117,12 @@ def test_ordinary_mixin_attributes_take_part_in_coordinate_shadowing(hidden_firs
     class VisibleFirst(Visible, HiddenMixin):
         pass
 
-    case = VerificationContext.for_model(HiddenFirst if hidden_first else VisibleFirst)
+    context = VerificationContext.for_model(HiddenFirst if hidden_first else VisibleFirst)
     if hidden_first:
         with pytest.raises(ModelDefinitionError):
-            case.expression("x")
+            context.expression("x")
     else:
-        assert case.expression("x") == Visible.x
+        assert context.expression("x") == Visible.x
 
 
 def test_native_coordinate_annotations_rebind_coordinates_inherited_from_ordinary_mixins():
@@ -1134,8 +1138,8 @@ def test_native_coordinate_annotations_rebind_coordinates_inherited_from_ordinar
 
     inherited = VerificationContext.for_model(Original)
     assert inherited.expression("x") == CoordinateMixin.x
-    assert inherited.verify().checks[0].verdict == "strictly true"
+    assert inherited.verify().evidence[0].verdict == "strictly true"
     changed = VerificationContext.for_model(Renamed)
-    evidence = changed.verify().checks[0]
+    evidence = changed.verify().evidence[0]
     assert evidence.coordinate == Renamed.x
     assert evidence.verdict == "strictly true"

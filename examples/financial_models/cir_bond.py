@@ -104,17 +104,19 @@ class CIRBond(VerificationModel):
     value = exp(log_value)
 
 
-def _require(claim: Obligation, consumer: str, reason: str, *, page: int = 8) -> Obligation:
+def _sourced_obligation(claim: Obligation, consumer: str, reason: str, *, page: int = 8) -> Obligation:
     return replace(claim, consumer=consumer, reason=reason, source=SOURCE + f"#page={page}")
 
 
-def _parameter_requirements(*, pricing: bool) -> tuple[Obligation, ...]:
+def _parameter_preconditions(*, pricing: bool) -> tuple[Obligation, ...]:
     obligations = [
-        _require(positive(name, name=f"positive_{name}"), "CIR_parameters", f"The CIR rule requires {name}>0.")
+        _sourced_obligation(
+            positive(name, name=f"positive_{name}"), "CIR_parameters", f"The CIR rule requires {name}>0."
+        )
         for name in ("kappa", "theta", "sigma")
     ]
     obligations.append(
-        _require(
+        _sourced_obligation(
             nonnegative("initial_rate", name="nonnegative_initial_rate"),
             "CIR_parameters",
             "The nonnegative CIR solution starts at a nonnegative rate, including zero.",
@@ -122,7 +124,7 @@ def _parameter_requirements(*, pricing: bool) -> tuple[Obligation, ...]:
     )
     if pricing:
         obligations.append(
-            _require(
+            _sourced_obligation(
                 nonnegative("horizon", name="nonnegative_horizon"),
                 "bond_pricing",
                 "Remaining time is nonnegative; zero is the terminal payment.",
@@ -132,9 +134,9 @@ def _parameter_requirements(*, pricing: bool) -> tuple[Obligation, ...]:
     return tuple(obligations)
 
 
-def _dynamics_requirements() -> tuple[Obligation, ...]:
+def _dynamics_preconditions() -> tuple[Obligation, ...]:
     return (
-        _require(
+        _sourced_obligation(
             equal_to(
                 "drift",
                 lambda get: get("kappa") * (get("theta") - get("rate")),
@@ -145,7 +147,7 @@ def _dynamics_requirements() -> tuple[Obligation, ...]:
             "CIR_dynamics",
             "The trusted path rule applies to the stated risk-neutral CIR drift.",
         ),
-        _require(
+        _sourced_obligation(
             equal_to(
                 "diffusion",
                 lambda get: get("sigma") * sqrt(get("rate")),
@@ -156,7 +158,7 @@ def _dynamics_requirements() -> tuple[Obligation, ...]:
             "CIR_dynamics",
             "The Brownian diffusion is sigma sqrt(r), defined at zero; C2 regularity is not required.",
         ),
-        _require(
+        _sourced_obligation(
             equal_to(
                 "variance_rate",
                 lambda get: get("sigma") ** 2 * get("rate"),
@@ -170,9 +172,9 @@ def _dynamics_requirements() -> tuple[Obligation, ...]:
     )
 
 
-def _coefficient_requirements() -> tuple[Obligation, ...]:
+def _coefficient_preconditions() -> tuple[Obligation, ...]:
     obligations = [
-        _require(
+        _sourced_obligation(
             equal_to(path, formula, wrt="time", domain=TIME_DOMAIN, name=f"{path}_form"),
             "affine_coefficients",
             "The affine shortcut consumes the actual CIR coefficient formula.",
@@ -182,7 +184,7 @@ def _coefficient_requirements() -> tuple[Obligation, ...]:
     ]
     obligations.extend(
         (
-            _require(
+            _sourced_obligation(
                 equal_to(
                     "b_at_horizon",
                     lambda get: _at_horizon(_b, get),
@@ -192,7 +194,7 @@ def _coefficient_requirements() -> tuple[Obligation, ...]:
                 "The reported B is the declared time curve at the selected horizon.",
                 page=10,
             ),
-            _require(
+            _sourced_obligation(
                 equal_to(
                     "log_a_at_horizon",
                     lambda get: _at_horizon(_log_a, get),
@@ -202,7 +204,7 @@ def _coefficient_requirements() -> tuple[Obligation, ...]:
                 "The reported log A is the declared time curve at the selected horizon.",
                 page=10,
             ),
-            _require(
+            _sourced_obligation(
                 equal_to(
                     "log_price",
                     lambda get: get("log_a") - get("b") * get("rate"),
@@ -214,7 +216,7 @@ def _coefficient_requirements() -> tuple[Obligation, ...]:
                 "The generator calculation uses the declared log price log A - B r.",
                 page=10,
             ),
-            _require(
+            _sourced_obligation(
                 equal_to(
                     "price",
                     lambda get: exp(get("log_price")),
@@ -226,7 +228,7 @@ def _coefficient_requirements() -> tuple[Obligation, ...]:
                 "The source formula is exp(log A - B r), rather than an arbitrary function sharing a residual.",
                 page=10,
             ),
-            _require(
+            _sourced_obligation(
                 equal_to(
                     "log_curve",
                     lambda get: get("log_a_at_horizon") - get("b_at_horizon") * get("rate"),
@@ -238,7 +240,7 @@ def _coefficient_requirements() -> tuple[Obligation, ...]:
                 "The evaluated curve retains the same coefficient formula at the selected horizon.",
                 page=10,
             ),
-            _require(
+            _sourced_obligation(
                 equal_to(
                     "curve",
                     lambda get: exp(get("log_curve")),
@@ -250,7 +252,7 @@ def _coefficient_requirements() -> tuple[Obligation, ...]:
                 "The selected-horizon rate curve is exp(log A - B r).",
                 page=10,
             ),
-            _require(
+            _sourced_obligation(
                 equal_to(
                     "log_value",
                     lambda get: get("log_a_at_horizon") - get("b_at_horizon") * get("initial_rate"),
@@ -260,7 +262,7 @@ def _coefficient_requirements() -> tuple[Obligation, ...]:
                 "The scalar value evaluates that curve at the initial rate.",
                 page=10,
             ),
-            _require(
+            _sourced_obligation(
                 equal_to("value", lambda get: exp(get("log_value")), name="initial_value_form"),
                 "affine_coefficients",
                 "The scalar value is the exponential of its initial log price.",
@@ -275,19 +277,19 @@ def _path_claim(*, strict: bool) -> Obligation:
     return Obligation("unattainable_zero" if strict else "nonnegative_paths", "diffusion", "rule")
 
 
-def symbolic_case(model: type[CIRBond] = CIRBond) -> VerificationContext[CIRBond]:
+def symbolic_context(model: type[CIRBond] = CIRBond) -> VerificationContext[CIRBond]:
     """Register precise source rules without assuming their scalar premises.
 
     The probabilistic context of each trusted rule is a standard Brownian CIR
     SDE under the risk-neutral measure. Scalar CAS checks establish only the
     listed parameter and formula premises, not stochastic boundary theory.
     """
-    case = VerificationContext.for_model(model, "cir_bond")
-    path_premises = (*_parameter_requirements(pricing=False), *_dynamics_requirements())
-    case = case.with_rule(
+    context = VerificationContext.for_model(model, "cir_bond")
+    path_premises = (*_parameter_preconditions(pricing=False), *_dynamics_preconditions())
+    context = context.with_rule(
         InferenceRule("CIR_nonnegative_solution", _path_claim(strict=False), path_premises, SOURCE + "#page=8", "1")
     )
-    feller_form = _require(
+    feller_form = _sourced_obligation(
         equal_to(
             "feller_margin",
             lambda get: 2 * get("kappa") * get("theta") - get("sigma") ** 2,
@@ -296,19 +298,19 @@ def symbolic_case(model: type[CIRBond] = CIRBond) -> VerificationContext[CIRBond
         "boundary_classification",
         "The condition uses the same risk-neutral CIR parameters as the dynamics.",
     )
-    case = case.with_rule(
+    context = context.with_rule(
         InferenceRule(
             "CIR_unattainable_zero_boundary",
             _path_claim(strict=True),
             (
                 *path_premises,
                 feller_form,
-                _require(
+                _sourced_obligation(
                     positive("initial_rate", name="strictly_positive_initial_rate"),
                     "boundary_classification",
                     "The unattainable-boundary statement starts strictly above zero.",
                 ),
-                _require(
+                _sourced_obligation(
                     nonnegative("feller_margin", name="feller_condition"),
                     "boundary_classification",
                     "2 kappa theta >= sigma squared is sufficient for zero to be unattainable from r0>0.",
@@ -318,15 +320,15 @@ def symbolic_case(model: type[CIRBond] = CIRBond) -> VerificationContext[CIRBond
             "1",
         )
     )
-    return case.with_rule(
+    return context.with_rule(
         InferenceRule(
             "CIR_affine_discounted_expectation",
             Obligation("affine_valuation", "value", "rule"),
             (
-                *_parameter_requirements(pricing=True),
-                *_dynamics_requirements(),
-                *_coefficient_requirements(),
-                _require(
+                *_parameter_preconditions(pricing=True),
+                *_dynamics_preconditions(),
+                *_coefficient_preconditions(),
+                _sourced_obligation(
                     _path_claim(strict=False),
                     "bond_pricing",
                     "The standard nonnegative CIR solution is the underlying rate process.",
@@ -347,7 +349,7 @@ def _exact(value: ScalarValue) -> Expr:
     return exact
 
 
-def cir_case(
+def cir_context(
     *,
     kappa: ScalarValue = Rational(3, 5),
     theta: ScalarValue | None = Rational(1, 20),
@@ -366,16 +368,16 @@ def cir_case(
     parameters = {"kappa": _exact(kappa), "sigma": _exact(sigma)}
     if theta is not None:
         parameters["theta"] = _exact(theta)
-    return symbolic_case().observe(
+    return symbolic_context().observe(
         parameters=CIRParameters("risk_neutral", **parameters),
         initial_rate=_exact(initial_rate),
         horizon=_exact(horizon),
     )
 
 
-def with_feller(case: VerificationContext[CIRBond]) -> VerificationContext[CIRBond]:
+def with_feller(context: VerificationContext[CIRBond]) -> VerificationContext[CIRBond]:
     """Add the sufficient boundary condition as an explicitly removable assumption."""
-    return case.assume(case.expression("feller_margin") >= 0)
+    return context.assume(context.expression("feller_margin") >= 0)
 
 
 @dataclass(frozen=True)
@@ -412,27 +414,27 @@ class NumericalBond:
     diagnostics: Mapping[str, float | int | str]
 
 
-def _verification(case: VerificationContext[CIRBond]) -> BondVerification:
-    time = case.expression("time", wrt="time")
-    rate = case.expression("rate", wrt="rate")
-    kappa, theta, sigma = (case.expression(path) for path in ("kappa", "theta", "sigma"))
-    b, log_a = (case.expression(path, wrt="time") for path in ("b", "log_a"))
-    log_price = case.expression("log_price", wrt="time")
-    drift, variance = (case.expression(path, wrt="rate") for path in ("drift", "variance_rate"))
+def _verification(context: VerificationContext[CIRBond]) -> BondVerification:
+    time = context.expression("time", wrt="time")
+    rate = context.expression("rate", wrt="rate")
+    kappa, theta, sigma = (context.expression(path) for path in ("kappa", "theta", "sigma"))
+    b, log_a = (context.expression(path, wrt="time") for path in ("b", "log_a"))
+    log_price = context.expression("log_price", wrt="time")
+    drift, variance = (context.expression(path, wrt="rate") for path in ("drift", "variance_rate"))
     first = diff(log_price, rate)
     generator = diff(log_price, time) - drift * first - variance * (diff(log_price, rate, 2) + first**2) / 2 + rate
     return BondVerification(
         simplify(diff(b, time) - (1 - kappa * b - sigma**2 * b**2 / 2)),
         simplify(diff(log_a, time) + kappa * theta * b),
         simplify(generator),
-        simplify(case.expression("price", wrt="time").subs(time, 0)),
+        simplify(context.expression("price", wrt="time").subs(time, 0)),
     )
 
 
-def _verification_requirements(case: VerificationContext[CIRBond]) -> tuple[Obligation, ...]:
-    checked = _verification(case)
+def _verification_preconditions(context: VerificationContext[CIRBond]) -> tuple[Obligation, ...]:
+    checked = _verification(context)
     obligations = [
-        _require(
+        _sourced_obligation(
             positive("denominator", wrt="time", domain=TIME_DOMAIN, name="coefficient_denominator"),
             "scalar_verification",
             "The original coefficient denominator must be positive before residual cancellation.",
@@ -440,7 +442,7 @@ def _verification_requirements(case: VerificationContext[CIRBond]) -> tuple[Obli
         ),
     ]
     obligations.extend(
-        _require(
+        _sourced_obligation(
             continuously_differentiable(path, wrt="time", domain=TIME_DOMAIN, name=f"{path}_time_c2"),
             "scalar_verification",
             "The actual coefficient is regular on nonnegative remaining time.",
@@ -449,7 +451,7 @@ def _verification_requirements(case: VerificationContext[CIRBond]) -> tuple[Obli
         for path in ("b", "log_a")
     )
     obligations.extend(
-        _require(
+        _sourced_obligation(
             equal_to(expression, expected, name=name),
             "scalar_verification",
             reason,
@@ -470,62 +472,62 @@ def _verification_requirements(case: VerificationContext[CIRBond]) -> tuple[Obli
     return tuple(obligations)
 
 
-def verification_method(case: VerificationContext[CIRBond]) -> Method[BondVerification]:
+def verification_method(context: VerificationContext[CIRBond]) -> Method[BondVerification]:
     """Check actual coefficients and identities; no stochastic theorem is inferred."""
     return Method(
         "exact CIR scalar verification",
         _verification,
         (
-            *_parameter_requirements(pricing=True),
-            *_dynamics_requirements(),
-            *_coefficient_requirements(),
-            *_verification_requirements(case),
+            *_parameter_preconditions(pricing=True),
+            *_dynamics_preconditions(),
+            *_coefficient_preconditions(),
+            *_verification_preconditions(context),
         ),
         uses=("b", "log_a", "log_price", "price", "drift", "variance_rate"),
-    ).bind(case)
+    ).bind(context)
 
 
-def _price(case: VerificationContext[CIRBond]) -> BondPrice:
+def _price(context: VerificationContext[CIRBond]) -> BondPrice:
     return BondPrice(
-        *(case.expression(path) for path in ("initial_rate", "horizon", "b_at_horizon", "log_a_at_horizon", "value"))
+        *(context.expression(path) for path in ("initial_rate", "horizon", "b_at_horizon", "log_a_at_horizon", "value"))
     )
 
 
-def pricing_method(case: VerificationContext[CIRBond]) -> Method[BondPrice]:
+def pricing_method(context: VerificationContext[CIRBond]) -> Method[BondPrice]:
     """Value the source formula with live scalar checks and a sourced valuation rule."""
     obligations = [
-        *_parameter_requirements(pricing=True),
-        *_dynamics_requirements(),
-        *_coefficient_requirements(),
-        *_verification_requirements(case),
-        _require(
+        *_parameter_preconditions(pricing=True),
+        *_dynamics_preconditions(),
+        *_coefficient_preconditions(),
+        *_verification_preconditions(context),
+        _sourced_obligation(
             Obligation("affine_valuation", "value", "rule"),
             "bond_pricing",
             "CIR's source formula identifies the discounted expectation under the stated risk-neutral dynamics.",
             page=10,
         ),
-        _require(
+        _sourced_obligation(
             continuously_differentiable("curve", wrt="rate", domain=RATE_DOMAIN, name="rate_c2"),
             "bond_pricing",
             "The affine bond price, including r=0, is twice differentiable in the current rate.",
             page=10,
         ),
-        _require(
+        _sourced_obligation(
             convex("curve", wrt="rate", domain=RATE_DOMAIN, name="rate_convex"),
             "bond_pricing",
             "The bond is convex in the current rate.",
             page=10,
         ),
-        _require(
+        _sourced_obligation(
             positive("curve", wrt="rate", domain=RATE_DOMAIN, name="positive_price"),
             "bond_pricing",
             "The affine price is strictly positive at finite current rates.",
             page=10,
         ),
     ]
-    if case.expression("horizon").is_positive is True:
+    if context.expression("horizon").is_positive is True:
         obligations.append(
-            _require(
+            _sourced_obligation(
                 strictly_decreasing("curve", wrt="rate", domain=RATE_DOMAIN, name="rate_decreasing"),
                 "bond_pricing",
                 "At positive remaining time the bond is strictly decreasing in current rate.",
@@ -533,56 +535,56 @@ def pricing_method(case: VerificationContext[CIRBond]) -> Method[BondPrice]:
             )
         )
     else:
-        rate = case.expression("rate", wrt="rate")
-        slope = -diff(case.expression("curve", wrt="rate"), rate)
+        rate = context.expression("rate", wrt="rate")
+        slope = -diff(context.expression("curve", wrt="rate"), rate)
         obligations.append(
-            _require(
+            _sourced_obligation(
                 nonnegative(slope, wrt=rate, domain=RATE_DOMAIN, name="rate_nonincreasing"),
                 "bond_pricing",
                 "The terminal bond is constant; nonincrease does not assert a strictly negative slope.",
                 page=10,
             )
         )
-    return Method("CIR affine bond price", _price, tuple(obligations), uses=("value", "curve", "price")).bind(case)
+    return Method("CIR affine bond price", _price, tuple(obligations), uses=("value", "curve", "price")).bind(context)
 
 
-def price(case: VerificationContext[CIRBond]) -> VerificationResult[BondPrice]:
-    return case.run(pricing_method)
+def price(context: VerificationContext[CIRBond]) -> VerificationResult[BondPrice]:
+    return context.run(pricing_method)
 
 
-def verify(case: VerificationContext[CIRBond]) -> VerificationResult[BondVerification]:
-    return case.run(verification_method)
+def verify(context: VerificationContext[CIRBond]) -> VerificationResult[BondVerification]:
+    return context.run(verification_method)
 
 
-def strict_positive_boundary_method(case: VerificationContext[CIRBond]) -> Method[BoundaryConclusion]:
+def strict_positive_boundary_method(context: VerificationContext[CIRBond]) -> Method[BoundaryConclusion]:
     """Require the sourced unattainable-zero rule, separately from bond valuation."""
     return Method(
         "CIR strictly positive boundary conclusion",
         lambda current: BoundaryConclusion("From r0>0, the CIR solution does not hit zero at any finite time."),
         (
-            _require(
+            _sourced_obligation(
                 _path_claim(strict=True),
                 "boundary_classification",
                 "This conclusion needs a positive initial rate and the Feller sufficient condition.",
             ),
         ),
         uses=("drift", "diffusion", "variance_rate", "initial_rate", "feller_margin"),
-    ).bind(case)
+    ).bind(context)
 
 
-def _numerical(case: VerificationContext[CIRBond], *, rtol: float = 1e-10, atol: float = 1e-12) -> NumericalBond:
+def _numerical(context: VerificationContext[CIRBond], *, rtol: float = 1e-10, atol: float = 1e-12) -> NumericalBond:
     import scipy
     from scipy.integrate import quad, solve_ivp
 
     if not isfinite(rtol) or not isfinite(atol) or min(rtol, atol) <= 0:
         raise ValueError("Numerical tolerances must be finite and strictly positive")
-    expressions = tuple(case.expression(path) for path in ("kappa", "theta", "sigma", "initial_rate", "horizon"))
+    expressions = tuple(context.expression(path) for path in ("kappa", "theta", "sigma", "initial_rate", "horizon"))
     if any(expression.free_symbols for expression in expressions):
         raise ValueError("Numerical CIR verification requires observed parameters")
     kappa, theta, sigma, rate, horizon = map(float, expressions)
     if not all(isfinite(item) for item in (kappa, theta, sigma, rate, horizon)):
         raise ValueError("Numerical CIR verification needs finite observed parameters")
-    exact = _price(case)
+    exact = _price(context)
     if horizon == 0:
         return NumericalBond(
             1.0,
@@ -628,55 +630,55 @@ def _numerical(case: VerificationContext[CIRBond], *, rtol: float = 1e-10, atol:
     return NumericalBond(value, b, log_a, diagnostics)
 
 
-def numerical_method(case: VerificationContext[CIRBond]) -> Method[NumericalBond]:
+def numerical_method(context: VerificationContext[CIRBond]) -> Method[NumericalBond]:
     """Independently integrate the Riccati ODE; diagnostics never prove a theorem."""
     return Method(
         "independent CIR Riccati integration",
         _numerical,
         (
-            *_parameter_requirements(pricing=True),
-            *_dynamics_requirements(),
-            *_coefficient_requirements(),
-            *_verification_requirements(case),
+            *_parameter_preconditions(pricing=True),
+            *_dynamics_preconditions(),
+            *_coefficient_preconditions(),
+            *_verification_preconditions(context),
         ),
         uses=("kappa", "theta", "sigma", "initial_rate", "horizon", "value"),
-    ).bind(case)
+    ).bind(context)
 
 
 def run_demo(*, numerical: bool = False) -> dict[str, dict[str, object]]:
-    """Return raw cases/results, including a blocked boundary conclusion.
+    """Return raw contexts/results, including a blocked boundary conclusion.
 
     The symbolic pair adds then removes only the Feller assumption. Its
     positive theta premise is retained in both branches. A failed sufficient
-    theorem is unresolved, and never means that negative rates occur.
+    rule is unresolved, and never means that negative rates occur.
     """
-    cases = {
-        "feller_satisfied": cir_case(),
-        "feller_failed": cir_case(sigma=Rational(2, 5)),
-        "zero_initial_rate": cir_case(initial_rate=0),
-        "terminal": cir_case(horizon=0),
+    contexts = {
+        "feller_satisfied": cir_context(),
+        "feller_failed": cir_context(sigma=Rational(2, 5)),
+        "zero_initial_rate": cir_context(initial_rate=0),
+        "terminal": cir_context(horizon=0),
     }
     rows: dict[str, dict[str, object]] = {}
-    for name, case in cases.items():
-        row: dict[str, object] = {"case": case, "price": price(case), "verification": verify(case)}
+    for name, context in contexts.items():
+        row: dict[str, object] = {"context": context, "price": price(context), "verification": verify(context)}
         try:
-            row["boundary"] = case.run(strict_positive_boundary_method)
+            row["boundary"] = context.run(strict_positive_boundary_method)
         except VerificationError as error:
             row["boundary_blocked"] = str(error)
             row["boundary_report"] = error.report
         if numerical:
-            row["numerical"] = case.run(numerical_method)
+            row["numerical"] = context.run(numerical_method)
         rows[name] = row
-    base = cir_case(theta=None)
+    base = cir_context(theta=None)
     bounded = with_feller(base)
     feller_condition = bounded.assumptions[-1]
     relaxed = bounded.without_assumptions(
         feller_condition, reason="Compare valuation without the optional Feller boundary condition."
     )
-    for name, case in (("feller_assumption_added", bounded), ("feller_assumption_removed", relaxed)):
-        row = {"case": case}
+    for name, context in (("feller_assumption_added", bounded), ("feller_assumption_removed", relaxed)):
+        row = {"context": context}
         try:
-            row["boundary"] = case.run(strict_positive_boundary_method)
+            row["boundary"] = context.run(strict_positive_boundary_method)
         except VerificationError as error:
             row["boundary_blocked"] = str(error)
             row["boundary_report"] = error.report

@@ -24,15 +24,15 @@ coefficient calculation.
 Check valuation before changing the boundary condition
 ------------------------------------------------------
 
-The price method applies the case's registered affine-valuation rule and
+The price method applies the context's registered affine-valuation rule and
 checks the shape of the current rate curve. The defaults are
 :math:`\kappa=3/5,\theta=1/20,\sigma=1/5`:
 
 >>> from examples.financial_models.cir_bond import (
-...     cir_case, price, verification_method,
+...     cir_context, price, verification_method,
 ... )
->>> case = cir_case()
->>> result = price(case)
+>>> context = cir_context()
+>>> result = price(context)
 >>> result.data.initial_rate, result.data.horizon
 (1/25, 5)
 >>> result.data.price.evalf(8)
@@ -45,8 +45,10 @@ checks the shape of the current rate curve. The defaults are
 This is the price of a unit payment after five time units, displayed to eight
 significant digits. The formula and its checked premises retain exact inputs.
 
-Feller is a boundary requirement
---------------------------------
+.. _feller-is-a-boundary-requirement:
+
+Feller is a boundary precondition
+---------------------------------
 
 The separately registered ``CIR_unattainable_zero_boundary`` rule requires
 :math:`R_0>0` and
@@ -64,7 +66,7 @@ sampling a simulated path.
 >>> from sympy import Rational
 >>> from modello.contrib.verification import VerificationError
 >>> from examples.financial_models.cir_bond import strict_positive_boundary_method
->>> weak = cir_case(sigma=Rational(2, 5))
+>>> weak = cir_context(sigma=Rational(2, 5))
 >>> weak.expression("feller_margin") < 0
 True
 >>> price(weak).report.explain("affine_valuation").verdict
@@ -86,7 +88,7 @@ record the reason for its removal. Leaving ``theta`` symbolic makes its role
 visible:
 
 >>> from examples.financial_models.cir_bond import with_feller
->>> earlier = cir_case(theta=None)
+>>> earlier = cir_context(theta=None)
 >>> bounded = with_feller(earlier)
 >>> bounded.run(strict_positive_boundary_method).data.kind
 'trusted stochastic boundary rule'
@@ -106,16 +108,16 @@ True
 >>> price(relaxed).report.explain("affine_valuation").verdict
 'strictly true'
 
-The earlier and bounded cases retain their original assumptions. The relaxed
-case records the removal while preserving the positive parameter and
+The earlier and bounded contexts retain their original assumptions. The relaxed
+context records the removal while preserving the positive parameter and
 nonnegative initial-state domains. Pricing and nonnegative-path evidence
 survive; the stronger boundary conclusion again needs its sufficient condition.
-Passing a factory to ``case.run`` prepares it for the current branch. Its
-``Method.bind(case)`` guard also protects a prepared method retained for later
-use against changes to the case or SymPy assumptions.
-``run_demo()`` returns these raw cases, results, and blocked-method reports
+Passing a factory to ``context.run`` prepares it for the current branch. Its
+``Method.bind(context)`` guard also protects a prepared method retained for later
+use against changes to the context or SymPy assumptions.
+``run_demo()`` returns these raw contexts, results, and blocked-method reports
 alongside the two fully observed parameter regimes, zero-rate valuation, and
-the terminal-payment case.
+the terminal-payment context.
 
 One formula on the nonnegative state domain
 -------------------------------------------
@@ -148,7 +150,7 @@ equivalent hyperbolic representation of the source formula:
 
 The positive parameters and nonnegative time keep :math:`D` positive. The
 implementation checks definedness and coefficient regularity before using
-reduced residuals. Exact-form requirements connect the selected-horizon
+reduced residuals. Exact-form obligations connect the selected-horizon
 coefficients, the rate curve, and its initial-rate evaluation to this formula.
 Changing a price definition cannot inherit an old valuation certificate.
 
@@ -187,7 +189,7 @@ justify that reduction. This avoids a large native mixed-derivative
 declaration and preserves the distinction between a scalar identity and a
 stochastic valuation theorem.
 
->>> verification = case.run(verification_method)
+>>> verification = context.run(verification_method)
 >>> verification.data.riccati_b, verification.data.riccati_log_a
 (0, 0)
 >>> verification.data.generator, verification.data.terminal_price

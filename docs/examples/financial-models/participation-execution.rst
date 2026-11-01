@@ -78,11 +78,11 @@ Check a solution and its evidence
 The defaults are exact: :math:`Q=3,V=4,\eta=1,\phi=1/2,\gamma=1/6,\sigma=1`.
 
 >>> from examples.financial_models.participation_execution import (
-...     participation_case, analytic_method, numerical_method, with_limits,
+...     participation_context, analytic_method, numerical_method, with_limits,
 ... )
 >>> from sympy import S
->>> case = participation_case()
->>> result = case.run(analytic_method)
+>>> context = participation_context()
+>>> result = context.run(analytic_method)
 >>> result.data.rate, result.data.duration, result.data.cost
 (1/4, 3, 9/4)
 >>> result.report.explain("inventory_risk_integral").verdict
@@ -96,7 +96,7 @@ the scaled first-order condition, completion boundary, feasibility, multiplier
 signs, stationarity, and complementary slackness at the proposed rate.
 
 For :math:`0<\phi<1`, :math:`J` need not be convex in :math:`\rho`. In the
-default case :math:`J''(1)=-3/8`. Two valid uniqueness arguments are retained:
+default context :math:`J''(1)=-3/8`. Two valid uniqueness arguments are retained:
 
 .. math::
 
@@ -111,7 +111,7 @@ strictly convex on the real line. The registered ``uniqueness_rule`` checks
 the transformation and curvature identities before its C2 and
 positive-curvature premises. Its conclusion is at most
 one attained minimum; the candidate's checked KKT certificate establishes
-attainment in each feasible minimum case. A citation alone supplies no proof.
+attainment in each feasible minimum context. A citation alone supplies no proof.
 
 Add and remove constraints
 --------------------------
@@ -126,13 +126,13 @@ A cap restricts :math:`\rho\leq\rho_{\max}`. A completion deadline imposes
 
 with the missing bounds omitted. The lower endpoint remains open at zero
 when there is no deadline. Limits are live model components, and changing a
-component rechecks the same method's requirements.
+component rechecks the same method's obligations.
 
->>> capped = with_limits(case, cap=S.One/8)
+>>> capped = with_limits(context, cap=S.One/8)
 >>> answer = capped.run(analytic_method).data
 >>> answer.rate, answer.duration, answer.active_bounds
 (1/8, 6, ('cap',))
->>> deadline = with_limits(case, deadline=2)
+>>> deadline = with_limits(context, deadline=2)
 >>> answer = deadline.run(analytic_method).data
 >>> answer.rate, answer.duration, answer.active_bounds
 (3/8, 2, ('deadline',))
@@ -142,9 +142,9 @@ component rechecks the same method's requirements.
 >>> capped.run(analytic_method).data.rate
 1/8
 
-Removal disables the bound and preserves the earlier observations. Cases are
-immutable, so the original constrained case remains available. To change an
-already observed numeric cap or deadline, branch from the earlier case;
+Removal disables the bound and preserves the earlier observations. Contexts are
+immutable, so the original constrained context remains available. To change an
+already observed numeric cap or deadline, branch from the earlier context;
 observations accumulate rather than overwrite one another. A cap of ``1/8``
 with deadline ``2`` is infeasible and blocks both methods with a checked
 ``feasible_limits`` failure. Equal lower and upper bounds are supported.
@@ -170,30 +170,30 @@ constant. Without a deadline, :math:`J(\rho)=\eta Q\rho^\phi>0` has infimum
 zero as :math:`\rho\downarrow0`; no admissible finite optimizer attains it.
 A participation cap alone does not repair nonattainment.
 
->>> neutral = participation_case(gamma=0)
+>>> neutral = participation_context(gamma=0)
 >>> answer = neutral.run(analytic_method).data
 >>> answer.status, answer.rate, answer.duration, answer.cost
 ('infimum_not_attained', None, None, 0)
->>> urgent = participation_case(gamma=0, deadline=2)
+>>> urgent = participation_context(gamma=0, deadline=2)
 >>> urgent.run(analytic_method).data.rate
 3/8
 
-``symbolic_case()`` exposes the unobserved declaration. Parameter assumptions
+``symbolic_context()`` exposes the unobserved declaration. Parameter assumptions
 can establish its positive-risk or zero-risk branch. The methods reject
 assumptions restricting the rate itself; express a cap or deadline with
 ``with_limits`` so the feasible interval and KKT conditions stay explicit.
-This rejection covers both ``case.assume(...)`` and active SymPy
+This rejection covers both ``context.assume(...)`` and active SymPy
 ``assuming(...)`` predicates on the rate, its logarithmic search coordinate,
 or execution time.
 Unsupported symbolic comparisons leave the certificate unestablished and
-raise ``VerificationError`` with the case and report.
+raise ``VerificationError`` with the context and report.
 
 Replace the impact function
 ---------------------------
 
 ``SurchargedPowerImpact`` changes the execution function to
 :math:`L(\rho)=\eta\rho^{1+\phi}+c\rho^2`, with :math:`c\geq0`. The inherited
-shape requirements follow the replacement, and strict log-rate convexity
+shape obligations follow the replacement, and strict log-rate convexity
 still holds. The pure-power identity fails when :math:`c>0`, blocking the
 analytic shortcut; the independent numerical method remains applicable.
 
@@ -201,11 +201,11 @@ analytic shortcut; the independent numerical method remains applicable.
 
    from examples.financial_models.participation_execution import SurchargedPowerImpact
 
-   changed = case.replace("impact", SurchargedPowerImpact).observe(
+   changed = context.replace("impact", SurchargedPowerImpact).observe(
        impact=SurchargedPowerImpact("surcharge", surcharge=S.One/4)
    )
    numerical = changed.run(numerical_method)
-   # rate approximately 0.2174036176; the earlier case still has rate 1/4.
+   # rate approximately 0.2174036176; the earlier context still has rate 1/4.
 
 The numerical method minimizes the actual declared objective in log-rate. It
 finds a derivative sign bracket without using the closed-form optimum, then
@@ -213,19 +213,19 @@ uses bounded scalar minimization or the appropriate feasible endpoint. It
 independently integrates squared inventory with SciPy quadrature, compares the
 resulting cost, and reports a numerical KKT defect. The default ``xatol`` is
 ``1e-12``. These diagnostics are observations, not certified error bounds.
-The risk-neutral open-endpoint case is classified by checked symbolic limits
+The risk-neutral open-endpoint context is classified by checked symbolic limits
 instead of returning a small positive rate as a supposed optimizer.
 
-``compare(numerical=True)`` retains the original cases, completed results, and
+``compare(numerical=True)`` retains the original contexts, completed results, and
 reports explaining blocked computations. Importing the module uses SymPy;
 numerical dependencies are loaded by the numerical method.
 
 Continue with :doc:`black-scholes` to replace deterministic coefficient
-schedules while keeping pricing identities and method requirements live.
+schedules while keeping pricing identities and method obligations live.
 
 API
 ---
 
 .. automodule:: examples.financial_models.participation_execution
-   :members: participation_case, symbolic_case, with_limits, analytic_method, numerical_method, compare, ParticipationExecution, PowerLawImpact, SurchargedPowerImpact, ParticipationSolution, NumericalParticipation
+   :members: participation_context, symbolic_context, with_limits, analytic_method, numerical_method, compare, ParticipationExecution, PowerLawImpact, SurchargedPowerImpact, ParticipationSolution, NumericalParticipation
    :member-order: bysource

@@ -1,4 +1,4 @@
-"""One requirement value serves declarations, cases, methods, and rules."""
+"""One obligation value serves declarations, contexts, methods, and rules."""
 
 from dataclasses import replace
 
@@ -20,7 +20,7 @@ from modello.contrib.verification import (
 from modello.errors import ModelDefinitionError, ModelInputError
 
 
-def test_one_requirement_value_works_at_every_consumer():
+def test_one_obligation_value_works_at_every_consumer():
     condition = positive("a", name="admissible", reason="This computation needs a positive parameter.")
     assert isinstance(condition, Obligation)
 
@@ -31,8 +31,8 @@ def test_one_requirement_value_works_at_every_consumer():
     base = VerificationContext.for_model(Parameter)
     result = base.observe(a=2).with_obligations(condition).run(method)
     assert result.data == 2
-    assert len(result.report.checks) == 2  # field declaration and shared case/method condition
-    assert all(item.obligation == condition for item in result.report.checks)
+    assert len(result.report.evidence) == 2  # field declaration and shared context/method condition
+    assert all(item.obligation == condition for item in result.report.evidence)
     with pytest.raises(VerificationError) as failure:
         base.observe(a=-1).run(method)
     assert failure.value.report.explain("a/admissible").verdict == "strictly false"
@@ -44,44 +44,44 @@ def test_rule_matching_ignores_motivation_without_ignoring_conflicting_ids():
 
     conclusion = Obligation("admissible", "a", "rule")
     requested = replace(conclusion, consumer="calculation", reason="A consumer needs this conclusion.")
-    case = VerificationContext.for_model(Parameter).observe(a=2)
-    case = case.with_rule(InferenceRule("rule", conclusion, (positive("a"),), "Explicit test rule"))
-    evidence = case.with_obligations(requested).verify().explain("admissible")
+    context = VerificationContext.for_model(Parameter).observe(a=2)
+    context = context.with_rule(InferenceRule("rule", conclusion, (positive("a"),), "Explicit test rule"))
+    evidence = context.with_obligations(requested).verify().explain("admissible")
     assert evidence.kind == "rule" and evidence.verdict == "strictly true"
     assert evidence.obligation is requested
     with pytest.raises(ModelDefinitionError, match="unique"):
-        case.with_obligations(requested, replace(requested, reason="A conflicting declaration.")).verify()
+        context.with_obligations(requested, replace(requested, reason="A conflicting declaration.")).verify()
 
 
-def test_model_requirements_refresh_definition_evidence_and_follow_component_scope():
+def test_model_obligations_refresh_definition_evidence_and_follow_component_scope():
     class Parameter(VerificationModel):
         a = InstanceDummy("a", real=True)
 
     earlier = VerificationContext.for_model(Parameter)
     constrained = specifies(Parameter, positive("a", name="admissible"))
     assert constrained is not Parameter and issubclass(constrained, Parameter)
-    assert Parameter.definition_report().checks == earlier.verify().checks == ()
+    assert Parameter.definition_report().evidence == earlier.verify().evidence == ()
     assert constrained.definition_report().explain("admissible").verdict == "conditionally true"
 
     class Parent(VerificationModel):
         a = InstanceDummy("outer", real=True)
         child = component(constrained)
 
-    case = VerificationContext.for_model(Parent).observe(a=3, child=constrained("child", a=-1))
-    assert case.verify().explain("child/admissible").verdict == "strictly false"
-    assert case.run(Method("outer", lambda current: current.expression("a"), uses=("a",))).data == 3
+    context = VerificationContext.for_model(Parent).observe(a=3, child=constrained("child", a=-1))
+    assert context.verify().explain("child/admissible").verdict == "strictly false"
+    assert context.run(Method("outer", lambda current: current.expression("a"), uses=("a",))).data == 3
     with pytest.raises(VerificationError):
-        case.run(Method("child", lambda current: current.expression("child.a"), uses=("child.a",)))
+        context.run(Method("child", lambda current: current.expression("child.a"), uses=("child.a",)))
 
 
 def test_hint_values_are_scalar_proposals():
-    case = VerificationContext.for_model(VerificationModel)
-    hinted = case.with_bound_hint("bound", upper=2)
+    context = VerificationContext.for_model(VerificationModel)
+    hinted = context.with_bound_hint("bound", upper=2)
     assert dict(hinted.bound_hints)["bound"] == S(2)
     with pytest.raises(ModelInputError, match="scalar expression"):
-        case.with_bound_hint("bound", upper=object())
+        context.with_bound_hint("bound", upper=object())
     with pytest.raises(ModelInputError, match="scalar expression"):
-        case.with_bound_hint("bound", upper=S.true)
+        context.with_bound_hint("bound", upper=S.true)
 
 
 def test_specifies_rejects_non_obligation_inputs():
@@ -91,16 +91,16 @@ def test_specifies_rejects_non_obligation_inputs():
         Obligation(positive("a"), "consumer", "positive")  # type: ignore[arg-type]
 
 
-def test_model_attachment_preserves_inherited_requirements_and_earlier_classes():
+def test_model_attachment_preserves_inherited_obligations_and_earlier_classes():
     class Parameter(VerificationModel):
         a = InstanceDummy("a", real=True)
         b = InstanceDummy("b", real=True)
 
     first = specifies(Parameter, positive("a", name="positive_a"))
     second = specifies(first, positive("b", name="positive_b"))
-    assert Parameter.definition_report().checks == ()
-    assert {item.id for item in first.definition_report().checks} == {"positive_a"}
-    assert {item.id for item in second.definition_report().checks} == {"positive_a", "positive_b"}
+    assert Parameter.definition_report().evidence == ()
+    assert {item.id for item in first.definition_report().evidence} == {"positive_a"}
+    assert {item.id for item in second.definition_report().evidence} == {"positive_a", "positive_b"}
 
 
 @pytest.mark.parametrize("intrinsic", (False, True))
@@ -110,35 +110,35 @@ def test_strict_polynomial_order_keeps_zero_coefficients_out_of_the_certificate(
         a = InstanceDummy("a", nonnegative=True) if intrinsic else InstanceDummy("a", real=True)
         value = specifies(a * x**3, verification.strictly_increasing("value", wrt="x"))
 
-    case = VerificationContext.for_model(Cubic)
+    context = VerificationContext.for_model(Cubic)
     if not intrinsic:
-        case = case.assume(case.symbols.a >= 0)
-    assert case.verify().explain("value/strictly_increasing").verdict == "conditionally true"
+        context = context.assume(context.symbols.a >= 0)
+    assert context.verify().explain("value/strictly_increasing").verdict == "conditionally true"
     if intrinsic:
         assert Cubic.definition_report().explain("value/strictly_increasing").verdict == "conditionally true"
     method = Method("read", lambda current: 1, uses=("value",))
     with pytest.raises(VerificationError):
-        case.run(method)
-    assert case.assume(case.symbols.a > 0).run(method).data == 1
-    assert case.observe(a=0).verify().explain("value/strictly_increasing").verdict == "strictly false"
+        context.run(method)
+    assert context.assume(context.symbols.a > 0).run(method).data == 1
+    assert context.observe(a=0).verify().explain("value/strictly_increasing").verdict == "strictly false"
 
 
-def test_requirement_names_cannot_bypass_explicit_or_declared_method_gates():
+def test_obligation_names_cannot_bypass_explicit_or_declared_method_gates():
     class Parameter(VerificationModel):
         a = specifies(InstanceDummy("a", real=True), positive("a", name="auto:custom"))
         value = 2 * a
 
-    case = VerificationContext.for_model(Parameter).observe(a=-1)
+    context = VerificationContext.for_model(Parameter).observe(a=-1)
     explicit = positive("a", name="user/auto:1")
     with pytest.raises(VerificationError) as failure:
-        case.run(Method("explicit", lambda current: "EXECUTED", preconditions=(explicit,)))
+        context.run(Method("explicit", lambda current: "EXECUTED", preconditions=(explicit,)))
     assert failure.value.report.explain(explicit.name).verdict == "strictly false"
     with pytest.raises(VerificationError) as failure:
-        case.run(Method("declared", lambda current: "EXECUTED", uses=("value",)))
+        context.run(Method("declared", lambda current: "EXECUTED", uses=("value",)))
     assert failure.value.report.explain("a/auto:custom").verdict == "strictly false"
 
 
-def test_rule_premise_ids_reuse_identical_checks_and_reject_conflicts():
+def test_rule_premise_ids_reuse_identical_evidence_and_reject_conflicts():
     class Parameters(VerificationModel):
         a = InstanceDummy("a", real=True)
         b = InstanceDummy("b", real=True)
@@ -164,14 +164,16 @@ def test_rule_premise_ids_cannot_collide_with_other_evidence(nested):
     conclusion = Obligation("combined", "a", "rule")
     child = Obligation("child", "a", "rule")
     premises = (child, positive("b", name="child/positive")) if nested else (positive("a"),)
-    case = VerificationContext.for_model(Parameters).with_rule(InferenceRule("rule", conclusion, premises, "Test rule"))
-    case = case.with_obligations(conclusion)
+    context = VerificationContext.for_model(Parameters).with_rule(
+        InferenceRule("rule", conclusion, premises, "Test rule")
+    )
+    context = context.with_obligations(conclusion)
     if nested:
-        case = case.with_rule(InferenceRule("child rule", child, (positive("a"),), "Test rule"))
+        context = context.with_rule(InferenceRule("child rule", child, (positive("a"),), "Test rule"))
     else:
-        case = case.with_obligations(positive("b", name="combined/positive"))
+        context = context.with_obligations(positive("b", name="combined/positive"))
     with pytest.raises(ModelDefinitionError, match="Evidence IDs must be unique"):
-        case.verify()
+        context.verify()
 
 
 @pytest.mark.parametrize(
@@ -192,7 +194,7 @@ def test_rule_premise_ids_cannot_collide_with_other_evidence(nested):
         "equal_to",
     ),
 )
-def test_empty_requirement_domains_neither_certify_nor_refute_scalar_claims(property):
+def test_empty_obligation_domains_neither_certify_nor_refute_scalar_claims(property):
     class Curve(VerificationModel):
         x = Coordinate("x", real=True)
         value = S.NegativeOne
@@ -213,10 +215,10 @@ def test_empty_domains_block_methods_after_binding_and_before_rule_application(d
         stop = InstanceDummy("stop", real=True)
         value = S.One
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     if domain_source == "observed":
-        domain = Interval(case.symbols.start, case.symbols.stop)
-        case = case.observe(start=2, stop=1)
+        domain = Interval(context.symbols.start, context.symbols.stop)
+        context = context.observe(start=2, stop=1)
     elif domain_source == "native":
         domain = Interval(Subs(Derivative(Curve.x**2, Curve.x, evaluate=False), Curve.x, 1), 1)
     elif domain_source == "unsupported_native":
@@ -230,10 +232,10 @@ def test_empty_domains_block_methods_after_binding_and_before_rule_application(d
         domain = Interval(1, 0)
     claim = positive("value", wrt="x", domain=domain)
     if trusted:
-        case = case.with_rule(InferenceRule("trusted rule", claim, (), "Test rule"))
+        context = context.with_rule(InferenceRule("trusted rule", claim, (), "Test rule"))
     calls = []
     with pytest.raises(VerificationError) as failure:
-        case.run(Method("read", lambda current: calls.append(current), preconditions=(claim,)))
+        context.run(Method("read", lambda current: calls.append(current), preconditions=(claim,)))
     evidence = failure.value.report.explain(claim.name)
     assert not calls
     assert evidence.verdict == "unresolved"
@@ -256,12 +258,12 @@ def test_symbolic_domains_do_not_assume_an_unstated_endpoint_order(value):
         stop = InstanceDummy("stop", real=True)
         value = InstanceDummy("value", real=True)
 
-    case = VerificationContext.for_model(Curve).observe(value=value)
-    claim = positive("value", wrt="x", domain=Interval(case.symbols.start, case.symbols.stop))
-    evidence = case.verify(obligations=(claim,)).explain(claim.name)
+    context = VerificationContext.for_model(Curve).observe(value=value)
+    claim = positive("value", wrt="x", domain=Interval(context.symbols.start, context.symbols.stop))
+    evidence = context.verify(obligations=(claim,)).explain(claim.name)
     assert evidence.verdict == "unresolved"
     assert "nonempty" in " ".join(evidence.steps)
-    assert case.observe(start=2, stop=1).verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
-    assert case.observe(start=0, stop=1).verify(obligations=(claim,)).explain(claim.name).verdict == (
+    assert context.observe(start=2, stop=1).verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
+    assert context.observe(start=0, stop=1).verify(obligations=(claim,)).explain(claim.name).verdict == (
         "strictly true" if value > 0 else "strictly false"
     )

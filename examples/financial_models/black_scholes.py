@@ -213,7 +213,7 @@ class EuropeanOptions(VerificationModel):
     """A European call and put sharing strike and deterministic integrated carry.
 
     Inputs are real at definition time; positive strike and variance are live
-    requirements. A claim about spot quantifies S in (0, infinity), even when
+    obligations. A claim about spot quantifies S in (0, infinity), even when
     ``spot`` has been observed at a particular value.
     """
 
@@ -265,7 +265,7 @@ class ConstantSchedule(VerificationModel):
 
     Slopes are zero definitions in this model. Replacing it with
     ``AffineSchedule`` turns them into independent parameters and refreshes all
-    dependent expressions and requirements.
+    dependent expressions and obligations.
     """
 
     time = Coordinate("t", real=True)
@@ -359,16 +359,18 @@ def _cdf_rules() -> tuple[InferenceRule, ...]:
     )
 
 
-def symbolic_case() -> VerificationContext[EuropeanOptions]:
+def symbolic_context() -> VerificationContext[EuropeanOptions]:
     """An unobserved interior branch, keeping all scalar parameters symbolic."""
-    case = VerificationContext.for_model(EuropeanOptions, "integrated_bsm")
-    case = case.assume(case.symbols.spot > 0, case.symbols.strike > 0, case.symbols.carry.variance_total > 0)
+    context = VerificationContext.for_model(EuropeanOptions, "integrated_bsm")
+    context = context.assume(
+        context.symbols.spot > 0, context.symbols.strike > 0, context.symbols.carry.variance_total > 0
+    )
     for rule in _cdf_rules():
-        case = case.with_rule(rule)
-    return case
+        context = context.with_rule(rule)
+    return context
 
 
-def study_case(
+def study_context(
     *,
     schedule: bool = False,
     dividends: bool = True,
@@ -385,9 +387,9 @@ def study_case(
     rationals, including scalar integrated totals; use rational overrides for
     an exact symbolic study.
     """
-    case = VerificationContext.for_model(OptionStudy, "bsm_study")
+    context = VerificationContext.for_model(OptionStudy, "bsm_study")
     if schedule:
-        case = case.replace("schedule", AffineSchedule)
+        context = context.replace("schedule", AffineSchedule)
     when = S(now)
     r0, q0, v0 = Rational(1, 25), Rational(1, 100) if dividends else S.Zero, S(variance)
     r1 = Rational(1, 100) if schedule else S.Zero
@@ -399,7 +401,7 @@ def study_case(
     observations = dict(rate_intercept=r0, yield_intercept=q0, variance_intercept=v0)
     if schedule:
         observations.update(rate_slope=r1, yield_slope=q1, variance_slope=v1)
-    case = case.observe(
+    context = context.observe(
         now=when,
         spot=spot,
         strike=strike,
@@ -409,12 +411,12 @@ def study_case(
         schedule=schedule_type("schedule", **observations),
     )
     for rule in _cdf_rules():
-        case = case.with_rule(rule)
-    return case
+        context = context.with_rule(rule)
+    return context
 
 
-def _snapshot_requirements(case: VerificationContext[OptionStudy]) -> tuple[Obligation, ...]:
-    time = case.expression("schedule.time")
+def _snapshot_preconditions(context: VerificationContext[OptionStudy]) -> tuple[Obligation, ...]:
+    time = context.expression("schedule.time")
     obligations = [
         positive(
             "pricing.spot",
@@ -444,9 +446,9 @@ def _snapshot_requirements(case: VerificationContext[OptionStudy]) -> tuple[Obli
         ),
     ]
     for name in ("rate_total", "yield_total", "variance_total"):
-        # Evaluate the live schedule at this case's state. The method's identity
+        # Evaluate the live schedule at this context's state. The method's identity
         # guard prevents these exact snapshot expectations crossing branches.
-        expected = case.expression(f"schedule.{name}", wrt=time).subs(time, case.expression("now"))
+        expected = context.expression(f"schedule.{name}", wrt=time).subs(time, context.expression("now"))
         obligations.append(
             equal_to(
                 f"pricing.carry.{name}",
@@ -462,14 +464,14 @@ def _snapshot_requirements(case: VerificationContext[OptionStudy]) -> tuple[Obli
     return tuple(obligations)
 
 
-def _schedule_requirements(case: VerificationContext[OptionStudy]) -> tuple[Obligation, ...]:
+def _schedule_preconditions(context: VerificationContext[OptionStudy]) -> tuple[Obligation, ...]:
     """Identify genuine C1 tail integrals, rather than arbitrary antiderivatives.
 
     C1 regularity on the closed year is a sufficient FTC scope. The derivative
     relations on the pricing interior and the zero terminal values then fix
     the integration constants for all three deterministic coefficient curves.
     """
-    time = case.expression("schedule.time")
+    time = context.expression("schedule.time")
     obligations = [
         equal_to(
             "schedule.horizon",
@@ -495,8 +497,8 @@ def _schedule_requirements(case: VerificationContext[OptionStudy]) -> tuple[Obli
         obligations.extend(
             (
                 equal_to(
-                    diff(case.expression(f"schedule.{total}", wrt=time), time),
-                    -case.expression(f"schedule.{local}", wrt=time),
+                    diff(context.expression(f"schedule.{total}", wrt=time), time),
+                    -context.expression(f"schedule.{local}", wrt=time),
                     wrt=time,
                     domain=TIME_DOMAIN,
                     name=f"chain_{total}",
@@ -507,7 +509,7 @@ def _schedule_requirements(case: VerificationContext[OptionStudy]) -> tuple[Obli
                     ),
                 ),
                 equal_to(
-                    Subs(getattr(case.symbols.schedule, total), time, S.One),
+                    Subs(getattr(context.symbols.schedule, total), time, S.One),
                     S.Zero,
                     name=f"terminal_{total}",
                     consumer="deterministic_tail_integrals",
@@ -522,7 +524,7 @@ def _schedule_requirements(case: VerificationContext[OptionStudy]) -> tuple[Obli
 
 
 @dataclass(frozen=True)
-class SymbolicChecks:
+class SymbolicVerification:
     """Exact zero residuals, with separate spot and time quantifiers."""
 
     residuals: Mapping[str, Expr]
@@ -569,18 +571,18 @@ def _integrated_identities() -> tuple[tuple[str, Expr], ...]:
     return tuple((name, simplify(value)) for name, value in residuals.items())
 
 
-def symbolic_method(case: VerificationContext[OptionStudy]) -> Method[SymbolicChecks]:
+def symbolic_method(context: VerificationContext[OptionStudy]) -> Method[SymbolicVerification]:
     """Check this branch's actual spot derivatives and deterministic schedule.
 
-    Pass the factory to ``case.run`` to build it for the current branch. The
+    Pass the factory to ``context.run`` to build it for the current branch. The
     integrated PDE audit keeps R, Q and W independent until applying the checked
     schedule chain rule. No derivative tree is checked at module import.
     """
-    spot = case.symbols.pricing.spot
-    obligations = (*_snapshot_requirements(case), *_schedule_requirements(case))
-    time = case.expression("schedule.time")
+    spot = context.symbols.pricing.spot
+    obligations = (*_snapshot_preconditions(context), *_schedule_preconditions(context))
+    time = context.expression("schedule.time")
 
-    def execute(current: VerificationContext[OptionStudy]) -> SymbolicChecks:
+    def execute(current: VerificationContext[OptionStudy]) -> SymbolicVerification:
         residuals = dict(_integrated_identities())
         for total, local in _TAIL_FIELDS:
             residuals[f"schedule_{total}_chain"] = simplify(
@@ -607,18 +609,18 @@ def symbolic_method(case: VerificationContext[OptionStudy]) -> Method[SymbolicCh
             raise ValueError("An exact symbolic identity did not reduce to zero")
         if not gamma_positive:
             raise ValueError("The exact interior gamma positivity check did not succeed")
-        return SymbolicChecks(MappingProxyType(residuals), gamma_positive)
+        return SymbolicVerification(MappingProxyType(residuals), gamma_positive)
 
     return Method(
         "BSM_identities",
         execute,
         obligations,
         (*_PRICING_USES, "schedule.variance_total"),
-    ).bind(case)
+    ).bind(context)
 
 
 @dataclass(frozen=True)
-class NumericalCheck:
+class NumericalComparison:
     call: float
     put: float
     call_delta: float
@@ -661,10 +663,10 @@ def _payoff_integral(log_scale: float, lower: float, deviation: float) -> tuple[
     return value, error
 
 
-def valuation_method(case: VerificationContext[OptionStudy]) -> Method[NumericalCheck]:
+def valuation_method(context: VerificationContext[OptionStudy]) -> Method[NumericalComparison]:
     """Compare the declared formula with discounted lognormal payoff quadrature."""
 
-    def execute(current: VerificationContext[OptionStudy]) -> NumericalCheck:
+    def execute(current: VerificationContext[OptionStudy]) -> NumericalComparison:
         def number(path: str) -> float:
             expression = current.expression(path)
             if expression.free_symbols or expression.is_real is not True or expression.is_finite is not True:
@@ -688,7 +690,7 @@ def valuation_method(case: VerificationContext[OptionStudy]) -> Method[Numerical
             log_strike - rate, -(log_ratio + variance / 2) / deviation, deviation
         )
         call, put = number("pricing.call"), number("pricing.put")
-        return NumericalCheck(
+        return NumericalComparison(
             call,
             put,
             number("pricing.call_delta"),
@@ -704,9 +706,9 @@ def valuation_method(case: VerificationContext[OptionStudy]) -> Method[Numerical
     return Method(
         "BSM_snapshot",
         execute,
-        (*_snapshot_requirements(case), *_schedule_requirements(case)),
+        (*_snapshot_preconditions(context), *_schedule_preconditions(context)),
         (*_PRICING_USES, "schedule.variance_total"),
-    ).bind(case)
+    ).bind(context)
 
 
 def dividend_free_method() -> Method[Expr]:
@@ -737,34 +739,34 @@ def dividend_free_method() -> Method[Expr]:
     )
 
 
-def boundary_checks() -> dict[str, Expr]:
+def boundary_slopes() -> dict[str, Expr]:
     """Compute unequal one-sided payoff slopes at the zero-variance kink.
 
     At maturity, x=S-K. With zero variance before maturity,
     x=S*exp(-Q)-K*exp(-R), the discounted deterministic forward moneyness.
     These boundary payoffs are not obtained by substituting W=0 into d1/d2.
     """
-    case = VerificationContext.for_model(PayoffBoundary)
+    context = VerificationContext.for_model(PayoffBoundary)
     x = PayoffBoundary.moneyness
     values = {}
     for option in ("call", "put"):
-        derivative = diff(case.expression(option, wrt=x), x)
+        derivative = diff(context.expression(option, wrt=x), x)
         values[f"{option}_left_slope"] = limit(derivative, x, 0, dir="-")
         values[f"{option}_right_slope"] = limit(derivative, x, 0, dir="+")
     return values
 
 
 def run_demo(*, numerical: bool = True) -> dict[str, Any]:
-    """Replay branches and retain raw cases, reports, and method results."""
-    no_dividends = study_case(dividends=False)
-    dividends = study_case()
-    changing = study_case(schedule=True, now=Rational(1, 4))
-    symbolic: dict[str, VerificationResult[SymbolicChecks]] = {}
-    numeric: dict[str, VerificationResult[NumericalCheck]] = {}
-    for name, case in (("constant", dividends), ("affine", changing)):
-        symbolic[name] = case.run(symbolic_method)
+    """Replay branches and retain raw contexts, reports, and method results."""
+    no_dividends = study_context(dividends=False)
+    dividends = study_context()
+    changing = study_context(schedule=True, now=Rational(1, 4))
+    symbolic: dict[str, VerificationResult[SymbolicVerification]] = {}
+    numeric: dict[str, VerificationResult[NumericalComparison]] = {}
+    for name, context in (("constant", dividends), ("affine", changing)):
+        symbolic[name] = context.run(symbolic_method)
         if numerical:
-            numeric[name] = case.run(valuation_method)
+            numeric[name] = context.run(valuation_method)
     shortcut = no_dividends.run(dividend_free_method())
     try:
         dividends.run(dividend_free_method())
@@ -773,25 +775,25 @@ def run_demo(*, numerical: bool = True) -> dict[str, Any]:
     else:
         raise RuntimeError("The dividend-free shortcut unexpectedly survived a positive dividend yield")
     rejected_interior = {}
-    for name, case in (
-        ("maturity", study_case(now=1)),
-        ("zero_variance", study_case(variance=0)),
-        ("negative_variance", study_case(variance=-Rational(1, 25))),
+    for name, context in (
+        ("maturity", study_context(now=1)),
+        ("zero_variance", study_context(variance=0)),
+        ("negative_variance", study_context(variance=-Rational(1, 25))),
     ):
         try:
-            case.run(valuation_method)
+            context.run(valuation_method)
         except VerificationError as error:
-            rejected_interior[name] = {"case": case, "report": error.report}
+            rejected_interior[name] = {"context": context, "report": error.report}
         else:
             raise RuntimeError(f"The interior formula unexpectedly accepted {name}")
     return {
-        "cases": {"no_dividends": no_dividends, "constant": dividends, "affine": changing},
+        "contexts": {"no_dividends": no_dividends, "constant": dividends, "affine": changing},
         "symbolic": symbolic,
         "numerical": numeric,
         "dividend_free_shortcut": shortcut,
         "rejected_dividend_free_shortcut": rejected_shortcut,
         "rejected_interior": rejected_interior,
-        "boundary": boundary_checks(),
+        "boundary": boundary_slopes(),
     }
 
 
@@ -802,7 +804,7 @@ def main(argv: list[str] | None = None) -> None:
     demo = run_demo(numerical=not arguments.symbolic_only)
     for name, result in demo["symbolic"].items():
         counts: dict[str, int] = {}
-        for evidence in result.report.checks:
+        for evidence in result.report.evidence:
             counts[evidence.verdict] = counts.get(evidence.verdict, 0) + 1
         print(f"{name}: {len(result.data.residuals)} exact zero residuals; report {counts}")
     for name, result in demo["numerical"].items():

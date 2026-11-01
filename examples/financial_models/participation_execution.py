@@ -28,7 +28,7 @@ from sympy import (
     simplify,
 )
 
-from examples._verification_checks import require_parameter_assumptions
+from examples._verification_inputs import validate_parameter_assumptions
 from modello import ConstraintKind, Coordinate, InstanceDummy, ScalarValue, component
 from modello.contrib.verification import (
     InferenceRule,
@@ -54,7 +54,7 @@ POSITIVE_RATES = Interval.open(0, S.Infinity)
 _UNIQUE = Obligation("at_most_one_pov_minimum", "log_objective", "rule")
 
 
-def impact_requirements() -> tuple[Obligation, ...]:
+def impact_obligations() -> tuple[Obligation, ...]:
     """Live execution-function hypotheses from Section 1 of the paper."""
     return tuple(
         replace(claim, consumer="pov_execution", reason=reason, source=SOURCE + "#S1")
@@ -83,7 +83,7 @@ class PowerLawImpact(VerificationModel):
     rate = Coordinate("rho", positive=True)
     eta = InstanceDummy("eta", positive=True)
     phi = InstanceDummy("phi", positive=True)
-    value = specifies(eta * rate ** (1 + phi), *impact_requirements())
+    value = specifies(eta * rate ** (1 + phi), *impact_obligations())
 
 
 class SurchargedPowerImpact(PowerLawImpact):
@@ -180,7 +180,7 @@ class ParticipationExecution(VerificationModel):
 def uniqueness_rule() -> InferenceRule:
     """Strict convexity in log-rate gives at most one attained scalar minimum.
 
-    Existence is checked separately. The theorem does not claim convexity in
+    Existence is checked separately. The inference rule does not claim convexity in
     rho, nor optimality among nonconstant participation schedules.
     """
     return InferenceRule(
@@ -222,7 +222,7 @@ def uniqueness_rule() -> InferenceRule:
 
 
 def with_limits(
-    case: VerificationContext[ParticipationExecution],
+    context: VerificationContext[ParticipationExecution],
     *,
     cap: ScalarValue | None = None,
     deadline: ScalarValue | None = None,
@@ -230,7 +230,7 @@ def with_limits(
     """Branch by adding or removing limits while retaining earlier observations.
 
     Passing ``None`` removes that constraint through component replacement.
-    To change an already observed numeric bound, branch from the earlier case:
+    To change an already observed numeric bound, branch from the earlier context:
     observations accumulate rather than overwrite one another.
     """
     model: type[FreeParticipation]
@@ -242,7 +242,7 @@ def with_limits(
         model = DeadlineParticipation
     else:
         model = FreeParticipation
-    changed = case.replace("limits", model)
+    changed = context.replace("limits", model)
     values = {}
     if cap is not None:
         values["cap"] = cap
@@ -251,12 +251,12 @@ def with_limits(
     return changed.observe(limits=model("limits", **values)) if values else changed
 
 
-def symbolic_case() -> VerificationContext[ParticipationExecution]:
-    """Return an unobserved case for parameter assumptions and observations."""
+def symbolic_context() -> VerificationContext[ParticipationExecution]:
+    """Return an unobserved context for parameter assumptions and observations."""
     return VerificationContext.for_model(ParticipationExecution, "pov_execution").with_rule(uniqueness_rule())
 
 
-def participation_case(
+def participation_context(
     *,
     quantity: ScalarValue = 3,
     volume: ScalarValue = 4,
@@ -268,9 +268,9 @@ def participation_case(
     deadline: ScalarValue | None = None,
 ) -> VerificationContext[ParticipationExecution]:
     """Observe exact defaults with rho*=1/4, completion time 3, and cost 9/4."""
-    case = symbolic_case()
-    case = with_limits(case, cap=cap, deadline=deadline)
-    return case.observe(quantity=quantity, volume=volume, eta=eta, phi=phi, gamma=gamma, sigma=sigma)
+    context = symbolic_context()
+    context = with_limits(context, cap=cap, deadline=deadline)
+    return context.observe(quantity=quantity, volume=volume, eta=eta, phi=phi, gamma=gamma, sigma=sigma)
 
 
 def _risk_integral(get: Callable[[str], Expr]) -> Expr:
@@ -285,8 +285,8 @@ def _risk_integral(get: Callable[[str], Expr]) -> Expr:
     )
 
 
-def _requirements(case: VerificationContext[ParticipationExecution], *, power_law: bool) -> tuple[Obligation, ...]:
-    symbol = case.symbols
+def _preconditions(context: VerificationContext[ParticipationExecution], *, power_law: bool) -> tuple[Obligation, ...]:
+    symbol = context.symbols
     obligations = [
         equal_to(
             "temporary_cost",
@@ -408,43 +408,43 @@ class ParticipationSolution:
     certificate: VerificationReport
 
 
-def _bound_data(case: VerificationContext[ParticipationExecution]) -> tuple[Expr, Expr | None]:
-    cap_active, deadline_active = (case.expression(f"limits.{name}") for name in ("cap_active", "deadline_active"))
+def _bound_data(context: VerificationContext[ParticipationExecution]) -> tuple[Expr, Expr | None]:
+    cap_active, deadline_active = (context.expression(f"limits.{name}") for name in ("cap_active", "deadline_active"))
     if cap_active not in (S.Zero, S.One) or deadline_active not in (S.Zero, S.One):
         raise ValueError("The supported limit switches must be exactly zero or one")
-    lower = case.expression("limits.lower")
+    lower = context.expression("limits.lower")
     if deadline_active == 0 and lower != 0 or deadline_active == 1 and lower.is_positive is not True:
         raise ValueError("The active deadline must give a positive lower rate; an inactive one must give zero")
-    return lower, case.expression("limits.cap") if cap_active == 1 else None
+    return lower, context.expression("limits.cap") if cap_active == 1 else None
 
 
-def _checked_report(
-    case: VerificationContext[ParticipationExecution], obligations: tuple[Obligation, ...]
+def _certificate_report(
+    context: VerificationContext[ParticipationExecution], obligations: tuple[Obligation, ...]
 ) -> VerificationReport:
-    report = case.verify(max_steps=1000, obligations=obligations)
+    report = context.verify(max_steps=1000, obligations=obligations)
     failed = [item.name for item in obligations if report.explain(item.name).condition is not S.true]
     if report.consistent is False or failed:
-        raise VerificationError("Unestablished POV certificate: " + ", ".join(failed), case, report)
+        raise VerificationError("Unestablished POV certificate: " + ", ".join(failed), context, report)
     return report
 
 
-def _independent_rate(case: VerificationContext[ParticipationExecution]) -> None:
-    coordinates = {case._reference(name) for name in ("rate", "log_rate", "time")}
-    require_parameter_assumptions(
-        case,
+def _independent_rate(context: VerificationContext[ParticipationExecution]) -> None:
+    coordinates = {context._reference(name) for name in ("rate", "log_rate", "time")}
+    validate_parameter_assumptions(
+        context,
         *coordinates,
         message="Optimize over the positive rate interval; encode caps and deadlines with with_limits",
     )
-    for constraint in case.problem.constraints:
+    for constraint in context.problem.constraints:
         if constraint.kind is not ConstraintKind.INPUT:
             continue
-        expressions = (case.expression(value, wrt="rate") for value in (constraint.left, constraint.right))
+        expressions = (context.expression(value, wrt="rate") for value in (constraint.left, constraint.right))
         if any(value.free_symbols & coordinates for value in expressions):
             raise ValueError("Optimize over an independent rate; observe parameters rather than its derived outputs")
 
 
-def _risk_regime(case: VerificationContext[ParticipationExecution]) -> Literal["positive", "zero"]:
-    gamma = case.expression("gamma")
+def _risk_regime(context: VerificationContext[ParticipationExecution]) -> Literal["positive", "zero"]:
+    gamma = context.expression("gamma")
     if gamma.is_positive is True:
         return "positive"
     if gamma.is_zero is True:
@@ -457,7 +457,7 @@ def _risk_regime(case: VerificationContext[ParticipationExecution]) -> Literal["
             Eq(gamma, 0), name="risk_zero_branch", consumer="risk_regime", reason="Check the risk-neutral branch."
         ),
     )
-    report = case.verify(max_steps=1000, obligations=obligations)
+    report = context.verify(max_steps=1000, obligations=obligations)
     if report.explain("risk_positive_branch").condition is S.true:
         return "positive"
     if report.explain("risk_zero_branch").condition is S.true:
@@ -465,16 +465,16 @@ def _risk_regime(case: VerificationContext[ParticipationExecution]) -> Literal["
     raise ValueError("Resolve whether gamma is positive or zero before selecting an optimizer")
 
 
-def _analytic(case: VerificationContext[ParticipationExecution]) -> ParticipationSolution:
-    _independent_rate(case)
-    lower, upper = _bound_data(case)
-    rate = case.expression("rate", wrt="rate")
-    objective = case.expression("objective", wrt="rate")
+def _analytic(context: VerificationContext[ParticipationExecution]) -> ParticipationSolution:
+    _independent_rate(context)
+    lower, upper = _bound_data(context)
+    rate = context.expression("rate", wrt="rate")
+    objective = context.expression("objective", wrt="rate")
     quantity, volume, eta, phi, gamma, sigma = (
-        case.expression(path) for path in ("quantity", "volume", "eta", "phi", "gamma", "sigma")
+        context.expression(path) for path in ("quantity", "volume", "eta", "phi", "gamma", "sigma")
     )
     coefficient = gamma * sigma**2 * quantity**3 / (6 * volume)
-    regime = _risk_regime(case)
+    regime = _risk_regime(context)
     scaled_slope = simplify(rate**2 * diff(objective, rate))
     common = (
         equal_to(
@@ -515,7 +515,7 @@ def _analytic(case: VerificationContext[ParticipationExecution]) -> Participatio
             ),
         )
         return ParticipationSolution(
-            "infimum_not_attained", None, None, S.Zero, None, (), None, None, _checked_report(case, obligations)
+            "infimum_not_attained", None, None, S.Zero, None, (), None, None, _certificate_report(context, obligations)
         )
     if regime == "positive":
         free_rate = simplify((gamma * sigma**2 * quantity**2 / (6 * eta * phi * volume)) ** (1 / (1 + phi)))
@@ -549,8 +549,8 @@ def _analytic(case: VerificationContext[ParticipationExecution]) -> Participatio
             reason="Check primal feasibility, nonnegative multipliers, stationarity, and complementary slackness.",
         ),
         equal_to(
-            case.expression("inventory", wrt="time").subs(
-                {rate: candidate, case.expression("time", wrt="time"): duration}, simultaneous=True
+            context.expression("inventory", wrt="time").subs(
+                {rate: candidate, context.expression("time", wrt="time"): duration}, simultaneous=True
             ),
             S.Zero,
             name="completion_boundary",
@@ -573,16 +573,16 @@ def _analytic(case: VerificationContext[ParticipationExecution]) -> Participatio
         active,
         lower_multiplier,
         upper_multiplier,
-        _checked_report(case, obligations),
+        _certificate_report(context, obligations),
     )
 
 
-def analytic_method(case: VerificationContext[ParticipationExecution]) -> Method[ParticipationSolution]:
+def analytic_method(context: VerificationContext[ParticipationExecution]) -> Method[ParticipationSolution]:
     """The pure-power shortcut, guarded by live identities and shape evidence."""
     return Method(
         "Guéant analytic POV",
         _analytic,
-        _requirements(case, power_law=True),
+        _preconditions(context, power_law=True),
         uses=("objective", "duration", "inventory", "log_objective", "log_curvature", "limits.lower"),
     )
 
@@ -599,27 +599,27 @@ class NumericalParticipation:
     diagnostics: dict[str, float | int | str]
 
 
-def _numerical(case: VerificationContext[ParticipationExecution], *, xatol: float = 1e-12) -> NumericalParticipation:
+def _numerical(context: VerificationContext[ParticipationExecution], *, xatol: float = 1e-12) -> NumericalParticipation:
     import math
 
     from scipy.integrate import quad
     from scipy.optimize import minimize_scalar
     from sympy import lambdify
 
-    _independent_rate(case)
+    _independent_rate(context)
     if not math.isfinite(xatol) or xatol <= 0:
         raise ValueError("xatol must be finite and positive")
-    lower, upper = _bound_data(case)
+    lower, upper = _bound_data(context)
     if lower.free_symbols or upper is not None and upper.free_symbols:
         raise ValueError("Observe the active participation cap and deadline before numerical minimization")
-    x = case.expression("log_rate", wrt="log_rate")
-    expression = case.expression("log_objective", wrt="log_rate").doit()
+    x = context.expression("log_rate", wrt="log_rate")
+    expression = context.expression("log_objective", wrt="log_rate").doit()
     if expression.free_symbols - {x}:
         raise ValueError("Observe all parameters before numerical minimization")
     value, derivative = (lambdify(x, formula, "math") for formula in (expression, diff(expression, x)))
-    if case.expression("gamma") == 0 and lower == 0:
-        _checked_report(
-            case,
+    if context.expression("gamma") == 0 and lower == 0:
+        _certificate_report(
+            context,
             (
                 positive(
                     "objective",
@@ -680,12 +680,16 @@ def _numerical(case: VerificationContext[ParticipationExecution], *, xatol: floa
         else (float(upper) if optimum == right and upper is not None else math.exp(optimum))
     )
     cost = float(value(optimum))
-    quantity, volume, gamma, sigma = (float(case.expression(path)) for path in ("quantity", "volume", "gamma", "sigma"))
+    quantity, volume, gamma, sigma = (
+        float(context.expression(path)) for path in ("quantity", "volume", "gamma", "sigma")
+    )
     duration = quantity / (volume * rho)
     variance_integral, quad_error = quad(
         lambda time: (quantity - rho * volume * time) ** 2, 0, duration, epsabs=1e-11, epsrel=1e-11
     )
-    temporary = float(case.expression("temporary_cost", wrt="rate").subs(case.expression("rate", wrt="rate"), rho))
+    temporary = float(
+        context.expression("temporary_cost", wrt="rate").subs(context.expression("rate", wrt="rate"), rho)
+    )
     integral_cost = temporary + gamma * sigma**2 * variance_integral / 2
     log_slope = float(derivative(optimum))
     violation = (
@@ -708,43 +712,43 @@ def _numerical(case: VerificationContext[ParticipationExecution], *, xatol: floa
     return NumericalParticipation("minimum", rho, duration, cost, (left, right), diagnostics)
 
 
-def numerical_method(case: VerificationContext[ParticipationExecution]) -> Method[NumericalParticipation]:
+def numerical_method(context: VerificationContext[ParticipationExecution]) -> Method[NumericalParticipation]:
     """Minimize the actual log-rate objective; no pure-power formula is used."""
     return Method(
         "independent scalar POV minimization",
         _numerical,
-        _requirements(case, power_law=False),
+        _preconditions(context, power_law=False),
         uses=("objective", "duration", "log_objective", "log_curvature", "limits.lower"),
     )
 
 
 def compare(*, numerical: bool = False) -> dict[str, dict[str, object]]:
     """Return reproducible branches, results, reports, and blocked-method evidence."""
-    free = participation_case()
+    free = participation_context()
     both = with_limits(free, cap=S.Half, deadline=2)
     surcharge = free.replace("impact", SurchargedPowerImpact).observe(
         impact=SurchargedPowerImpact("surcharge", surcharge=S.One / 4)
     )
-    cases = {
+    contexts = {
         "free": free,
         "capped": with_limits(free, cap=S.One / 8),
         "deadline": with_limits(free, deadline=2),
         "both": both,
         "cap_removed": with_limits(both, deadline=2),
         "deadline_removed": with_limits(both, cap=S.Half),
-        "risk_neutral_free": participation_case(gamma=0),
-        "risk_neutral_deadline": participation_case(gamma=0, deadline=2),
+        "risk_neutral_free": participation_context(gamma=0),
+        "risk_neutral_deadline": participation_context(gamma=0, deadline=2),
         "infeasible": with_limits(free, cap=S.One / 8, deadline=2),
         "surcharge_replacement": surcharge,
     }
     results: dict[str, dict[str, object]] = {}
-    for name, case in cases.items():
-        row: dict[str, object] = {"case": case}
+    for name, context in contexts.items():
+        row: dict[str, object] = {"context": context}
         for key, method in (("analytic", analytic_method), ("numerical", numerical_method)):
             if key == "numerical" and not numerical:
                 continue
             try:
-                result: VerificationResult = case.run(method)
+                result: VerificationResult = context.run(method)
                 row[key] = result
             except VerificationError as error:
                 row[f"{key}_blocked"] = str(error)

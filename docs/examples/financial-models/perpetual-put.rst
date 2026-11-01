@@ -42,10 +42,10 @@ The proposed value is
 
 .. math::
 
-   P(Bx)=\begin{cases}
+   P(Bx)=\begin{contexts}
        K-Bx,&0<x\leq1,\\
        (K-B)x^\beta,&x>1.
-   \end{cases}
+   \end{contexts}
 
 Merton uses :math:`\gamma=2r/\sigma^2=-\beta` and names the exercise boundary
 :math:`C^*`. The implementation retains the fixed domains ``(0,1]`` and
@@ -55,11 +55,11 @@ parameter-dependent boundary.
 The defaults are :math:`r=1/25,\sigma=1/5,K=100,S_0=100`:
 
 >>> from examples.financial_models.perpetual_put import (
-...     perpetual_put_case, algebra_method, c2_consumer_method,
+...     perpetual_put_context, algebra_method, c2_consumer_method,
 ...     trust_stopping_rule, verification_method,
 ... )
->>> case = perpetual_put_case()
->>> algebra = case.run(algebra_method)
+>>> context = perpetual_put_context()
+>>> algebra = context.run(algebra_method)
 >>> algebra.data.beta, algebra.data.boundary, algebra.data.value_at_initial_spot
 (-2, 200/3, 400/27)
 >>> algebra.report.explain("continuation_pricing_generator").verdict
@@ -98,7 +98,7 @@ The witness is normalized moneyness :math:`x=1`, corresponding to :math:`S=B`.
 The rule checks regularity on each active open side, the value actually
 assigned at the join, and finite one-sided derivative limits. A matched first
 derivative and an unequal second derivative give the two different verdicts;
-they do not use a registered stochastic theorem. Unsupported multiple or
+they do not use a registered stochastic inference rule. Unsupported multiple or
 parameter-dependent joins remain unresolved. At an included domain endpoint,
 one-sided continuity alone cannot discharge an ordinary derivative premise.
 The separate exact certificate still exports derivatives in spot units.
@@ -135,10 +135,10 @@ of numerical samples substitutes for the global inequality.
 Where stochastic verification enters
 ------------------------------------
 
-A PDE residual alone does not prove optimal stopping. The ordinary case has
+A PDE residual alone does not prove optimal stopping. The ordinary context has
 no rule establishing ``optimal_stopping_under_GBM``. Adopt it explicitly:
 
->>> trusted = trust_stopping_rule(case)
+>>> trusted = trust_stopping_rule(context)
 >>> verification = trusted.run(verification_method)
 >>> verification.report.explain("optimal_stopping_under_GBM").kind
 'rule'
@@ -170,19 +170,19 @@ mathematical inputs, rather than discoveries made by the scalar CAS checker.
 Change a parameter or the consumer
 ----------------------------------
 
-``perpetual_put_case(rate=0)`` cannot reuse the positive-parameter shortcut:
+``perpetual_put_context(rate=0)`` cannot reuse the positive-parameter shortcut:
 the positive-rate and positive-boundary premises fail, and the envelope no
 longer vanishes. The example records this rejection; it does not obtain a
 zero-rate price by substituting into a formula whose normalization requires
 :math:`B>0`. Nonzero dividends likewise invalidate this exponent and are
 blocked by the exact zero-dividend and generator checks.
 
-``case.run(algebra_method)`` builds the method for the current immutable branch.
+``context.run(algebra_method)`` builds the method for the current immutable branch.
 Observe ``initial_spot`` to value an initial state;
 observations or assumptions fixing the normalized curve itself are rejected
 because verification traverses both regions.
 The restriction check includes active SymPy ``assuming(...)`` contexts as well
-as explicitly recorded ``case.assume(...)`` predicates.
+as explicitly recorded ``context.assume(...)`` predicates.
 Both moneyness and the time coordinate of the transversality envelope must
 remain unrestricted.
 
@@ -196,7 +196,7 @@ payoff in the stated GBM setting is
 
    H(b)=(K-b)(S_0/b)^\beta.
 
-``numerical_method(case)`` maximizes this function with bounded SciPy scalar
+``numerical_method(context)`` maximizes this function with bounded SciPy scalar
 optimization in :math:`b/K`. The bracket and objective use the admissible
 barrier domain; the analytic boundary is used only afterward for comparison.
 The method also checks the immediate-exercise endpoint when :math:`S_0<B`.
@@ -204,16 +204,16 @@ It reports barrier and value differences, with default ``xatol=1e-12``.
 These are numerical observations over barrier strategies. They neither prove
 an error bound nor replace verification over all stopping times.
 
-``run_demo(numerical=True)`` returns the raw cases, scalar and trusted results,
+``run_demo(numerical=True)`` returns the raw contexts, scalar and trusted results,
 blocked-method reports, and numerical comparisons for continuation and
 immediate exercise.
 
-Continue with :doc:`../market-making/index` to combine component requirements
+Continue with :doc:`../market-making/index` to combine component obligations
 with a coupled system of time-dependent inventory values.
 
 API
 ---
 
 .. automodule:: examples.financial_models.perpetual_put
-   :members: perpetual_put_case, symbolic_case, algebra_method, c2_consumer_method, trust_stopping_rule, verification_method, numerical_method, regularity_report, run_demo, PerpetualPut, PutCertificate, StoppingVerification, BarrierComparison
+   :members: perpetual_put_context, symbolic_context, algebra_method, c2_consumer_method, trust_stopping_rule, verification_method, numerical_method, regularity_report, run_demo, PerpetualPut, PutCertificate, StoppingVerification, BarrierComparison
    :member-order: bysource

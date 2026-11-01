@@ -1,4 +1,4 @@
-"""Declared domains and native premises survive every research input path."""
+"""Declared domains and native premises survive every verification input path."""
 
 from contextlib import nullcontext
 
@@ -63,14 +63,14 @@ def test_intrinsic_domains_apply_to_claims_methods_and_sampling(assumptions, val
         x = Coordinate("x", **assumptions)
         value = x
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     claim = nonzero(Curve.x - S.Half, wrt="x")
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
     with pytest.raises(VerificationError):
-        case.run(Method("real_domain", lambda current: 0, (claim,)))
+        context.run(Method("real_domain", lambda current: 0, (claim,)))
     with pytest.raises(ModelValidationError):
-        case.sample("value", wrt="x", points=(invalid,))
-    assert float(case.sample("value", wrt="x", points=(valid,)).values[0]) == pytest.approx(float(valid))
+        context.sample("value", wrt="x", points=(invalid,))
+    assert float(context.sample("value", wrt="x", points=(valid,)).values[0]) == pytest.approx(float(valid))
 
 
 def test_index_and_imaginary_coordinates_do_not_acquire_a_real_continuous_domain():
@@ -78,12 +78,12 @@ def test_index_and_imaginary_coordinates_do_not_acquire_a_real_continuous_domain
         index = Index("n")
         imaginary = Coordinate("z", imaginary=True)
 
-    case = VerificationContext.for_model(Axes)
+    context = VerificationContext.for_model(Axes)
     for coordinate in ("index", "imaginary"):
-        claim = continuously_differentiable(case.expression(coordinate), wrt=coordinate)
-        assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
+        claim = continuously_differentiable(context.expression(coordinate), wrt=coordinate)
+        assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
         with pytest.raises(ModelValidationError):
-            case.sample(case.expression(coordinate), wrt=coordinate, points=(S.Half,))
+            context.sample(context.expression(coordinate), wrt=coordinate, points=(S.Half,))
 
 
 @pytest.mark.parametrize("point", (0, 1))
@@ -96,21 +96,23 @@ def test_symbolic_observations_retain_native_operation_premises(point, indirect)
         helper = InstanceDummy("h", real=True)
         value = a * b
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     native = Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, point)
-    case = case.observe(a=case.symbols.helper**2, helper=native, b=0) if indirect else case.observe(a=native, b=0)
+    context = (
+        context.observe(a=context.symbols.helper**2, helper=native, b=0) if indirect else context.observe(a=native, b=0)
+    )
     claim = continuously_differentiable("value", wrt="x")
-    report = case.verify(obligations=(claim,))
+    report = context.verify(obligations=(claim,))
     assert report.explain(claim.name).verdict == ("strictly false" if point == 0 else "strictly true")
     method = Method("observe", lambda current: current.expression("value").doit(), uses=("value",))
     if point == 0:
         with pytest.raises(VerificationError):
-            case.run(method)
+            context.run(method)
         with pytest.raises(ModelValidationError):
-            case.sample("value", wrt="x", points=(1,))
+            context.sample("value", wrt="x", points=(1,))
     else:
-        assert case.run(method).data == 0
-        assert case.sample("value", wrt="x", points=(1,)).values == (0,)
+        assert context.run(method).data == 0
+        assert context.sample("value", wrt="x", points=(1,)).values == (0,)
 
 
 def test_conflicting_and_cyclic_observations_remain_joint_equations():
@@ -121,12 +123,12 @@ def test_conflicting_and_cyclic_observations_remain_joint_equations():
         x = Coordinate("x", real=True)
         slope = Derivative(a * x**2, x)
 
-    case = VerificationContext.for_model(Product)
-    conflicting = case.observe(a=1).observe(a=2)
+    context = VerificationContext.for_model(Product)
+    conflicting = context.observe(a=1).observe(a=2)
     assert conflicting.verify().consistent is False
-    compatible = case.observe(a=case.symbols.b).observe(a=1)
+    compatible = context.observe(a=context.symbols.b).observe(a=1)
     assert compatible.verify(obligations=(equal_to("value", S.One),)).explain("equal_to").verdict == "strictly true"
-    cyclic = case.observe(a=case.symbols.b, b=case.symbols.a)
+    cyclic = context.observe(a=context.symbols.b, b=context.symbols.a)
     claim = equal_to("value", cyclic.symbols.b**2)
     assert cyclic.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
     claim = equal_to("slope", 2 * cyclic.symbols.b * Product.x, wrt="x")
@@ -140,10 +142,10 @@ def test_observed_zero_inside_a_derivative_is_a_valid_specialization():
         b = InstanceDummy("b", real=True)
         value = a * b
 
-    case = VerificationContext.for_model(Curve)
-    native = Subs(Derivative(case.symbols.b * Abs(Curve.x), Curve.x), Curve.x, 0)
-    case = case.observe(a=native, b=0)
-    assert case.run(Method("zero", lambda current: current.expression("value").doit(), uses=("value",))).data == 0
+    context = VerificationContext.for_model(Curve)
+    native = Subs(Derivative(context.symbols.b * Abs(Curve.x), Curve.x), Curve.x, 0)
+    context = context.observe(a=native, b=0)
+    assert context.run(Method("zero", lambda current: current.expression("value").doit(), uses=("value",))).data == 0
 
 
 @pytest.mark.parametrize("point", (0, 1))
@@ -154,26 +156,26 @@ def test_cyclic_observations_keep_native_premises_after_joint_elimination(point)
         b = InstanceDummy("b", real=True)
         value = a - b
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     native = Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, point)
-    case = case.observe(a=case.symbols.b, b=case.symbols.a + native - point)
+    context = context.observe(a=context.symbols.b, b=context.symbols.a + native - point)
     claim = equal_to("value", S.Zero, wrt="x")
     method = Method("cyclic", lambda current: 0, (claim,))
     with assuming(Q.positive(Curve.x)):
-        report = case.verify(obligations=(claim,))
+        report = context.verify(obligations=(claim,))
         assert report.explain(claim.name).verdict == ("strictly false" if point == 0 else "strictly true")
         assert report.explain(claim.name).source_operands
-        audit = next(row for row in report.to_dict()["checks"] if row["id"] == claim.name)
+        audit = next(row for row in report.to_dict()["evidence"] if row["id"] == claim.name)
         assert any("Derivative" in source for source in audit["source_operands"])
         assert "Source operands:" in report.to_html()
     if point == 0:
         with pytest.raises(VerificationError):
-            case.run(method)
+            context.run(method)
         with pytest.raises(ModelValidationError):
-            case.sample("value", wrt="x", points=(1,))
+            context.sample("value", wrt="x", points=(1,))
     else:
-        assert case.run(method).data == 0
-        assert case.sample("value", wrt="x", points=(1,)).values == (0,)
+        assert context.run(method).data == 0
+        assert context.sample("value", wrt="x", points=(1,)).values == (0,)
 
 
 def test_cyclic_observation_guards_keep_local_function_domains():
@@ -183,18 +185,18 @@ def test_cyclic_observation_guards_keep_local_function_domains():
         b = InstanceDummy("b", real=True)
         value = a - b
 
-    case = VerificationContext.for_model(Curve)
-    source = Add(case.symbols.a, Mul(0, log(Curve.x), evaluate=False), evaluate=False)
-    case = case.observe(a=case.symbols.b, b=source)
+    context = VerificationContext.for_model(Curve)
+    source = Add(context.symbols.a, Mul(0, log(Curve.x), evaluate=False), evaluate=False)
+    context = context.observe(a=context.symbols.b, b=source)
     claim = continuously_differentiable("value", wrt="x")
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
     claim = continuously_differentiable("value", wrt="x", domain=Interval.open(0, S.Infinity))
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
     claim = differentiable("value", wrt="x", at=1)
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
-    assert case.sample("value", wrt="x", points=(1,)).values == (0,)
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
+    assert context.sample("value", wrt="x", points=(1,)).values == (0,)
     with pytest.raises(ModelValidationError):
-        case.sample("value", wrt="x", points=(0,))
+        context.sample("value", wrt="x", points=(0,))
 
 
 def test_residual_source_guards_preserve_nested_native_substitution_scopes():
@@ -205,12 +207,12 @@ def test_residual_source_guards_preserve_nested_native_substitution_scopes():
         curve = log(x)
         value = a - b
 
-    case = VerificationContext.for_model(Curve)
-    native = Subs(Derivative(case.symbols.curve, Curve.x), Curve.x, 1)
-    case = case.observe(a=case.symbols.b, b=case.symbols.a + native - 1)
+    context = VerificationContext.for_model(Curve)
+    native = Subs(Derivative(context.symbols.curve, Curve.x), Curve.x, 1)
+    context = context.observe(a=context.symbols.b, b=context.symbols.a + native - 1)
     claim = equal_to("value", S.Zero, wrt="x")
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
-    assert case.sample("value", wrt="x", points=(0, 1)).values == (0, 0)
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
+    assert context.sample("value", wrt="x", points=(0, 1)).values == (0, 0)
 
 
 @pytest.mark.parametrize("reverse", (False, True))
@@ -221,14 +223,14 @@ def test_proof_cache_distinguishes_a_constant_from_an_equal_unestablished_quanti
         b = InstanceDummy("b", real=True)
         value = a - b
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     native = Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, 0)
-    case = case.observe(a=case.symbols.b, b=case.symbols.a + native)
+    context = context.observe(a=context.symbols.b, b=context.symbols.a + native)
     claims = (
         equal_to(S.Zero, S.Zero, wrt="x", name="constant"),
         equal_to("value", S.Zero, wrt="x", name="observation"),
     )
-    report = case.verify(obligations=claims[::-1] if reverse else claims)
+    report = context.verify(obligations=claims[::-1] if reverse else claims)
     assert report.explain("constant").verdict == "strictly true"
     assert report.explain("observation").verdict == "strictly false"
 
@@ -254,35 +256,35 @@ def substitution_identity(value, payload, name):
 
 @pytest.mark.parametrize("payload", ("subject", "expected"))
 @pytest.mark.parametrize("reverse", (False, True))
-def test_equal_substitutions_keep_their_own_domains_across_cached_checks(substitution_scopes, payload, reverse):
-    case, values = substitution_scopes
+def test_equal_substitutions_keep_their_own_domains_across_cached_verification(substitution_scopes, payload, reverse):
+    context, values = substitution_scopes
     claims = tuple(substitution_identity(value, payload, name) for name, value in values.items())
     if reverse:
         claims = claims[::-1]
-    report = case.verify(obligations=claims)
+    report = context.verify(obligations=claims)
     assert report.explain("valid").verdict == "strictly true"
     assert report.explain("outside_domain").verdict == "unresolved"
     calls = []
     for claim in claims:
         method = Method(claim.name, lambda current: calls.append(current) or 0, (claim,))
         if claim.name == "valid":
-            assert case.run(method).data == 0
+            assert context.run(method).data == 0
         else:
             with pytest.raises(VerificationError):
-                case.run(method)
-    assert calls == [case]
+                context.run(method)
+    assert calls == [context]
 
 
 @pytest.mark.parametrize("payload", ("subject", "expected"))
 def test_rules_and_duplicate_ids_distinguish_native_substitution_scopes(substitution_scopes, payload):
-    case, values = substitution_scopes
+    context, values = substitution_scopes
     valid = substitution_identity(values["valid"], payload, "identity")
     invalid = substitution_identity(values["outside_domain"], payload, "identity")
     with pytest.raises(ModelDefinitionError, match="Obligation IDs"):
-        case.with_obligations(valid).verify(obligations=(invalid,))
+        context.with_obligations(valid).verify(obligations=(invalid,))
     with pytest.raises(ModelDefinitionError, match="premise names"):
         InferenceRule("duplicate", valid, (valid, invalid), source="Test rule")
-    trusted = case.with_rule(InferenceRule("real derivative", valid, (), source="Derivative of a constant"))
+    trusted = context.with_rule(InferenceRule("real derivative", valid, (), source="Derivative of a constant"))
     assert trusted.verify(obligations=(valid,)).explain("identity").kind == "rule"
     evidence = trusted.verify(obligations=(invalid,)).explain("identity")
     assert evidence.verdict == "unresolved"
@@ -291,19 +293,19 @@ def test_rules_and_duplicate_ids_distinguish_native_substitution_scopes(substitu
 
 @pytest.mark.parametrize("reverse", (False, True))
 def test_equal_observations_retain_both_native_source_scopes(substitution_scopes, reverse):
-    case, values = substitution_scopes
+    context, values = substitution_scopes
     observations = tuple(values.values())
     for value in observations[::-1] if reverse else observations:
-        case = case.observe(observed=value)
+        context = context.observe(observed=value)
     claim = equal_to("observed", S.Zero)
-    report = case.verify(obligations=(claim,))
+    report = context.verify(obligations=(claim,))
     evidence = report.explain(claim.name)
     assert evidence.verdict == "unresolved"
     assert {value.variables for value in evidence.source_operands} == {value.variables for value in observations}
     with pytest.raises(VerificationError):
-        case.run(Method("observation", lambda current: 0, (claim,)))
+        context.run(Method("observation", lambda current: 0, (claim,)))
     with pytest.raises(ModelValidationError):
-        case.sample("observed", wrt="real", points=(1,))
+        context.sample("observed", wrt="real", points=(1,))
 
 
 @pytest.mark.parametrize("substituted", (False, True))
@@ -314,20 +316,22 @@ def test_predicate_binding_preserves_native_derivative_operands(substituted):
         a = InstanceDummy("a", real=True)
         b = InstanceDummy("b", real=True)
 
-    case = VerificationContext.for_model(Axes).observe(a=37 if substituted else 1, b=37 if substituted else 1)
-    left = Derivative(case.symbols.a * (Axes.x if substituted else Abs(Axes.x)), Axes.x, evaluate=False)
+    context = VerificationContext.for_model(Axes).observe(a=37 if substituted else 1, b=37 if substituted else 1)
+    left = Derivative(context.symbols.a * (Axes.x if substituted else Abs(Axes.x)), Axes.x, evaluate=False)
     right = Derivative(
-        case.symbols.b * (Axes.p if substituted else Abs(Axes.x)), Axes.p if substituted else Axes.x, evaluate=False
+        context.symbols.b * (Axes.p if substituted else Abs(Axes.x)), Axes.p if substituted else Axes.x, evaluate=False
     )
     if substituted:
         left, right = Subs(left, Axes.x, 0), Subs(right, Axes.p, 0)
-        assert case.verify(obligations=(equal_to(exp(left), exp(37)),)).explain("equal_to").verdict == "strictly true"
+        assert (
+            context.verify(obligations=(equal_to(exp(left), exp(37)),)).explain("equal_to").verdict == "strictly true"
+        )
         unsafe = equal_to(exp(right), exp(37))
-        assert case.verify(obligations=(unsafe,)).explain(unsafe.name).verdict == "unresolved"
+        assert context.verify(obligations=(unsafe,)).explain(unsafe.name).verdict == "unresolved"
     claim = predicate(Eq(left, right, evaluate=False))
-    assert case.verify(obligations=(claim,)).explain(claim.name).condition is not S.true
+    assert context.verify(obligations=(claim,)).explain(claim.name).condition is not S.true
     with pytest.raises(VerificationError):
-        case.run(Method("predicate", lambda current: 0, (claim,)))
+        context.run(Method("predicate", lambda current: 0, (claim,)))
 
 
 @pytest.mark.parametrize("point", (0, 1))
@@ -338,11 +342,11 @@ def test_domain_parameters_retain_sources_lost_during_joint_solving(point):
         b = InstanceDummy("b", real=True)
         value = a - b
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     native = Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, point)
-    case = case.observe(a=case.symbols.b, b=case.symbols.a + native - point)
-    claim = nonzero(Curve.x + 1, wrt="x", domain=FiniteSet(case.symbols.value))
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == (
+    context = context.observe(a=context.symbols.b, b=context.symbols.a + native - point)
+    claim = nonzero(Curve.x + 1, wrt="x", domain=FiniteSet(context.symbols.value))
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == (
         "strictly false" if point == 0 else "strictly true"
     )
 
@@ -356,42 +360,42 @@ def test_optional_hint_parameters_retain_sources_lost_during_joint_solving(point
         delta = a - b
         value = x**2
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     native = Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, point)
-    case = case.observe(a=case.symbols.b, b=case.symbols.a + native - point)
+    context = context.observe(a=context.symbols.b, b=context.symbols.a + native - point)
     claim = supremum_below("value", 2, wrt="x", domain=Interval(0, 1))
-    case = case.with_bound_hint(claim.name, upper=1 + case.symbols.delta)
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == (
+    context = context.with_bound_hint(claim.name, upper=1 + context.symbols.delta)
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == (
         "unresolved" if point == 0 else "strictly true"
     )
 
 
 @pytest.mark.parametrize("payload", ("bound", "point", "domain"))
 @pytest.mark.parametrize("point", (0, 1))
-def test_required_payloads_check_their_own_native_derivative_scopes(payload, point):
+def test_required_payloads_verify_their_own_native_derivative_scopes(payload, point):
     class Curve(VerificationModel):
         x = Coordinate("x", real=True)
         y = Coordinate("y", real=True)
         value = x**2
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     native = Subs(Derivative(Abs(Curve.y), Curve.y), Curve.y, point)
     constant = Add(2 if payload == "bound" else 1, Mul(0, native, evaluate=False), evaluate=False)
     if payload == "bound":
         claim = supremum_below("value", constant, wrt="x", domain=Interval(0, 1))
-        case = case.with_bound_hint(claim.name, upper=1)
+        context = context.with_bound_hint(claim.name, upper=1)
     elif payload == "point":
         claim = differentiable("value", wrt="x", at=constant)
     else:
         claim = positive("value", wrt="x", domain=FiniteSet(constant))
-    evidence = case.verify(obligations=(claim,)).explain(claim.name)
+    evidence = context.verify(obligations=(claim,)).explain(claim.name)
     assert evidence.verdict == ("strictly false" if point == 0 else "strictly true")
     method = Method("payload", lambda current: 0, (claim,))
     if point == 0:
         with pytest.raises(VerificationError):
-            case.run(method)
+            context.run(method)
     else:
-        assert case.run(method).data == 0
+        assert context.run(method).data == 0
 
 
 @pytest.mark.parametrize("point", (0, 1))
@@ -404,8 +408,8 @@ def test_an_invalid_optional_hint_is_inapplicable_instead_of_refuting_the_bound(
     native = Subs(Derivative(Abs(Curve.y), Curve.y), Curve.y, point)
     hint = Add(1, Mul(0, native, evaluate=False), evaluate=False)
     claim = supremum_below("value", 2, wrt="x", domain=Interval(0, 1))
-    case = VerificationContext.for_model(Curve).with_bound_hint(claim.name, upper=hint)
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == (
+    context = VerificationContext.for_model(Curve).with_bound_hint(claim.name, upper=hint)
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == (
         "unresolved" if point == 0 else "strictly true"
     )
 
@@ -418,12 +422,12 @@ def test_ambient_coordinate_assumptions_cannot_erase_source_exclusions(function)
         source = function(x)
         value = a * source
 
-    case = VerificationContext.for_model(Curve).observe(a=0)
+    context = VerificationContext.for_model(Curve).observe(a=0)
     claim = continuously_differentiable("value", wrt="x")
     with assuming(Q.positive(Curve.x)):
-        assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
+        assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
     with assuming(Q.nonzero(Curve.x)):
-        assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
+        assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
 
 
 @pytest.mark.parametrize("mode", ("declaration", "direct", "cyclic"))
@@ -436,7 +440,7 @@ def test_valid_guarded_derivatives_do_not_consume_inactive_undefined_branches(mo
             slope = Derivative(curve, x)
             value = slope - 1 / x
 
-        case = VerificationContext.for_model(Declared)
+        context = VerificationContext.for_model(Declared)
     else:
 
         class Observed(VerificationModel):
@@ -445,19 +449,19 @@ def test_valid_guarded_derivatives_do_not_consume_inactive_undefined_branches(mo
             b = InstanceDummy("b", real=True)
             value = a - b
 
-        case = VerificationContext.for_model(Observed)
+        context = VerificationContext.for_model(Observed)
         native = Derivative(log(Observed.x), Observed.x)
-        case = (
-            case.observe(a=native, b=1 / Observed.x)
+        context = (
+            context.observe(a=native, b=1 / Observed.x)
             if mode == "direct"
-            else case.observe(a=case.symbols.b, b=case.symbols.a + native - 1 / Observed.x)
+            else context.observe(a=context.symbols.b, b=context.symbols.a + native - 1 / Observed.x)
         )
     claim = equal_to("value", S.Zero, wrt="x", domain=Interval.open(0, S.Infinity))
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
-    assert case.run(Method("guarded", lambda current: 0, (claim,))).data == 0
-    assert case.sample("value", wrt="x", points=(1, 2)).values == (0, 0)
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
+    assert context.run(Method("guarded", lambda current: 0, (claim,))).data == 0
+    assert context.sample("value", wrt="x", points=(1, 2)).values == (0, 0)
     with pytest.raises(ModelValidationError):
-        case.sample("value", wrt="x", points=(0,))
+        context.sample("value", wrt="x", points=(0,))
 
 
 def test_native_piecewise_premises_respect_branch_domains_and_parameter_guards():
@@ -470,17 +474,17 @@ def test_native_piecewise_premises_respect_branch_domains_and_parameter_guards()
         value = Piecewise((good, x > 0), (bad, True))
         selected = Piecewise((good, switch > 0), (bad, True))
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     claim = continuously_differentiable("value", wrt="x", domain=Interval.open(0, S.Infinity))
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
-    assert tuple(map(float, case.sample("value", wrt="x", points=(1,)).values)) == (2.0,)
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
+    assert tuple(map(float, context.sample("value", wrt="x", points=(1,)).values)) == (2.0,)
     claim = equal_to("value", 2 * Curve.x, wrt="x")
     with assuming(Q.positive(Curve.x)):
-        assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
+        assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
     claim = equal_to("selected", 2 * Curve.x, wrt="x", domain=Interval.open(0, S.Infinity))
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
-    positive_case = case.assume(case.symbols.switch > 0)
-    assert positive_case.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
+    positive_context = context.assume(context.symbols.switch > 0)
+    assert positive_context.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
 
 
 def test_native_operations_in_unreachable_branch_conditions_do_not_refute_the_active_branch():
@@ -491,14 +495,15 @@ def test_native_operations_in_unreachable_branch_conditions_do_not_refute_the_ac
         bad = Subs(Derivative(Abs(y), y), y, 0)
         value = Piecewise((Derivative(x**2, x), switch > 0), (1, bad > 0), (2, True))
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     claim = continuously_differentiable("value", wrt="x", order=1)
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
     assert (
-        case.assume(case.symbols.switch > 0).verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
+        context.assume(context.symbols.switch > 0).verify(obligations=(claim,)).explain(claim.name).verdict
+        == "strictly true"
     )
-    with assuming(Q.positive(case.symbols.switch)):
-        assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
+    with assuming(Q.positive(context.symbols.switch)):
+        assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
 
 
 def test_an_unresolved_branch_premise_cannot_refute_a_valid_identity():
@@ -509,12 +514,12 @@ def test_an_unresolved_branch_premise_cannot_refute_a_valid_identity():
         value = Piecewise((Derivative(x**2, x, y, evaluate=False), switch > 0), (Derivative(x**2, x), True))
         expected = Piecewise((0, switch > 0), (2 * x, True))
 
-    case = VerificationContext.for_model(Curve)
-    claim = equal_to("value", case.symbols.expected, wrt="x")
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
-    selected = case.assume(case.symbols.switch > 0)
+    context = VerificationContext.for_model(Curve)
+    claim = equal_to("value", context.symbols.expected, wrt="x")
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
+    selected = context.assume(context.symbols.switch > 0)
     assert selected.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
-    established = case.observe(switch=-1)
+    established = context.observe(switch=-1)
     assert established.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
 
 
@@ -530,19 +535,19 @@ def test_methods_consume_only_reachable_automatic_operations(operation):
             (Subs(Derivative(Abs(y), y), y, 0) if operation == "derivative" else 1 / a, True),
         )
 
-    case = VerificationContext.for_model(Curve).observe(a=0)
+    context = VerificationContext.for_model(Curve).observe(a=0)
     method = Method("read", lambda current: "executed", uses=("value",))
-    assert case.observe(switch=1).run(method).data == "executed"
-    assert case.assume(case.symbols.switch > 0).run(method).data == "executed"
+    assert context.observe(switch=1).run(method).data == "executed"
+    assert context.assume(context.symbols.switch > 0).run(method).data == "executed"
     with pytest.raises(VerificationError):
-        case.run(method)
-    obligations = tuple(item for item in case.verify().checks if item.obligation.consumer == "value")
+        context.run(method)
+    obligations = tuple(item for item in context.verify().evidence if item.obligation.consumer == "value")
     assert any(item.verdict == "unresolved" for item in obligations)
     assert all(item.verdict in {"strictly true", "unresolved"} for item in obligations)
     assert all(not item.witness for item in obligations if item.verdict == "unresolved")
     assert all(item.kind != "counterexample" for item in obligations if item.verdict == "unresolved")
     with pytest.raises(VerificationError):
-        case.observe(switch=-1).run(method)
+        context.observe(switch=-1).run(method)
 
 
 @pytest.mark.parametrize("coordinate", (Coordinate, InstanceDummy))
@@ -552,14 +557,14 @@ def test_coordinate_assumptions_cannot_select_away_automatic_branch_operations(c
         y = Coordinate("y", real=True)
         value = Piecewise((Derivative(x**2, x), x > 0), (Subs(Derivative(Abs(y), y), y, 0), True))
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     method = Method("read", lambda current: "must not execute", uses=("value",))
-    with assuming(Q.positive(case.expression("x", wrt="x"))):
-        obligations = tuple(item for item in case.verify().checks if item.obligation.consumer == "value")
+    with assuming(Q.positive(context.expression("x", wrt="x"))):
+        obligations = tuple(item for item in context.verify().evidence if item.obligation.consumer == "value")
         assert any(item.verdict == "unresolved" for item in obligations)
         assert all(item.verdict in {"strictly true", "unresolved"} for item in obligations)
         with pytest.raises(VerificationError):
-            case.run(method)
+            context.run(method)
 
 
 def test_globally_certified_operations_do_not_need_branch_selection():
@@ -568,23 +573,23 @@ def test_globally_certified_operations_do_not_need_branch_selection():
         switch = InstanceDummy("s", real=True)
         value = Piecewise((Derivative(x**2, x), switch > 0), (Derivative(x**3, x), True))
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     method = Method("read", lambda current: "executed", uses=("value",))
-    assert case.run(method).data == "executed"
+    assert context.run(method).data == "executed"
 
 
-def test_an_unconditional_use_keeps_its_automatic_requirement_after_a_conditional_use():
+def test_an_unconditional_use_keeps_its_automatic_obligation_after_a_conditional_use():
     class Curve(VerificationModel):
         x = Coordinate("x", real=True)
         switch = InstanceDummy("s", real=True)
         native = Subs(Derivative(Abs(x), x), x, 0)
         value = Add(Subs(Piecewise((native, switch > 0), (1, True)), x, 1), native, evaluate=False)
 
-    case = VerificationContext.for_model(Curve)
-    obligations = tuple(item for item in case.verify().checks if item.obligation.consumer == "value")
+    context = VerificationContext.for_model(Curve)
+    obligations = tuple(item for item in context.verify().evidence if item.obligation.consumer == "value")
     assert any(item.verdict == "strictly false" for item in obligations)
     with pytest.raises(VerificationError):
-        case.run(Method("read", lambda current: "must not execute", uses=("value",)))
+        context.run(Method("read", lambda current: "must not execute", uses=("value",)))
 
 
 @pytest.mark.parametrize("ambient", (False, True))
@@ -596,18 +601,18 @@ def test_parameter_branch_selection_uses_resolved_assumptions(form, ambient):
         doubled = 2 * switch
         value = Piecewise((Derivative(Abs(x), x, evaluate=False), switch < 0), (1, True))
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     condition = {
-        "direct": case.symbols.switch > 0,
-        "alias": case.symbols.doubled > 0,
-        "predicate": Q.positive(case.symbols.doubled),
+        "direct": context.symbols.switch > 0,
+        "alias": context.symbols.doubled > 0,
+        "predicate": Q.positive(context.symbols.doubled),
     }[form]
-    context = assuming(condition) if ambient else nullcontext()
-    case = case if ambient else case.assume(condition)
-    with context:
-        result = case.run(Method("read", lambda current: 1, uses=("value",)))
+    assumption_scope = assuming(condition) if ambient else nullcontext()
+    context = context if ambient else context.assume(condition)
+    with assumption_scope:
+        result = context.run(Method("read", lambda current: 1, uses=("value",)))
     assert result.data == 1
-    assert not any(item.obligation.consumer == "value" for item in result.report.checks)
+    assert not any(item.obligation.consumer == "value" for item in result.report.evidence)
 
 
 @pytest.mark.parametrize("ambient", (False, True))
@@ -618,23 +623,23 @@ def test_coordinate_coupled_assumptions_cannot_select_away_local_operations(ambi
         switch = InstanceDummy("switch", real=True)
         value = Piecewise((Derivative(Abs(x), x, evaluate=False), switch < 0), (1, True))
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     conditions = (
-        (Q.zero(case.symbols.switch - Curve.x), Q.positive(Curve.x))
+        (Q.zero(context.symbols.switch - Curve.x), Q.positive(Curve.x))
         if predicates
-        else (Eq(case.symbols.switch, Curve.x), Curve.x > 0)
+        else (Eq(context.symbols.switch, Curve.x), Curve.x > 0)
     )
-    context = assuming(*conditions) if ambient else nullcontext()
-    case = case if ambient else case.assume(*conditions)
-    with context:
+    assumption_scope = assuming(*conditions) if ambient else nullcontext()
+    context = context if ambient else context.assume(*conditions)
+    with assumption_scope:
         with pytest.raises(VerificationError) as failure:
-            case.run(Method("read", lambda current: "must not execute", uses=("value",)))
-    obligations = tuple(item for item in failure.value.report.checks if item.obligation.consumer == "value")
+            context.run(Method("read", lambda current: "must not execute", uses=("value",)))
+    obligations = tuple(item for item in failure.value.report.evidence if item.obligation.consumer == "value")
     assert obligations and all(item.verdict == "unresolved" for item in obligations)
 
 
 @pytest.fixture(params=("self", "mutual"))
-def cyclic_coordinate_case(request):
+def cyclic_coordinate_context(request):
     class Implicit(VerificationModel):
         x = Coordinate("x", real=True)
         a = InstanceDummy("a", real=True)
@@ -648,51 +653,51 @@ def cyclic_coordinate_case(request):
     return VerificationContext.for_model(Implicit), 1 if request.param == "mutual" else 0
 
 
-@pytest.mark.parametrize("operation", ("expression", "check", "sample", "method"))
+@pytest.mark.parametrize("operation", ("expression", "verify", "sample", "method"))
 @pytest.mark.parametrize("native", (False, True))
-def test_cyclic_definitions_cannot_supply_independent_coordinates(cyclic_coordinate_case, operation, native):
-    case, expected = cyclic_coordinate_case
-    coordinate = case.symbols.a if native else "a"
+def test_cyclic_definitions_cannot_supply_independent_coordinates(cyclic_coordinate_context, operation, native):
+    context, expected = cyclic_coordinate_context
+    coordinate = context.symbols.a if native else "a"
     calls = []
-    for subject in ("value", case.symbols.a**2):
+    for subject in ("value", context.symbols.a**2):
         claim = equal_to(subject, expected, wrt=coordinate)
         with pytest.raises(ModelDefinitionError, match="reparameterize derived quantities"):
             if operation == "expression":
-                case.expression(subject, wrt=coordinate)
-            elif operation == "check":
-                case.verify(obligations=(claim,))
+                context.expression(subject, wrt=coordinate)
+            elif operation == "verify":
+                context.verify(obligations=(claim,))
             elif operation == "sample":
-                case.sample(subject, wrt=coordinate, points=(2,))
+                context.sample(subject, wrt=coordinate, points=(2,))
             else:
-                case.run(Method("identity", lambda current: calls.append(current), (claim,)))
+                context.run(Method("identity", lambda current: calls.append(current), (claim,)))
     assert not calls
 
 
-def test_cyclic_definition_dependents_are_not_independent_coordinates(cyclic_coordinate_case):
-    case, _ = cyclic_coordinate_case
+def test_cyclic_definition_dependents_are_not_independent_coordinates(cyclic_coordinate_context):
+    context, _ = cyclic_coordinate_context
     with pytest.raises(ModelDefinitionError, match="reparameterize derived quantities"):
-        case.expression("a", wrt="value")
+        context.expression("a", wrt="value")
 
 
-def test_cyclic_coordinates_are_rejected_when_model_requirements_are_attached(cyclic_coordinate_case):
-    case, _ = cyclic_coordinate_case
-    model = case.problem.model
+def test_cyclic_coordinates_are_rejected_when_model_obligations_are_attached(cyclic_coordinate_context):
+    context, _ = cyclic_coordinate_context
+    model = context.problem.model
     previous = model.definition_report()
     with pytest.raises(ModelDefinitionError, match="reparameterize derived quantities"):
         specifies(model, continuously_differentiable("value", wrt="a"))
     assert model.definition_report() is previous
 
 
-def test_implicit_quantities_remain_available_under_an_independent_coordinate(cyclic_coordinate_case):
-    case, expected = cyclic_coordinate_case
+def test_implicit_quantities_remain_available_under_an_independent_coordinate(cyclic_coordinate_context):
+    context, expected = cyclic_coordinate_context
     claims = tuple(
         equal_to(subject, expected, wrt="x", name=name)
-        for name, subject in (("named", "value"), ("native", case.symbols.a**2))
+        for name, subject in (("named", "value"), ("native", context.symbols.a**2))
     )
-    result = case.run(Method("identity", lambda current: current.expression("value"), claims))
+    result = context.run(Method("identity", lambda current: current.expression("value"), claims))
     assert result.data == expected
     assert all(result.report.explain(claim.name).verdict == "strictly true" for claim in claims)
-    assert tuple(map(float, case.sample("value", wrt="x", points=(0, 1)).values)) == (float(expected),) * 2
+    assert tuple(map(float, context.sample("value", wrt="x", points=(0, 1)).values)) == (float(expected),) * 2
 
 
 @pytest.mark.parametrize("coordinate", ("a", "alias"))
@@ -704,16 +709,18 @@ def test_observations_preserve_independent_coordinates_and_their_aliases(coordin
         b = InstanceDummy("b", real=True)
         value = a**2
 
-    case = VerificationContext.for_model(Parameters)
-    case = case.observe(a=3) if observed == "numeric" else case.observe(a=case.symbols.b, b=case.symbols.a)
-    expected = case.symbols.a**2
-    assert case.expression("value", wrt=coordinate) == expected
+    context = VerificationContext.for_model(Parameters)
+    context = (
+        context.observe(a=3) if observed == "numeric" else context.observe(a=context.symbols.b, b=context.symbols.a)
+    )
+    expected = context.symbols.a**2
+    assert context.expression("value", wrt=coordinate) == expected
     claim = equal_to("value", expected, wrt=coordinate)
     assert (
-        case.run(Method("identity", lambda current: current.expression("value", wrt=coordinate), (claim,))).data
+        context.run(Method("identity", lambda current: current.expression("value", wrt=coordinate), (claim,))).data
         == expected
     )
-    assert tuple(map(float, case.sample("value", wrt=coordinate, points=(2,)).values)) == (4.0,)
+    assert tuple(map(float, context.sample("value", wrt=coordinate, points=(2,)).values)) == (4.0,)
 
 
 @pytest.mark.parametrize("observed", (False, True))
@@ -727,26 +734,26 @@ def test_joint_state_solutions_cannot_freeze_a_protected_implicit_curve(binding,
         a = a / 2 + (b if binding == "direct" else c)
         value = a**2
 
-    case = VerificationContext.for_model(Implicit)
+    context = VerificationContext.for_model(Implicit)
     if binding != "direct":
-        c = case.symbols.b if binding == "observed_alias" else 2 * case.symbols.c + case.symbols.b
-        case = case.observe(c=c)
+        c = context.symbols.b if binding == "observed_alias" else 2 * context.symbols.c + context.symbols.b
+        context = context.observe(c=c)
     if observed:
-        case = case.observe(b=1)
-        assert case.expression("value") == 4
-    subject = case.symbols.a**2 if native else "value"
-    claim = equal_to(subject, 4 * case.symbols.b**2, wrt="b")
-    evidence = case.verify(obligations=(claim,)).explain(claim.name)
+        context = context.observe(b=1)
+        assert context.expression("value") == 4
+    subject = context.symbols.a**2 if native else "value"
+    claim = equal_to(subject, 4 * context.symbols.b**2, wrt="b")
+    evidence = context.verify(obligations=(claim,)).explain(claim.name)
     assert evidence.verdict == "unresolved"
     assert "cyclic model definitions" in " ".join(evidence.steps)
     assert not evidence.witness
     with pytest.raises(NotImplementedError, match="cyclic model definitions"):
-        case.expression(subject, wrt="b")
+        context.expression(subject, wrt="b")
     with pytest.raises(NotImplementedError, match="cyclic model definitions"):
-        case.sample(subject, wrt="b", points=(2,))
+        context.sample(subject, wrt="b", points=(2,))
     calls = []
     with pytest.raises(VerificationError):
-        case.run(Method("implicit curve", lambda current: calls.append(current), (claim,)))
+        context.run(Method("implicit curve", lambda current: calls.append(current), (claim,)))
     assert not calls
 
 
@@ -762,32 +769,32 @@ def test_observation_queries_preserve_implicit_curve_scopes(binding, observed, n
         middle = InstanceDummy("middle", real=True)
         output = InstanceDummy("output", real=True)
 
-    case = VerificationContext.for_model(Implicit)
+    context = VerificationContext.for_model(Implicit)
     if binding == "nested":
-        case = case.observe(middle=case.symbols.a, output=case.symbols.middle**2)
+        context = context.observe(middle=context.symbols.a, output=context.symbols.middle**2)
     else:
-        case = case.observe(output=case.symbols.a**2)
+        context = context.observe(output=context.symbols.a**2)
         if binding == "equivalent_equations":
-            case = case.observe(output=2 * case.symbols.a * case.symbols.b)
+            context = context.observe(output=2 * context.symbols.a * context.symbols.b)
     if observed:
-        case = case.observe(b=1)
-        assert case.expression("output") == 4
-        assert case.expression("output", wrt="x") == 4
+        context = context.observe(b=1)
+        assert context.expression("output") == 4
+        assert context.expression("output", wrt="x") == 4
         independent = equal_to("output", 4, wrt="x", name="independent")
-        assert case.verify(obligations=(independent,)).explain("independent").verdict == "strictly true"
-    subject = case.symbols.output if native else "output"
+        assert context.verify(obligations=(independent,)).explain("independent").verdict == "strictly true"
+    subject = context.symbols.output if native else "output"
     claim = equal_to(subject, 4, wrt="b")
-    evidence = case.verify(obligations=(claim,)).explain(claim.name)
+    evidence = context.verify(obligations=(claim,)).explain(claim.name)
     assert evidence.verdict == "unresolved"
     assert "cyclic model definitions" in " ".join(evidence.steps)
     assert not evidence.witness
     with pytest.raises(NotImplementedError, match="cyclic model definitions"):
-        case.expression(subject, wrt="b")
+        context.expression(subject, wrt="b")
     with pytest.raises(NotImplementedError, match="cyclic model definitions"):
-        case.sample(subject, wrt="b", points=(2,))
+        context.sample(subject, wrt="b", points=(2,))
     calls = []
     with pytest.raises(VerificationError):
-        case.run(Method("observed implicit curve", lambda current: calls.append(current), (claim,)))
+        context.run(Method("observed implicit curve", lambda current: calls.append(current), (claim,)))
     assert not calls
 
 
@@ -802,24 +809,24 @@ def test_observation_queries_preserve_implicit_curve_scopes(binding, observed, n
         (0, 0, "strictly false"),
     ),
 )
-def test_native_local_derivative_premises_check_point_domains(point, expected, verdict):
+def test_native_local_derivative_premises_verify_point_domains(point, expected, verdict):
     class Curve(VerificationModel):
         x = Coordinate("x", real=True)
         value = x
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     native = Subs(Derivative(Abs(Curve.x), Curve.x, evaluate=False), Curve.x, point)
     claim = equal_to(native, expected)
-    evidence = case.verify(obligations=(claim,)).explain(claim.name)
+    evidence = context.verify(obligations=(claim,)).explain(claim.name)
     assert evidence.verdict == verdict
     calls = []
     method = Method("local derivative", lambda current: calls.append(current), (claim,))
     if verdict == "strictly true":
-        case.run(method)
-        assert calls == [case]
+        context.run(method)
+        assert calls == [context]
     else:
         with pytest.raises(VerificationError):
-            case.run(method)
+            context.run(method)
         assert not calls
 
 
@@ -829,12 +836,12 @@ def test_local_derivatives_need_a_real_neighborhood_in_their_domain(assumptions,
         x = Coordinate("x", **assumptions)
         value = Abs(x)
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     claim = differentiable("value", wrt="x", domain=domain, at=1)
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
     if domain is S.Integers:
-        native = equal_to(Subs(Derivative(case.symbols.value, Curve.x), Curve.x, 1), 1)
-        assert case.verify(obligations=(native,)).explain(native.name).verdict == "unresolved"
+        native = equal_to(Subs(Derivative(context.symbols.value, Curve.x), Curve.x, 1), 1)
+        assert context.verify(obligations=(native,)).explain(native.name).verdict == "unresolved"
 
 
 @pytest.mark.parametrize(
@@ -857,7 +864,7 @@ def test_intrinsically_noncontinuous_coordinates_do_not_supply_ordinary_derivati
         cusp = Abs(x)
         slope = Derivative(value, x)
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     claims = (
         continuously_differentiable("value", wrt="x", domain=domain),
         differentiable("value", wrt="x", domain=domain),
@@ -866,22 +873,22 @@ def test_intrinsically_noncontinuous_coordinates_do_not_supply_ordinary_derivati
         equal_to("slope", 2 * Curve.x),
     )
     for claim in claims:
-        evidence = case.verify(obligations=(claim,)).explain(claim.name)
+        evidence = context.verify(obligations=(claim,)).explain(claim.name)
         assert evidence.verdict == "unresolved"
         assert not evidence.witness
         calls = []
         with pytest.raises(VerificationError):
-            case.run(Method("ordinary calculus", lambda current: calls.append(current), (claim,)))
+            context.run(Method("ordinary calculus", lambda current: calls.append(current), (claim,)))
         assert not calls
-    automatic = case.verify().checks
+    automatic = context.verify().evidence
     assert automatic and all(item.verdict == "unresolved" for item in automatic)
     with pytest.raises(VerificationError):
-        case.run(Method("slope", lambda current: current.expression("slope").doit(), uses=("slope",)))
+        context.run(Method("slope", lambda current: current.expression("slope").doit(), uses=("slope",)))
     constrained = specifies(Curve, claims[0])
     assert constrained.definition_report().explain("continuously_differentiable").verdict == "unresolved"
     values = (nonnegative("value"), equal_to("value", Curve.x**2))
-    assert all(case.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true" for claim in values)
-    assert float(case.sample("value", wrt="x", points=(point,)).values[0]) == pytest.approx(float(point**2))
+    assert all(context.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true" for claim in values)
+    assert float(context.sample("value", wrt="x", points=(point,)).values[0]) == pytest.approx(float(point**2))
 
 
 @pytest.mark.parametrize("domain", (FiniteSet(1, 2), Range(1, 3), S.Integers))
@@ -892,15 +899,17 @@ def test_real_curves_keep_ordinary_derivatives_on_discrete_evaluation_sets(domai
         slope = Derivative(value, x)
         total = Sum(slope, (x, 1, 2))
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     claims = (
         continuously_differentiable("value", wrt="x", domain=domain),
         differentiable("value", wrt="x", domain=domain),
         equal_to("slope", 2 * Curve.x, wrt="x", domain=domain),
     )
-    result = case.run(Method("sum slopes", lambda current: current.expression("total").doit(), claims, uses=("total",)))
+    result = context.run(
+        Method("sum slopes", lambda current: current.expression("total").doit(), claims, uses=("total",))
+    )
     assert result.data == 6
-    assert all(item.verdict == "strictly true" for item in result.report.checks)
+    assert all(item.verdict == "strictly true" for item in result.report.evidence)
 
 
 @pytest.mark.parametrize("nonnegative_coordinate", (False, True))
@@ -910,11 +919,11 @@ def test_ordinary_derivative_certificates_preserve_closed_real_intervals(nonnega
         value = x**2
         slope = Derivative(value, x)
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     claims = (
         continuously_differentiable("value", wrt="x", domain=Interval(0, 1)),
         differentiable("value", wrt="x", domain=Interval(0, 1)),
     )
-    result = case.run(Method("slope", lambda current: current.expression("slope").doit(), claims, uses=("slope",)))
+    result = context.run(Method("slope", lambda current: current.expression("slope").doit(), claims, uses=("slope",)))
     assert result.data == 2 * Curve.x
-    assert all(item.verdict == "strictly true" for item in result.report.checks)
+    assert all(item.verdict == "strictly true" for item in result.report.evidence)

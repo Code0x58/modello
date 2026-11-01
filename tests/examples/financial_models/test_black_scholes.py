@@ -13,11 +13,11 @@ from examples.financial_models.black_scholes import (
     OptionStudy,
     PayoffBoundary,
     _payoff_integral,
-    boundary_checks,
+    boundary_slopes,
     dividend_free_method,
     normal_cdf,
     normal_density,
-    study_case,
+    study_context,
     symbolic_method,
     valuation_method,
 )
@@ -25,27 +25,27 @@ from modello.contrib.verification import VerificationContext, VerificationError,
 
 
 @pytest.fixture(scope="module")
-def cases() -> dict[str, VerificationContext[OptionStudy]]:
+def contexts() -> dict[str, VerificationContext[OptionStudy]]:
     return {
-        "constant": study_case(),
-        "affine": study_case(schedule=True, now=Rational(1, 4)),
-        "no_dividends": study_case(dividends=False),
+        "constant": study_context(),
+        "affine": study_context(schedule=True, now=Rational(1, 4)),
+        "no_dividends": study_context(dividends=False),
     }
 
 
 @pytest.fixture(scope="module")
-def symbolic_results(cases):
-    return {name: cases[name].run(symbolic_method(cases[name])) for name in ("constant", "affine")}
+def symbolic_results(contexts):
+    return {name: contexts[name].run(symbolic_method(contexts[name])) for name in ("constant", "affine")}
 
 
 @pytest.mark.parametrize("name", ("constant", "affine"))
-def test_exact_identities_and_checked_schedule_chain_rule(cases, symbolic_results, name):
-    case = cases[name]
+def test_exact_identities_and_verified_schedule_chain_rule(contexts, symbolic_results, name):
+    context = contexts[name]
     result = symbolic_results[name]
     assert len(result.data.residuals) == 18
     assert set(result.data.residuals.values()) == {S.Zero}
     assert result.data.gamma_positive
-    assert all(evidence.verdict == "strictly true" for evidence in result.report.checks)
+    assert all(evidence.verdict == "strictly true" for evidence in result.report.evidence)
     assert result.report.explain("chain_rate_total").verdict == "strictly true"
     assert result.report.explain("chain_yield_total").verdict == "strictly true"
     assert result.report.explain("chain_variance_total").verdict == "strictly true"
@@ -56,16 +56,16 @@ def test_exact_identities_and_checked_schedule_chain_rule(cases, symbolic_result
         assert regularity.resolved is not None
         assert regularity.resolved.domain == Interval(0, 1)
     # A scalar observation does not reduce the quantified spot curve to a point.
-    spot = case.symbols.pricing.spot
-    assert spot in case.expression("pricing.call", wrt=spot).free_symbols
-    assert not case.expression("pricing.call").free_symbols
+    spot = context.symbols.pricing.spot
+    assert spot in context.expression("pricing.call", wrt=spot).free_symbols
+    assert not context.expression("pricing.call").free_symbols
 
 
-def test_cdf_composition_is_an_explicit_trust_boundary(cases, symbolic_results):
-    case = cases["constant"]
+def test_cdf_composition_is_an_explicit_trust_boundary(contexts, symbolic_results):
+    context = contexts["constant"]
     assert EuropeanOptions.strike.is_positive is None
     assert EuropeanOptions.carry.variance_total.is_positive is None
-    original = replace(case, rules=()).verify()
+    original = replace(context, rules=()).verify()
     assert original.explain("pricing.call/call_c2").verdict == "unresolved"
     checked = symbolic_results["constant"].report.explain("pricing.call/call_c2")
     assert checked.kind == "rule"
@@ -75,27 +75,27 @@ def test_cdf_composition_is_an_explicit_trust_boundary(cases, symbolic_results):
     assert any(premise.obligation.name == "call_form" for premise in checked.premises)
 
 
-def test_symbolic_interest_is_valid_but_numerical_valuation_needs_observations(cases):
-    case = VerificationContext.for_model(OptionStudy, "unobserved_interest")
-    case = case.observe(
+def test_symbolic_interest_is_valid_but_numerical_valuation_needs_observations(contexts):
+    context = VerificationContext.for_model(OptionStudy, "unobserved_interest")
+    context = context.observe(
         now=0,
         spot=100,
         strike=100,
-        rate_total=case.symbols.schedule.rate_intercept,
+        rate_total=context.symbols.schedule.rate_intercept,
         yield_total=0,
         variance_total=Rational(1, 25),
         schedule=ConstantSchedule("symbolic_rate", yield_intercept=0, variance_intercept=Rational(1, 25)),
     )
-    case = replace(case, rules=cases["constant"].rules)
+    context = replace(context, rules=contexts["constant"].rules)
     with pytest.raises(VerificationError, match="finite real scalar observation") as failure:
-        case.run(valuation_method(case))
-    assert failure.value.context is case
-    assert all(item.verdict == "strictly true" for item in failure.value.report.checks)
+        context.run(valuation_method(context))
+    assert failure.value.context is context
+    assert all(item.verdict == "strictly true" for item in failure.value.report.evidence)
 
 
-def test_yield_invalidates_dividend_free_parity_without_changing_earlier_branch(cases):
-    no_dividends = cases["no_dividends"]
-    dividends = cases["constant"]
+def test_yield_invalidates_dividend_free_parity_without_changing_earlier_branch(contexts):
+    no_dividends = contexts["no_dividends"]
+    dividends = contexts["constant"]
     original_result = no_dividends.run(dividend_free_method())
     assert original_result.report.explain("dividend_free_parity").verdict == "strictly true"
     with pytest.raises(VerificationError) as captured:
@@ -108,8 +108,8 @@ def test_yield_invalidates_dividend_free_parity_without_changing_earlier_branch(
     assert no_dividends.expression("pricing.call_minus_put", wrt="pricing.spot") == original_result.data
 
 
-def test_replacement_refreshes_the_schedule_and_blocks_a_stale_pricing_snapshot(cases):
-    original = cases["constant"]
+def test_replacement_refreshes_the_schedule_and_blocks_a_stale_pricing_snapshot(contexts):
+    original = contexts["constant"]
     changed = original.replace("schedule", AffineSchedule).observe(
         schedule=AffineSchedule(
             "changing_schedule",
@@ -140,22 +140,22 @@ def test_replacement_refreshes_the_schedule_and_blocks_a_stale_pricing_snapshot(
     ),
 )
 def test_interior_method_does_not_silently_extend_to_singular_or_invalid_inputs(settings, rejected):
-    case = study_case(**settings)
+    context = study_context(**settings)
     with pytest.raises(VerificationError) as captured:
-        case.run(valuation_method(case))
-    assert captured.value.context is case
+        context.run(valuation_method(context))
+    assert captured.value.context is context
     assert captured.value.report.explain(rejected).verdict != "strictly true"
 
 
-def test_zero_variance_payoff_has_a_checked_kink():
-    slopes = boundary_checks()
+def test_zero_variance_payoff_has_a_verified_kink():
+    slopes = boundary_slopes()
     assert slopes == {"call_left_slope": 0, "call_right_slope": 1, "put_left_slope": -1, "put_right_slope": 0}
     assert slopes["call_left_slope"] != slopes["call_right_slope"]
     assert slopes["put_left_slope"] != slopes["put_right_slope"]
-    case = VerificationContext.for_model(PayoffBoundary)
+    context = VerificationContext.for_model(PayoffBoundary)
     x = PayoffBoundary.moneyness
-    assert simplify(case.expression("call", wrt=x) - case.expression("put", wrt=x) - x) == 0
-    kink = case.with_obligations(
+    assert simplify(context.expression("call", wrt=x) - context.expression("put", wrt=x) - x) == 0
+    kink = context.with_obligations(
         continuously_differentiable(
             "kink", wrt="moneyness", consumer="boundary", reason="Test the C2 boundary premise."
         )
@@ -166,33 +166,34 @@ def test_zero_variance_payoff_has_a_checked_kink():
 @pytest.mark.parametrize("settings", ({"spot": 80}, {"spot": 100}, {"spot": 120}, {"schedule": True}))
 def test_discounted_lognormal_quadrature_is_an_independent_numerical_reference(settings):
     pytest.importorskip("scipy.integrate")
-    case = study_case(**settings)
-    result = case.run(valuation_method(case))
+    context = study_context(**settings)
+    result = context.run(valuation_method(context))
     data = result.data
     assert data.kind == "numerical observation"
     assert data.call_error < 1e-9
     assert data.put_error < 1e-9
-    assert 0 < data.call_delta < float(exp(-case.expression("pricing.carry.yield_total")))
+    assert 0 < data.call_delta < float(exp(-context.expression("pricing.carry.yield_total")))
     assert data.put_delta < 0
     assert data.gamma > 0
     assert data.call - data.put == pytest.approx(
-        float(case.expression("pricing.discounted_spot") - case.expression("pricing.discounted_strike")), abs=1e-12
+        float(context.expression("pricing.discounted_spot") - context.expression("pricing.discounted_strike")),
+        abs=1e-12,
     )
 
 
-def test_changed_greek_does_not_keep_its_old_contract(cases):
+def test_changed_greek_does_not_keep_its_old_contract(contexts):
     class IncorrectDelta(EuropeanOptions):
         call_delta = exp(-EuropeanOptions.carry.yield_total) * normal_cdf(EuropeanOptions.d1) + 1
 
-    case = cases["constant"].replace("pricing", IncorrectDelta)
+    context = contexts["constant"].replace("pricing", IncorrectDelta)
     with pytest.raises(VerificationError) as captured:
-        case.run(valuation_method(case))
+        context.run(valuation_method(context))
     assert captured.value.report.consistent is True
     assert captured.value.report.explain("pricing.call_delta/call_delta_form").verdict == "strictly false"
 
 
 @pytest.fixture(scope="module")
-def adversarial_cases(cases):
+def adversarial_contexts(contexts):
     shift = Rational(1, 10)
 
     class ShiftedTotals(ConstantSchedule):
@@ -206,8 +207,8 @@ def adversarial_cases(cases):
             (0, True),
         )
 
-    def schedule_case(model, *, all_totals=False):
-        case = (
+    def schedule_context(model, *, all_totals=False):
+        context = (
             VerificationContext.for_model(OptionStudy)
             .replace("schedule", model)
             .observe(
@@ -225,9 +226,9 @@ def adversarial_cases(cases):
                 ),
             )
         )
-        for rule in cases["constant"].rules:
-            case = case.with_rule(rule)
-        return case
+        for rule in contexts["constant"].rules:
+            context = context.with_rule(rule)
+        return context
 
     class CompensatedHelpers(EuropeanOptions):
         # Both prices and Greeks deliberately compensate for the altered
@@ -254,17 +255,17 @@ def adversarial_cases(cases):
         call_minus_put = call - put + 1
 
     return {
-        "shifted": schedule_case(ShiftedTotals, all_totals=True),
-        "patched": schedule_case(PatchedTerminal),
-        "helpers": cases["constant"].replace("pricing", CompensatedHelpers),
+        "shifted": schedule_context(ShiftedTotals, all_totals=True),
+        "patched": schedule_context(PatchedTerminal),
+        "helpers": contexts["constant"].replace("pricing", CompensatedHelpers),
     }
 
 
 @pytest.mark.parametrize("factory", (symbolic_method, valuation_method))
-def test_tail_integral_terminal_conditions_fix_constants_even_with_matching_snapshots(adversarial_cases, factory):
-    case = adversarial_cases["shifted"]
+def test_tail_integral_terminal_conditions_fix_constants_even_with_matching_snapshots(adversarial_contexts, factory):
+    context = adversarial_contexts["shifted"]
     with pytest.raises(VerificationError) as captured:
-        case.run(factory(case))
+        context.run(factory(context))
     report = captured.value.report
     assert report.consistent is True
     for total in ("rate_total", "yield_total", "variance_total"):
@@ -275,10 +276,10 @@ def test_tail_integral_terminal_conditions_fix_constants_even_with_matching_snap
 
 
 @pytest.mark.parametrize("factory", (symbolic_method, valuation_method))
-def test_terminal_patch_does_not_replace_closed_interval_regularities(adversarial_cases, factory):
-    case = adversarial_cases["patched"]
+def test_terminal_patch_does_not_replace_closed_interval_regularities(adversarial_contexts, factory):
+    context = adversarial_contexts["patched"]
     with pytest.raises(VerificationError) as captured:
-        case.run(factory(case))
+        context.run(factory(context))
     report = captured.value.report
     assert report.consistent is True
     assert report.explain("snapshot_rate_total").verdict == "strictly true"
@@ -287,10 +288,10 @@ def test_terminal_patch_does_not_replace_closed_interval_regularities(adversaria
 
 
 @pytest.mark.parametrize("factory", (symbolic_method, valuation_method))
-def test_compensated_prices_do_not_certify_incorrect_helpers(adversarial_cases, factory):
-    case = adversarial_cases["helpers"]
+def test_compensated_prices_do_not_certify_incorrect_helpers(adversarial_contexts, factory):
+    context = adversarial_contexts["helpers"]
     with pytest.raises(VerificationError) as captured:
-        case.run(factory(case))
+        context.run(factory(context))
     report = captured.value.report
     assert report.consistent is True
     for field in ("call", "put", "call_delta", "put_delta", "gamma"):
@@ -301,9 +302,9 @@ def test_compensated_prices_do_not_certify_incorrect_helpers(adversarial_cases, 
 
 @pytest.mark.parametrize(("spot", "strike"), ((100, 1), (1, 100)))
 def test_payoff_quadrature_retains_mass_at_remote_exercise_boundaries(spot, strike):
-    case = study_case(spot=spot, strike=strike, variance=Rational(1, 10000))
-    result = case.run(valuation_method)
-    assert all(item.verdict == "strictly true" for item in result.report.checks)
+    context = study_context(spot=spot, strike=strike, variance=Rational(1, 10000))
+    result = context.run(valuation_method)
+    assert all(item.verdict == "strictly true" for item in result.report.evidence)
     data = result.data
     assert data.quadrature_call == pytest.approx(data.call, rel=1e-10, abs=1e-9)
     assert data.quadrature_put == pytest.approx(data.put, rel=1e-10, abs=1e-9)
@@ -352,20 +353,20 @@ def test_gaussian_payoff_kernel_handles_infinite_exercise_boundaries(lower, expe
     assert math.isfinite(error) and error >= 0
 
 
-def test_nonfinite_payoff_quadrature_retains_the_case_and_report(cases, monkeypatch):
+def test_nonfinite_payoff_quadrature_retains_the_context_and_report(contexts, monkeypatch):
     import scipy.integrate
 
     monkeypatch.setattr(scipy.integrate, "quad", lambda *args, **kwargs: (math.nan, 0.0))
-    case = cases["constant"]
+    context = contexts["constant"]
     with pytest.raises(VerificationError, match="Payoff quadrature produced nonfinite") as captured:
-        case.run(valuation_method)
-    assert captured.value.context is case
-    assert all(item.verdict == "strictly true" for item in captured.value.report.checks)
+        context.run(valuation_method)
+    assert captured.value.context is context
+    assert all(item.verdict == "strictly true" for item in captured.value.report.evidence)
 
 
 @pytest.fixture(scope="module")
-def assumption_branches(cases):
-    template = cases["constant"]
+def assumption_branches(contexts):
+    template = contexts["constant"]
     base = VerificationContext.for_model(OptionStudy, "unobserved_time").observe(
         spot=100,
         strike=100,
@@ -387,7 +388,7 @@ def assumption_branches(cases):
 
 
 @pytest.mark.parametrize("factory", (symbolic_method, valuation_method))
-def test_case_bound_method_rejects_changed_assumptions_with_the_same_problem(assumption_branches, factory):
+def test_context_bound_method_rejects_changed_assumptions_with_the_same_problem(assumption_branches, factory):
     first, changed = assumption_branches
     assert first.problem is changed.problem
     # A factory's already evaluated snapshot expectations must not cross from

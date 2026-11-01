@@ -24,7 +24,7 @@ def compact_collection(tmp_path_factory):
 
 
 def _verify(report, name):
-    return next(item for item in report["checks"] if item["id"] == name)
+    return next(item for item in report["evidence"] if item["id"] == name)
 
 
 def test_all_model_subdirectories_export_evidence_results_figures_and_provenance(compact_collection, monkeypatch):
@@ -34,7 +34,7 @@ def test_all_model_subdirectories_export_evidence_results_figures_and_provenance
     saved = json.loads((directory / "collection.json").read_text())
     assert saved["compact_selection"] and saved["numerical_references"]
     assert saved["provenance"]["source_sha256"]
-    assert "examples/_verification_checks.py" in saved["provenance"]["source_sha256"]
+    assert "examples/_verification_inputs.py" in saved["provenance"]["source_sha256"]
     for name, study in payload["studies"].items():
         output = directory / name
         assert (output / "report.html").read_text().startswith("<!doctype html>")
@@ -63,7 +63,7 @@ def test_bsm_keeps_exact_identities_and_numerical_quadrature_separate(compact_co
     exact = variant["computations"]["identities"]
     numerical = variant["computations"]["quadrature"]
     assert set(exact["data"]["residuals"].values()) == {"0"}
-    assert exact["kind"] == "exact scalar checks"
+    assert exact["kind"] == "exact scalar verification"
     assert numerical["kind"] == "numerical observation"
     assert numerical["data"]["call_error"] < 1e-9
     assert (
@@ -100,10 +100,10 @@ def test_symbolic_report_writer_escapes_labels_and_never_needs_optional_dependen
     class Tiny(VerificationModel):
         value = InstanceDummy("value", real=True)
 
-    case = VerificationContext.for_model(Tiny).observe(value=2)
-    result = case.run(Method("scalar result", lambda current: current.expression("value")))
+    context = VerificationContext.for_model(Tiny).observe(value=2)
+    result = context.run(Method("scalar result", lambda current: current.expression("value")))
     study = Study(
-        key, "<script>bad title</script>", "a < b", (), {"<branch>": Variant(case, {"result": Computation(result)})}
+        key, "<script>bad title</script>", "a < b", (), {"<branch>": Variant(context, {"result": Computation(result)})}
     )
     payload = write_reports((study,), tmp_path, numerical=False, compact=True)
     html = (tmp_path / key / "report.html").read_text()
@@ -117,38 +117,44 @@ def test_symbolic_report_writer_escapes_labels_and_never_needs_optional_dependen
     assert "constructing Python code" in index
 
 
-@pytest.mark.parametrize("collision", ("variant", "computation", "nested", "blocked", "combined", "case", "long"))
+@pytest.mark.parametrize(
+    "collision", ("variant", "computation", "nested", "blocked", "combined", "letter_case", "long")
+)
 def test_collection_links_keep_distinct_evidence_when_output_names_collide(tmp_path, collision):
     class Tiny(VerificationModel):
         value = InstanceDummy("value", real=True)
 
-    cases = tuple(
+    contexts = tuple(
         VerificationContext.for_model(Tiny).observe(value=value).with_obligations(positive("value", name="sign"))
         for value in (1, -1)
     )
-    results = tuple(case.run(Method("read", lambda current: current.expression("value"))) for case in cases)
-    case = cases[0]
+    results = tuple(context.run(Method("read", lambda current: current.expression("value"))) for context in contexts)
+    context = contexts[0]
     good, bad = results
     labels = ("cap <= 10%", "cap >= 10%")
     expected = ("strictly true", "strictly false")
     if collision == "computation":
-        variants = {"branch": Variant(case, {labels[0]: Computation(good), labels[1]: Computation(bad)})}
+        variants = {"branch": Variant(context, {labels[0]: Computation(good), labels[1]: Computation(bad)})}
     elif collision in {"nested", "blocked"}:
         reports = {labels[0]: good.report, labels[1]: bad.report} if collision == "nested" else {"blocked": good.report}
         computations = {"read": Computation(replace(good, data=reports))}
         blocked = {} if collision == "nested" else {"read-data": Blocked(bad.report, "Unestablished sign")}
-        variants = {"branch": Variant(case, computations, blocked)}
+        variants = {"branch": Variant(context, computations, blocked)}
         expected = ("strictly true", "strictly true", "strictly false")
     elif collision == "combined":
-        variants = {"a-b": Variant(case, {"c": Computation(good)}), "a": Variant(cases[1], {"b-c": Computation(bad)})}
+        variants = {
+            "a-b": Variant(context, {"c": Computation(good)}),
+            "a": Variant(contexts[1], {"b-c": Computation(bad)}),
+        }
     else:
-        if collision == "case":
+        if collision == "letter_case":
             labels = ("BRANCH", "branch")
         elif collision == "long":
             labels = ("branch" * 30 + "left", "branch" * 30 + "right")
         name = "read" * 40 if collision == "long" else "read"
         variants = {
-            label: Variant(branch, {name: Computation(result)}) for label, branch, result in zip(labels, cases, results)
+            label: Variant(branch, {name: Computation(result)})
+            for label, branch, result in zip(labels, contexts, results)
         }
     study = Study("tiny", "Distinct evidence", "Colliding labels", (), variants)
     write_reports((study,), tmp_path, numerical=False, compact=True)

@@ -51,11 +51,11 @@ class Parameters(Modello):
     b = InstanceDummy("b", real=True)
 
 
-def assert_blocked(case, *, claim=None, uses=()):
+def assert_blocked(context, *, claim=None, uses=()):
     calls = []
     method = Method("read", lambda current: calls.append(current), () if claim is None else (claim,), uses=uses)
     with pytest.raises(VerificationError):
-        case.run(method)
+        context.run(method)
     assert not calls
 
 
@@ -73,14 +73,14 @@ def test_scalar_declarations_retain_partial_sources_before_simplification(functi
         x = Coordinate("x", real=True)
         value = formula(function(x))
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     claim = equal_to("value", expected, wrt="x")
-    assert case.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
-    assert_blocked(case, claim=claim, uses=("value",))
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
+    assert_blocked(context, claim=claim, uses=("value",))
     with pytest.raises(ModelValidationError):
-        case.sample("value", wrt="x", points=(0,))
-    assert tuple(map(float, case.sample("value", wrt="x", points=(1,)).values)) == (float(expected),)
-    assert case.expression("value", wrt="x").subs(Curve.x, 0).doit() is S.NaN
+        context.sample("value", wrt="x", points=(0,))
+    assert tuple(map(float, context.sample("value", wrt="x", points=(1,)).values)) == (float(expected),)
+    assert context.expression("value", wrt="x").subs(Curve.x, 0).doit() is S.NaN
 
 
 def test_definition_reports_keep_declared_function_sources_before_inverse_simplification():
@@ -89,34 +89,34 @@ def test_definition_reports_keep_declared_function_sources_before_inverse_simpli
         value = specifies(exp(log(x), evaluate=False), equal_to("value", x, wrt=x))
 
     assert Curve.definition_report().explain("value/equal_to").verdict == "strictly false"
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     with pytest.raises(ModelValidationError):
-        case.sample("value", wrt="x", points=(0,))
-    assert case.sample("value", wrt="x", points=(-1, 1)).values == (-1.0, 1.0)
+        context.sample("value", wrt="x", points=(0,))
+    assert context.sample("value", wrt="x", points=(-1, 1)).values == (-1.0, 1.0)
 
 
 @pytest.mark.parametrize("ambient", (False, True))
 @pytest.mark.parametrize("point", (0, 1))
-def test_assumptions_validate_native_derivatives_before_certifying_other_requirements(ambient, point):
+def test_assumptions_validate_native_derivatives_before_certifying_other_obligations(ambient, point):
     class Curve(Modello):
         x = Coordinate("x", real=True)
 
     base = VerificationContext.for_model(Curve)
     premise = Eq(Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, point), int(bool(point)), evaluate=False)
-    case = base if ambient else base.assume(premise)
+    context = base if ambient else base.assume(premise)
     claim = positive(S.One)
     with assuming(premise) if ambient else nullcontext():
-        report = case.verify(obligations=(claim,))
+        report = context.verify(obligations=(claim,))
         if point == 0:
             assert report.consistent is False
             assert report.explain(claim.name).verdict == "unresolved"
             assert any("undefined native operation" in issue for issue in report.issues)
-            assert_blocked(case, claim=claim)
-            assert_blocked(case)
+            assert_blocked(context, claim=claim)
+            assert_blocked(context)
         else:
             assert report.consistent is True
             assert report.explain(claim.name).verdict == "strictly true"
-            assert case.run(Method("native", lambda current: 1, (claim,))).data == 1
+            assert context.run(Method("native", lambda current: 1, (claim,))).data == 1
     if ambient:
         assert base.verify().consistent is True
         assert base.run(Method("left_context", lambda current: 1)).data == 1
@@ -127,32 +127,32 @@ def test_assumptions_cannot_certify_their_own_conditional_native_premises():
         x = Coordinate("x", real=True)
         point = InstanceDummy("p", real=True)
 
-    case = VerificationContext.for_model(Curve)
-    p = case.symbols.point
+    context = VerificationContext.for_model(Curve)
+    p = context.symbols.point
     premise = Eq(Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, p), 1, evaluate=False)
-    uncertain = case.assume(premise)
+    uncertain = context.assume(premise)
     assert uncertain.verify().consistent is None
     assert uncertain.verify().explain("model/auto:algebra").verdict == "unresolved"
     assert_blocked(uncertain)
-    established = case.assume(And(p > 0, premise, evaluate=False))
+    established = context.assume(And(p > 0, premise, evaluate=False))
     assert established.run(Method("positive_point", lambda current: 1)).data == 1
 
 
-def test_assumptions_check_native_sources_erased_by_joint_observation_solving():
+def test_assumptions_verify_native_sources_erased_by_joint_observation_solving():
     class Curve(Parameters):
         x = Coordinate("x", real=True)
 
     base = VerificationContext.for_model(Curve)
     a, b = base.symbols.a, base.symbols.b
     undefined = Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, 0)
-    case = base.observe(a=b, b=2 * a + undefined).assume(Eq(a, 0, evaluate=False))
-    report = case.verify()
+    context = base.observe(a=b, b=2 * a + undefined).assume(Eq(a, 0, evaluate=False))
+    report = context.verify()
     assert report.consistent is False
     assert any("undefined native operation" in issue for issue in report.issues)
-    assert_blocked(case)
+    assert_blocked(context)
 
 
-@pytest.mark.parametrize("entry", ("requirement", "assumption", "ambient", "selector", "definition"))
+@pytest.mark.parametrize("entry", ("obligation", "assumption", "ambient", "selector", "definition"))
 def test_recursive_upstream_predicates_remain_inspectable_and_block_methods(entry):
     model = VerificationModel if entry == "definition" else Modello
 
@@ -164,21 +164,21 @@ def test_recursive_upstream_predicates_remain_inspectable_and_block_methods(entr
     base = VerificationContext.for_model(Curve)
     value = Product(log(Curve.i), (Curve.i, 0, 1))
     condition = Ne(value, 1, evaluate=False)
-    case = base.assume(condition) if entry == "assumption" else base
+    context = base.assume(condition) if entry == "assumption" else base
     claim = predicate(condition)
     with assuming(condition) if entry == "ambient" else nullcontext():
-        report = case.verify(obligations=(claim,))
+        report = context.verify(obligations=(claim,))
         assert report.explain(claim.name).verdict == "unresolved"
-        assert_blocked(case, claim=claim)
-        if entry != "requirement":
+        assert_blocked(context, claim=claim)
+        if entry != "obligation":
             assert report.consistent is None
             assert report.explain("model/auto:algebra").verdict == "unresolved"
-            assert_blocked(case)
+            assert_blocked(context)
         if entry in {"selector", "definition"}:
-            assert_blocked(case, uses=("value",))
+            assert_blocked(context, uses=("value",))
             assert "unresolved" in report.to_json()
             with pytest.raises(NotImplementedError, match="source domains: RecursionError"):
-                case.expression("value")
+                context.expression("value")
     if entry in {"selector", "definition"}:
         if entry == "definition":
             assert Curve.definition_report().consistent is None
@@ -187,9 +187,9 @@ def test_recursive_upstream_predicates_remain_inspectable_and_block_methods(entr
             i = Coordinate("i", integer=True)
             value = Piecewise((1, Eq(Product(i, (i, 1, 2)), 2, evaluate=False)), (0, True), evaluate=False)
 
-        finite_case = VerificationContext.for_model(Finite)
+        finite_context = VerificationContext.for_model(Finite)
         finite = equal_to("value", S.One)
-        assert finite_case.run(Method("finite", lambda current: 1, (finite,), uses=("value",))).data == 1
+        assert finite_context.run(Method("finite", lambda current: 1, (finite,), uses=("value",))).data == 1
         return
     finite = predicate(Eq(Product(Curve.i, (Curve.i, 1, 2)), 2, evaluate=False))
     assert base.verify(obligations=(finite,)).explain(finite.name).verdict == "strictly true"
@@ -208,41 +208,41 @@ def test_recursive_upstream_predicates_remain_inspectable_and_block_methods(entr
         lambda a, b: Ne(arg(a), 1, evaluate=False),
     ),
 )
-def test_predicates_check_scalar_domains_outside_boolean_truth(condition):
-    case = VerificationContext.for_model(Parameters)
-    claim = predicate(condition(case.symbols.a, case.symbols.b))
-    invalid = case.observe(a=0, b=0)
+def test_predicates_verify_scalar_domains_outside_boolean_truth(condition):
+    context = VerificationContext.for_model(Parameters)
+    claim = predicate(condition(context.symbols.a, context.symbols.b))
+    invalid = context.observe(a=0, b=0)
     evidence = invalid.verify(obligations=(claim,)).explain(claim.name)
     assert evidence.verdict in {"strictly false", "unresolved"}
     assert_blocked(invalid, claim=claim)
-    valid = case.observe(a=1, b=2)
+    valid = context.observe(a=1, b=2)
     assert valid.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
     assert valid.run(Method("finite", lambda current: 1, (claim,))).data == 1
 
 
 def test_negated_membership_cannot_certify_an_undefined_scalar():
-    case = VerificationContext.for_model(Parameters)
-    claim = predicate(Not(Contains(1 / case.symbols.a, S.Reals, evaluate=False), evaluate=False))
-    invalid = case.observe(a=0)
+    context = VerificationContext.for_model(Parameters)
+    claim = predicate(Not(Contains(1 / context.symbols.a, S.Reals, evaluate=False), evaluate=False))
+    invalid = context.observe(a=0)
     assert invalid.verify(obligations=(claim,)).explain(claim.name).verdict != "strictly true"
     assert_blocked(invalid, claim=claim)
-    assert case.observe(a=1).verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
+    assert context.observe(a=1).verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
 
 
 def test_membership_allows_unbounded_intervals():
-    case = VerificationContext.for_model(Parameters)
-    claim = predicate(Contains(case.symbols.a, Interval.open(0, S.Infinity), evaluate=False))
+    context = VerificationContext.for_model(Parameters)
+    claim = predicate(Contains(context.symbols.a, Interval.open(0, S.Infinity), evaluate=False))
     for value, expected in ((1, "strictly true"), (-1, "strictly false")):
-        assert case.observe(a=value).verify(obligations=(claim,)).explain(claim.name).verdict == expected
+        assert context.observe(a=value).verify(obligations=(claim,)).explain(claim.name).verdict == expected
 
 
 def test_negated_membership_retains_domains_of_scalar_set_elements():
-    case = VerificationContext.for_model(Parameters)
-    claim = predicate(Not(Contains(0, FiniteSet(1 / case.symbols.a), evaluate=False), evaluate=False))
-    invalid = case.observe(a=0)
+    context = VerificationContext.for_model(Parameters)
+    claim = predicate(Not(Contains(0, FiniteSet(1 / context.symbols.a), evaluate=False), evaluate=False))
+    invalid = context.observe(a=0)
     assert invalid.verify(obligations=(claim,)).explain(claim.name).verdict != "strictly true"
     assert_blocked(invalid, claim=claim)
-    assert case.observe(a=1).verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
+    assert context.observe(a=1).verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
 
 
 @pytest.mark.parametrize("declaration_symbols", (False, True))
@@ -252,48 +252,48 @@ def test_composite_set_predicates_retain_scalar_sources_before_model_expansion(d
         a = InstanceDummy("a", real=True)
         value = log(a)
 
-    case = VerificationContext.for_model(Curve)
-    symbols = Curve if declaration_symbols else case.symbols
+    context = VerificationContext.for_model(Curve)
+    symbols = Curve if declaration_symbols else context.symbols
     source = symbols.value if through_field else Mul(0, log(symbols.a), evaluate=False)
     domain = Complement(FiniteSet(0), FiniteSet(source), evaluate=False)
     claim = predicate(Not(Contains(0, domain, evaluate=False), evaluate=False))
-    invalid = case.observe(a=0)
+    invalid = context.observe(a=0)
     assert invalid.verify(obligations=(claim,)).explain(claim.name).verdict != "strictly true"
     assert_blocked(invalid, claim=claim)
-    assert case.observe(a=1).verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
+    assert context.observe(a=1).verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
 
 
-def test_guarded_research_expressions_can_be_reused_in_solution_family_conditions():
+def test_guarded_verification_expressions_can_be_reused_in_solution_family_conditions():
     class Curve(Modello):
         x = Coordinate("x", real=True)
         a = InstanceDummy("a", real=True)
 
-    case = VerificationContext.for_model(Curve)
-    expression = case.expression(log(Derivative(Curve.x**2, Curve.x, evaluate=False)), wrt="x")
+    context = VerificationContext.for_model(Curve)
+    expression = context.expression(log(Derivative(Curve.x**2, Curve.x, evaluate=False)), wrt="x")
     condition = Eq(expression, 1, evaluate=False)
-    assert case.family.where(condition).conditions == (condition,)
+    assert context.family.where(condition).conditions == (condition,)
 
 
 def test_predicate_identity_retains_a_sufficient_parameter_domain():
-    case = VerificationContext.for_model(Parameters)
-    claim = predicate(Eq(1 / case.symbols.a, 1 / case.symbols.a, evaluate=False))
-    evidence = case.verify(obligations=(claim,)).explain(claim.name)
+    context = VerificationContext.for_model(Parameters)
+    claim = predicate(Eq(1 / context.symbols.a, 1 / context.symbols.a, evaluate=False))
+    evidence = context.verify(obligations=(claim,)).explain(claim.name)
     assert evidence.verdict == "conditionally true"
-    assert evidence.condition == Ne(case.symbols.a, 0)
-    assert_blocked(case, claim=claim)
-    established = case.assume(case.symbols.a > 0)
+    assert evidence.condition == Ne(context.symbols.a, 0)
+    assert_blocked(context, claim=claim)
+    established = context.assume(context.symbols.a > 0)
     assert established.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
 
 
 def test_power_cancellation_retains_its_source_until_the_exponent_is_observed():
-    case = VerificationContext.for_model(Parameters)
+    context = VerificationContext.for_model(Parameters)
     power = Pow(Parameters.a, Parameters.b, evaluate=False)
     held = Add(power, -power, Parameters.a, Parameters.b, evaluate=False)
     claim = equal_to(held, Parameters.a + Parameters.b)
-    invalid = case.observe(a=0, b=-1)
+    invalid = context.observe(a=0, b=-1)
     assert invalid.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
     assert_blocked(invalid, claim=claim)
-    for valid in (case.observe(a=1, b=-1), case.observe(a=0, b=1)):
+    for valid in (context.observe(a=1, b=-1), context.observe(a=0, b=1)):
         assert valid.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
 
 
@@ -312,7 +312,7 @@ def test_declaration_predicates_keep_function_sources_until_binding(function, se
         parameter = a
         chosen = value if selector else parameter
 
-    case = VerificationContext.for_model(Choice)
+    context = VerificationContext.for_model(Choice)
     claim = (
         positive("chosen")
         if selector
@@ -320,10 +320,10 @@ def test_declaration_predicates_keep_function_sources_until_binding(function, se
             Eq(source(Choice.parameter), 0 if zero_coefficient else source(Choice.parameter), evaluate=False)
         )
     )
-    invalid = case.observe(parameter=0)
+    invalid = context.observe(parameter=0)
     assert invalid.verify(obligations=(claim,)).explain(claim.name).verdict != "strictly true"
     assert_blocked(invalid, claim=claim, uses=("chosen",))
-    valid = case.observe(parameter=1)
+    valid = context.observe(parameter=1)
     assert valid.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
 
 
@@ -333,15 +333,15 @@ def test_declaration_predicates_keep_function_sources_until_binding(function, se
     (lambda value: value, lambda value: Min(0, value, evaluate=False), lambda value: Max(0, value, evaluate=False)),
 )
 def test_rebinding_expected_templates_retains_scalar_source_without_adding_proof_guards(function, wrapper):
-    case = VerificationContext.for_model(Parameters)
+    context = VerificationContext.for_model(Parameters)
     template = wrapper(Mul(0, function(Parameters.a), evaluate=False))
     claim = equal_to(S.Zero, template)
-    invalid = case.observe(a=0)
+    invalid = context.observe(a=0)
     assert invalid.verify(obligations=(claim,)).explain(claim.name).verdict != "strictly true"
     assert_blocked(invalid, claim=claim)
-    valid = case.observe(a=1).verify(obligations=(claim,)).explain(claim.name)
+    valid = context.observe(a=1).verify(obligations=(claim,)).explain(claim.name)
     assert valid.verdict == "strictly true"
-    assert valid.expected_template == wrapper(Mul(0, function(case.symbols.a), evaluate=False))
+    assert valid.expected_template == wrapper(Mul(0, function(context.symbols.a), evaluate=False))
 
 
 @pytest.mark.parametrize("ambient", (False, True))
@@ -357,14 +357,14 @@ def test_rebinding_expected_templates_retains_scalar_source_without_adding_proof
 def test_assumptions_require_their_scalar_operands_to_be_defined(condition, ambient):
     base = VerificationContext.for_model(Parameters)
     premise = condition(base.symbols.a, base.symbols.b)
-    case = (base if ambient else base.assume(premise)).observe(a=0, b=0)
+    context = (base if ambient else base.assume(premise)).observe(a=0, b=0)
     with assuming(premise) if ambient else nullcontext():
-        report = case.verify()
+        report = context.verify()
         assert report.consistent is not True
-        assert_blocked(case)
+        assert_blocked(context)
     if ambient:
-        assert case.verify().consistent is True
-        assert case.run(Method("unrestricted", lambda current: 1)).data == 1
+        assert context.verify().consistent is True
+        assert context.run(Method("unrestricted", lambda current: 1)).data == 1
 
 
 @pytest.mark.parametrize("function", (log, arg))
@@ -378,12 +378,12 @@ def test_model_selectors_retain_scalar_domains_through_declaration_and_rebinding
         parameter = a
         chosen = value if retained else Piecewise((1, Ne(function(parameter), 1, evaluate=False)), (-1, True))
 
-    case = VerificationContext.for_model(Choice)
+    context = VerificationContext.for_model(Choice)
     claim = positive("chosen")
-    invalid = case.observe(parameter=0)
+    invalid = context.observe(parameter=0)
     assert invalid.verify(obligations=(claim,)).explain(claim.name).verdict != "strictly true"
     assert_blocked(invalid, uses=("chosen",))
-    valid = case.observe(parameter=1)
+    valid = context.observe(parameter=1)
     assert valid.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
     assert valid.run(Method("chosen", lambda current: current.expression("chosen"), uses=("chosen",))).data == 1
 
@@ -394,14 +394,14 @@ def test_selectors_only_require_domains_on_reachable_branches():
         a = InstanceDummy("a", real=True)
         chosen = Piecewise((2, switch > 0), (1, Ne(log(a), 1, evaluate=False)), (-1, True))
 
-    case = VerificationContext.for_model(Choice).observe(a=0)
+    context = VerificationContext.for_model(Choice).observe(a=0)
     method = Method("chosen", lambda current: current.expression("chosen"), uses=("chosen",))
-    assert case.observe(switch=1).run(method).data == 2
-    assumed = case.assume(case.symbols.switch > 0).run(method).data
-    assert assumed.subs(case.symbols.switch, 1) == 2
-    assert assumed.subs(case.symbols.switch, -1) is S.NaN
-    assert_blocked(case, uses=("chosen",))
-    assert_blocked(case.observe(switch=-1), uses=("chosen",))
+    assert context.observe(switch=1).run(method).data == 2
+    assumed = context.assume(context.symbols.switch > 0).run(method).data
+    assert assumed.subs(context.symbols.switch, 1) == 2
+    assert assumed.subs(context.symbols.switch, -1) is S.NaN
+    assert_blocked(context, uses=("chosen",))
+    assert_blocked(context.observe(switch=-1), uses=("chosen",))
 
 
 @pytest.mark.parametrize("positive_coordinate", (False, True))
@@ -411,19 +411,19 @@ def test_selector_domains_keep_curve_and_local_substitution_scopes(positive_coor
         curve = Piecewise((1, Ne(log(x), 1, evaluate=False)), (-1, True))
         local = Subs(curve, x, 1)
 
-    case = VerificationContext.for_model(Curve)
+    context = VerificationContext.for_model(Curve)
     local = Method("local", lambda current: current.expression("local").doit(), uses=("local",))
-    assert case.run(local).data == 1
+    assert context.run(local).data == 1
     curve = Method("curve", lambda current: 1, uses=("curve",))
     if positive_coordinate:
-        assert case.run(curve).data == 1
+        assert context.run(curve).data == 1
     else:
-        assert_blocked(case, uses=("curve",))
-        assert_blocked(case.assume(Curve.x > 0), uses=("curve",))
+        assert_blocked(context, uses=("curve",))
+        assert_blocked(context.assume(Curve.x > 0), uses=("curve",))
         with pytest.raises(ModelValidationError):
-            case.sample("curve", wrt="x", points=(0,))
-        assert case.expression("curve", wrt="x").subs(Curve.x, 0).doit() is S.NaN
-    assert case.sample("curve", wrt="x", points=(1,)).values == (1.0,)
+            context.sample("curve", wrt="x", points=(0,))
+        assert context.expression("curve", wrt="x").subs(Curve.x, 0).doit() is S.NaN
+    assert context.sample("curve", wrt="x", points=(1,)).values == (1.0,)
 
 
 @pytest.mark.parametrize("through_observation", (False, True))
@@ -433,11 +433,11 @@ def test_predicates_preserve_source_domains_through_aliases_and_observations(thr
         source = InstanceDummy("s", real=True) if through_observation else log(a)
         alias = source
 
-    case = VerificationContext.for_model(Aliases)
+    context = VerificationContext.for_model(Aliases)
     if through_observation:
-        case = case.observe(source=log(case.symbols.a))
-    claim = predicate(Ne(case.symbols.alias, 1, evaluate=False))
-    invalid = case.observe(a=0)
+        context = context.observe(source=log(context.symbols.a))
+    claim = predicate(Ne(context.symbols.alias, 1, evaluate=False))
+    invalid = context.observe(a=0)
     assert invalid.verify(obligations=(claim,)).explain(claim.name).verdict != "strictly true"
     assert_blocked(invalid, claim=claim)
-    assert case.observe(a=1).verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
+    assert context.observe(a=1).verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"

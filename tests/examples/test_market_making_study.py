@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from sympy import S, assuming, exp
 
-from examples._market_making_models import CARAMarketMaker, LogisticIntensity, study_case
+from examples._market_making_models import CARAMarketMaker, LogisticIntensity, study_context
 from examples._market_making_numerics import QuoteEvaluator, exponential_reference, run_quotes
 from examples.market_making import CARAUtility, QuadraticTerminalPenalty
 from examples.market_making_study import _provenance, compare, write_study
@@ -21,8 +21,8 @@ def comparison():
 
 
 @pytest.fixture(scope="module")
-def capacity_one_case():
-    return study_case(capacity=1)
+def capacity_one_context():
+    return study_context(capacity=1)
 
 
 @pytest.mark.parametrize("family", ["exponential", "logistic"])
@@ -45,7 +45,7 @@ def test_terminal_boundary_symmetry_and_convergence(comparison, family):
     assert diagnostics["max_root_residual"] < 1e-9
     coarse, fine = diagnostics["time_difference_defects"]
     assert fine < coarse / 2 and fine < 1e-3
-    assert all(item.verdict == "strictly true" for item in record["result"].report.checks)
+    assert all(item.verdict == "strictly true" for item in record["result"].report.evidence)
 
 
 @pytest.mark.parametrize("cost", [-3.0, 0.0, 2.0])
@@ -57,7 +57,7 @@ def test_general_quote_root_agrees_with_the_exponential_formula(cost):
 
 
 @pytest.mark.parametrize("cost", [-3.0, 0.0, 2.0])
-def test_logistic_quote_is_a_global_maximum_under_the_checked_premises(cost):
+def test_logistic_quote_is_a_global_maximum_under_the_verified_premises(cost):
     evaluator = QuoteEvaluator("logistic", 4, 2, 0.1, 1)
     quote, value, derivative = evaluator.evaluate(cost)
     assert quote > cost and derivative < 0
@@ -77,11 +77,11 @@ def test_changing_utility_or_losing_uniform_evidence_blocks_the_method():
     class ConvexUtility(CARAUtility):
         value = exp(CARAUtility.gamma * CARAUtility.wealth)
 
-    case = study_case(capacity=2)
+    context = study_context(capacity=2)
     with pytest.raises(VerificationError) as error:
-        run_quotes(case.replace("utility", ConvexUtility))
+        run_quotes(context.replace("utility", ConvexUtility))
     assert error.value.report.explain("cara_form").verdict == "strictly false"
-    logistic = study_case(logistic=True, capacity=2)
+    logistic = study_context(logistic=True, capacity=2)
     from dataclasses import replace
 
     with pytest.raises(VerificationError):
@@ -91,20 +91,20 @@ def test_changing_utility_or_losing_uniform_evidence_blocks_the_method():
     assert error.value.report.explain("exponential_bid").verdict == "strictly false"
 
 
-def test_invalid_lattice_and_numerical_failure_retain_case_and_report(capacity_one_case):
-    case = study_case(capacity=S(3) / 2)
+def test_invalid_lattice_and_numerical_failure_retain_context_and_report(capacity_one_context):
+    context = study_context(capacity=S(3) / 2)
     with pytest.raises(VerificationError, match="integral number") as error:
-        run_quotes(case)
-    assert error.value.context is case
-    assert error.value.report.checks
+        run_quotes(context)
+    assert error.value.context is context
+    assert error.value.report.evidence
     with pytest.raises(VerificationError, match="max_step"):
-        run_quotes(capacity_one_case, max_step=0)
+        run_quotes(capacity_one_context, max_step=0)
 
 
 @pytest.mark.parametrize("tolerance", ["rtol", "atol"])
 @pytest.mark.parametrize("value", [0, -1, inf, -inf, nan])
-def test_invalid_solver_tolerances_are_rejected_before_integration(monkeypatch, capacity_one_case, tolerance, value):
-    case = capacity_one_case
+def test_invalid_solver_tolerances_are_rejected_before_integration(monkeypatch, capacity_one_context, tolerance, value):
+    context = capacity_one_context
     calls = []
 
     def integrate(*args, **kwargs):
@@ -113,17 +113,17 @@ def test_invalid_solver_tolerances_are_rejected_before_integration(monkeypatch, 
 
     monkeypatch.setattr("examples._market_making_numerics.solve_ivp", integrate)
     with pytest.raises(VerificationError, match="tolerances") as error:
-        run_quotes(case, points=3, **{tolerance: value})
+        run_quotes(context, points=3, **{tolerance: value})
     assert not calls
-    assert error.value.context is case
-    assert error.value.report.checks
+    assert error.value.context is context
+    assert error.value.report.evidence
 
 
 def test_asymmetric_intensities_use_independent_component_scopes():
-    case = study_case(capacity=2).replace("ask.intensity", LogisticIntensity)
+    context = study_context(capacity=2).replace("ask.intensity", LogisticIntensity)
     # Replacement preserves the recorded scale=2, decay=1 on the ask side.
-    case = case.with_bound_hint("ask.intensity.rate/derivative_ratio_bound", upper=1)
-    data = run_quotes(case, points=5).data
+    context = context.with_bound_hint("ask.intensity.rate/derivative_ratio_bound", upper=1)
+    data = run_quotes(context, points=5).data
     assert data.diagnostics["bid_family"] == "exponential"
     assert data.diagnostics["ask_family"] == "logistic"
     assert data.bid[0][2] != pytest.approx(data.ask[0][2])
@@ -138,7 +138,7 @@ def test_report_artifacts_are_complete_and_replayable(tmp_path):
     assert matplotlib.rcParams["font.size"] == original_font
     assert matplotlib.rcParams["svg.hashsalt"] == original_salt
     saved = json.loads((tmp_path / "report.json").read_text())
-    assert saved["cases"]["logistic"]["bid"][0][-1] is None
+    assert saved["contexts"]["logistic"]["bid"][0][-1] is None
     assert (tmp_path / "report.html").read_text().startswith("<!doctype html>")
     assert (tmp_path / "evidence-logistic.html").is_file()
     assert "sup &lt;=" in (tmp_path / "evidence-logistic.html").read_text()
@@ -147,12 +147,12 @@ def test_report_artifacts_are_complete_and_replayable(tmp_path):
     assert len(list((tmp_path / "figures").glob("*.svg"))) == 4
     assert saved["provenance"]["versions"]["scipy"]
     assert saved["provenance"]["source_sha256"]
-    assert "examples/_verification_checks.py" in saved["provenance"]["source_sha256"]
+    assert "examples/_verification_inputs.py" in saved["provenance"]["source_sha256"]
     replayed = compare(capacity=1, points=5)
     for name, record in replayed.items():
-        np.testing.assert_allclose(payload["cases"][name]["theta"], record["result"].data.theta, atol=1e-10)
+        np.testing.assert_allclose(payload["contexts"][name]["theta"], record["result"].data.theta, atol=1e-10)
         assert (
-            payload["cases"][name]["evidence"]["evidence_sha256"]
+            payload["contexts"][name]["evidence"]["evidence_sha256"]
             == record["result"].report.to_dict()["evidence_sha256"]
         )
 
@@ -166,30 +166,30 @@ def test_reference_derives_terminal_inputs_and_validates_its_domain():
     class Quartic(QuadraticTerminalPenalty):
         cost = QuadraticTerminalPenalty.eta * QuadraticTerminalPenalty.inventory**4
 
-    case = study_case(capacity=2).replace("terminal", Quartic)
-    reference = exponential_reference(case, (0, 1))
+    context = study_context(capacity=2).replace("terminal", Quartic)
+    reference = exponential_reference(context, (0, 1))
     np.testing.assert_allclose(reference[-1], [-0.8, -0.05, 0, -0.05, -0.8], atol=1e-12)
-    actual = run_quotes(case, points=3).data
+    actual = run_quotes(context, points=3).data
     np.testing.assert_allclose(actual.theta[0], reference[0], atol=1e-6)
     with pytest.raises(VerificationError, match="integral number"):
-        exponential_reference(study_case(capacity=S(3) / 2), (0, 1))
+        exponential_reference(study_context(capacity=S(3) / 2), (0, 1))
     with pytest.raises(VerificationError, match="within the model horizon"):
-        exponential_reference(case, (-1, 1))
+        exponential_reference(context, (-1, 1))
 
 
-def test_coordinate_renaming_preserves_the_declared_gain_and_numerical_model(capacity_one_case):
+def test_coordinate_renaming_preserves_the_declared_gain_and_numerical_model(capacity_one_context):
     from examples.market_making import ExponentialIntensity
 
     class Renamed(ExponentialIntensity):
         distance = Coordinate("new_delta", real=True)
         rate = ExponentialIntensity.scale * exp(-ExponentialIntensity.decay * distance)
 
-    case = capacity_one_case
-    changed = case.replace("ask.intensity", Renamed)
+    context = capacity_one_context
+    changed = context.replace("ask.intensity", Renamed)
     gain = changed.expression("ask.gain", wrt="ask.intensity.distance")
     assert ExponentialIntensity.distance not in gain.free_symbols
     np.testing.assert_allclose(
-        run_quotes(changed, points=3).data.theta, run_quotes(case, points=3).data.theta, atol=1e-9
+        run_quotes(changed, points=3).data.theta, run_quotes(context, points=3).data.theta, atol=1e-9
     )
 
 
@@ -209,7 +209,7 @@ def test_git_is_optional_provenance(monkeypatch):
     assert provenance["source_sha256"]
 
 
-def test_numerical_adapter_rechecks_the_declared_neighbor_and_gain_laws(capacity_one_case):
+def test_numerical_adapter_reverifies_the_declared_neighbor_and_gain_laws(capacity_one_context):
     from examples.market_making import ContinuationValue, QuoteHamiltonian
 
     class WrongNeighbor(ContinuationValue):
@@ -218,26 +218,26 @@ def test_numerical_adapter_rechecks_the_declared_neighbor_and_gain_laws(capacity
     class WrongGain(QuoteHamiltonian):
         gain = -QuoteHamiltonian.gain
 
-    case = capacity_one_case
+    context = capacity_one_context
     for path, replacement, claim in (
         ("continuation", WrongNeighbor, "bid_neighbor_cost"),
         ("bid", WrongGain, "bid_cara_gain"),
     ):
         with pytest.raises(VerificationError) as error:
-            run_quotes(case.replace(path, replacement), points=3)
+            run_quotes(context.replace(path, replacement), points=3)
         assert error.value.report.explain(claim).verdict != "strictly true"
 
 
-def test_full_ode_rejects_fixed_state_observations_and_assumptions(capacity_one_case):
-    case = capacity_one_case
+def test_full_ode_rejects_fixed_state_observations_and_assumptions(capacity_one_context):
+    context = capacity_one_context
     for changed, message in (
-        (case.observe(inventory=0), "fixed state observations"),
-        (case.observe(bid_cost=0), "fixed state observations"),
-        (case.assume(case.symbols.inventory >= 0), "state coordinates vary"),
-        (case.assume(case.symbols.bid_cost >= 0), "state coordinates vary"),
-        (case.assume(case._reference("terminal.inventory") > 0), "state coordinates vary"),
-        (case.assume(case._reference("bid.intensity.distance") < 0), "state coordinates vary"),
-        (case.assume(case._reference("ask.intensity.distance") < 0), "state coordinates vary"),
+        (context.observe(inventory=0), "fixed state observations"),
+        (context.observe(bid_cost=0), "fixed state observations"),
+        (context.assume(context.symbols.inventory >= 0), "state coordinates vary"),
+        (context.assume(context.symbols.bid_cost >= 0), "state coordinates vary"),
+        (context.assume(context._reference("terminal.inventory") > 0), "state coordinates vary"),
+        (context.assume(context._reference("bid.intensity.distance") < 0), "state coordinates vary"),
+        (context.assume(context._reference("ask.intensity.distance") < 0), "state coordinates vary"),
     ):
         with pytest.raises(VerificationError, match=message):
             run_quotes(changed, points=3)
@@ -246,11 +246,11 @@ def test_full_ode_rejects_fixed_state_observations_and_assumptions(capacity_one_
 @pytest.mark.parametrize(
     "subject", ["inventory", "bid_cost", "terminal.inventory", "bid.intensity.distance", "ask.intensity.distance"]
 )
-def test_full_ode_rejects_global_state_restrictions(capacity_one_case, subject):
-    case = capacity_one_case
-    coordinate = case._reference(subject)
+def test_full_ode_rejects_global_state_restrictions(capacity_one_context, subject):
+    context = capacity_one_context
+    coordinate = context._reference(subject)
     condition = coordinate < 0 if subject.endswith("distance") else coordinate >= 0
     with assuming(condition):
         with pytest.raises(VerificationError, match="state coordinates vary") as failure:
-            run_quotes(case, points=3)
+            run_quotes(context, points=3)
         assert failure.value.report.assumptions

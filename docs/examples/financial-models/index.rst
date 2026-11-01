@@ -2,8 +2,8 @@ Financial models with changing constraints
 ==========================================
 
 A researcher often needs to compare several versions of a model: a new cost
-law, a tighter admissible set, or a method with weaker regularity requirements.
-These studies show how to keep an earlier case, make the change, and inspect
+law, a tighter admissible set, or a method with weaker regularity obligations.
+These studies show how to keep an earlier context, make the change, and inspect
 which computations still have the evidence they need.
 
 The examples cover pricing, execution, and allocation with illustrative exact
@@ -44,7 +44,7 @@ can be read independently.
    perpetual-put
 
 Continue with :doc:`continuous-time market making <../market-making/index>`
-to connect utility, risk, and liquidity requirements to a coupled numerical
+to connect utility, risk, and liquidity obligations to a coupled numerical
 terminal-value problem.
 
 Separate the roles of constraints
@@ -67,12 +67,12 @@ The studies retain these outcomes in separate branches.
 Work through a model change
 ---------------------------
 
-1. Keep an unobserved model or early case as the common branch point.
+1. Keep an unobserved model or early context as the common branch point.
    Assumptions and observations accumulate, so branch before an observation
    when you want to compare another value.
 2. Make a named branch for the component or restriction change. State the
    admissible set and the calculation you intend to compare.
-3. Run the method through the current case. Inspect its report for established
+3. Run the method through the current context. Inspect its report for established
    premises, sufficient parameter conditions, refutations, or open obligations.
 4. Inspect the candidate's certificate. The examples check exact identities,
    domain conditions, and the premises of any explicitly trusted rule.
@@ -81,15 +81,15 @@ Work through a model change
 6. Revisit the contract after a replacement or relaxation. Keep both the
    successful and blocked computations, recording why a premise was removed.
 
-``case.run(method_factory)`` prepares a method for the current branch. A
-prepared method that captures case-specific expressions uses
-``Method.bind(case)``. Retiring an exploratory obligation leaves the method's
+``context.run(method_factory)`` prepares a method for the current branch. A
+prepared method that captures context-specific expressions uses
+``Method.bind(context)``. Retiring an exploratory obligation leaves the method's
 preconditions and the obligations from symbolic operations in place.
 
 Read and compare the reports
 ----------------------------
 
-Each study report keeps case inputs, completed computations, and blocked
+Each study report keeps context inputs, completed computations, and blocked
 attempts together. Open a computation's premises link to see the obligation,
 coordinate domain, conditions, and any counterexample or nested inference-rule
 premises. The report retains the declared formula alongside the specialized
@@ -130,7 +130,7 @@ numerical replay is:
 
 Replay uses the Python source and records dependency versions, exact inputs,
 source fingerprints, and numerical settings. JSON is a descriptive audit
-export. For a custom study, keep the Python code that constructed its cases
+export. For a custom study, keep the Python code that constructed its contexts
 and computations. The reusable ``write_reports`` writer accepts a
 ``replay_command`` for that code's entry point; a study key labels its output
 directory.

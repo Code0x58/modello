@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 
 from sympy import Derivative, Eq, Expr, FiniteSet, Float, Ge, Interval, Rational, S, Subs, simplify, sympify
 
-from examples._verification_checks import require_parameter_assumptions
+from examples._verification_inputs import validate_parameter_assumptions
 from modello import ConstraintKind, Coordinate, InstanceDummy, component
 from modello.contrib.verification import (
     InferenceRule,
@@ -33,7 +33,7 @@ SOURCE = "https://www.stanford.edu/~boyd/cvxbook/bv_cvxbook.pdf"
 
 
 class Covariance(VerificationModel):
-    """A symmetric 2x2 covariance specification, including singular cases."""
+    """A symmetric 2x2 covariance specification, including singular matrices."""
 
     first = specifies(
         InstanceDummy("v1", real=True),
@@ -100,7 +100,7 @@ def _exact(value) -> Expr:
 class PortfolioRestrictions:
     """Optional economic restrictions, separate from covariance validity.
 
-    ``without`` branches the restriction set; it does not mutate an old case
+    ``without`` branches the restriction set; it does not mutate an old context
     or discard a solver's mathematical premises.
     """
 
@@ -155,7 +155,7 @@ class Allocation:
     restrictions: PortfolioRestrictions
 
 
-def portfolio_case(
+def portfolio_context(
     *, first_variance=4, second_variance=1, covariance=0, first_return=Rational(8, 100), second_return=Rational(4, 100)
 ):
     """Use exact illustrative moments; preserve an unbound allocation coordinate."""
@@ -281,7 +281,7 @@ def _contracts(*, unique: bool):
     return tuple(obligations)
 
 
-def _linear_restrictions(case, restrictions):
+def _linear_restrictions(context, restrictions):
     result = []
     if restrictions.long_only:
         result.extend(
@@ -296,15 +296,15 @@ def _linear_restrictions(case, restrictions):
         result.append(
             LinearRestriction(
                 "minimum_return",
-                case.symbols.means.first - case.symbols.means.second,
-                restrictions.target - case.symbols.means.second,
+                context.symbols.means.first - context.symbols.means.second,
+                restrictions.target - context.symbols.means.second,
             )
         )
     return tuple(result)
 
 
-def _closed(case, value):
-    value = simplify(case.expression(value).doit())
+def _closed(context, value):
+    value = simplify(context.expression(value).doit())
     if value.free_symbols or value.has(Float) or value.is_real is not True or value.is_finite is not True:
         raise ValueError("Bind exact finite real moments before deriving an allocation")
     return value
@@ -323,22 +323,22 @@ def _ordered_minimum(left, right):
     return -_ordered_maximum(-left, -right)
 
 
-def _propose(case, restrictions):
-    weight_coordinate = case._reference("weight")
-    require_parameter_assumptions(
-        case,
+def _propose(context, restrictions):
+    weight_coordinate = context._reference("weight")
+    validate_parameter_assumptions(
+        context,
         weight_coordinate,
         message="Keep weight assumptions in PortfolioRestrictions so the admissible interval is explicit",
     )
-    for constraint in case.problem.constraints:
+    for constraint in context.problem.constraints:
         if constraint.kind is ConstraintKind.INPUT and weight_coordinate in (
-            case._law(constraint.left).free_symbols | case._law(constraint.right).free_symbols
+            context._law(constraint.left).free_symbols | context._law(constraint.right).free_symbols
         ):
             raise ValueError(
                 "Observe portfolio parameters rather than weight-dependent outputs; use PortfolioRestrictions"
             )
-    specs = _linear_restrictions(case, restrictions)
-    evaluated = tuple((item, _closed(case, item.coefficient), _closed(case, item.bound)) for item in specs)
+    specs = _linear_restrictions(context, restrictions)
+    evaluated = tuple((item, _closed(context, item.coefficient), _closed(context, item.bound)) for item in specs)
     lower, upper = S.NegativeInfinity, S.Infinity
     for item, coefficient, bound in evaluated:
         if coefficient.is_positive is True:
@@ -357,17 +357,17 @@ def _propose(case, restrictions):
         raise ValueError(f"The restrictions are infeasible: lower weight {lower} exceeds upper weight {upper}")
     if feasible_order is not S.true:
         raise ValueError("The ordering of the restriction bounds is unresolved")
-    a = _closed(case, "moments.contrast")
+    a = _closed(context, "moments.contrast")
     if a == 0:
-        if _closed(case, "moments.second") != _closed(case, "moments.cross"):
+        if _closed(context, "moments.second") != _closed(context, "moments.cross"):
             raise ValueError("A zero-curvature covariance must have a constant budget-line variance")
         weight = _ordered_maximum(lower, _ordered_minimum(upper, S.Zero))
     else:
         weight = _ordered_maximum(
-            lower, _ordered_minimum(upper, (_closed(case, "moments.second") - _closed(case, "moments.cross")) / a)
+            lower, _ordered_minimum(upper, (_closed(context, "moments.second") - _closed(context, "moments.cross")) / a)
         )
-    candidate_case = case.observe(candidate=weight)
-    gradient = _closed(candidate_case, "candidate_slope")
+    candidate_context = context.observe(candidate=weight)
+    gradient = _closed(candidate_context, "candidate_slope")
     active = tuple(item.name for item, coefficient, bound in evaluated if simplify(coefficient * weight - bound) == 0)
     multipliers = dict.fromkeys((item.name for item in specs), S.Zero)
     if gradient != 0:
@@ -381,17 +381,17 @@ def _propose(case, restrictions):
         )
         if matching is None:
             raise ValueError("No active constraint supports the candidate's gradient")
-        multipliers[matching.name] = simplify(gradient / _closed(case, matching.coefficient))
+        multipliers[matching.name] = simplify(gradient / _closed(context, matching.coefficient))
     stationarity = simplify(
         gradient - sum((multipliers[item.name] * coefficient for item, coefficient, _ in evaluated), S.Zero)
     )
-    completion = simplify(candidate_case.expression("completion_residual", wrt="weight"))
+    completion = simplify(candidate_context.expression("completion_residual", wrt="weight"))
     feasible = Interval(lower, upper)
     allocation = Allocation(
         weight,
         1 - weight,
-        _closed(candidate_case, "candidate_variance"),
-        _closed(candidate_case, "candidate_return"),
+        _closed(candidate_context, "candidate_variance"),
+        _closed(candidate_context, "candidate_return"),
         feasible,
         feasible if a == 0 else FiniteSet(weight),
         active,
@@ -400,11 +400,11 @@ def _propose(case, restrictions):
         completion,
         restrictions,
     )
-    return candidate_case, allocation, specs
+    return candidate_context, allocation, specs
 
 
 def allocate(
-    case: VerificationContext, restrictions: PortfolioRestrictions | None = None, *, unique=True
+    context: VerificationContext, restrictions: PortfolioRestrictions | None = None, *, unique=True
 ) -> VerificationResult[Allocation]:
     """Derive a candidate, then independently check its exact scalar KKT proof.
 
@@ -412,15 +412,15 @@ def allocate(
     primal/dual, stationarity, and complementarity premises are checked here.
     """
     restrictions = restrictions or PortfolioRestrictions()
-    proposed = case.run(
+    proposed = context.run(
         Method("derive allocation", _propose, _contracts(unique=unique), ("variance", "expected_return")),
         restrictions=restrictions,
     )
-    candidate_case, allocation, specs = proposed.data
+    candidate_context, allocation, specs = proposed.data
     multipliers = dict(allocation.multipliers)
     premises = list(_contracts(unique=unique))
-    candidate = candidate_case.symbols.candidate
-    gradient = candidate_case.symbols.candidate_slope
+    candidate = candidate_context.symbols.candidate
+    gradient = candidate_context.symbols.candidate_slope
     dual_sum = sum((multipliers[item.name] * item.coefficient for item in specs), S.Zero)
     premises.append(
         predicate(
@@ -460,7 +460,7 @@ def allocate(
             )
         )
     conclusion = Obligation("global_minimum", "candidate_variance", "rule")
-    certified = candidate_case.with_rule(
+    certified = candidate_context.with_rule(
         InferenceRule("scalar_convex_KKT", conclusion, tuple(premises), SOURCE + "#page=263", "1")
     )
     required = replace(
@@ -474,13 +474,13 @@ def allocate(
     )
 
 
-def numerical_reference(case: VerificationContext, restrictions: PortfolioRestrictions | None = None):
+def numerical_reference(context: VerificationContext, restrictions: PortfolioRestrictions | None = None):
     """Independent bounded scalar minimization; numerical agreement is not proof."""
     import numpy as np
     from scipy.optimize import minimize_scalar
 
     restrictions = restrictions or PortfolioRestrictions()
-    result = allocate(case, restrictions)
+    result = allocate(context, restrictions)
     interval = result.data.feasible
     if isinstance(interval, FiniteSet):
         lower = upper = next(iter(interval))
@@ -488,8 +488,8 @@ def numerical_reference(case: VerificationContext, restrictions: PortfolioRestri
         lower, upper = interval.start, interval.end
     if not all(endpoint.is_finite is True for endpoint in (lower, upper)):
         raise ValueError("The independent numerical reference requires a bounded feasible interval")
-    w = case._reference("weight")
-    expression = case.expression("variance", wrt=w)
+    w = context._reference("weight")
+    expression = context.expression("variance", wrt=w)
     from sympy import lambdify
 
     objective = lambdify(w, expression, modules="numpy")
@@ -509,28 +509,28 @@ def numerical_reference(case: VerificationContext, restrictions: PortfolioRestri
 
 def run_demo():
     """Compare active restrictions, their removal, and the loss of uniqueness."""
-    case = portfolio_case()
+    context = portfolio_context()
     targeted = PortfolioRestrictions(target=Rational(7, 100), cap=Rational(4, 5))
     variants = {
-        "interior": (case, PortfolioRestrictions()),
-        "target": (case, targeted),
-        "target_removed": (case, targeted.without("target")),
-        "cap": (case, PortfolioRestrictions(cap=Rational(1, 10))),
+        "interior": (context, PortfolioRestrictions()),
+        "target": (context, targeted),
+        "target_removed": (context, targeted.without("target")),
+        "cap": (context, PortfolioRestrictions(cap=Rational(1, 10))),
         "no_short": (
-            portfolio_case(first_variance=1, second_variance=4, covariance=Rational(3, 2)),
+            portfolio_context(first_variance=1, second_variance=4, covariance=Rational(3, 2)),
             PortfolioRestrictions(),
         ),
         "shorts_allowed": (
-            portfolio_case(first_variance=1, second_variance=4, covariance=Rational(3, 2)),
+            portfolio_context(first_variance=1, second_variance=4, covariance=Rational(3, 2)),
             PortfolioRestrictions().without("long_only"),
         ),
     }
     results = {
-        name: {"case": current, "result": allocate(current, restrictions)}
+        name: {"context": current, "result": allocate(current, restrictions)}
         for name, (current, restrictions) in variants.items()
     }
-    flat = portfolio_case(first_variance=1, second_variance=1, covariance=1)
-    results["flat"] = {"case": flat, "result": allocate(flat, unique=False)}
+    flat = portfolio_context(first_variance=1, second_variance=1, covariance=1)
+    results["flat"] = {"context": flat, "result": allocate(flat, unique=False)}
     return results
 
 

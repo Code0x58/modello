@@ -3,7 +3,7 @@ Markowitz allocation with changing restrictions
 
 Choose the weights of a fully invested two-asset portfolio to minimize its
 variance. Add a return target or concentration cap and compare the new
-allocation with the earlier case. Then relax strict curvature and inspect
+allocation with the earlier context. Then relax strict curvature and inspect
 what remains true when the optimum is no longer unique.
 
 The inputs are illustrative expected returns, variances, and covariance. The
@@ -45,10 +45,10 @@ rule. Its checked scalar premises are detailed under the certificate below.
 
 >>> from sympy import Rational, S
 >>> from examples.financial_models.markowitz import (
-...     PortfolioRestrictions, allocate, portfolio_case,
+...     PortfolioRestrictions, allocate, portfolio_context,
 ... )
->>> case = portfolio_case()
->>> interior = allocate(case)
+>>> context = portfolio_context()
+>>> interior = allocate(context)
 >>> interior.data.weight, interior.data.variance
 (1/5, 4/5)
 >>> interior.report.explain("global_minimum").verdict
@@ -69,23 +69,23 @@ positions impose :math:`0\leq w\leq1`; a concentration cap imposes
 These conditions reduce to a feasible interval :math:`[L,U]`. The code handles
 either sign of the return difference, equal means, unbounded intervals, and
 singleton feasible sets. An infeasible interval blocks the method and retains
-the case and its mathematical report in ``VerificationError``.
+the context and its mathematical report in ``VerificationError``.
 
 The optimizer rejects assumptions restricting the quantified weight and scalar
 observations of weight-dependent outputs. Put those restrictions in
 ``PortfolioRestrictions`` so that the candidate and its
 Karush--Kuhn--Tucker (KKT) certificate use the same admissible interval.
 Observing market moments remains supported.
-The same check applies to ``case.assume(...)`` and active SymPy
+The same check applies to ``context.assume(...)`` and active SymPy
 ``assuming(...)`` contexts; ambient predicates cannot silently narrow the
 weight interval used by the certificate.
 
 >>> restrictions = PortfolioRestrictions(target=Rational(7, 100), cap=Rational(4, 5))
->>> targeted = allocate(case, restrictions)
+>>> targeted = allocate(context, restrictions)
 >>> targeted.data.weight, targeted.data.active
 (3/4, ('minimum_return',))
 >>> relaxed = restrictions.without("target")
->>> allocate(case, relaxed).data.weight
+>>> allocate(context, relaxed).data.weight
 1/5
 >>> restrictions.target, relaxed.target, relaxed.changes
 (7/100, None, ('Removed target.',))
@@ -93,7 +93,7 @@ weight interval used by the certificate.
 ``without`` changes this economic admissible set. It does not remove covariance
 validity or a solver's need for the exact objective law. A class that replaces
 the quadratic variance by a quartic cannot use this analytic shortcut; its
-exact-form requirement is rechecked and blocks execution.
+exact-form obligation is rechecked and blocks execution.
 
 The determinant, reduced curvature, derivative, candidate values, and complete
 objective-difference expression also have live source identities. Renaming an
@@ -141,7 +141,7 @@ With identical perfectly correlated asset returns, :math:`v_1=v_2=c=1`, the
 variance is constant along the budget line. The strict-curvature shortcut is
 blocked. The broader convex method retains every feasible minimizer:
 
->>> flat = portfolio_case(first_variance=1, second_variance=1, covariance=1)
+>>> flat = portfolio_context(first_variance=1, second_variance=1, covariance=1)
 >>> result = allocate(flat, unique=False)
 >>> result.data.variance, result.data.minimizers
 (1, Interval(0, 1))

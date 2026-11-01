@@ -55,31 +55,31 @@ class CARAMarketMaker(MarketMakingState):
     horizon = InstanceDummy("T", positive=True)
 
 
-def study_case(*, logistic=False, capacity=5) -> VerificationContext[CARAMarketMaker]:
+def study_context(*, logistic=False, capacity=5) -> VerificationContext[CARAMarketMaker]:
     """Match both the zero-distance intensity and slope across the two families."""
-    case = VerificationContext.for_model(CARAMarketMaker, "market_making")
+    context = VerificationContext.for_model(CARAMarketMaker, "market_making")
     if logistic:
-        case = case.replace("bid.intensity", LogisticIntensity).replace("ask.intensity", LogisticIntensity)
+        context = context.replace("bid.intensity", LogisticIntensity).replace("ask.intensity", LogisticIntensity)
     for side in ("bid", "ask"):
         conclusion = Obligation(f"unique_{side}", f"{side}.intensity.rate", "rule")
-        case = case.with_rule(
+        context = context.with_rule(
             InferenceRule(
                 f"gueant_unique_{side}", conclusion, intensity_contracts(f"{side}.intensity"), SOURCE + "#S3.SS2", "1"
             )
         )
         if logistic:
-            case = case.with_bound_hint(f"{side}.intensity.rate/derivative_ratio_bound", upper=1)
+            context = context.with_bound_hint(f"{side}.intensity.rate/derivative_ratio_bound", upper=1)
     gamma, eta = S.One / 10, S.One / 20
     scale, decay = (4, 2) if logistic else (2, 1)
     # Constructor-compatible partial components retain shared parameter links.
-    declaration = case.problem.model
+    declaration = context.problem.model
     bid_type = declaration._modello_namespace.nested_models["bid"]._modello_model
     ask_type = declaration._modello_namespace.nested_models["ask"]._modello_model
     bid_intensity = bid_type._modello_namespace.nested_models["intensity"]._modello_model
     ask_intensity = ask_type._modello_namespace.nested_models["intensity"]._modello_model
     from examples.market_making import QuadraticInventoryRisk, QuadraticTerminalPenalty
 
-    return case.observe(
+    return context.observe(
         gamma=gamma,
         step=1,
         capacity=capacity,
@@ -91,7 +91,7 @@ def study_case(*, logistic=False, capacity=5) -> VerificationContext[CARAMarketM
     )
 
 
-def solver_requirements(case: VerificationContext) -> tuple[Obligation, ...]:
+def solver_preconditions(context: VerificationContext) -> tuple[Obligation, ...]:
     obligations = [
         equal_to(
             "utility.value",
@@ -198,7 +198,7 @@ def solver_requirements(case: VerificationContext) -> tuple[Obligation, ...]:
     return tuple(obligations)
 
 
-def exponential_requirement(side: str) -> Obligation:
+def exponential_precondition(side: str) -> Obligation:
     return equal_to(
         f"{side}.intensity.rate",
         lambda get: (

@@ -14,22 +14,22 @@ from examples._market_making_models import (
     SOURCE,
     CARAMarketMaker as CARAMarketMaker,
     LogisticIntensity as LogisticIntensity,
-    study_case,
+    study_context,
 )
 from modello.contrib.verification import VerificationError
 
 
 def compare(*, capacity=5, points=101):
-    """Return cases, checked numerical results, and independent comparisons."""
+    """Return contexts, checked numerical results, and independent comparisons."""
     import numpy as np
 
     from examples._market_making_numerics import exponential_reference, run_quotes
 
     results = {}
     for name, logistic in (("exponential", False), ("logistic", True)):
-        case = study_case(logistic=logistic, capacity=capacity)
-        result = run_quotes(case, points=points)
-        refined = run_quotes(case, points=points, rtol=1e-10, atol=1e-12, max_step=0.005)
+        context = study_context(logistic=logistic, capacity=capacity)
+        result = run_quotes(context, points=points)
+        refined = run_quotes(context, points=points, rtol=1e-10, atol=1e-12, max_step=0.005)
         data, tighter = result.data, refined.data
         quote_errors = [
             abs(left - right)
@@ -46,10 +46,10 @@ def compare(*, capacity=5, points=101):
             "reference_max_step": 0.005,
         }
         if not logistic:
-            reference = exponential_reference(case, data.times)
+            reference = exponential_reference(context, data.times)
             convergence["matrix_exponential_theta_error"] = float(np.max(np.abs(np.array(data.theta) - reference)))
         parameters = {
-            path: str(case.expression(path))
+            path: str(context.expression(path))
             for path in (
                 "horizon",
                 "capacity",
@@ -63,7 +63,7 @@ def compare(*, capacity=5, points=101):
                 "ask.intensity.decay",
             )
         }
-        results[name] = {"case": case, "result": result, "parameters": parameters, "convergence": convergence}
+        results[name] = {"context": context, "result": result, "parameters": parameters, "convergence": convergence}
     return results
 
 
@@ -81,7 +81,7 @@ def _provenance():
         *Path(verification.__file__).parent.glob("*.py"),
         Path(__file__).with_name("_market_making_models.py"),
         Path(__file__).with_name("_market_making_numerics.py"),
-        Path(__file__).with_name("_verification_checks.py"),
+        Path(__file__).with_name("_verification_inputs.py"),
         Path(__file__).with_name("market_making.py"),
     ]
     return {
@@ -205,15 +205,15 @@ def write_study(directory: Path, *, capacity=5, points=101):
         (directory / "report.html").write_text(error.report.to_html(title=str(error)))
         raise
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "source": SOURCE,
         "provenance": _provenance(),
         "comparison": "Matched rate and slope at zero quote distance",
-        "cases": {},
+        "contexts": {},
     }
     for name, value in results.items():
         result, data = value["result"], value["result"].data
-        payload["cases"][name] = {
+        payload["contexts"][name] = {
             "parameters": value["parameters"],
             "evidence": result.report.to_dict(),
             "settings": dict(result.settings),
@@ -279,12 +279,12 @@ def write_study(directory: Path, *, capacity=5, points=101):
         f'<p>A single-asset CARA model following <a href="{SOURCE}">Guéant, Model A</a>. '
         "Time is continuous and inventory changes in lots. Both intensity families have the same "
         "arrival rate and slope at zero distance.</p><p>The linked evidence reports retain the assumptions, "
-        "checked curvature bounds, theorem premises, and source expressions. Numerical convergence "
+        "verified derivative-ratio bounds, inference-rule premises, and source expressions. Numerical convergence "
         "checks below measure approximation error; they do not prove global mathematical properties.</p>"
-        "<h2>Numerical checks</h2><p>Differences compare the default run with tighter tolerances. "
-        "HJB defects use independent central time differences. The exponential case also has a "
+        "<h2>Numerical comparisons</h2><p>Differences compare the default run with tighter tolerances. "
+        "HJB defects use independent central time differences. The exponential context also has a "
         "matrix-exponential reference, recorded in the JSON report.</p>"
-        "<table><tr><th>Case / evidence</th><th>Theta difference</th><th>Quote difference</th>"
+        "<table><tr><th>Context / evidence</th><th>Theta difference</th><th>Quote difference</th>"
         f"<th>HJB defect</th><th>Quote root residual</th></tr>{rows}</table>"
         f"{figures}<h2>Reproduce and inspect</h2>"
         '<p><a href="report.json">Complete JSON audit</a> · <a href="theta.csv">Values CSV</a> · '

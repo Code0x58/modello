@@ -1,4 +1,6 @@
-Market making with component requirements
+.. _market-making-with-component-requirements:
+
+Market making with component obligations
 =========================================
 
 Choose bid and ask quotes for a single asset to maximize expected utility of
@@ -11,7 +13,7 @@ time and compares exponential and logistic trade-arrival intensities.
 Time is continuous and inventory changes in discrete lots. The pricing
 equation is a Hamilton--Jacobi--Bellman (HJB) equation for continuation values.
 The utility has constant absolute risk aversion (CARA), which supplies the
-reduction used below. For the case, evidence, and method API, first work through
+reduction used below. For the context, evidence, and method API, first work through
 :doc:`/contrib/verification`; :doc:`../financial-models/markowitz` offers a smaller
 scalar example of changing constraints.
 
@@ -33,7 +35,9 @@ Open ``artefacts/market-making/report.html``. An HTML documentation build also
 generates a `complete study report <study/report.html>`_, with evidence pages,
 CSV tables, JSON audit, and figures in the same directory.
 
-The model and its requirements
+.. _the-model-and-its-requirements:
+
+The model and its obligations
 -----------------------------------
 
 The starting point is the continuous-time market-making framework near the
@@ -133,8 +137,8 @@ Check the component definitions
 
 The components use the shared ``modello.contrib.verification`` interface.
 ``VerificationModel`` checks their declarations after each class body, including
-subclasses. ``specifies`` attaches mathematical requirements to a field or a
-model. Nested composition scopes those requirements to their component paths:
+subclasses. ``specifies`` attaches mathematical obligations to a field or a
+model. Nested composition scopes those obligations to their component paths:
 
 >>> from examples.market_making import MarketMaker
 >>> report = MarketMaker.definition_report()
@@ -142,7 +146,7 @@ model. Nested composition scopes those requirements to their component paths:
 'strictly true'
 >>> report.explain("bid.intensity.rate/derivative_ratio_bound").verdict
 'strictly true'
->>> all(check.verdict == "strictly true" for check in report.checks)
+>>> all(check.verdict == "strictly true" for check in report.evidence)
 True
 
 A check reports one of four verdicts:
@@ -160,7 +164,7 @@ A check reports one of four verdicts:
    The checker has not established a result; ``condition`` is ``None``.
 
 For example, relax the declaration of risk aversion before connecting it to
-any consumer. The subclass automatically refreshes the inherited requirements:
+any consumer. The subclass automatically refreshes the inherited obligations:
 
 >>> from examples.market_making import CARAUtility
 >>> from modello import InstanceDummy
@@ -174,8 +178,8 @@ any consumer. The subclass automatically refreshes the inherited requirements:
 >>> gamma = next(iter(condition.free_symbols))
 >>> condition == (gamma > 0)
 True
->>> case = VerificationContext.for_model(UnrestrictedUtility)
->>> case.observe(gamma=0).verify().explain("value/strictly_increasing").verdict
+>>> context = VerificationContext.for_model(UnrestrictedUtility)
+>>> context.observe(gamma=0).verify().explain("value/strictly_increasing").verdict
 'strictly false'
 
 Checks concern whole declared domains; sampled slopes are numerical
@@ -221,13 +225,13 @@ components with general Hamiltonian inputs, and integrate in remaining time.
 Run the time-dependent study
 ----------------------------
 
-``study_case`` constructs that branch. ``run_quotes`` returns continuation
+``study_context`` constructs that branch. ``run_quotes`` returns continuation
 values, quotes, and diagnostics on a time and inventory grid. Boundary gates
 leave the inventory-increasing quotes absent throughout the grid:
 
->>> from examples.market_making_study import study_case
+>>> from examples.market_making_study import study_context
 >>> from examples._market_making_numerics import run_quotes
->>> result = run_quotes(study_case(logistic=True, capacity=1), points=5)
+>>> result = run_quotes(study_context(logistic=True, capacity=1), points=5)
 >>> result.data.bid[0][-1] is None, result.data.ask[0][0] is None
 (True, True)
 >>> result.data.diagnostics["terminal_error"]
@@ -255,19 +259,19 @@ The full ODE requires independent state inputs and parameter observations;
 observations or assumptions fixing a state are rejected because the study
 traverses the entire inventory and time grid.
 These checks include active SymPy ``assuming(...)`` predicates as well as
-``case.assume(...)``. Parameter-only assumptions remain supported.
+``context.assume(...)``. Parameter-only assumptions remain supported.
 Quote-distance and terminal-inventory coordinates are included in the check;
 a predicate on a locally substituted argument cannot narrow the solver's domain.
 
 ``run_quotes`` requires at least three output times, finite positive ``rtol``
 and ``atol``, and a finite positive ``max_step`` when supplied. Invalid settings
-raise ``VerificationError`` with the originating case and report before integration
+raise ``VerificationError`` with the originating context and report before integration
 starts.
 
 Default tolerances are ``rtol=1e-8``, ``atol=1e-10``, and a maximum time step
 of ``T/100``. The report compares a tighter run, measures independent central
-time-difference defects, and checks the exponential case against its linear
-matrix-exponential transformation. Both calculations use the case's declared
+time-difference defects, and checks the exponential context against its linear
+matrix-exponential transformation. Both calculations use the context's declared
 risk and terminal laws, including supported component replacements. The
 comparisons record numerical differences and residuals; they do not prove
 error bounds. Source fingerprints, exact parameters, solver settings, and

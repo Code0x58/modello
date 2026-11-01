@@ -321,7 +321,7 @@ def predicate(
 
 @dataclass(frozen=True, init=False)
 class _Obligations(Annotation):
-    """One annotation registry entry for a declaration's requirements."""
+    """One annotation registry entry for a declaration's obligations."""
 
     obligations: tuple[Obligation, ...]
     model_level: bool
@@ -364,17 +364,17 @@ class Evidence:
 
 @dataclass(frozen=True)
 class VerificationReport:
-    """Evidence for one immutable case; consistency is checked separately."""
+    """Evidence for one immutable context; consistency is checked separately."""
 
     model: str
-    checks: tuple[Evidence, ...]
+    evidence: tuple[Evidence, ...]
     assumptions: tuple[Basic, ...] = ()
     consistent: bool | None = True
     issues: tuple[str, ...] = ()
     labels: tuple[tuple[Symbol, str], ...] = ()
 
     def __post_init__(self) -> None:
-        pending = list(self.checks)
+        pending = list(self.evidence)
         ids: set[str] = set()
         while pending:
             item = pending.pop()
@@ -389,21 +389,21 @@ class VerificationReport:
                 yield item
                 yield from search(item.premises)
 
-        matches = [item for item in search(self.checks) if item.id == obligation_id]
+        matches = [item for item in search(self.evidence) if item.id == obligation_id]
         if len(matches) != 1:
             raise KeyError(obligation_id)
         return matches[0]
 
     def __str__(self) -> str:
         lines = [f"Verification: {self.model}; assumptions consistent: {self.consistent}"]
-        for item in self.checks:
+        for item in self.evidence:
             condition = f" if {item.condition}" if item.verdict == "conditionally true" else ""
             reason = f" — {item.obligation.reason}" if item.obligation.reason else ""
             lines.append(f"  {item.id}: {item.verdict}{condition}{reason}")
         return "\n".join([*lines, *(f"  Issue: {issue}" for issue in self.issues)])
 
     def to_dict(self) -> dict[str, Any]:
-        """Export descriptive evidence; this is not an executable case format."""
+        """Export descriptive evidence; this is not an executable context format."""
         from ._report import report_dict
 
         return report_dict(self)
@@ -423,8 +423,8 @@ class VerificationReport:
 class InferenceRule:
     """A trusted, versioned rule whose premises are recursively checked.
 
-    Registered inference rules are part of the trust boundary, like the CAS. A
-    bibliographic note by itself never registers or proves a theorem.
+    Registered inference rules are part of the trust boundary, like the CAS.
+    A bibliographic note alone does not register a rule or establish its conclusion.
     """
 
     name: str
@@ -471,7 +471,7 @@ class Method(Generic[ResultT]):
         if self.bound_context is not None and (
             self.bound_context is not context or _expression_key(self.bound_assumptions) != _expression_key(assumptions)
         ):
-            raise ModelDefinitionError("Rebuild a case-bound method after changing its case or SymPy assumptions")
+            raise ModelDefinitionError("Rebuild a context-bound method after changing its context or SymPy assumptions")
         return (
             self
             if self.bound_context is context

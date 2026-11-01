@@ -75,7 +75,7 @@ def _evidence(report: VerificationReport, evidence: Evidence):
         "at": _text(report, claim.at),
         "expected": _text(report, claim.expected),
         "target_bound": _text(report, claim.bound),
-        "checked_upper_bound": _text(report, evidence.hint),
+        "bound_hint": _text(report, evidence.hint),
         "source_operands": [_text(report, value) for value in evidence.source_operands],
         "condition": _text(report, evidence.condition),
         "condition_strength": evidence.condition_strength,
@@ -94,12 +94,12 @@ def _evidence(report: VerificationReport, evidence: Evidence):
 
 def report_dict(report: VerificationReport):
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "model": report.model,
         "assumptions_consistent": report.consistent,
         "assumptions": [_text(report, value) for value in report.assumptions],
         "issues": list(report.issues),
-        "checks": [_evidence(report, item) for item in report.checks],
+        "evidence": [_evidence(report, item) for item in report.evidence],
     }
     payload["evidence_sha256"] = sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     payload["environment"] = {
@@ -144,14 +144,14 @@ def report_html(report: VerificationReport, title: str):
             f"<p>Condition ({escape(item['condition_strength'])}): <code>{escape(str(item['condition']))}</code></p>"
             f"<p>Expected form: <code>{escape(str(item['expected']))}</code>; "
             f"target bound: <code>{escape(str(item['target_bound']))}</code>; "
-            f"checked upper bound: <code>{escape(str(item['checked_upper_bound']))}</code>.</p>"
+            f"bound hint: <code>{escape(str(item['bound_hint']))}</code>.</p>"
             f"<p>Expected template: <code>{escape(str(item['expected_template']))}</code>.</p>"
             f"{observations}"
             f"<ol>{steps}</ol><ul>{witness}</ul><p>{source_link}</p>{premises}</article>"
         )
 
     assumptions = "".join(_math(report, value) for value in report.assumptions) or "<p>No additional assumptions.</p>"
-    checks = "".join(render(item) for item in data["checks"])
+    evidence = "".join(render(item) for item in data["evidence"])
     issues = "".join(f"<li>{escape(issue)}</li>" for issue in report.issues)
     return (
         '<!doctype html><html lang="en"><meta charset="utf-8">'
@@ -164,6 +164,6 @@ def report_html(report: VerificationReport, title: str):
         "h1,h2,h3{line-height:1.25}a{color:#075a8c}li{margin:.4rem 0}"
         f"</style><h1>{escape(title)}</h1><p>Model: {escape(report.model)}. "
         f"Assumptions consistent: {report.consistent}.</p><h2>Assumptions</h2>{assumptions}"
-        f"<ul>{issues}</ul>{checks}<footer>Evidence fingerprint: "
+        f"<ul>{issues}</ul>{evidence}<footer>Evidence fingerprint: "
         f"<code>{data['evidence_sha256']}</code></footer></html>"
     )

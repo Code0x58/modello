@@ -20,7 +20,7 @@ from ._study import Blocked, Computation, Study, Variant
 MODELS = ("black-scholes", "participation-execution", "markowitz", "cir-bond", "perpetual-put")
 
 
-def _attempt(call: Callable[[], VerificationResult], *, kind="exact scalar checks"):
+def _attempt(call: Callable[[], VerificationResult], *, kind="exact scalar verification"):
     try:
         return Computation(call(), kind), None
     except VerificationError as error:
@@ -32,17 +32,17 @@ def _black_scholes(*, numerical: bool, compact: bool) -> Study:
 
     variants = {}
     if compact:
-        case = model.study_case(schedule=True, now=Rational(1, 4))
-        results = {"identities": Computation(case.run(model.symbolic_method))}
+        context = model.study_context(schedule=True, now=Rational(1, 4))
+        results = {"identities": Computation(context.run(model.symbolic_method))}
         if numerical:
-            results["quadrature"] = Computation(case.run(model.valuation_method), "numerical observation")
-        _, blocked = _attempt(lambda: case.run(model.dividend_free_method()))
+            results["quadrature"] = Computation(context.run(model.valuation_method), "numerical observation")
+        _, blocked = _attempt(lambda: context.run(model.dividend_free_method()))
         variants["affine_with_dividends"] = Variant(
-            case, results, {"dividend_free_shortcut": blocked} if blocked else {}
+            context, results, {"dividend_free_shortcut": blocked} if blocked else {}
         )
     else:
         demo = model.run_demo(numerical=numerical)
-        for name, case in demo["cases"].items():
+        for name, context in demo["contexts"].items():
             results, rejected = {}, {}
             if name in demo["symbolic"]:
                 results["identities"] = Computation(demo["symbolic"][name])
@@ -56,14 +56,14 @@ def _black_scholes(*, numerical: bool, compact: bool) -> Study:
                     "Positive dividend yield refutes the dividend-free parity shortcut.",
                 )
             variants[name] = Variant(
-                case,
+                context,
                 results,
                 rejected,
                 {"payoff_boundary": {"kind": "exact one-sided limits", "values": demo["boundary"]}},
             )
         for name, row in demo["rejected_interior"].items():
             variants[name] = Variant(
-                row["case"],
+                row["context"],
                 blocked={
                     "interior_formula": Blocked(row["report"], "This input is outside the interior pricing domain.")
                 },
@@ -85,10 +85,12 @@ def _participation(*, numerical: bool, compact: bool) -> Study:
     from . import participation_execution as model
 
     if compact:
-        case = model.participation_case(cap=S.Half, deadline=2)
-        rows: dict[str, dict] = {"capped_deadline": {"case": case, "analytic": case.run(model.analytic_method)}}
+        context = model.participation_context(cap=S.Half, deadline=2)
+        rows: dict[str, dict] = {
+            "capped_deadline": {"context": context, "analytic": context.run(model.analytic_method)}
+        }
         if numerical:
-            rows["capped_deadline"]["numerical"] = case.run(model.numerical_method)
+            rows["capped_deadline"]["numerical"] = context.run(model.numerical_method)
     else:
         rows = model.compare(numerical=numerical)
     variants = {}
@@ -97,11 +99,11 @@ def _participation(*, numerical: bool, compact: bool) -> Study:
         for method in ("analytic", "numerical"):
             if isinstance(row.get(method), VerificationResult):
                 results[method] = Computation(
-                    row[method], "numerical observation" if method == "numerical" else "exact scalar checks"
+                    row[method], "numerical observation" if method == "numerical" else "exact scalar verification"
                 )
             if isinstance(row.get(f"{method}_report"), VerificationReport):
                 rejected[method] = Blocked(row[f"{method}_report"], str(row[f"{method}_blocked"]))
-        variants[name] = Variant(row["case"], results, rejected)
+        variants[name] = Variant(row["context"], results, rejected)
     return Study(
         "participation-execution",
         "Guéant constant-participation execution",
@@ -119,9 +121,9 @@ def _markowitz(*, numerical: bool, compact: bool) -> Study:
     from . import markowitz as model
 
     if compact:
-        case = model.portfolio_case()
+        context = model.portfolio_context()
         restrictions = model.PortfolioRestrictions(target=Rational(7, 100), cap=Rational(4, 5))
-        rows = {"target_and_cap": {"case": case, "result": model.allocate(case, restrictions)}}
+        rows = {"target_and_cap": {"context": context, "result": model.allocate(context, restrictions)}}
     else:
         rows = model.run_demo()
     variants = {}
@@ -129,21 +131,21 @@ def _markowitz(*, numerical: bool, compact: bool) -> Study:
         result = row["result"]
         observations = {}
         if numerical and name not in {"shorts_allowed", "flat"}:
-            observations["independent_minimum"] = model.numerical_reference(row["case"], result.data.restrictions)
+            observations["independent_minimum"] = model.numerical_reference(row["context"], result.data.restrictions)
         variants[name] = Variant(
-            row["case"],
+            row["context"],
             {"allocation": Computation(result)},
             observations=observations,
             notes=result.data.restrictions.changes,
         )
     if not compact:
-        for name, case, restrictions in (
-            ("infeasible_target", model.portfolio_case(), model.PortfolioRestrictions(target=Rational(9, 100))),
-            ("invalid_covariance", model.portfolio_case(covariance=-3), model.PortfolioRestrictions()),
+        for name, context, restrictions in (
+            ("infeasible_target", model.portfolio_context(), model.PortfolioRestrictions(target=Rational(9, 100))),
+            ("invalid_covariance", model.portfolio_context(covariance=-3), model.PortfolioRestrictions()),
         ):
-            result, blocked = _attempt(lambda: model.allocate(case, restrictions))
+            result, blocked = _attempt(lambda: model.allocate(context, restrictions))
             variants[name] = Variant(
-                case, {"allocation": result} if result else {}, {"allocation": blocked} if blocked else {}
+                context, {"allocation": result} if result else {}, {"allocation": blocked} if blocked else {}
             )
     return Study(
         "markowitz",
@@ -162,17 +164,17 @@ def _cir(*, numerical: bool, compact: bool) -> Study:
     from . import cir_bond as model
 
     if compact:
-        case = model.cir_case(sigma=Rational(2, 5))
-        row = {"case": case, "price": model.price(case), "verification": model.verify(case)}
+        context = model.cir_context(sigma=Rational(2, 5))
+        row = {"context": context, "price": model.price(context), "verification": model.verify(context)}
         result, blocked = _attempt(
-            lambda: case.run(model.strict_positive_boundary_method), kind="trusted stochastic rule"
+            lambda: context.run(model.strict_positive_boundary_method), kind="trusted stochastic rule"
         )
         if result:
             row["boundary"] = result.result
         if blocked:
             row["boundary_report"], row["boundary_blocked"] = blocked.report, blocked.message
         if numerical:
-            row["numerical"] = case.run(model.numerical_method)
+            row["numerical"] = context.run(model.numerical_method)
         rows = {"feller_not_satisfied": row}
     else:
         rows = model.run_demo(numerical=numerical)
@@ -187,14 +189,14 @@ def _cir(*, numerical: bool, compact: bool) -> Study:
                     if method == "numerical"
                     else "trusted stochastic rule"
                     if method in {"price", "boundary"}
-                    else "exact scalar checks"
+                    else "exact scalar verification"
                 )
                 results[method] = Computation(result, kind)
         blocked = {}
         report = row.get("boundary_report")
         if isinstance(report, VerificationReport):
             blocked["boundary"] = Blocked(report, str(row["boundary_blocked"]))
-        variants[name] = Variant(cast(VerificationContext, row["case"]), results, blocked)
+        variants[name] = Variant(cast(VerificationContext, row["context"]), results, blocked)
     return Study(
         "cir-bond",
         "CIR zero-coupon bonds",
@@ -213,19 +215,19 @@ def _perpetual(*, numerical: bool, compact: bool) -> Study:
 
     variants = {}
     if compact:
-        case = model.perpetual_put_case()
-        results = {"scalar_certificate": Computation(case.run(model.algebra_method))}
+        context = model.perpetual_put_context()
+        results = {"scalar_certificate": Computation(context.run(model.algebra_method))}
         if numerical:
-            results["barrier_search"] = Computation(case.run(model.numerical_method), "numerical observation")
+            results["barrier_search"] = Computation(context.run(model.numerical_method), "numerical observation")
         rejected = {}
         for name, method in (
             ("global_c2", model.c2_consumer_method()),
             ("untrusted_stopping", model.verification_method),
         ):
-            _, blocked = _attempt(lambda: case.run(method))
+            _, blocked = _attempt(lambda: context.run(method))
             if blocked:
                 rejected[name] = blocked
-        variants["smooth_fit"] = Variant(case, results, rejected)
+        variants["smooth_fit"] = Variant(context, results, rejected)
     else:
         demo = model.run_demo(numerical=numerical)
         results = {"scalar_certificate": Computation(demo["algebra"])}
@@ -235,18 +237,18 @@ def _perpetual(*, numerical: bool, compact: bool) -> Study:
         for key in ("global_c2", "untrusted_verification"):
             row = demo[f"blocked_{key}"]
             rejected[key] = Blocked(row["report"], row["message"])
-        variants["smooth_fit"] = Variant(demo["case"], results, rejected)
+        variants["smooth_fit"] = Variant(demo["context"], results, rejected)
         variants["trusted_stopping"] = Variant(
-            demo["trusted_case"],
+            demo["trusted_context"],
             {"verification": Computation(demo["verification"], "explicitly trusted stochastic rule")},
         )
         row = demo["blocked_zero_rate"]
         variants["zero_rate"] = Variant(
-            row["case"], blocked={"positive_rate_shortcut": Blocked(row["report"], row["message"])}
+            row["context"], blocked={"positive_rate_shortcut": Blocked(row["report"], row["message"])}
         )
         if numerical:
             variants["immediate_exercise"] = Variant(
-                demo["exercise_case"],
+                demo["exercise_context"],
                 {"barrier_search": Computation(demo["numerical_exercise"], "numerical observation")},
             )
     return Study(
@@ -255,10 +257,7 @@ def _perpetual(*, numerical: bool, compact: bool) -> Study:
         "Separate exercise and continuation regions, exact smooth fit, and a failed global C2 consumer.",
         (model.SOURCE,),
         variants,
-        (
-            "A scalar boundary certificate is separate from "
-            "the explicitly adopted GBM optimal-stopping verification theorem.",
-        ),
+        ("A scalar boundary certificate is separate from the explicitly adopted GBM optimal-stopping inference rule.",),
     )
 
 

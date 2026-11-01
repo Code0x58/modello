@@ -170,8 +170,8 @@ from modello.contrib.verification import VerificationContext, VerificationModel,
 class VerificationCurve(VerificationModel):
     x = modello.Coordinate("x", real=True)
     value = specifies(x**3, strictly_increasing("value", wrt="x", consumer="smoke", reason="Order matters"))
-assert VerificationCurve.definition_report().checks[0].verdict == "strictly true"
-assert VerificationContext.for_model(VerificationCurve).verify().to_dict()["checks"]
+assert VerificationCurve.definition_report().evidence[0].verdict == "strictly true"
+assert VerificationContext.for_model(VerificationCurve).verify().to_dict()["evidence"]
 assert not {"numpy", "scipy", "matplotlib"} & sys.modules.keys()
 import importlib
 for name in ("black_scholes", "participation_execution", "markowitz", "cir_bond", "perpetual_put"):
@@ -296,8 +296,8 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
         stdout=subprocess.DEVNULL,
     )
     study_report = json.loads((study / "report.json").read_text())
-    assert set(study_report["cases"]) == {"exponential", "logistic"}
-    assert study_report["cases"]["exponential"]["convergence"]["matrix_exponential_theta_error"] < 1e-6
+    assert set(study_report["contexts"]) == {"exponential", "logistic"}
+    assert study_report["contexts"]["exponential"]["convergence"]["matrix_exponential_theta_error"] < 1e-6
     assert (study / "figures" / "quotes.svg").is_file()
     print("Validated the installed market-making study and its optional numerical dependencies", flush=True)
     collection = directory / "financial-models"

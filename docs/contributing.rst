@@ -210,12 +210,12 @@ these layers.
 
 ``contrib/verification`` binds scoped claims to immutable problem snapshots and
 refreshes definition reports through an opt-in ``VerificationModel`` subclass hook.
-Proof attempts retain parameter guards, theorem premises, and unresolved
+Proof attempts retain parameter guards, inference-rule premises, and unresolved
 outcomes. Method contracts select the evidence they consume. Numerical and
 plotting dependencies remain in optional example methods; the symbolic
-extension imports neither. Report JSON is an audit export rather than a case
-deserializer. The market-making study compiles its RHS from the shared HJB and
-checks it against independent time differences and an exponential linear
+extension imports neither. Report JSON is a descriptive audit export; it cannot
+reconstruct a context. The market-making study compiles its RHS from the shared
+HJB and checks it against independent time differences and an exponential linear
 reference.
 
 ``series.py`` declares relative recurrences. ``contrib/stochastic.py`` provides

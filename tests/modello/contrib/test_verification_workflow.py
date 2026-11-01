@@ -1,4 +1,4 @@
-"""Workflow issues exposed by applying research contracts to several models."""
+"""Workflow issues exposed by applying verification contracts to several models."""
 
 from dataclasses import replace
 
@@ -25,12 +25,12 @@ def test_automatic_obligations_use_the_coordinates_declared_domain():
         inverse = 1 / x
         slope = Derivative(log(x), x)
 
-    case = VerificationContext.for_model(PositiveCurve)
-    report = case.verify()
-    assert all(item.verdict == "strictly true" for item in report.checks)
-    assert all(item.resolved.domain == Interval.open(0, S.Infinity) for item in report.checks)
+    context = VerificationContext.for_model(PositiveCurve)
+    report = context.verify()
+    assert all(item.verdict == "strictly true" for item in report.evidence)
+    assert all(item.resolved.domain == Interval.open(0, S.Infinity) for item in report.evidence)
     for path in ("inverse", "slope"):
-        result = case.run(Method(path, lambda current, name=path: current.expression(name).doit(), uses=(path,)))
+        result = context.run(Method(path, lambda current, name=path: current.expression(name).doit(), uses=(path,)))
         assert result.data == 1 / PositiveCurve.x
 
 
@@ -39,10 +39,10 @@ def test_a_nonnegative_coordinate_still_requires_the_zero_denominator_check():
         x = Coordinate("x", nonnegative=True)
         inverse = 1 / x
 
-    case = VerificationContext.for_model(ClosedBoundary)
-    assert case.verify().checks[0].verdict == "strictly false"
+    context = VerificationContext.for_model(ClosedBoundary)
+    assert context.verify().evidence[0].verdict == "strictly false"
     with pytest.raises(VerificationError):
-        case.run(Method("inverse", lambda current: current.expression("inverse"), uses=("inverse",)))
+        context.run(Method("inverse", lambda current: current.expression("inverse"), uses=("inverse",)))
 
 
 def test_native_substitution_identities_evaluate_without_losing_their_domains():
@@ -53,8 +53,8 @@ def test_native_substitution_identities_evaluate_without_losing_their_domains():
         evaluated = Subs(curve, x, at)
         residual = evaluated - at**2
 
-    case = VerificationContext.for_model(Evaluated)
-    inspected = case.with_obligations(
+    context = VerificationContext.for_model(Evaluated)
+    inspected = context.with_obligations(
         equal_to(
             "residual", S.Zero, name="substitution_identity", consumer="test", reason="Evaluate a native substitution."
         ),
@@ -86,8 +86,8 @@ def test_native_expected_derivatives_and_scalar_equalities_keep_their_premises()
         slope = 2 * x
         scalar = InstanceDummy("b", real=True)
 
-    case = VerificationContext.for_model(Curve)
-    report = case.with_obligations(
+    context = VerificationContext.for_model(Curve)
+    report = context.with_obligations(
         equal_to(
             "slope",
             Derivative(Curve.x**2, Curve.x),
@@ -104,7 +104,7 @@ def test_native_expected_derivatives_and_scalar_equalities_keep_their_premises()
     assert report.explain("false_constant").verdict == "strictly false"
 
 
-def test_removing_an_assumption_rechecks_dependent_method_premises():
+def test_removing_an_assumption_reverifies_dependent_method_premises():
     class Parameter(VerificationModel):
         a = InstanceDummy("a", real=True)
 
@@ -129,7 +129,7 @@ def test_removing_an_assumption_rechecks_dependent_method_premises():
         positive_branch.without_assumptions(condition, reason="")
 
 
-def test_removing_a_case_requirement_cannot_waive_a_methods_own_requirement():
+def test_removing_a_context_obligation_cannot_waive_a_methods_own_obligation():
     class Parameter(VerificationModel):
         a = InstanceDummy("a", real=True)
 
@@ -141,7 +141,7 @@ def test_removing_a_case_requirement_cannot_waive_a_methods_own_requirement():
     relaxed = original.without_obligations(
         "positive_parameter", reason="This exploratory report no longer requests positivity."
     )
-    assert relaxed.verify().checks == ()
+    assert relaxed.verify().evidence == ()
     assert original.obligations == (obligation,)
     method = Method("calculation", lambda current: current.expression("a"), (obligation,))
     with pytest.raises(VerificationError) as failure:
@@ -150,54 +150,54 @@ def test_removing_a_case_requirement_cannot_waive_a_methods_own_requirement():
     assert any("Removed obligation positive_parameter" in issue for issue in relaxed.verify().issues)
 
 
-def test_declaration_and_automatic_requirements_are_changed_at_their_source():
+def test_declaration_and_automatic_obligations_are_changed_at_their_source():
     class Annotated(VerificationModel):
         a = specifies(InstanceDummy("a", real=True), positive("a", consumer="test", reason="Live declaration."))
         inverse = 1 / a
 
-    case = VerificationContext.for_model(Annotated)
+    context = VerificationContext.for_model(Annotated)
     for key in ("a/positive", "inverse/auto:1"):
         with pytest.raises(ModelInputError, match="Only context-added"):
-            case.without_obligations(key, reason="Cannot erase a consumed contract.")
+            context.without_obligations(key, reason="Cannot erase a consumed contract.")
 
 
-def test_identical_requirements_are_reused_and_conflicting_ids_remain_errors():
+def test_identical_obligations_are_reused_and_conflicting_ids_remain_errors():
     class Parameter(VerificationModel):
         a = InstanceDummy("a", real=True)
 
     obligation = positive(
-        "a", name="positive_parameter", consumer="calculation", reason="The same consumed requirement."
+        "a", name="positive_parameter", consumer="calculation", reason="The same consumed obligation."
     )
-    case = VerificationContext.for_model(Parameter).observe(a=2).with_obligations(obligation)
-    result = case.run(Method("calculation", lambda current: current.expression("a"), (obligation,)))
-    assert len(result.report.checks) == 1
+    context = VerificationContext.for_model(Parameter).observe(a=2).with_obligations(obligation)
+    result = context.run(Method("calculation", lambda current: current.expression("a"), (obligation,)))
+    assert len(result.report.evidence) == 1
     conflicting = positive("a", name="positive_parameter", consumer="another consumer", reason="A conflicting ID.")
     with pytest.raises(ModelDefinitionError, match="positive_parameter"):
-        case.verify(obligations=(conflicting,))
+        context.verify(obligations=(conflicting,))
 
 
-def test_case_bound_methods_reject_assumption_only_branches_before_execution():
+def test_context_bound_methods_reject_assumption_only_branches_before_execution():
     class Parameter(VerificationModel):
         a = InstanceDummy("a", real=True)
 
-    case = VerificationContext.for_model(Parameter).observe(a=2)
+    context = VerificationContext.for_model(Parameter).observe(a=2)
     calls = []
-    method = Method("captured formula", lambda current: calls.append(current) or current.expression("a")).bind(case)
-    assert case.run(method).data == 2
-    changed = case.assume(case.symbols.a > 0)
-    assert changed.problem is case.problem
+    method = Method("captured formula", lambda current: calls.append(current) or current.expression("a")).bind(context)
+    assert context.run(method).data == 2
+    changed = context.assume(context.symbols.a > 0)
+    assert changed.problem is context.problem
     with pytest.raises(VerificationError, match="different verification context") as failure:
         changed.run(method)
     assert failure.value.context is changed
-    assert calls == [case]
+    assert calls == [context]
     with pytest.raises(ModelDefinitionError, match="Rebuild"):
         method.bind(changed)
-    assert method.bind(case) is method
+    assert method.bind(context) is method
     rebuilt = Method("captured formula", lambda current: current.expression("a")).bind(changed)
     assert changed.run(rebuilt).data == 2
 
 
-def test_method_factories_use_the_current_case_and_forward_execution_settings():
+def test_method_factories_use_the_current_context_and_forward_execution_settings():
     class Parameter(VerificationModel):
         a = InstanceDummy("a", real=True)
 
@@ -230,21 +230,21 @@ def test_a_factory_cannot_bypass_a_prepared_methods_context_guard():
     class Parameter(VerificationModel):
         a = InstanceDummy("a", real=True)
 
-    case = VerificationContext.for_model(Parameter).observe(a=2)
-    method = Method("captured", lambda current: 2).bind(case)
-    changed = case.assume(case.symbols.a > 0)
+    context = VerificationContext.for_model(Parameter).observe(a=2)
+    method = Method("captured", lambda current: 2).bind(context)
+    changed = context.assume(context.symbols.a > 0)
     with pytest.raises(VerificationError, match="different verification context") as failure:
         changed.run(lambda current: method)
     assert failure.value.context is changed
 
 
 def test_a_factory_must_return_a_method_instead_of_a_computation_result():
-    case = VerificationContext.for_model(VerificationModel)
+    context = VerificationContext.for_model(VerificationModel)
     with pytest.raises(ModelDefinitionError, match="factory must return a Method"):
-        case.run(lambda current: 1)  # type: ignore[arg-type, return-value]
+        context.run(lambda current: 1)  # type: ignore[arg-type, return-value]
 
 
-def test_audits_preserve_the_requirement_and_formula_before_observations():
+def test_audits_preserve_the_obligation_and_formula_before_observations():
     class Curve(VerificationModel):
         x = Coordinate("x", real=True)
         a = InstanceDummy("a", real=True)
@@ -259,7 +259,7 @@ def test_audits_preserve_the_requirement_and_formula_before_observations():
         reason="Retain the source identity as well as its checked specialization.",
     )
     report = VerificationContext.for_model(Curve).observe(a=2).with_obligations(obligation).verify()
-    audit = report.to_dict()["checks"][0]
+    audit = report.to_dict()["evidence"][0]
     assert audit["declared_subject"] == "value"
     assert "a" in audit["expected_template"]
     assert "2" in audit["expected"]
@@ -273,7 +273,7 @@ def test_an_inner_derivative_cannot_borrow_an_unrelated_outer_domain():
         y = Coordinate("y", positive=True)
         value = 1 / x
 
-    case = VerificationContext.for_model(DifferentCoordinates).assume(DifferentCoordinates.x < 0)
+    context = VerificationContext.for_model(DifferentCoordinates).assume(DifferentCoordinates.x < 0)
     claim = equal_to(
         "value",
         Derivative(log(DifferentCoordinates.x), DifferentCoordinates.x, evaluate=False),
@@ -283,7 +283,7 @@ def test_an_inner_derivative_cannot_borrow_an_unrelated_outer_domain():
     )
     obligation = replace(claim, consumer="consumer", reason="The real logarithm's argument is a separate coordinate.")
     with pytest.raises(VerificationError) as failure:
-        case.run(Method("consumer", lambda current: 42, (obligation,)))
+        context.run(Method("consumer", lambda current: 42, (obligation,)))
     assert failure.value.report.explain("cross_scope").verdict == "unresolved"
 
 
@@ -293,14 +293,14 @@ def test_intrinsic_nonzero_coordinates_keep_zero_out_of_their_requested_domain()
         inverse = 1 / x
         square = x**2
 
-    case = VerificationContext.for_model(Punctured)
-    automatic = case.verify().checks[0]
+    context = VerificationContext.for_model(Punctured)
+    automatic = context.verify().evidence[0]
     assert automatic.verdict == "strictly true"
     assert automatic.resolved.domain == S.Reals - FiniteSet(0)
     impossible_domain = positive(
         "square", wrt="x", name="overbroad", consumer="test", reason="An intrinsic exclusion cannot be erased."
     )
-    assert case.with_obligations(impossible_domain).verify().explain("overbroad").verdict == "unresolved"
+    assert context.with_obligations(impossible_domain).verify().explain("overbroad").verdict == "unresolved"
 
 
 def test_reused_scalar_work_keeps_fresh_formula_payloads_and_each_reports_budget():
@@ -315,20 +315,20 @@ def test_reused_scalar_work_keeps_fresh_formula_payloads_and_each_reports_budget
         consumer="test",
         reason="Resolve the actual formula before reuse.",
     )
-    case = VerificationContext.for_model(Parameter).observe(a=2).with_obligations(obligation)
-    first = case.verify()
+    context = VerificationContext.for_model(Parameter).observe(a=2).with_obligations(obligation)
+    first = context.verify()
     assert first.explain("live_target").verdict == "strictly true"
     target[0] = 3
-    second = case.verify()
+    second = context.verify()
     assert second.explain("live_target").verdict == "strictly false"
-    assert first.to_dict()["checks"][0]["expected"] == "2"
-    assert second.to_dict()["checks"][0]["expected"] == "3"
+    assert first.to_dict()["evidence"][0]["expected"] == "2"
+    assert second.to_dict()["evidence"][0]["expected"] == "3"
     target[0] = 2
     extra = equal_to(
         "a", S(2), name="same_identity", consumer="another consumer", reason="The mathematical result can be shared."
     )
-    populated = case.with_obligations(extra)
-    assert all(item.verdict == "strictly true" for item in populated.verify().checks)
+    populated = context.with_obligations(extra)
+    assert all(item.verdict == "strictly true" for item in populated.verify().evidence)
     limited = populated.verify(max_steps=1)
     assert limited.explain("live_target").verdict == "strictly true"
     assert limited.explain("same_identity").verdict == "unresolved"
@@ -342,61 +342,61 @@ def test_cached_resolution_follows_temporary_sympy_assumptions(observed):
         denominator = a + 1
         ratio = numerator / denominator
 
-    case = VerificationContext.for_model(Ratio)
+    context = VerificationContext.for_model(Ratio)
     if observed:
-        case = case.observe(a=case.symbols.a)
+        context = context.observe(a=context.symbols.a)
     obligation = equal_to("ratio", S.One, name="one", consumer="consumer", reason="Retain the source pole.")
-    predicate = Q.nonzero(case.symbols.a + 1)
+    predicate = Q.nonzero(context.symbols.a + 1)
     with assuming(predicate):
-        first = case.verify(obligations=(obligation,))
+        first = context.verify(obligations=(obligation,))
         assert first.explain("one").verdict == "strictly true"
         assert predicate in first.assumptions
-    unguarded = case.verify(obligations=(obligation,))
+    unguarded = context.verify(obligations=(obligation,))
     assert unguarded.explain("one").verdict == "conditionally true"
-    assert unguarded.explain("one").expression.subs(case.symbols.a, -1) is S.NaN
+    assert unguarded.explain("one").expression.subs(context.symbols.a, -1) is S.NaN
     assert predicate not in unguarded.assumptions
     with assuming(predicate):
-        assert case.verify(obligations=(obligation,)).explain("one").verdict == "strictly true"
+        assert context.verify(obligations=(obligation,)).explain("one").verdict == "strictly true"
 
 
-def test_global_assumptions_are_checked_against_observations():
+def test_global_assumptions_are_verified_against_observations():
     class Parameter(VerificationModel):
         a = InstanceDummy("a", real=True)
         value = a + 2
 
-    case = VerificationContext.for_model(Parameter).observe(a=-1)
+    context = VerificationContext.for_model(Parameter).observe(a=-1)
     obligation = positive("value", name="positive", consumer="consumer", reason="Skip contradictory premises.")
-    with assuming(Q.positive(case.symbols.a)):
-        report = case.verify(obligations=(obligation,))
+    with assuming(Q.positive(context.symbols.a)):
+        report = context.verify(obligations=(obligation,))
         assert report.consistent is False
         assert report.explain("positive").verdict == "unresolved"
         with pytest.raises(VerificationError):
-            case.run(Method("consumer", lambda current: 1, (obligation,)))
-    assert case.verify(obligations=(obligation,)).explain("positive").verdict == "strictly true"
+            context.run(Method("consumer", lambda current: 1, (obligation,)))
+    assert context.verify(obligations=(obligation,)).explain("positive").verdict == "strictly true"
     symbolic = VerificationContext.for_model(Parameter)
     symbolic = symbolic.assume(symbolic.symbols.a < 0)
     with assuming(Q.positive(symbolic.symbols.a)):
         assert symbolic.verify().consistent is False
 
 
-def test_case_bound_methods_require_the_same_global_assumption_context():
+def test_context_bound_methods_require_the_same_global_assumption_context():
     class Parameter(VerificationModel):
         a = InstanceDummy("a", real=True)
 
-    case = VerificationContext.for_model(Parameter)
+    context = VerificationContext.for_model(Parameter)
     calls = []
-    with assuming(Q.positive(case.symbols.a)):
-        method = Method("captured formula", lambda current: calls.append(current) or 1).bind(case)
-        assert case.run(method).data == 1
+    with assuming(Q.positive(context.symbols.a)):
+        method = Method("captured formula", lambda current: calls.append(current) or 1).bind(context)
+        assert context.run(method).data == 1
     with pytest.raises(VerificationError, match="SymPy assumption context") as failure:
-        case.run(method)
-    assert failure.value.context is case
-    assert calls == [case]
+        context.run(method)
+    assert failure.value.context is context
+    assert calls == [context]
     with pytest.raises(ModelDefinitionError, match="Rebuild"):
-        method.bind(case)
-    with assuming(Q.positive(case.symbols.a)):
-        assert method.bind(case) is method
-        assert case.run(method).data == 1
+        method.bind(context)
+    with assuming(Q.positive(context.symbols.a)):
+        assert method.bind(context) is method
+        assert context.run(method).data == 1
 
 
 @pytest.fixture(params=(0, 1))
@@ -417,9 +417,9 @@ def equal_native_assumptions(request):
 @pytest.mark.parametrize("removed", (0, 1))
 def test_assumption_removal_preserves_distinct_native_scopes(equal_native_assumptions, removed):
     base, conditions, point = equal_native_assumptions
-    case = base.assume(*conditions)
+    context = base.assume(*conditions)
     selected, other = conditions[removed], conditions[1 - removed]
-    relaxed = case.without_assumptions(selected, selected, reason="Remove just this native scope.")
+    relaxed = context.without_assumptions(selected, selected, reason="Remove just this native scope.")
     assert len(relaxed.assumptions) == 1
     assert relaxed.assumptions[0].lhs.variables == other.lhs.variables
     with pytest.raises(ModelInputError, match="not recorded"):
@@ -431,29 +431,29 @@ def test_assumption_removal_preserves_distinct_native_scopes(equal_native_assump
             relaxed.run(method)
     else:
         assert relaxed.run(method).data == 1
-    empty = case.without_assumptions(*conditions, *conditions, reason="Remove both recorded scopes.")
+    empty = context.without_assumptions(*conditions, *conditions, reason="Remove both recorded scopes.")
     assert not empty.assumptions
     assert len(empty.changes) == 2
     assert empty.run(method).data == 1
-    assert len(case.assumptions) == 2
-    assert case.verify().consistent is (None if point == 0 else True)
+    assert len(context.assumptions) == 2
+    assert context.verify().consistent is (None if point == 0 else True)
 
 
 def test_bound_methods_distinguish_equal_native_assumption_scopes(equal_native_assumptions):
-    case, conditions, _ = equal_native_assumptions
+    context, conditions, _ = equal_native_assumptions
     calls = []
     with assuming(conditions[0]):
-        method = Method("captured", lambda current: calls.append(current) or 1).bind(case)
-        assert case.run(method).data == 1
+        method = Method("captured", lambda current: calls.append(current) or 1).bind(context)
+        assert context.run(method).data == 1
     with assuming(conditions[1]):
         with pytest.raises(ModelDefinitionError, match="Rebuild"):
-            method.bind(case)
+            method.bind(context)
         with pytest.raises(VerificationError, match="SymPy assumption context"):
-            case.run(method)
-    assert calls == [case]
+            context.run(method)
+    assert calls == [context]
     with assuming(conditions[0]):
-        assert method.bind(case) is method
-        assert case.run(method).data == 1
+        assert method.bind(context) is method
+        assert context.run(method).data == 1
 
 
 def test_singleton_convexity_uses_the_value_instead_of_ambient_curvature():
@@ -462,7 +462,7 @@ def test_singleton_convexity_uses_the_value_instead_of_ambient_curvature():
         concave = -(x**2)
         pole = 1 / x
 
-    case = VerificationContext.for_model(Curves)
+    context = VerificationContext.for_model(Curves)
     for path, verdict in (("concave", "strictly true"), ("pole", "strictly false")):
         obligation = convex(
             path,
@@ -472,7 +472,7 @@ def test_singleton_convexity_uses_the_value_instead_of_ambient_curvature():
             consumer="consumer",
             reason="Convexity on a singleton requires a finite real value, without a curvature condition.",
         )
-        assert case.verify(obligations=(obligation,)).explain("singleton").verdict == verdict
+        assert context.verify(obligations=(obligation,)).explain("singleton").verdict == verdict
     obligation = convex(
         "concave",
         wrt="x",
@@ -481,4 +481,4 @@ def test_singleton_convexity_uses_the_value_instead_of_ambient_curvature():
         consumer="consumer",
         reason="The interval curvature test cannot refute unsupported disconnected-domain convexity.",
     )
-    assert case.verify(obligations=(obligation,)).explain("disconnected").verdict == "unresolved"
+    assert context.verify(obligations=(obligation,)).explain("disconnected").verdict == "unresolved"

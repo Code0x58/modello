@@ -189,8 +189,8 @@ def test_the_requested_domain_cannot_exceed_the_variables_intrinsic_domain():
     assert result.condition is S.true
 
 
-def public_check(case, claim):
-    return case.verify(
+def verify_obligation(context, claim):
+    return context.verify(
         obligations=(replace(claim, consumer="integration", reason="Check the public finite-join contract."),)
     ).explain(claim.name)
 
@@ -200,19 +200,22 @@ def test_public_c1_and_c2_verdicts_and_native_derivative_guards_use_the_actual_j
         x = Coordinate("x", positive=True)
         value = Piecewise((3 - 2 * x, x <= 1), (x**-2, True))
 
-    case = VerificationContext.for_model(Joined)
+    context = VerificationContext.for_model(Joined)
     domain = Interval.open(0, S.Infinity)
-    assert public_check(case, continuously_differentiable("value", wrt="x", domain=domain, order=1)).condition is S.true
-    c2 = public_check(case, continuously_differentiable("value", wrt="x", domain=domain, order=2))
+    assert (
+        verify_obligation(context, continuously_differentiable("value", wrt="x", domain=domain, order=1)).condition
+        is S.true
+    )
+    c2 = verify_obligation(context, continuously_differentiable("value", wrt="x", domain=domain, order=2))
     assert c2.condition is S.false and c2.witness == ((Joined.x, S.One),)
-    assert public_check(case, differentiable("value", wrt="x", domain=domain, order=1)).condition is S.true
-    at_join = public_check(case, differentiable("value", wrt="x", domain=domain, order=2, at=1))
+    assert verify_obligation(context, differentiable("value", wrt="x", domain=domain, order=1)).condition is S.true
+    at_join = verify_obligation(context, differentiable("value", wrt="x", domain=domain, order=2, at=1))
     assert at_join.condition is S.false and at_join.witness == ((Joined.x, S.One),)
-    first = equal_to(Subs(Derivative(case.symbols.value, Joined.x), Joined.x, 1), -2, name="first_derivative")
-    assert public_check(case, first).condition is S.true
-    second = equal_to(Subs(Derivative(case.symbols.value, Joined.x, 2), Joined.x, 1), 0, name="second_derivative")
+    first = equal_to(Subs(Derivative(context.symbols.value, Joined.x), Joined.x, 1), -2, name="first_derivative")
+    assert verify_obligation(context, first).condition is S.true
+    second = equal_to(Subs(Derivative(context.symbols.value, Joined.x, 2), Joined.x, 1), 0, name="second_derivative")
     with pytest.raises(VerificationError) as failure:
-        case.run(
+        context.run(
             Method(
                 "evaluate second derivative",
                 lambda current: "must remain blocked",
@@ -231,7 +234,7 @@ def test_public_included_join_endpoint_cannot_discharge_ordinary_derivative_prem
         x = Coordinate("x", positive=True)
         value = Piecewise((1, x <= 1), (x**-2, True))
 
-    case = VerificationContext.for_model(Endpoint)
+    context = VerificationContext.for_model(Endpoint)
     domain = Interval(1, 2)
     for claim in (
         continuously_differentiable("value", wrt="x", domain=domain, order=1),
@@ -239,16 +242,16 @@ def test_public_included_join_endpoint_cannot_discharge_ordinary_derivative_prem
         differentiable("value", wrt="x", domain=domain, order=1),
         differentiable("value", wrt="x", domain=domain, order=1, at=1),
     ):
-        assert public_check(case, claim).condition is None
+        assert verify_obligation(context, claim).condition is None
     ordinary = equal_to(
-        Derivative(case.symbols.value, Endpoint.x),
+        Derivative(context.symbols.value, Endpoint.x),
         Piecewise((0, Endpoint.x <= 1), (-2 * Endpoint.x**-3, True)),
         wrt="x",
         domain=domain,
         name="ordinary_derivative",
     )
     with pytest.raises(VerificationError) as failure:
-        case.run(
+        context.run(
             Method(
                 "ordinary derivative on a closed interval",
                 lambda current: "must remain blocked",
@@ -265,19 +268,19 @@ def test_guarded_smoothness_requires_the_same_neighborhood_as_differentiability(
         x = Coordinate("x", real=True)
         value = Piecewise((x**2, x >= 1), (S.NaN, True))
 
-    case = VerificationContext.for_model(Guarded)
+    context = VerificationContext.for_model(Guarded)
     claim = continuously_differentiable("value", wrt="x", domain=domain, order=order)
-    evidence = public_check(case, claim)
+    evidence = verify_obligation(context, claim)
     assert evidence.verdict == "unresolved"
     assert not evidence.witness
     calls = []
     with pytest.raises(VerificationError):
-        case.run(Method("guarded derivatives", lambda current: calls.append(current), (claim,)))
+        context.run(Method("guarded derivatives", lambda current: calls.append(current), (claim,)))
     assert not calls
     continuity = _regular(Piecewise((x**2, x >= 1), (S.NaN, True)), x, domain, 0)
     assert continuity.condition is S.true
     interior = continuously_differentiable("value", wrt="x", domain=Interval.open(1, 2), order=order)
-    assert public_check(case, interior).verdict == "strictly true"
+    assert verify_obligation(context, interior).verdict == "strictly true"
 
 
 def test_public_local_refutations_cannot_be_carried_to_a_different_point():
@@ -285,8 +288,10 @@ def test_public_local_refutations_cannot_be_carried_to_a_different_point():
         x = Coordinate("x", positive=True)
         value = Piecewise((3 - 2 * x, x <= 1), (x**-2, True))
 
-    case = VerificationContext.for_model(Joined)
-    result = public_check(case, differentiable("value", wrt="x", domain=Interval.open(0, S.Infinity), order=2, at=2))
+    context = VerificationContext.for_model(Joined)
+    result = verify_obligation(
+        context, differentiable("value", wrt="x", domain=Interval.open(0, S.Infinity), order=2, at=2)
+    )
     assert result.condition is not S.false
     assert not result.witness
 
@@ -294,45 +299,45 @@ def test_public_local_refutations_cannot_be_carried_to_a_different_point():
 @pytest.mark.parametrize("point", (-1, 1))
 @pytest.mark.parametrize("order", (1, 2))
 @pytest.mark.parametrize("observed", (False, True))
-def test_local_piecewise_requirements_do_not_require_matching_inactive_branches(point, order, observed):
+def test_local_piecewise_obligations_do_not_require_matching_inactive_branches(point, order, observed):
     class Joined(VerificationModel):
         x = Coordinate("x", real=True)
         a = InstanceDummy("a", real=True)
         b = InstanceDummy("b", real=True)
         value = Piecewise((a, x < 0), (b, True))
 
-    case = VerificationContext.for_model(Joined)
-    case = case.observe(a=0, b=1) if observed else case.assume(Ne(case.symbols.a, case.symbols.b))
+    context = VerificationContext.for_model(Joined)
+    context = context.observe(a=0, b=1) if observed else context.assume(Ne(context.symbols.a, context.symbols.b))
     local = differentiable("value", wrt="x", order=order, at=point, name="local")
-    native = equal_to(Subs(Derivative(case.symbols.value, Joined.x, order), Joined.x, point), 0, name="native")
+    native = equal_to(Subs(Derivative(context.symbols.value, Joined.x, order), Joined.x, point), 0, name="native")
     conclusion = replace(local, name="reused")
-    case = case.with_rule(
-        InferenceRule("reuse local requirement", conclusion, (local,), "The same mathematical proposition is retained.")
+    context = context.with_rule(
+        InferenceRule("reuse local obligation", conclusion, (local,), "The same mathematical proposition is retained.")
     )
-    result = case.run(Method("local derivative", lambda current: point, (local, native, conclusion)))
+    result = context.run(Method("local derivative", lambda current: point, (local, native, conclusion)))
     assert result.data == point
-    assert all(item.verdict == "strictly true" for item in result.report.checks)
+    assert all(item.verdict == "strictly true" for item in result.report.evidence)
     assert result.report.explain("reused/local").verdict == "strictly true"
     at_join = replace(local, at=S.Zero)
-    assert case.verify(obligations=(at_join,)).explain("local").verdict == "strictly false"
+    assert context.verify(obligations=(at_join,)).explain("local").verdict == "strictly false"
     global_claim = continuously_differentiable("value", wrt="x", order=order)
-    assert case.verify(obligations=(global_claim,)).explain(global_claim.name).verdict == "strictly false"
+    assert context.verify(obligations=(global_claim,)).explain(global_claim.name).verdict == "strictly false"
 
 
 @pytest.mark.parametrize("point", (-1, 1))
-def test_local_piecewise_checks_retain_only_active_branch_source_guards(point):
+def test_local_piecewise_verification_retains_only_active_branch_source_guards(point):
     class Guarded(VerificationModel):
         x = Coordinate("x", real=True)
         a = InstanceDummy("a", real=True)
         value = Piecewise((1 / a, x < 0), (1, True))
 
-    case = VerificationContext.for_model(Guarded)
+    context = VerificationContext.for_model(Guarded)
     claim = differentiable("value", wrt="x", at=point)
-    expression = Piecewise((1 / case.symbols.a, Guarded.x < 0), (1, True))
+    expression = Piecewise((1 / context.symbols.a, Guarded.x < 0), (1, True))
     evidence = _differentiable(expression, Guarded.x, S.Reals, 1, S(point))
-    expected = Ne(case.symbols.a, 0) if point < 0 else S.true
+    expected = Ne(context.symbols.a, 0) if point < 0 else S.true
     assert evidence.condition == expected
-    evidence = case.observe(a=0).verify(obligations=(claim,)).explain(claim.name)
+    evidence = context.observe(a=0).verify(obligations=(claim,)).explain(claim.name)
     assert evidence.condition is (S.false if point < 0 else S.true)
 
 
@@ -344,8 +349,8 @@ def test_public_failure_of_c2_does_not_refute_existing_second_differentiability(
     # Both second difference-quotient limits are zero, although the right
     # second-derivative curve oscillates and supplies no C2 join certificate.
     assert limit(diff(x**4 * sin(1 / x), x) / x, x, 0, dir="+") == 0
-    case = VerificationContext.for_model(Oscillating)
-    result = public_check(case, differentiable("value", wrt="x", order=2, at=0))
+    context = VerificationContext.for_model(Oscillating)
+    result = verify_obligation(context, differentiable("value", wrt="x", order=2, at=0))
     assert result.condition is not S.false
 
 
@@ -360,7 +365,7 @@ def test_public_unsupported_multiple_and_parameter_joins_remain_unresolved():
         value = Piecewise((x, x <= a), (x**2, True))
 
     for model in (Multiple, ParameterJoin):
-        result = public_check(
+        result = verify_obligation(
             VerificationContext.for_model(model),
             continuously_differentiable("value", wrt="x", domain=Interval.open(0, S.Infinity)),
         )

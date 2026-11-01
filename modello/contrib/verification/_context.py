@@ -1,4 +1,4 @@
-"""Bind declarations, assumptions, contracts, and computations to fresh cases."""
+"""Bind declarations, assumptions, contracts, and computations to fresh contexts."""
 
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ ValueT = TypeVar("ValueT")
 
 @dataclass
 class _Context:
-    """Resolved work for one case under one set of global assumptions."""
+    """Resolved work for one context under one set of global assumptions."""
 
     problem: ModelProblem
     assumptions: tuple[Basic, ...]
@@ -238,7 +238,7 @@ def _replace_component(model: type[Modello], path: tuple[str, ...], replacement:
             continue
         target = new_coordinates[name]
         if by_scope[scope] is not None and by_scope[scope] != target:
-            raise ModelDefinitionError("Replacement splits aliased coordinates; declare a new model and case")
+            raise ModelDefinitionError("Replacement splits aliased coordinates; declare a new model and context")
         by_scope[scope] = target
     own_coordinates = {name: value for name, value in _coordinates(model).items() if "." not in name}
     namespace = model._modello_namespace
@@ -261,7 +261,8 @@ def _replace_component(model: type[Modello], path: tuple[str, ...], replacement:
                     value == original and name.rpartition(".")[0] == scope for name, value in new_coordinates.items()
                 ):
                     raise ModelDefinitionError(
-                        "Replacement removed a coordinate used by inherited expressions; declare a new model and case"
+                        "Replacement removed a coordinate used by inherited expressions; "
+                        "declare a new model and context"
                     )
                 scopes[scope] = original
         targets = set(scopes.values())
@@ -551,7 +552,7 @@ class VerificationContext(Generic[ModelT]):
         recorded = {_expression_key(condition) for condition in self.assumptions}
         missing = tuple(condition for condition in removed if _expression_key(condition) not in recorded)
         if missing:
-            raise ModelInputError(f"These assumptions were not recorded in this case: {missing}")
+            raise ModelInputError(f"These assumptions were not recorded in this context: {missing}")
         removed_keys = {_expression_key(condition) for condition in removed}
         return replace(
             self,
@@ -579,7 +580,7 @@ class VerificationContext(Generic[ModelT]):
         available = {item.name for item in self.obligations}
         missing = tuple(key for key in removed if key not in available)
         if missing:
-            raise ModelInputError(f"Only context-added obligations can be removed; unknown case IDs: {missing}")
+            raise ModelInputError(f"Only context-added obligations can be removed; unknown context IDs: {missing}")
         return replace(
             self,
             obligations=tuple(item for item in self.obligations if item.name not in removed),
@@ -636,7 +637,7 @@ class VerificationContext(Generic[ModelT]):
                     split = original in mapping and mapping[original] != target
                 if split:
                     raise ModelDefinitionError(
-                        "Replacement splits aliased fields or declarations; declare a new model and case"
+                        "Replacement splits aliased fields or declarations; declare a new model and context"
                     )
                 mapping[original] = target
         old_coordinates = _coordinates(self.problem.model)
@@ -1237,7 +1238,7 @@ class VerificationContext(Generic[ModelT]):
             token = (claim._proposition(), prefix)
             skip_reason = None
             if feasible is False or steps[0] >= max_steps or token in active:
-                skip_reason = "Inconsistent premises, exhausted proof budget, or circular theorem dependency."
+                skip_reason = "Inconsistent premises, exhausted proof budget, or circular inference-rule dependency."
             else:
                 try:
                     # Evaluating a domain here can only withhold a certificate;
@@ -1247,9 +1248,9 @@ class VerificationContext(Generic[ModelT]):
                     empty = None
                 if empty is not False:
                     skip_reason = (
-                        "The requirement domain is empty; no certificate is established."
+                        "The obligation domain is empty; no certificate is established."
                         if empty is True
-                        else "The requirement domain is not established to be nonempty."
+                        else "The obligation domain is not established to be nonempty."
                     )
             if skip_reason is not None:
                 return Evidence(
@@ -1273,8 +1274,8 @@ class VerificationContext(Generic[ModelT]):
                 finally:
                     active.remove(token)
                 condition = conjunction(*(item.condition for item in premises))
-                # A failed sufficient premise makes the theorem inapplicable;
-                # it cannot refute the theorem's conclusion.
+                # A failed sufficient premise makes the rule inapplicable;
+                # it cannot refute the rule's conclusion.
                 if condition is S.false:
                     condition = None
                 return Evidence(
@@ -1363,8 +1364,8 @@ class VerificationContext(Generic[ModelT]):
                     self._dependencies(expression),
                 )
 
-        checks = tuple(prove(*record) for record in records)
-        checks = tuple(
+        evidence = tuple(prove(*record) for record in records)
+        evidence = tuple(
             replace(
                 item,
                 condition=None,
@@ -1377,13 +1378,13 @@ class VerificationContext(Generic[ModelT]):
             )
             if item.id in conditional_operations and item.condition is not S.true
             else item
-            for item in checks
+            for item in evidence
         )
         unused = set(bound_hints) - used_hints
         if unused:
             issues.append(f"Unused proof hints: {', '.join(sorted(unused))}")
         report = VerificationReport(
-            self.problem.model.__name__, checks, assumptions, feasible, tuple(issues), self._labels
+            self.problem.model.__name__, evidence, assumptions, feasible, tuple(issues), self._labels
         )
         return report, frozenset(key for key, _, _ in automatic)
 
@@ -1441,10 +1442,10 @@ class VerificationContext(Generic[ModelT]):
         method: Method[ResultT] | Callable[[VerificationContext[ModelT]], Method[ResultT]],
         **settings,
     ) -> VerificationResult[ResultT]:
-        """Run a prepared method or build one for this case before checking it."""
+        """Run a prepared method or build one for this context before checking it."""
         if not isinstance(method, Method):
             if not callable(method):
-                raise ModelDefinitionError("run needs a Method or a case-to-Method factory")
+                raise ModelDefinitionError("run needs a Method or a context-to-Method factory")
             method = method(self)
             if not isinstance(method, Method):
                 raise ModelDefinitionError(
@@ -1492,7 +1493,7 @@ class VerificationContext(Generic[ModelT]):
                 )
             )
 
-        blocked = [item for item in report.checks if consumed(item) and item.condition is not S.true]
+        blocked = [item for item in report.evidence if consumed(item) and item.condition is not S.true]
         if report.consistent is False or blocked:
             details = ", ".join(f"{item.id}: {item.verdict}" for item in blocked)
             raise VerificationError(f"{method.name} has unestablished premises: {details}", self, report)
@@ -1524,7 +1525,7 @@ class VerificationModel(Modello):
 
 
 def specifies(value: ValueT, *obligations: Obligation) -> ValueT:
-    """Return a field declaration or model subclass carrying requirements.
+    """Return a field declaration or model subclass carrying obligations.
 
     Property functions create the same Obligation values accepted by contexts,
     method preconditions, and inference-rule premises. Use the return value: the input expression,

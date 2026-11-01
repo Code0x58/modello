@@ -1,4 +1,4 @@
-"""The shared research contracts and HJB slice agree with their mathematics."""
+"""The shared verification contracts and HJB slice agree with their mathematics."""
 
 import pytest
 from sympy import Rational, diff, exp, log, simplify
@@ -28,7 +28,7 @@ def test_default_component_contracts_are_proved_and_scoped_in_the_parent():
         "ask.intensity.rate/strictly_decreasing",
     ):
         assert report.explain(path).verdict == "strictly true"
-    assert all(check.verdict == "strictly true" for check in report.checks)
+    assert all(item.verdict == "strictly true" for item in report.evidence)
 
 
 def test_parameter_conditions_refresh_after_subclassing_and_observations():
@@ -47,13 +47,13 @@ def test_parameter_conditions_refresh_after_subclassing_and_observations():
         == report.explain("value/concave").verdict
         == "strictly true"
     )
-    case = VerificationContext.for_model(UnrestrictedUtility)
+    context = VerificationContext.for_model(UnrestrictedUtility)
     for gamma, expected in ((2, "strictly true"), (0, "strictly false"), (-1, "strictly false")):
-        assert case.observe(gamma=gamma).verify().explain("value/strictly_increasing").verdict == expected
-    assert all(check.verdict == "strictly true" for check in CARAUtility.definition_report().checks)
+        assert context.observe(gamma=gamma).verify().explain("value/strictly_increasing").verdict == expected
+    assert all(item.verdict == "strictly true" for item in CARAUtility.definition_report().evidence)
 
 
-def test_incompatible_components_refresh_inherited_requirements_automatically():
+def test_incompatible_components_refresh_inherited_obligations_automatically():
     class ConvexUtility(CARAUtility):
         value = exp(CARAUtility.gamma * CARAUtility.wealth)
 

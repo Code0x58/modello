@@ -12,14 +12,14 @@ from examples.financial_models.markowitz import (
     TwoAssetPortfolio,
     allocate,
     numerical_reference,
-    portfolio_case,
+    portfolio_context,
 )
 from modello import component
 from modello.contrib.verification import VerificationContext, VerificationError
 
 
 def test_interior_solution_has_an_exact_global_certificate():
-    result = allocate(portfolio_case())
+    result = allocate(portfolio_context())
     assert result.data.weight == S.One / 5
     assert result.data.variance == S(4) / 5
     assert result.data.other_weight == S(4) / 5
@@ -31,9 +31,9 @@ def test_interior_solution_has_an_exact_global_certificate():
 
 def test_adding_and_removing_a_return_target_preserves_the_original_branch():
     restrictions = PortfolioRestrictions(target=Rational(7, 100), cap=Rational(4, 5))
-    original = allocate(portfolio_case(), restrictions).data
+    original = allocate(portfolio_context(), restrictions).data
     relaxed = restrictions.without("target")
-    changed = allocate(portfolio_case(), relaxed).data
+    changed = allocate(portfolio_context(), relaxed).data
     assert original.weight == S(3) / 4
     assert original.expected_return == S(7) / 100
     assert original.active == ("minimum_return",)
@@ -47,7 +47,7 @@ def test_adding_and_removing_a_return_target_preserves_the_original_branch():
 
 
 def test_an_upper_concentration_bound_has_the_correct_multiplier_sign():
-    result = allocate(portfolio_case(), PortfolioRestrictions(cap=Rational(1, 10)))
+    result = allocate(portfolio_context(), PortfolioRestrictions(cap=Rational(1, 10)))
     assert result.data.weight == S.One / 10
     assert result.data.variance == S(17) / 20
     assert result.data.active == ("concentration_cap",)
@@ -55,10 +55,10 @@ def test_an_upper_concentration_bound_has_the_correct_multiplier_sign():
 
 
 def test_removing_no_short_restrictions_changes_the_optimum():
-    case = portfolio_case(first_variance=1, second_variance=4, covariance=Rational(3, 2))
+    context = portfolio_context(first_variance=1, second_variance=4, covariance=Rational(3, 2))
     restricted = PortfolioRestrictions()
-    long_only = allocate(case, restricted).data
-    unrestricted = allocate(case, restricted.without("long_only")).data
+    long_only = allocate(context, restricted).data
+    unrestricted = allocate(context, restricted.without("long_only")).data
     assert long_only.weight == 1 and long_only.active == ("second_nonnegative",)
     assert unrestricted.weight == S(5) / 4 and unrestricted.other_weight == -S.One / 4
     assert unrestricted.variance < long_only.variance
@@ -66,8 +66,8 @@ def test_removing_no_short_restrictions_changes_the_optimum():
 
 
 def test_a_lower_return_on_the_first_asset_reverses_the_target_inequality():
-    case = portfolio_case(first_return=Rational(4, 100), second_return=Rational(8, 100))
-    data = allocate(case, PortfolioRestrictions(target=Rational(78, 1000))).data
+    context = portfolio_context(first_return=Rational(4, 100), second_return=Rational(8, 100))
+    data = allocate(context, PortfolioRestrictions(target=Rational(78, 1000))).data
     assert data.weight == S.One / 20
     assert data.active == ("minimum_return",)
     assert data.expected_return == S(78) / 1000
@@ -75,63 +75,63 @@ def test_a_lower_return_on_the_first_asset_reverses_the_target_inequality():
 
 
 @pytest.mark.parametrize(
-    "case,restrictions,message",
+    "context,restrictions,message",
     [
-        (portfolio_case(), PortfolioRestrictions(target=Rational(9, 100)), "infeasible"),
-        (portfolio_case(), PortfolioRestrictions(cap=-1), "infeasible"),
+        (portfolio_context(), PortfolioRestrictions(target=Rational(9, 100)), "infeasible"),
+        (portfolio_context(), PortfolioRestrictions(cap=-1), "infeasible"),
         (
-            portfolio_case(first_return=Rational(4, 100), second_return=Rational(4, 100)),
+            portfolio_context(first_return=Rational(4, 100), second_return=Rational(4, 100)),
             PortfolioRestrictions(target=Rational(5, 100)),
             "same expected return",
         ),
     ],
 )
-def test_infeasible_restrictions_retain_the_case_and_mathematical_report(case, restrictions, message):
+def test_infeasible_restrictions_retain_the_context_and_mathematical_report(context, restrictions, message):
     with pytest.raises(VerificationError, match=message) as error:
-        allocate(case, restrictions)
-    assert error.value.context is case
-    assert error.value.report.checks
+        allocate(context, restrictions)
+    assert error.value.context is context
+    assert error.value.report.evidence
 
 
 def test_equal_means_with_a_redundant_target_do_not_need_division_by_zero():
-    case = portfolio_case(first_return=Rational(4, 100), second_return=Rational(4, 100))
-    result = allocate(case, PortfolioRestrictions(target=Rational(3, 100)))
+    context = portfolio_context(first_return=Rational(4, 100), second_return=Rational(4, 100))
+    result = allocate(context, PortfolioRestrictions(target=Rational(3, 100)))
     assert result.data.weight == S.One / 5
     assert result.report.explain("global_minimum").verdict == "strictly true"
 
 
 def test_singular_covariance_can_have_a_unique_budget_line_minimum():
-    case = portfolio_case(first_variance=1, second_variance=4, covariance=-2)
-    result = allocate(case)
+    context = portfolio_context(first_variance=1, second_variance=4, covariance=-2)
+    result = allocate(context)
     assert result.data.weight == S(2) / 3
     assert result.data.variance == 0
     assert result.report.explain("global_minimum/valid_covariance").verdict == "strictly true"
 
 
 def test_flat_curvature_loses_uniqueness_without_losing_all_minimizers():
-    case = portfolio_case(first_variance=1, second_variance=1, covariance=1)
+    context = portfolio_context(first_variance=1, second_variance=1, covariance=1)
     with pytest.raises(VerificationError) as error:
-        allocate(case)
+        allocate(context)
     assert error.value.report.explain("unique_curvature").verdict == "strictly false"
-    result = allocate(case, unique=False)
+    result = allocate(context, unique=False)
     assert result.data.variance == 1
     assert result.data.minimizers == Interval(0, 1)
     assert result.report.explain("global_minimum").verdict == "strictly true"
 
 
 def test_a_singleton_feasible_set_is_supported_by_both_methods():
-    case = portfolio_case()
+    context = portfolio_context()
     restrictions = PortfolioRestrictions(target=Rational(8, 100))
-    result = allocate(case, restrictions)
+    result = allocate(context, restrictions)
     assert result.data.feasible == FiniteSet(1)
     assert result.data.minimizers == FiniteSet(1)
-    assert numerical_reference(case, restrictions)["weight"] == 1.0
+    assert numerical_reference(context, restrictions)["weight"] == 1.0
 
 
 def test_invalid_covariance_blocks_the_solver_before_it_derives_a_candidate():
-    case = portfolio_case(covariance=3)
+    context = portfolio_context(covariance=3)
     with pytest.raises(VerificationError) as error:
-        allocate(case)
+        allocate(context)
     assert error.value.report.explain("valid_covariance").verdict == "strictly false"
 
 
@@ -144,12 +144,12 @@ def test_a_changed_variance_law_cannot_reuse_the_quadratic_shortcut():
             + TwoAssetPortfolio.weight**4
         )
 
-    case = VerificationContext.for_model(FourthPower).observe(
+    context = VerificationContext.for_model(FourthPower).observe(
         moments=Covariance("moments", first=4, second=1, cross=0),
         means=ExpectedReturns("means", first=Rational(8, 100), second=Rational(4, 100)),
     )
     with pytest.raises(VerificationError) as error:
-        allocate(case)
+        allocate(context)
     assert error.value.report.explain("quadratic_variance_form").verdict == "strictly false"
 
 
@@ -162,9 +162,9 @@ def test_a_changed_variance_law_cannot_reuse_the_quadratic_shortcut():
     ],
 )
 def test_exact_solution_agrees_with_an_independent_numerical_minimizer(restrictions):
-    case = portfolio_case()
-    exact = allocate(case, restrictions).data
-    numerical = numerical_reference(case, restrictions)
+    context = portfolio_context()
+    exact = allocate(context, restrictions).data
+    numerical = numerical_reference(context, restrictions)
     assert numerical["weight"] == pytest.approx(float(exact.weight), abs=1e-7)
     assert numerical["variance"] == pytest.approx(float(exact.variance), abs=1e-10)
     assert numerical["kind"] == "numerical observation"
@@ -175,34 +175,34 @@ def test_restriction_validation_and_audits_distinguish_variants():
         PortfolioRestrictions().without("covariance_validity")
     with pytest.raises(ValueError, match="finite real"):
         PortfolioRestrictions(cap=S.Infinity)
-    case = portfolio_case()
-    plain = allocate(case).report.to_dict()
-    capped = allocate(case, PortfolioRestrictions(cap=Rational(1, 10))).report.to_dict()
+    context = portfolio_context()
+    plain = allocate(context).report.to_dict()
+    capped = allocate(context, PortfolioRestrictions(cap=Rational(1, 10))).report.to_dict()
     assert plain["evidence_sha256"] != capped["evidence_sha256"]
 
 
 def test_hidden_weight_assumptions_and_derived_observations_cannot_change_the_search_set():
-    case = portfolio_case()
-    weight = case.expression("weight", wrt="weight")
-    for restricted in (case.assume(weight >= S(3) / 4), case.observe(variance=S(5) / 4)):
+    context = portfolio_context()
+    weight = context.expression("weight", wrt="weight")
+    for restricted in (context.assume(weight >= S(3) / 4), context.observe(variance=S(5) / 4)):
         with pytest.raises(VerificationError, match="PortfolioRestrictions"):
             allocate(restricted)
 
 
 @pytest.mark.parametrize("subject,bound", [("weight", S(3) / 4), ("expected_return", S(7) / 100)])
 def test_global_weight_restrictions_cannot_change_the_search_set(subject, bound):
-    case = portfolio_case()
-    condition = case.expression(subject, wrt="weight") >= bound
+    context = portfolio_context()
+    condition = context.expression(subject, wrt="weight") >= bound
     with assuming(condition):
         with pytest.raises(VerificationError, match="PortfolioRestrictions") as failure:
-            allocate(case)
+            allocate(context)
         assert condition in failure.value.report.assumptions
 
 
 def test_global_parameter_assumptions_remain_supported():
-    case = portfolio_case()
-    with assuming(case.symbols.moments.first > 0):
-        result = allocate(case)
+    context = portfolio_context()
+    with assuming(context.symbols.moments.first > 0):
+        result = allocate(context)
     assert result.data.weight == S.One / 5
     assert result.report.explain("global_minimum").verdict == "strictly true"
 
@@ -211,9 +211,9 @@ def test_a_false_determinant_cannot_certify_an_invalid_covariance():
     class FalsePSD(Covariance):
         determinant = S.One
 
-    case = portfolio_case(covariance=-3).replace("moments", FalsePSD)
+    context = portfolio_context(covariance=-3).replace("moments", FalsePSD)
     with pytest.raises(VerificationError) as error:
-        allocate(case)
+        allocate(context)
     assert error.value.report.explain("determinant_form").verdict == "strictly false"
 
 
@@ -233,12 +233,12 @@ def test_consumed_candidate_and_derivative_helpers_follow_the_actual_model(field
         namespace[field] = S(99)
 
     changed = new_class("ChangedHelper", (TwoAssetPortfolio,), exec_body=declare)
-    case = VerificationContext.for_model(changed).observe(
+    context = VerificationContext.for_model(changed).observe(
         moments=Covariance("moments", first=4, second=1, cross=0),
         means=ExpectedReturns("means", first=Rational(8, 100), second=Rational(4, 100)),
     )
     with pytest.raises(VerificationError) as error:
-        allocate(case)
+        allocate(context)
     assert error.value.report.explain(claim).verdict != "strictly true"
 
 
@@ -251,12 +251,12 @@ def test_multiple_changed_helpers_cannot_fabricate_a_wrong_global_optimum():
         candidate_slope = S.Zero
         completion_residual = S.Zero
 
-    case = VerificationContext.for_model(WrongProof).observe(
+    context = VerificationContext.for_model(WrongProof).observe(
         moments=WrongContrast("moments", first=4, second=1, cross=0),
         means=ExpectedReturns("means", first=Rational(8, 100), second=Rational(4, 100)),
     )
     with pytest.raises(VerificationError) as error:
-        allocate(case)
+        allocate(context)
     assert error.value.report.explain("contrast_form").verdict == "strictly false"
 
 
@@ -265,19 +265,19 @@ def test_an_undecidable_coefficient_sign_is_not_treated_as_zero():
         is_real = True
         is_finite = True
 
-    case = portfolio_case(first_return=UnknownReal())
+    context = portfolio_context(first_return=UnknownReal())
     with pytest.raises(VerificationError, match="sign.*coefficient.*unresolved"):
-        allocate(case, PortfolioRestrictions(target=Rational(3, 100)))
+        allocate(context, PortfolioRestrictions(target=Rational(3, 100)))
 
 
 @pytest.mark.parametrize("restriction", ["cap", "target"])
-def test_undecidable_bound_ordering_retains_the_case_and_report(restriction):
+def test_undecidable_bound_ordering_retains_the_context_and_report(restriction):
     class UnknownReal(AtomicExpr):
         is_real = True
         is_finite = True
 
-    case = portfolio_case()
+    context = portfolio_context()
     with pytest.raises(VerificationError, match="ordering.*restriction bound.*unresolved") as failure:
-        allocate(case, PortfolioRestrictions(**{restriction: UnknownReal()}))
-    assert failure.value.context is case
-    assert failure.value.report.checks
+        allocate(context, PortfolioRestrictions(**{restriction: UnknownReal()}))
+    assert failure.value.context is context
+    assert failure.value.report.evidence

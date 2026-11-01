@@ -14,8 +14,8 @@ from examples.financial_models.perpetual_put import (
     c2_consumer_method,
     numerical_method,
     obstacle_rule,
-    perpetual_put_case,
-    symbolic_case,
+    perpetual_put_context,
+    symbolic_context,
     trust_stopping_rule,
     verification_method,
 )
@@ -23,13 +23,13 @@ from modello.contrib.verification import VerificationContext, VerificationError
 
 
 @pytest.fixture(scope="module")
-def case():
-    return perpetual_put_case()
+def context():
+    return perpetual_put_context()
 
 
 @pytest.fixture(scope="module")
-def algebra(case):
-    return case.run(algebra_method(case))
+def algebra(context):
+    return context.run(algebra_method(context))
 
 
 def test_exact_boundary_and_actual_one_sided_derivatives(algebra):
@@ -60,7 +60,7 @@ def test_exact_boundary_and_actual_one_sided_derivatives(algebra):
         assert algebra.report.explain(name).condition is S.true
 
 
-def test_obstacle_inequality_has_checked_calculus_premises(algebra):
+def test_obstacle_inequality_has_verified_calculus_premises(algebra):
     evidence = algebra.report.explain("continuation_obstacle")
     assert evidence.kind == "rule"
     assert evidence.condition is S.true
@@ -70,24 +70,24 @@ def test_obstacle_inequality_has_checked_calculus_premises(algebra):
     assert "stochastic" not in evidence.steps[0].lower()
 
 
-def test_constant_join_proof_checks_c1_and_refutes_c2_without_a_stochastic_rule(case, algebra):
+def test_constant_join_proof_verifies_c1_and_refutes_c2_without_a_stochastic_rule(context, algebra):
     c1 = algebra.data.regularity.explain("global_c1")
     c2 = algebra.data.regularity.explain("global_c2")
     assert c1.verdict == "strictly true" and c1.kind == "symbolic"
     assert c2.verdict == "strictly false" and c2.kind == "counterexample"
-    assert c2.witness == ((case.expression("moneyness", wrt="moneyness"), S.One),)
+    assert c2.witness == ((context.expression("moneyness", wrt="moneyness"), S.One),)
     with pytest.raises(VerificationError) as failure:
-        case.run(c2_consumer_method())
+        context.run(c2_consumer_method())
     assert failure.value.report.explain("requires_global_c2").condition is S.false
     assert algebra.data.one_sided["delta_left"] == algebra.data.one_sided["delta_right"]
     assert algebra.data.one_sided["gamma_left"] != algebra.data.one_sided["gamma_right"]
 
 
-def test_stochastic_optimality_requires_explicit_trust_and_exports_the_assumptions(case):
+def test_stochastic_optimality_requires_explicit_trust_and_exports_the_assumptions(context):
     with pytest.raises(VerificationError) as failure:
-        case.run(verification_method(case))
+        context.run(verification_method(context))
     assert failure.value.report.explain("optimal_stopping_under_GBM").verdict == "unresolved"
-    trusted = trust_stopping_rule(case)
+    trusted = trust_stopping_rule(context)
     result = trusted.run(verification_method(trusted))
     conclusion = result.report.explain("optimal_stopping_under_GBM")
     assert conclusion.kind == "rule" and conclusion.condition is S.true
@@ -101,7 +101,7 @@ def test_stochastic_optimality_requires_explicit_trust_and_exports_the_assumptio
 
 @pytest.mark.parametrize("initial_spot,expected", [(50, 50), (S(200) / 3, S(100) / 3)])
 def test_immediate_exercise_and_boundary_values(initial_spot, expected):
-    current = perpetual_put_case(initial_spot=initial_spot)
+    current = perpetual_put_context(initial_spot=initial_spot)
     certificate = current.run(algebra_method(current)).data
     assert certificate.value_at_initial_spot == expected
     numeric = current.run(numerical_method(current)).data
@@ -110,8 +110,8 @@ def test_immediate_exercise_and_boundary_values(initial_spot, expected):
     assert numeric.value_error < 1e-12
 
 
-def test_independent_barrier_optimization_matches_the_analytic_boundary(case):
-    numeric = case.run(numerical_method(case)).data
+def test_independent_barrier_optimization_matches_the_analytic_boundary(context):
+    numeric = context.run(numerical_method(context)).data
     assert numeric.barrier == pytest.approx(200 / 3, abs=1e-5)
     assert numeric.discounted_payoff == pytest.approx(400 / 27, abs=1e-12)
     assert numeric.barrier_error < 1e-5 and numeric.value_error < 1e-12
@@ -121,7 +121,7 @@ def test_independent_barrier_optimization_matches_the_analytic_boundary(case):
 
 @pytest.mark.parametrize("rate,boundary", [(S.One / 50, 50), (S.One / 20, S(500) / 7)])
 def test_positive_parameter_changes_refresh_the_boundary_and_obstacle_proof(rate, boundary):
-    current = perpetual_put_case(rate=rate)
+    current = perpetual_put_context(rate=rate)
     result = current.run(algebra_method(current))
     assert result.data.boundary == boundary
     assert result.data.second_derivative_jump > 0
@@ -129,7 +129,7 @@ def test_positive_parameter_changes_refresh_the_boundary_and_obstacle_proof(rate
 
 
 def test_zero_rate_cannot_reuse_the_positive_parameter_shortcut():
-    current = perpetual_put_case(rate=0)
+    current = perpetual_put_context(rate=0)
     with pytest.raises(VerificationError) as failure:
         current.run(algebra_method(current))
     assert failure.value.context is current
@@ -139,22 +139,22 @@ def test_zero_rate_cannot_reuse_the_positive_parameter_shortcut():
 
 
 def test_dividends_cannot_reuse_the_zero_dividend_exponent():
-    current = perpetual_put_case(dividend=S.One / 100)
+    current = perpetual_put_context(dividend=S.One / 100)
     with pytest.raises(VerificationError) as failure:
         current.run(algebra_method(current))
     assert failure.value.report.explain("zero_dividends").condition is S.false
     assert failure.value.report.explain("continuation_pricing_generator").condition is S.false
 
 
-def test_replacing_a_consumed_exponent_rechecks_its_exact_form(case):
+def test_replacing_a_consumed_exponent_reverifies_its_exact_form(context):
     class WrongExponent(ConstantBSMMarket):
         beta = -S.One
 
-    changed = case.replace("market", WrongExponent)
+    changed = context.replace("market", WrongExponent)
     with pytest.raises(VerificationError) as failure:
         changed.run(algebra_method(changed))
     assert failure.value.report.explain("form_beta").condition is S.false
-    assert case.expression("beta") == -2
+    assert context.expression("beta") == -2
 
 
 def test_a_redefined_curvature_cannot_supply_a_stale_obstacle_certificate():
@@ -178,49 +178,49 @@ def test_a_redefined_curvature_cannot_supply_a_stale_obstacle_certificate():
     assert failure.value.report.explain("continuation_obstacle").condition is not S.true
 
 
-def test_curve_restrictions_and_derived_observations_do_not_silently_change_the_problem(case):
-    x = case.expression("moneyness", wrt="moneyness")
-    restricted = case.assume(x > 2)
+def test_curve_restrictions_and_derived_observations_do_not_silently_change_the_problem(context):
+    x = context.expression("moneyness", wrt="moneyness")
+    restricted = context.assume(x > 2)
     with pytest.raises(VerificationError, match="both regions"):
         restricted.run(algebra_method(restricted))
-    observed = case.observe(spot=100)
+    observed = context.observe(spot=100)
     with pytest.raises(VerificationError, match="derived curve values"):
         observed.run(algebra_method(observed))
 
 
 @pytest.mark.parametrize("method", [algebra_method, verification_method])
 @pytest.mark.parametrize("subject", ["moneyness", "time"])
-def test_global_curve_restrictions_cannot_change_the_verification_problem(case, method, subject):
+def test_global_curve_restrictions_cannot_change_the_verification_problem(context, method, subject):
     if method is verification_method:
-        case = trust_stopping_rule(case)
-    coordinate = case._reference(subject)
+        context = trust_stopping_rule(context)
+    coordinate = context._reference(subject)
     condition = coordinate > 2
     with assuming(condition):
         with pytest.raises(VerificationError, match="both regions") as failure:
-            case.run(method)
+            context.run(method)
         assert condition in failure.value.report.assumptions
 
 
-def test_local_time_restrictions_cannot_change_the_verification_problem(case):
-    restricted = case.assume(case._reference("time") < 1)
+def test_local_time_restrictions_cannot_change_the_verification_problem(context):
+    restricted = context.assume(context._reference("time") < 1)
     with pytest.raises(VerificationError, match="both regions"):
         restricted.run(algebra_method)
 
 
-def test_a_method_cannot_reuse_case_bound_native_requirements(case):
-    branch = case.assume(True)
+def test_a_method_cannot_reuse_context_bound_native_obligations(context):
+    branch = context.assume(True)
     with pytest.raises(VerificationError, match="rebuild"):
-        branch.run(algebra_method(case))
+        branch.run(algebra_method(context))
 
 
-def test_numerical_parameter_and_setting_errors_retain_case_context(case):
-    unobserved = symbolic_case().observe(rate=S.One / 25, volatility=S.One / 5, strike=100, dividend=0)
+def test_numerical_parameter_and_setting_errors_retain_context_and_report(context):
+    unobserved = symbolic_context().observe(rate=S.One / 25, volatility=S.One / 5, strike=100, dividend=0)
     with pytest.raises(VerificationError, match="parameter observations") as failure:
         unobserved.run(numerical_method(unobserved))
     assert failure.value.context is unobserved
     with pytest.raises(VerificationError, match="xatol") as failure:
-        case.run(numerical_method(case), xatol=float("nan"))
-    assert failure.value.context is case
+        context.run(numerical_method(context), xatol=float("nan"))
+    assert failure.value.context is context
 
 
 def test_import_loads_no_optional_numerical_or_plotting_packages():

@@ -62,8 +62,8 @@ def _provenance() -> dict[str, Any]:
             versions[package] = metadata.version(package)
         except metadata.PackageNotFoundError:
             versions[package] = None
-    shared = Path(__file__).parent.parent / "_verification_checks.py"
-    sources = {"examples/_verification_checks.py": sha256(shared.read_bytes()).hexdigest()}
+    shared = Path(__file__).parent.parent / "_verification_inputs.py"
+    sources = {"examples/_verification_inputs.py": sha256(shared.read_bytes()).hexdigest()}
     for prefix, directory in (
         ("examples/financial_models", Path(__file__).parent),
         ("modello/contrib/verification", Path(verification.__file__).parent),
@@ -79,12 +79,12 @@ def _provenance() -> dict[str, Any]:
     }
 
 
-def _case_record(case: VerificationContext):
+def _context_record(context: VerificationContext):
     return {
-        "model": case.problem.model.__name__,
-        "name": case.problem.name,
-        "assumptions": [str(condition) for condition in case.assumptions],
-        "changes": list(case.changes),
+        "model": context.problem.model.__name__,
+        "name": context.problem.name,
+        "assumptions": [str(condition) for condition in context.assumptions],
+        "changes": list(context.changes),
         "inputs": [
             {
                 "path": ".".join(item.path),
@@ -92,7 +92,7 @@ def _case_record(case: VerificationContext):
                 "value": str(item.right),
                 "input_group": item.input,
             }
-            for item in case.problem.constraints
+            for item in context.problem.constraints
             if item.kind is not ConstraintKind.DEFINITION
         ],
     }
@@ -156,7 +156,7 @@ def _page(title, body):
 
 def _counts(report):
     return ", ".join(
-        f"{amount} {verdict}" for verdict, amount in Counter(item.verdict for item in report.checks).items()
+        f"{amount} {verdict}" for verdict, amount in Counter(item.verdict for item in report.evidence).items()
     )
 
 
@@ -172,7 +172,7 @@ def _variant(variant: Variant, label: str, directory: Path, filenames: set[str])
         return filename
 
     encoded: dict[str, Any] = {
-        "case": _case_record(variant.context),
+        "context": _context_record(variant.context),
         "computations": {},
         "blocked": {},
         "observations": encode(variant.observations),
@@ -208,26 +208,25 @@ def _variant(variant: Variant, label: str, directory: Path, filenames: set[str])
             f'<a href="{filename}">Inspect the evidence</a>.</p>'
         )
     notes = "".join(f"<li>{escape(note)}</li>" for note in (*variant.context.changes, *variant.notes))
-    inputs = escape(json.dumps(encoded["case"], indent=2, ensure_ascii=False))
+    inputs = escape(json.dumps(encoded["context"], indent=2, ensure_ascii=False))
     observations = ""
     if variant.observations:
         observations = (
-            "<h3>Supplementary checks and observations</h3>"
+            "<h3>Supplementary observations</h3>"
             f"<pre>{escape(json.dumps(encode(variant.observations), indent=2))}</pre>"
         )
         for name, observation in variant.observations.items():
             kind = observation.get("kind", "reported datum") if isinstance(observation, Mapping) else "reported datum"
             fact_rows.extend((label, name, path, value, kind) for path, value in _facts(observation))
     table = (
-        "<table><tr><th>Computation / evidence kind</th><th>Selected results</th><th>Checks and full evidence</th></tr>"
-        + "".join(rows)
-        + "</table>"
+        "<table><tr><th>Computation / evidence kind</th><th>Selected results</th>"
+        "<th>Verdicts and full evidence</th></tr>" + "".join(rows) + "</table>"
         if rows
         else ""
     )
     html = (
         f"<article><h2>{escape(label)}</h2><ul>{notes}</ul>{table}{''.join(rejected)}{observations}"
-        f"<details><summary>Case inputs and assumption changes</summary><pre>{inputs}</pre></details></article>"
+        f"<details><summary>Context inputs and assumption changes</summary><pre>{inputs}</pre></details></article>"
     )
     return encoded, html, fact_rows
 
@@ -238,7 +237,7 @@ def write_reports(
     """Write studies and an optional caller-supplied command for constructing them."""
     directory.mkdir(parents=True, exist_ok=True)
     payload: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "numerical_references": numerical,
         "compact_selection": compact,
         "selection": [study.key for study in studies],
@@ -267,7 +266,7 @@ def write_reports(
 
             figures = write_figure(study, output / "figures")
         data = {
-            "schema_version": 1,
+            "schema_version": 2,
             "model": key,
             "provenance": payload["provenance"],
             "numerical_references": numerical,
@@ -318,7 +317,7 @@ def write_reports(
     )
     selection = "Representative branches" if compact else "Full branch collection"
     mode = (
-        "Exact checks with independent numerical observations and figures"
+        "Symbolic verification with independent numerical observations and figures"
         if numerical
         else "Symbolic replay using SymPy"
     )
@@ -329,7 +328,7 @@ def write_reports(
     )
     body = (
         f"<p>{selection}. {mode}.</p><p>Each sub-example separates mathematical validity, "
-        "optional economic restrictions, and method contracts. Exact identities, trusted theorem premises, "
+        "optional economic restrictions, and method contracts. Exact identities, trusted inference-rule premises, "
         "numerical comparisons, and blocked computations remain distinct in the evidence.</p>"
         f"{''.join(cards)}<h2>Replay and provenance</h2>{replay}"
         '<p><a href="collection.json">Complete JSON audit, source fingerprints, versions and solver settings</a></p>'

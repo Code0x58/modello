@@ -28,18 +28,18 @@ def test_unsupported_key_is_rejected_before_writing(tmp_path):
 def test_markowitz_artifacts_use_bound_results_and_preserve_plotting_state(tmp_path):
     matplotlib = pytest.importorskip("matplotlib")
     pyplot = pytest.importorskip("matplotlib.pyplot")
-    from examples.financial_models.markowitz import allocate, portfolio_case
+    from examples.financial_models.markowitz import allocate, portfolio_context
 
     # Changing the first variance changes the actual optimum to 10%. The
     # figure must read this result, rather than the collection's default data.
-    case = portfolio_case(first_variance=9, second_variance=1)
-    result = allocate(case)
+    context = portfolio_context(first_variance=9, second_variance=1)
+    result = allocate(context)
     study = Study(
         "markowitz",
         "Bound covariance experiment",
         "An actual computed allocation, with changed covariance data.",
         (),
-        {"changed_covariance": Variant(case, {"allocation": Computation(result)})},
+        {"changed_covariance": Variant(context, {"allocation": Computation(result)})},
     )
     with matplotlib.rc_context(
         {
@@ -85,10 +85,10 @@ def test_markowitz_artifacts_use_bound_results_and_preserve_plotting_state(tmp_p
 
 def test_blocked_only_study_does_not_invent_a_curve(tmp_path):
     pytest.importorskip("matplotlib")
-    from examples.financial_models.markowitz import portfolio_case
+    from examples.financial_models.markowitz import portfolio_context
 
-    case = portfolio_case()
-    study = Study("markowitz", "No certified allocation", "", (), {"uncomputed": Variant(case)})
+    context = portfolio_context()
+    study = Study("markowitz", "No certified allocation", "", (), {"uncomputed": Variant(context)})
     write_figure(study, tmp_path)
     content = (tmp_path / "overview.svg").read_text()
     assert "No fully specified successful variant" in content
@@ -97,16 +97,16 @@ def test_blocked_only_study_does_not_invent_a_curve(tmp_path):
 
 def test_gaussian_option_curves_are_sampled_as_arrays(tmp_path):
     pytest.importorskip("matplotlib")
-    from examples.financial_models.black_scholes import dividend_free_method, study_case
+    from examples.financial_models.black_scholes import dividend_free_method, study_context
 
-    case = study_case(dividends=False)
-    result = case.run(dividend_free_method())
+    context = study_context(dividends=False)
+    result = context.run(dividend_free_method())
     study = Study(
         "black-scholes",
         "Bound Gaussian curves",
         "",
         (),
-        {"without_dividends": Variant(case, {"parity": Computation(result)})},
+        {"without_dividends": Variant(context, {"parity": Computation(result)})},
     )
     write_figure(study, tmp_path)
     content = (tmp_path / "overview.svg").read_text()
@@ -119,10 +119,10 @@ def test_unbounded_weight_domain_retains_the_short_position(tmp_path):
     pytest.importorskip("matplotlib")
     from sympy import Rational
 
-    from examples.financial_models.markowitz import PortfolioRestrictions, allocate, portfolio_case
+    from examples.financial_models.markowitz import PortfolioRestrictions, allocate, portfolio_context
 
-    case = portfolio_case(first_variance=1, second_variance=4, covariance=Rational(3, 2))
-    result = allocate(case, PortfolioRestrictions(long_only=False))
+    context = portfolio_context(first_variance=1, second_variance=4, covariance=Rational(3, 2))
+    result = allocate(context, PortfolioRestrictions(long_only=False))
     assert result.data.feasible.start.is_finite is False
     assert result.data.other_weight < 0
     study = Study(
@@ -130,7 +130,7 @@ def test_unbounded_weight_domain_retains_the_short_position(tmp_path):
         "Short positions allowed",
         "",
         (),
-        {"shorts_allowed": Variant(case, {"allocation": Computation(result)})},
+        {"shorts_allowed": Variant(context, {"allocation": Computation(result)})},
     )
     write_figure(study, tmp_path)
     content = (tmp_path / "overview.svg").read_text()

@@ -11,12 +11,12 @@ from sympy import Rational, S, exp, simplify
 from examples.financial_models.cir_bond import (
     CIRBond,
     CIRParameters,
-    cir_case,
+    cir_context,
     numerical_method,
     price,
     pricing_method,
     strict_positive_boundary_method,
-    symbolic_case,
+    symbolic_context,
     verification_method,
     with_feller,
 )
@@ -24,28 +24,28 @@ from modello.contrib.verification import VerificationError
 
 
 @pytest.fixture(scope="module")
-def ordinary_case():
-    return cir_case()
+def ordinary_context():
+    return cir_context()
 
 
 @pytest.fixture(scope="module")
-def ordinary_price(ordinary_case):
-    return price(ordinary_case)
+def ordinary_price(ordinary_context):
+    return price(ordinary_context)
 
 
 @pytest.fixture(scope="module")
-def high_volatility_case():
-    return cir_case(sigma=Rational(2, 5))
+def high_volatility_context():
+    return cir_context(sigma=Rational(2, 5))
 
 
 @pytest.fixture(scope="module")
-def terminal_case():
-    return cir_case(initial_rate=0, horizon=0)
+def terminal_context():
+    return cir_context(initial_rate=0, horizon=0)
 
 
 @pytest.fixture(scope="module")
-def changed_assumptions(ordinary_case):
-    return ordinary_case.assume(S.true)
+def changed_assumptions(ordinary_context):
+    return ordinary_context.assume(S.true)
 
 
 def test_price_has_exact_scalar_and_explicit_trusted_stochastic_evidence(ordinary_price):
@@ -71,30 +71,30 @@ def test_price_has_exact_scalar_and_explicit_trusted_stochastic_evidence(ordinar
     assert 0 < float(ordinary_price.data.price) < 1
 
 
-def test_verification_reduces_the_actual_riccati_and_generator_identities(ordinary_case):
-    result = ordinary_case.run(verification_method(ordinary_case))
+def test_verification_reduces_the_actual_riccati_and_generator_identities(ordinary_context):
+    result = ordinary_context.run(verification_method(ordinary_context))
     assert result.data.riccati_b == result.data.riccati_log_a == result.data.generator == 0
     assert result.data.terminal_price == 1
     assert result.report.explain("coefficient_denominator").verdict == "strictly true"
 
 
-def test_feller_rule_is_separate_and_its_failure_does_not_refute_valuation(high_volatility_case):
-    case = high_volatility_case
-    valuation = price(case)
-    assert case.expression("feller_margin") < 0
+def test_feller_rule_is_separate_and_its_failure_does_not_refute_valuation(high_volatility_context):
+    context = high_volatility_context
+    valuation = price(context)
+    assert context.expression("feller_margin") < 0
     assert valuation.report.explain("affine_valuation").verdict == "strictly true"
     assert valuation.report.explain("affine_valuation/nonnegative_paths").verdict == "strictly true"
     assert 0 < float(valuation.data.price) < 1
     with pytest.raises(VerificationError) as caught:
-        case.run(strict_positive_boundary_method(case))
-    assert caught.value.context is case
+        context.run(strict_positive_boundary_method(context))
+    assert caught.value.context is context
     report = caught.value.report
     assert report.explain("unattainable_zero").verdict == "unresolved"
     assert report.explain("unattainable_zero/feller_condition").verdict == "strictly false"
 
 
-def test_feller_can_be_added_and_removed_without_changing_its_parent_case():
-    earlier = cir_case(theta=None)
+def test_feller_can_be_added_and_removed_without_changing_its_parent_context():
+    earlier = cir_context(theta=None)
     bounded = with_feller(earlier)
     condition = bounded.assumptions[-1]
     relaxed = bounded.without_assumptions(condition, reason="Compare pricing without the optional boundary condition.")
@@ -122,50 +122,50 @@ def test_feller_can_be_added_and_removed_without_changing_its_parent_case():
     assert bounded.assumptions == (condition,) and not earlier.assumptions
 
 
-def test_the_feller_equality_case_also_has_an_unattainable_boundary():
-    case = cir_case(theta=Rational(1, 30))
-    assert case.expression("feller_margin") == 0
-    result = case.run(strict_positive_boundary_method(case))
+def test_the_feller_equality_context_also_has_an_unattainable_boundary():
+    context = cir_context(theta=Rational(1, 30))
+    assert context.expression("feller_margin") == 0
+    result = context.run(strict_positive_boundary_method(context))
     assert result.report.explain("unattainable_zero/feller_condition").verdict == "strictly true"
 
 
 def test_zero_initial_rate_is_a_valid_pricing_input():
-    case = cir_case(initial_rate=0)
-    result = price(case)
+    context = cir_context(initial_rate=0)
+    result = price(context)
     assert simplify(result.data.price - exp(result.data.log_a)) == 0
     assert result.report.explain("rate_c2").verdict == "strictly true"
     assert result.report.explain("affine_valuation/nonnegative_paths").verdict == "strictly true"
-    assert not any(item.obligation.consumer == "diffusion" for item in result.report.checks)
+    assert not any(item.obligation.consumer == "diffusion" for item in result.report.evidence)
     with pytest.raises(VerificationError) as caught:
-        case.run(strict_positive_boundary_method(case))
+        context.run(strict_positive_boundary_method(context))
     assert caught.value.report.explain("unattainable_zero/strictly_positive_initial_rate").verdict == "strictly false"
 
 
-def test_terminal_bond_is_one_and_does_not_assert_strict_decrease(terminal_case):
-    result = price(terminal_case)
+def test_terminal_bond_is_one_and_does_not_assert_strict_decrease(terminal_context):
+    result = price(terminal_context)
     assert result.data.price == 1
     assert result.data.b == result.data.log_a == 0
     assert result.report.explain("rate_nonincreasing").verdict == "strictly true"
     with pytest.raises(KeyError):
         result.report.explain("rate_decreasing")
-    numerical = terminal_case.run(numerical_method)
+    numerical = terminal_context.run(numerical_method)
     assert numerical.data.price == 1 and numerical.data.b == numerical.data.log_a == 0
     assert numerical.data.diagnostics["ode_nfev"] == 0
     with pytest.raises(VerificationError, match="strictly positive"):
-        terminal_case.run(numerical_method, rtol=0)
+        terminal_context.run(numerical_method, rtol=0)
 
 
 def test_a_changed_price_cannot_reuse_the_source_shortcut():
     class WrongTerminal(CIRBond):
         price = 2 * CIRBond.price
 
-    case = symbolic_case(WrongTerminal).observe(
+    context = symbolic_context(WrongTerminal).observe(
         parameters=CIRParameters("risk_neutral", kappa=Rational(3, 5), theta=Rational(1, 20), sigma=Rational(1, 5)),
         initial_rate=Rational(1, 25),
         horizon=5,
     )
     with pytest.raises(VerificationError) as caught:
-        price(case)
+        price(context)
     assert caught.value.report.explain("affine_price_form").verdict == "strictly false"
     assert caught.value.report.explain("terminal_price").verdict == "strictly false"
 
@@ -175,7 +175,7 @@ def test_overridden_generator_or_report_helpers_block_analytic_and_numerical_sho
     changed = new_class(
         "ChangedCIR", (CIRBond,), exec_body=lambda namespace: namespace.__setitem__(field, 2 * getattr(CIRBond, field))
     )
-    case = symbolic_case(changed).observe(
+    context = symbolic_context(changed).observe(
         parameters=CIRParameters("risk_neutral", kappa=Rational(3, 5), theta=Rational(1, 20), sigma=Rational(1, 5)),
         initial_rate=Rational(1, 25),
         horizon=5,
@@ -185,27 +185,27 @@ def test_overridden_generator_or_report_helpers_block_analytic_and_numerical_sho
     ]
     for factory in (pricing_method, numerical_method):
         with pytest.raises(VerificationError) as caught:
-            case.run(factory(case))
+            context.run(factory(context))
         assert caught.value.report.explain(claim).verdict == "strictly false"
 
 
 @pytest.mark.parametrize(
     "factory", [pricing_method, verification_method, numerical_method, strict_positive_boundary_method]
 )
-def test_case_aware_methods_reject_reuse_after_an_assumption_change(ordinary_case, changed_assumptions, factory):
-    method = factory(ordinary_case)
-    assert method.bound_context is ordinary_case
+def test_context_aware_methods_reject_reuse_after_an_assumption_change(ordinary_context, changed_assumptions, factory):
+    method = factory(ordinary_context)
+    assert method.bound_context is ordinary_context
     changed = changed_assumptions
-    assert changed.problem is ordinary_case.problem
+    assert changed.problem is ordinary_context.problem
     with pytest.raises(VerificationError, match="bound to a different verification context") as caught:
         changed.run(method)
     assert caught.value.context is changed
 
 
-@pytest.mark.parametrize("case_name", ["ordinary_case", "high_volatility_case"])
-def test_independent_riccati_integration_and_quadrature_agree_with_the_formula(request, case_name):
-    case = request.getfixturevalue(case_name)
-    result = case.run(numerical_method(case), rtol=1e-11, atol=1e-13)
+@pytest.mark.parametrize("context_name", ["ordinary_context", "high_volatility_context"])
+def test_independent_riccati_integration_and_quadrature_agree_with_the_formula(request, context_name):
+    context = request.getfixturevalue(context_name)
+    result = context.run(numerical_method(context), rtol=1e-11, atol=1e-13)
     assert result.data.diagnostics["kind"] == "numerical observation"
     for name in ("b_difference", "log_a_difference", "price_difference", "quadrature_log_a_difference"):
         assert result.data.diagnostics[name] < 1e-9
@@ -215,7 +215,7 @@ def test_independent_riccati_integration_and_quadrature_agree_with_the_formula(r
 @pytest.mark.parametrize("value", [S.Infinity, S.NaN, float("nan"), float("inf"), 1 + S.ImaginaryUnit])
 def test_nonfinite_or_nonreal_observations_are_rejected(value):
     with pytest.raises(ValueError, match="finite real"):
-        cir_case(initial_rate=value)
+        cir_context(initial_rate=value)
 
 
 def test_import_does_not_load_optional_numerical_dependencies():

@@ -49,7 +49,7 @@ class _Regularity(Protocol):
     def witness(self) -> tuple[tuple[Symbol, Expr], ...]: ...
 
 
-_Check = Callable[[Expr, Symbol | None, Set, int], _Regularity]
+_RegularityVerifier = Callable[[Expr, Symbol | None, Set, int], _Regularity]
 
 
 @dataclass(frozen=True)
@@ -102,7 +102,9 @@ def _conjunction(conditions: list[Basic | None]) -> Basic | None:
     return And(*conditions)
 
 
-def _finite(value: Expr, check: _Check, guards: list[Basic | None], steps: list[str], label: str) -> bool | None:
+def _finite(
+    value: Expr, verify: _RegularityVerifier, guards: list[Basic | None], steps: list[str], label: str
+) -> bool | None:
     """Check actual finite real values; retain parameter guards explicitly."""
     if value in (S.NaN, S.ComplexInfinity, S.Infinity, S.NegativeInfinity) or value.is_finite is False:
         steps.append(f"{label} is not finite: {value}.")
@@ -110,7 +112,7 @@ def _finite(value: Expr, check: _Check, guards: list[Basic | None], steps: list[
     if value.has(Limit, AccumBounds, Piecewise):
         steps.append(f"{label} has no established single finite limit: {value}.")
         return None
-    result = check(value, None, S.Reals, 0)
+    result = verify(value, None, S.Reals, 0)
     guards.append(result.condition)
     steps.extend(f"{label}: {item}" for item in result.steps)
     if result.condition is not None and result.condition is not S.true:
@@ -136,14 +138,14 @@ def _equal(left: Expr, right: Expr) -> Basic:
 
 
 def piecewise_regular(
-    expression: Expr, variable: Symbol | None, domain: Set, order: int, check: _Check
+    expression: Expr, variable: Symbol | None, domain: Set, order: int, verify: _RegularityVerifier
 ) -> PiecewiseCertificate | None:
     """Check a genuine two-branch Piecewise on a real interval, for orders 0--2.
 
-    ``check(expr, variable, domain, order)`` must certify regularity and retain
+    ``verify(expr, variable, domain, order)`` must certify regularity and retain
     source-domain guards. Constant-value checks pass ``variable=None`` and
     ``order=0`` to the same callback. Unsupported joins return ``None``;
-    supported but unproved cases return a certificate with ``condition=None``.
+    supported but unproved scenarios return a certificate with ``condition=None``.
 
     A singleton domain is supported only for C0: a finite assigned value is
     continuous on that singleton, but it supplies no derivative neighborhood.
@@ -178,7 +180,7 @@ def piecewise_regular(
         value = selected.subs(variable, singleton)
         steps: list[str] = []
         guards: list[Basic | None] = []
-        finite = _finite(value, check, guards, steps, "The assigned singleton value")
+        finite = _finite(value, verify, guards, steps, "The assigned singleton value")
         condition = S.false if finite is False else _conjunction(guards) if finite is True else None
         return PiecewiseCertificate(
             condition,
@@ -208,7 +210,7 @@ def piecewise_regular(
     guards = []
     witness: tuple[tuple[Symbol, Expr], ...] = ()
     for side, branch, part in active:
-        result = check(branch, variable, part, checked_order)
+        result = verify(branch, variable, part, checked_order)
         guards.append(result.condition)
         steps.extend(f"The {side} branch: {item}" for item in result.steps)
         if result.condition is not None and result.condition is not S.true:
@@ -225,7 +227,7 @@ def piecewise_regular(
         steps.append("The join is outside the domain; inactive branches and the assigned join value are irrelevant.")
         return PiecewiseCertificate(_conjunction(guards), tuple(steps), guards=retained())
     point_value = assigned.subs(variable, point)
-    finite_point = _finite(point_value, check, guards, steps, "The actual assigned join value")
+    finite_point = _finite(point_value, verify, guards, steps, "The actual assigned join value")
     if finite_point is False:
         return PiecewiseCertificate(S.false, tuple(steps), ((variable, point),), guards=retained())
     if finite_point is None:
@@ -240,7 +242,7 @@ def piecewise_regular(
                 steps.append(f"The {side} derivative-order-{degree} limit is unresolved.")
                 return PiecewiseCertificate(None, tuple(steps), guards=retained())
             label = f"The {side} derivative-order-{degree} limit"
-            finite = _finite(value, check, guards, steps, label)
+            finite = _finite(value, verify, guards, steps, label)
             if finite is not True:
                 condition = S.false if finite is False and _conjunction(guards) is S.true else None
                 return PiecewiseCertificate(

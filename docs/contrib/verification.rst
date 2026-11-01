@@ -63,7 +63,7 @@ second derivatives, the usual C2 condition.
 In this declaration, ``wealth`` is the curve's argument, represented by a
 ``Coordinate``. These properties are checked over the real line. ``gamma`` is
 a parameter represented by ``InstanceDummy``. An assumption restricts its
-allowed values; an observation can fix it for a particular case.
+allowed values; an observation can fix it for a particular context.
 
 Interpret the first verdict
 ---------------------------
@@ -87,31 +87,31 @@ Read a verdict in the context of its coordinate domain and current assumptions:
 
 Definition checks keep all four outcomes available for exploration. A method
 can run once the premises it consumes are established. The next step is to
-make the utility's parameter condition explicit on a case.
+make the utility's parameter condition explicit on a context.
 
 Branch assumptions and observations
 -----------------------------------
 
-A ``VerificationContext`` combines a model declaration with the assumptions
-and observations for one case. Create it as a common branch point, then use
-its actual symbols when stating assumptions:
+A ``VerificationContext`` combines a model declaration with assumptions and
+observations for one branch of a study. Start with a common branch point,
+then use its actual symbols when stating assumptions:
 
->>> case = VerificationContext.for_model(Utility)
->>> needed = case.explain("value/strictly_increasing")
->>> needed.condition == (case.symbols.gamma > 0)
+>>> context = VerificationContext.for_model(Utility)
+>>> needed = context.explain("value/strictly_increasing")
+>>> needed.condition == (context.symbols.gamma > 0)
 True
->>> positive_case = case.assume(case.symbols.gamma > 0)
->>> positive_case.verify().explain("value/strictly_increasing").verdict
+>>> positive_context = context.assume(context.symbols.gamma > 0)
+>>> positive_context.verify().explain("value/strictly_increasing").verdict
 'strictly true'
->>> case.observe(gamma=0).verify().explain("value/strictly_increasing").verdict
+>>> context.observe(gamma=0).verify().explain("value/strictly_increasing").verdict
 'strictly false'
->>> case.verify().explain("value/strictly_increasing").verdict
+>>> context.verify().explain("value/strictly_increasing").verdict
 'conditionally true'
 
 ``observe`` accepts the same scalar and component observations as model
 inspection. It retains the original equations and input provenance through the
 existing solution-family machinery. Observations accumulate; use a new branch
-from the earlier case to change one. Use exact values, such as
+from the earlier context to change one. Use exact values, such as
 ``Rational("0.1")``, for symbolic checks. Numerical tolerances belong to a
 numerical method's settings.
 
@@ -124,7 +124,7 @@ Run a method with established premises
 A ``Method`` pairs a computation with an explicit contract. Set ``uses`` to
 the model fields the computation reads directly; the runner follows their
 model dependencies. State extra mathematical premises in ``Method.preconditions``.
-This symbolic valuation reads the utility curve from whichever case is
+This symbolic valuation reads the utility curve from whichever context is
 supplied:
 
 >>> from modello.contrib.verification import Method, VerificationError
@@ -133,7 +133,7 @@ supplied:
 ...     lambda current: current.expression("value", wrt="wealth"),
 ...     uses=("value",),
 ... )
->>> valued = positive_case.observe(gamma=1).run(valuation)
+>>> valued = positive_context.observe(gamma=1).run(valuation)
 >>> valued.data.subs(Utility.wealth, 0)
 -1
 >>> valued.report.explain("value/strictly_increasing").verdict
@@ -141,11 +141,11 @@ supplied:
 
 The result's ``data`` is a SymPy utility curve; here it is evaluated at zero
 wealth. Its ``report`` retains the premises that permitted the computation.
-Running the same method on the unrestricted case exposes the premise still
+Running the same method on the unrestricted context exposes the premise still
 needed:
 
 >>> try:
-...     case.run(valuation)
+...     context.run(valuation)
 ... except VerificationError as error:
 ...     print(error.report.explain("value/strictly_increasing").verdict)
 conditionally true
@@ -162,8 +162,8 @@ Inspect and export evidence
 ---------------------------
 
 Use ``valued.report.explain(id)`` to inspect the premises checked for that
-computation. ``case.explain(id)`` or ``case.verify().explain(id)`` instead checks
-the case with its own observations and assumptions.
+computation. ``context.explain(id)`` or ``context.verify().explain(id)`` instead
+verifies the context with its own observations and assumptions.
 Evidence includes the claim, coordinate domain, condition and its strength,
 derivation steps, dependencies, counterexamples, and recursively checked
 rule premises. Expected forms, target bounds, and checked hints retain their
@@ -180,8 +180,10 @@ True
 Exports retain the declared subject and the expected formula before parameter
 observations, alongside the specialized expression actually checked. This
 keeps a successful equality readable even when both evaluated sides become
-the same number. The JSON remains descriptive; it cannot reconstruct a case
-or execute a stored formula.
+the same number. ``VerificationReport.evidence`` holds the verification
+attempts; schema version 2 exports them under ``evidence``. Study records use
+``context`` or ``contexts`` for their model contexts. The JSON remains
+descriptive; it cannot reconstruct a context or execute a stored formula.
 
 .. _revise-an-assumption-or-requirement:
 
@@ -190,19 +192,19 @@ Revise assumptions and obligations
 
 Explicit assumptions can be removed on a new branch, with a recorded reason:
 
->>> relaxed = positive_case.without_assumptions(
-...     case.symbols.gamma > 0, reason="Compare zero and negative risk aversion.")
+>>> relaxed = positive_context.without_assumptions(
+...     context.symbols.gamma > 0, reason="Compare zero and negative risk aversion.")
 >>> relaxed.verify().explain("value/strictly_increasing").verdict
 'conditionally true'
->>> positive_case.verify().explain("value/strictly_increasing").verdict
+>>> positive_context.verify().explain("value/strictly_increasing").verdict
 'strictly true'
 
 The report records why an explicit premise changed. Declared symbol domains
-and existing observations remain part of the case.
+and existing observations remain part of the context.
 
 You can add a proof obligation for exploration, then retire it on a new branch:
 
->>> exploratory = case.with_obligations(positive("gamma", name="positive_risk"))
+>>> exploratory = context.with_obligations(positive("gamma", name="positive_risk"))
 >>> exploratory.verify().explain("positive_risk").verdict
 'conditionally true'
 >>> restored = exploratory.without_obligations(
@@ -218,8 +220,8 @@ in place. A method still needs evidence for its preconditions.
 Check consistency when combining assumptions. Contradictory premises produce
 an inconsistent report and cannot establish a result:
 
->>> impossible = case.assume(case.symbols.gamma > 0, case.symbols.gamma < 0).verify()
->>> impossible.consistent, impossible.checks[0].verdict
+>>> impossible = context.assume(context.symbols.gamma > 0, context.symbols.gamma < 0).verify()
+>>> impossible.consistent, impossible.evidence[0].verdict
 (False, 'unresolved')
 
 .. _check-a-proposed-proof:
@@ -246,7 +248,7 @@ premise is checked before cancellation. A pointwise inequality strictly below
 2 would not by itself establish a supremum strictly below 2.
 
 An incorrect hint leaves the obligation unresolved; it does not refute the property.
-The ``upper`` value is a proposed proof aid, not an assumption or a requirement
+The ``upper`` value is a proposed proof aid, not an assumption or an obligation
 that is accepted without checking. A uniform target bound must also be
 independent of the quantified coordinate, including after resolving aliases.
 A coordinate-dependent target is a ``ModelDefinitionError``; it cannot become
@@ -265,7 +267,7 @@ deterministic schedules, stochastic premises, and piecewise regularity.
 
 For the complete utility/risk/liquidity application, continue with
 :doc:`market making <../examples/market-making/index>`. It connects checked
-component requirements to the coupled time-dependent numerical study and its
+component obligations to the coupled time-dependent numerical study and its
 offline reports.
 
 Reference: contracts, domains, and proof limits
@@ -322,23 +324,23 @@ Model and component contracts
 
 Obligations use relative paths. Nested components acquire their parent path
 when inspected; replacing a component or redefining an inherited formula
-rebinds its requirements. The stored annotations describe claims, not old
+rebinds its obligations. The stored annotations describe claims, not old
 verdicts. Definition checking does not construct a model or select a solver
-candidate. Failed and unresolved requirements remain available for exploration.
+candidate. Failed and unresolved obligations remain available for exploration.
 
 Every property function accepts optional ``consumer``, ``reason``, and
 ``source`` metadata. ``reason`` and ``source`` describe the claim's purpose and
 provenance. ``consumer`` can associate a claim with a method name or field path
-for execution. Methods also consume the requirements declared on the fields
+for execution. Methods also consume the obligations declared on the fields
 in ``Method.uses`` and their dependencies. These labels leave the mathematical
 property being checked unchanged. The same ``Obligation`` works in
-``case.with_obligations(...)``, ``Method.preconditions``, and ``InferenceRule.premises``.
+``context.with_obligations(...)``, ``Method.preconditions``, and ``InferenceRule.premises``.
 
 ``Constrained = specifies(Model, *obligations)`` returns a subclass carrying
 additional model-wide conditions. For a ``VerificationModel`` subclass, it also
 refreshes the definition report automatically. For an ordinary ``Modello``
 class, inspect the conditions with ``VerificationContext.for_model(Constrained).verify()``.
-The original model and earlier cases remain unchanged. These conditions follow
+The original model and earlier contexts remain unchanged. These conditions follow
 the model into nested components and are consumed by methods that read its fields.
 Coordinate paths follow inheritance: a subclass that shadows a coordinate with
 a regular attribute removes that path from the verification interface. Scalar
@@ -354,22 +356,22 @@ Keep component field references in reusable native claims and hints: expanded
 expressions cannot identify which component owns a shared coordinate, so
 replacement rejects that ambiguity.
 Replacement cannot split previously aliased fields or coordinate paths into
-independent quantities within the same component. Start a new model and case
+independent quantities within the same component. Start a new model and context
 to give them separate observations, argument scopes, and contracts.
 Named symbolic declarations, such as series and recurrence laws,
 follow the same path-based rebinding as fields in observations, claims, and
 hints. Recorded declaration paths and argument signatures must remain
-compatible; removing or changing that interface requires a new model and case.
+compatible; removing or changing that interface requires a new model and context.
 Local argument names in independent declarations can change independently.
 Coordinate paths also retain their argument role during replacement. Changing
-one into an observed or derived model field requires a new model and case;
+one into an observed or derived model field requires a new model and context;
 replacement rejects that change before it can alter an inherited derivative.
 Coordinates used by inherited calculations, observations, assumptions, claims,
 or hints must remain available through a compatible path or coordinate alias.
 Callable expected formulas are evaluated when a claim is checked. Resolve
 coordinates through their reference callback so the formula follows the current
 component interface. A callback that captures a coordinate from a changed
-interface, or a scalar symbol from an earlier case, must be rebuilt before it
+interface, or a scalar symbol from an earlier context, must be rebuilt before it
 can establish a claim. Fresh local variables in native operations remain valid.
 
 Replacement preserves explicit observations. Inferred values copied from an
@@ -391,7 +393,9 @@ identity even when reached through several component paths. Report printers
 label the original symbolic tree without substituting or simplifying it, so
 formatting cannot turn a difference of independent coordinates into zero.
 
-Retire explicit assumptions and requirements
+.. _retire-explicit-assumptions-and-requirements:
+
+Retire explicit assumptions and obligations
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``without_assumptions`` removes only explicitly recorded predicates, matching
@@ -399,14 +403,14 @@ their retained native scopes. Mathematically equal substitutions with different
 coordinate domains remain separate assumptions. To change an intrinsic symbol
 domain or an observation, change the declaration or branch before that
 observation. ``without_obligations(*ids, reason=...)`` removes
-requirements added with ``case.with_obligations`` and records their retirement in the
-report. Declaration annotations and automatic operation obligations are changed
-at their source. Removing an exploratory requirement never removes a method's
-own contract; the method checks that requirement again when it runs. Identical
-requirement records shared by a case and a method reuse one check, while
+obligations added with ``context.with_obligations`` and records their retirement
+in the report. Declaration annotations and obligations from symbolic operations
+are changed at their source. Retiring an exploratory obligation leaves a
+method's preconditions in place; ``run`` verifies them again. Identical
+obligation records shared by a context and a method reuse one verification, while
 conflicting uses of an ID remain definition errors.
-The same policy applies to rule premises: identical requirements reuse one
-check, while conflicting conditions need distinct ``name`` values.
+The same policy applies to rule premises: identical obligations reuse one
+verification, while conflicting conditions need distinct ``name`` values.
 All evidence IDs, including nested inference-rule premise paths, must be unique
 within a report; a collision is a definition error.
 
@@ -427,7 +431,7 @@ assumed.
 
 ``wrt`` selects an independent model quantity or a declared ``Coordinate``.
 Use a path or the original symbol identity. A new same-named SymPy symbol is
-rejected as foreign to the case. A defined quantity such as ``doubled = 2*x``
+rejected as foreign to the context. A defined quantity such as ``doubled = 2*x``
 is rejected as a differentiation coordinate with ``ModelDefinitionError``:
 reparameterize the curve explicitly before asking about its derivatives.
 Quantities in unresolved defining cycles, and quantities that depend on them,
@@ -455,7 +459,7 @@ methods that need them.
 Scalar declarations retain their operands before simplification too. A held
 ``0*log(x)`` or ``exp(log(x))`` therefore keeps the hole at zero when inspected,
 checked, or sampled. Native operations in assumptions use the same premise
-checks as property subjects. A refuted native premise makes the case
+checks as property subjects. A refuted native premise makes the context
 inconsistent; an unestablished premise blocks methods until supported
 parameter facts establish it. The native assumption cannot establish its own
 operation's premises.
@@ -468,9 +472,9 @@ Checks also bind active SymPy ``assuming(...)`` predicates through observations
 and record them in their report, checking the combined premises for consistency.
 Cached expression bindings, solution families, and proof attempts remain scoped
 to that global assumption context, including its retained native coordinate
-scopes. Case-bound methods distinguish those scopes too. Leaving the context
+scopes. Context-bound methods distinguish those scopes too. Leaving the context
 checks the original branch again without retaining context-dependent
-simplifications. Use explicit ``case.assume(...)`` branches for premises that
+simplifications. Use explicit ``context.assume(...)`` branches for premises that
 should persist in the study.
 
 Native substitution coordinates keep their own declared domains in cached
@@ -598,7 +602,7 @@ unresolved. These checks establish the operations used in an integrand or term;
 they do not establish convergence of an integral, series, or limit.
 
 Implicit defining equations and intrinsic field domains participate in joint
-feasibility checks even without observations. Inconsistent cases block method execution.
+feasibility checks even without observations. Inconsistent contexts block method execution.
 Unsupported cyclic calculus remains inspectable as unresolved evidence, and
 blocks computations that depend on the unavailable model algebra.
 Unsupported inequality reasoning, including the solver's limits on irrational
@@ -616,7 +620,7 @@ at the join is unnecessary. Unsupported joins stay unresolved; an included
 interval endpoint with only one active side does not establish ordinary differentiability.
 Pointwise definedness at a guarded boundary is insufficient: an ordinary
 derivative needs a defined neighborhood around every point, including points
-in finite or closed interval domains. This requirement also applies to
+in finite or closed interval domains. This obligation also applies to
 ``continuously_differentiable(order=1)`` and ``continuously_differentiable(order=2)``. Continuity checks remain relative to
 the requested domain.
 
@@ -628,7 +632,7 @@ are excluded from unused-hint diagnostics.
 Use deferred ``Derivative(named_quantity, coordinate)`` inside declarations.
 A named quantity acts as a symbol while the class body is collected, so eager
 ``diff`` can treat it as independent of the coordinate. Differentiate a resolved
-``case.expression`` when performing a calculation outside the declaration.
+``context.expression`` when performing a calculation outside the declaration.
 
 .. _verification-method-reference:
 
@@ -636,7 +640,7 @@ Methods and inference rules
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Pass either a prepared method or a method factory to
-``case.run(method, **settings)``. A factory receives the current case and returns
+``context.run(method, **settings)``. A factory receives the current context and returns
 a ``Method``; the runner then checks its premises and relevant automatic
 obligations before executing it. Settings go to the computation, not the
 factory. A blocked computation raises
@@ -669,18 +673,18 @@ curve can still have a pole elsewhere.
 ...     return Method(
 ...         "symbolic valuation", lambda inner: curve, uses=("value",),
 ...     ).bind(current)
->>> positive_case.run(valuation).report.explain("value/strictly_increasing").verdict
+>>> positive_context.run(valuation).report.explain("value/strictly_increasing").verdict
 'strictly true'
 
-Use ``case.run(valuation)`` after branching: it builds the method from the
-current case on every call. The model examples use this form, such as
-``case.run(symbolic_method)`` or ``case.run(numerical_method, xatol=1e-10)``.
+Use ``context.run(valuation)`` after branching: it builds the method from the
+current context on every call. The model examples use this form, such as
+``context.run(symbolic_method)`` or ``context.run(numerical_method, xatol=1e-10)``.
 
 Factories capturing expressions bind the returned method with
-``Method(...).bind(case)``. If a prepared method is retained for later use,
-``case.run(prepared)`` rejects a different case or SymPy assumption context
-before checking its captured requirements or executing it. Generic methods
-that resolve expressions from the supplied ``current`` case can remain unbound.
+``Method(...).bind(context)``. If a prepared method is retained for later use,
+``context.run(prepared)`` rejects a different context or SymPy assumption context
+before checking its captured obligations or executing it. Generic methods
+that resolve expressions from the supplied ``current`` context can remain unbound.
 
 ``InferenceRule`` registers a trusted implication with a conclusion, named premises, source,
 and version. ``with_rule`` adds it to a context. The engine recursively checks
@@ -691,7 +695,7 @@ trust boundary; a citation or user assertion alone supplies no proof.
 
 ``sample`` evaluates a finite set of points and returns a ``Sample``.
 This record is labelled numerical observation and cannot discharge a global
-requirement. Points must be fully bound finite real scalars in the coordinate's
+obligation. Points must be fully bound finite real scalars in the coordinate's
 declared domain, and their evaluated values must be fully bound, finite, and
 real. Invalid points and unresolved symbolic values raise
 ``ModelValidationError``.
@@ -784,7 +788,7 @@ Returned evidence and results
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 These records are returned by the workflow; they do not introduce additional
-ways to declare a requirement.
+ways to declare an obligation.
 
 .. autoclass:: Evidence
    :members:
@@ -845,6 +849,22 @@ has one public vocabulary, without compatibility aliases for the draft names.
      - ``Method.preconditions``
    * - ``ResearchError.case``
      - ``VerificationError.context``
+   * - ``VerificationReport.checks``
+     - ``VerificationReport.evidence``
+   * - ``portfolio_case`` and other ``*_case`` factories
+     - ``portfolio_context`` and ``*_context`` factories
+   * - ``from_case``
+     - ``from_context``
+   * - ``SymbolicChecks``
+     - ``SymbolicVerification``
+   * - ``NumericalCheck``
+     - ``NumericalComparison``
+   * - ``checked_upper_bound`` in exported evidence
+     - ``bound_hint``
+
+JSON schema version 2 uses ``evidence`` in place of ``checks``, and ``context``
+or ``contexts`` in place of ``case`` or ``cases``. The bound hint is exported
+as ``bound_hint``. Reports do not emit the earlier draft keys.
 
 .. list-table:: Mathematical property terminology
    :header-rows: 1

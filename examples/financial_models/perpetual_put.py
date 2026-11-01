@@ -14,7 +14,7 @@ from typing import Any
 
 from sympy import Derivative, Expr, Interval, Piecewise, S, Subs, diff, exp, limit, simplify
 
-from examples._verification_checks import require_parameter_assumptions
+from examples._verification_inputs import validate_parameter_assumptions
 from modello import ConstraintKind, Coordinate, InstanceDummy, ScalarValue, component
 from modello.contrib.verification import (
     InferenceRule,
@@ -217,8 +217,8 @@ def obstacle_rule() -> InferenceRule:
     )
 
 
-def _requirements(case: VerificationContext[PerpetualPut]) -> tuple[Obligation, ...]:
-    symbol = case.symbols
+def _preconditions(context: VerificationContext[PerpetualPut]) -> tuple[Obligation, ...]:
+    symbol = context.symbols
     obligations = [*_source_forms()]
     for path in ("rate", "volatility", "strike"):
         obligations.append(
@@ -363,12 +363,12 @@ def _requirements(case: VerificationContext[PerpetualPut]) -> tuple[Obligation, 
     return tuple(obligations)
 
 
-def symbolic_case() -> VerificationContext[PerpetualPut]:
+def symbolic_context() -> VerificationContext[PerpetualPut]:
     """Prepare unobserved scalar formulas, trusting only the convex-tangent lemma."""
     return VerificationContext.for_model(PerpetualPut, "perpetual_put").with_rule(obstacle_rule())
 
 
-def perpetual_put_case(
+def perpetual_put_context(
     *,
     rate: ScalarValue = S.One / 25,
     volatility: ScalarValue = S.One / 5,
@@ -377,49 +377,49 @@ def perpetual_put_case(
     initial_spot: ScalarValue = 100,
 ) -> VerificationContext[PerpetualPut]:
     """Exact defaults have beta=-2, boundary 200/3, and value 400/27 at S0=100."""
-    return symbolic_case().observe(
+    return symbolic_context().observe(
         rate=rate, volatility=volatility, strike=strike, dividend=dividend, initial_spot=initial_spot
     )
 
 
-def trust_stopping_rule(case: VerificationContext[PerpetualPut]) -> VerificationContext[PerpetualPut]:
+def trust_stopping_rule(context: VerificationContext[PerpetualPut]) -> VerificationContext[PerpetualPut]:
     """Explicitly adopt the stated GBM optimal-stopping verification rule.
 
     The scalar checker checks the rule's analytic premises. It does not prove
     the Brownian model, generalized Ito, or optional sampling. The full trusted
     setting is exported in ``TRUSTED_STOPPING_ASSUMPTIONS`` and the result.
     """
-    return case.with_rule(
+    return context.with_rule(
         InferenceRule(
             "trusted_GBM_perpetual_put_verification",
             _OPTIMAL,
-            _requirements(case),
+            _preconditions(context),
             SOURCE,
             "1",
         )
     )
 
 
-def _independent_curve(case: VerificationContext[PerpetualPut]) -> None:
-    coordinates = {case._reference(name) for name in ("moneyness", "time")}
-    require_parameter_assumptions(
-        case,
+def _independent_curve(context: VerificationContext[PerpetualPut]) -> None:
+    coordinates = {context._reference(name) for name in ("moneyness", "time")}
+    validate_parameter_assumptions(
+        context,
         *coordinates,
         message="The verification traverses both regions and an unbounded time horizon; "
         "do not restrict its coordinates",
     )
-    for constraint in case.problem.constraints:
+    for constraint in context.problem.constraints:
         if constraint.kind is ConstraintKind.INPUT:
             if any(
-                case.expression(value, wrt="moneyness").free_symbols & coordinates
+                context.expression(value, wrt="moneyness").free_symbols & coordinates
                 for value in (constraint.left, constraint.right)
             ):
                 raise ValueError("Observe market parameters and initial_spot rather than derived curve values")
 
 
-def regularity_report(case: VerificationContext[PerpetualPut]) -> VerificationReport:
+def regularity_report(context: VerificationContext[PerpetualPut]) -> VerificationReport:
     """Keep the generic global C1/C2 attempts, including unresolved outcomes."""
-    return case.verify(
+    return context.verify(
         max_steps=1000,
         obligations=tuple(
             continuously_differentiable(
@@ -429,7 +429,7 @@ def regularity_report(case: VerificationContext[PerpetualPut]) -> VerificationRe
                 order=order,
                 name=f"global_c{order}",
                 consumer="global_regularity_diagnostic",
-                reason="Inspect the actual piecewise curve; no theorem overrides this attempt.",
+                reason="Inspect the actual piecewise curve; no inference rule overrides this attempt.",
             )
             for order in (1, 2)
         ),
@@ -447,15 +447,17 @@ class PutCertificate:
     second_derivative_jump: Expr
     regularity: VerificationReport
     boundary_report: VerificationReport
-    interpretation: str = "Scalar identities, obstacle bounds, and matched C1 boundary; no stochastic theorem invoked."
+    interpretation: str = (
+        "Scalar identities, obstacle bounds, and matched C1 boundary; no stochastic inference rule invoked."
+    )
 
 
-def _certificate(case: VerificationContext[PerpetualPut]) -> PutCertificate:
-    _independent_curve(case)
-    x = case.expression("moneyness", wrt="moneyness")
-    boundary = case.expression("boundary")
+def _certificate(context: VerificationContext[PerpetualPut]) -> PutCertificate:
+    _independent_curve(context)
+    x = context.expression("moneyness", wrt="moneyness")
+    boundary = context.expression("boundary")
     branches = {
-        side: case.expression(branch, wrt=x).doit()
+        side: context.expression(branch, wrt=x).doit()
         for side, branch in (("left", "exercise"), ("right", "continuation"))
     }
     one_sided = {
@@ -471,7 +473,7 @@ def _certificate(case: VerificationContext[PerpetualPut]) -> PutCertificate:
     ):
         raise ValueError("The actual one-sided value or slope fails to match")
     jump = simplify(one_sided["gamma_right"] - one_sided["gamma_left"])
-    report = case.verify(
+    report = context.verify(
         max_steps=1000,
         obligations=(
             positive(
@@ -492,28 +494,28 @@ def _certificate(case: VerificationContext[PerpetualPut]) -> PutCertificate:
         report.explain(name).condition is not S.true
         for name in ("nonzero_second_derivative_jump", "positive_initial_spot")
     ):
-        raise VerificationError("The boundary or initial-state certificate is unestablished", case, report)
-    value = case.expression("value", wrt=x).subs(x, case.expression("initial_spot") / boundary).doit()
+        raise VerificationError("The boundary or initial-state certificate is unestablished", context, report)
+    value = context.expression("value", wrt=x).subs(x, context.expression("initial_spot") / boundary).doit()
     return PutCertificate(
-        case.expression("beta"), boundary, simplify(value), one_sided, jump, regularity_report(case), report
+        context.expression("beta"), boundary, simplify(value), one_sided, jump, regularity_report(context), report
     )
 
 
-def algebra_method(case: VerificationContext[PerpetualPut]) -> Method[PutCertificate]:
+def algebra_method(context: VerificationContext[PerpetualPut]) -> Method[PutCertificate]:
     """Use piecewise smoothness and smooth fit, without requiring global C2."""
     return Method(
         "perpetual put scalar certificate",
         _certificate,
-        _requirements(case),
+        _preconditions(context),
         ("value", "continuation_residual", "exercise_residual", "continuation_curvature"),
-    ).bind(case)
+    ).bind(context)
 
 
 def c2_consumer_method() -> Method[Expr]:
     """An overly restrictive consumer, retained to demonstrate its rejection."""
     return Method(
         "global C2 consumer",
-        lambda case: case.expression("value", wrt="moneyness"),
+        lambda context: context.expression("value", wrt="moneyness"),
         (
             continuously_differentiable(
                 "value",
@@ -538,7 +540,7 @@ class StoppingVerification:
     )
 
 
-def verification_method(case: VerificationContext[PerpetualPut]) -> Method[StoppingVerification]:
+def verification_method(context: VerificationContext[PerpetualPut]) -> Method[StoppingVerification]:
     """Require the explicitly registered stochastic rule as well as the algebra."""
     return Method(
         "trusted perpetual put stopping verification",
@@ -553,7 +555,7 @@ def verification_method(case: VerificationContext[PerpetualPut]) -> Method[Stopp
             ),
         ),
         ("value", "continuation_residual", "exercise_residual", "continuation_curvature"),
-    ).bind(case)
+    ).bind(context)
 
 
 @dataclass(frozen=True)
@@ -567,7 +569,7 @@ class BarrierComparison:
     kind: str = "numerical observation over constant stopping barriers"
 
 
-def numerical_method(case: VerificationContext[PerpetualPut]) -> Method[BarrierComparison]:
+def numerical_method(context: VerificationContext[PerpetualPut]) -> Method[BarrierComparison]:
     """Independently maximize (K-b)*(S0/b)**beta over 0<b<=min(S0,K)."""
 
     def execute(current: VerificationContext[PerpetualPut], *, xatol: float = 1e-12) -> BarrierComparison:
@@ -619,36 +621,36 @@ def numerical_method(case: VerificationContext[PerpetualPut]) -> Method[BarrierC
     return Method(
         "independent stopping-barrier maximization",
         execute,
-        _requirements(case),
+        _preconditions(context),
         ("value", "continuation_residual", "exercise_residual", "continuation_curvature"),
-    ).bind(case)
+    ).bind(context)
 
 
 def run_demo(*, numerical: bool = False) -> dict[str, Any]:
-    """Return raw cases/results, blocked consumers, and trusted-rule evidence."""
-    case = perpetual_put_case()
-    trusted = trust_stopping_rule(case)
+    """Return raw contexts/results, blocked consumers, and trusted-rule evidence."""
+    context = perpetual_put_context()
+    trusted = trust_stopping_rule(context)
     results: dict[str, Any] = {
-        "case": case,
-        "algebra": case.run(algebra_method),
-        "trusted_case": trusted,
+        "context": context,
+        "algebra": context.run(algebra_method),
+        "trusted_context": trusted,
         "verification": trusted.run(verification_method),
     }
     for name, current, method in (
-        ("global_c2", case, c2_consumer_method()),
-        ("untrusted_verification", case, verification_method),
-        ("zero_rate", perpetual_put_case(rate=0), algebra_method),
+        ("global_c2", context, c2_consumer_method()),
+        ("untrusted_verification", context, verification_method),
+        ("zero_rate", perpetual_put_context(rate=0), algebra_method),
     ):
         try:
             current.run(method)
         except VerificationError as error:
-            results[f"blocked_{name}"] = {"case": current, "report": error.report, "message": str(error)}
+            results[f"blocked_{name}"] = {"context": current, "report": error.report, "message": str(error)}
         else:
             raise RuntimeError(f"The restricted consumer unexpectedly accepted {name}")
     if numerical:
-        results["numerical"] = case.run(numerical_method)
-        exercising = perpetual_put_case(initial_spot=50)
-        results["exercise_case"] = exercising
+        results["numerical"] = context.run(numerical_method)
+        exercising = perpetual_put_context(initial_spot=50)
+        results["exercise_context"] = exercising
         results["numerical_exercise"] = exercising.run(numerical_method)
     return results
 

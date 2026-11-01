@@ -13,7 +13,7 @@ from modello.contrib.verification import VerificationContext, VerificationError,
 @dataclass(frozen=True)
 class Computation:
     result: VerificationResult
-    kind: str = "exact scalar checks"
+    kind: str = "exact scalar verification"
 
 
 @dataclass(frozen=True)

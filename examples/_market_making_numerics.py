@@ -14,14 +14,14 @@ from scipy.sparse.linalg import expm_multiply
 from scipy.special import expit
 from sympy import Symbol, diff, exp as symbolic_exp, lambdify, simplify
 
-from examples._market_making_models import exponential_requirement, solver_requirements
-from examples._verification_checks import require_parameter_assumptions
+from examples._market_making_models import exponential_precondition, solver_preconditions
+from examples._verification_inputs import validate_parameter_assumptions
 from modello import ConstraintKind
 from modello.contrib.verification import Method, VerificationContext, VerificationResult
 
 
-def _number(case, path):
-    value = case.expression(path).doit()
+def _number(context, path):
+    value = context.expression(path).doit()
     if value.free_symbols or value.is_finite is not True or value.is_real is not True:
         raise ValueError(f"Bind {path} to a finite real value before numerical evaluation")
     return float(value)
@@ -43,15 +43,15 @@ class QuoteEvaluator:
     max_root_residual: float = 0
 
     @classmethod
-    def from_case(cls, case, side):
-        distance = case._reference(f"{side}.intensity.distance")
-        rate = case.expression(f"{side}.intensity.rate", wrt=distance).doit()
+    def from_context(cls, context, side):
+        distance = context._reference(f"{side}.intensity.distance")
+        rate = context.expression(f"{side}.intensity.rate", wrt=distance).doit()
         if rate.free_symbols - {distance}:
             raise ValueError("Bind all intensity coefficients before quote optimization")
-        scale, decay = (_number(case, f"{side}.intensity.{name}") for name in ("scale", "decay"))
-        gamma, step = _number(case, "gamma"), _number(case, "step")
-        a = case.expression(f"{side}.intensity.scale")
-        k = case.expression(f"{side}.intensity.decay")
+        scale, decay = (_number(context, f"{side}.intensity.{name}") for name in ("scale", "decay"))
+        gamma, step = _number(context, "gamma"), _number(context, "step")
+        a = context.expression(f"{side}.intensity.scale")
+        k = context.expression(f"{side}.intensity.decay")
         if simplify(rate - a * symbolic_exp(-k * distance)) == 0:
             family = "exponential"
         elif simplify(rate - a / (1 + symbolic_exp(k * distance))) == 0:
@@ -141,7 +141,7 @@ class QuoteSolution:
     diagnostics: dict[str, object]
 
 
-def _state_roles(case):
+def _state_roles(context):
     names = (
         "inventory",
         "continuation.current",
@@ -151,33 +151,33 @@ def _state_roles(case):
         "bid.value",
         "ask.value",
     )
-    symbols = {case._reference(name) for name in names}
+    symbols = {context._reference(name) for name in names}
     if len(symbols) != len(names):
         raise ValueError("The ODE adapter requires independent state and Hamiltonian coordinates")
     varying = symbols | {
-        case._reference(name) for name in ("terminal.inventory", "bid.intensity.distance", "ask.intensity.distance")
+        context._reference(name) for name in ("terminal.inventory", "bid.intensity.distance", "ask.intensity.distance")
     }
-    for constraint in case.problem.constraints:
+    for constraint in context.problem.constraints:
         if constraint.left in symbols and constraint.kind is ConstraintKind.DEFINITION:
             raise ValueError("The ODE adapter requires independent state and Hamiltonian coordinates")
         if (
             constraint.kind is ConstraintKind.INPUT
-            and (case._law(constraint.left).free_symbols | case._law(constraint.right).free_symbols) & varying
+            and (context._law(constraint.left).free_symbols | context._law(constraint.right).free_symbols) & varying
         ):
             raise ValueError("The full ODE study accepts parameter observations, not fixed state observations")
-    require_parameter_assumptions(
-        case,
+    validate_parameter_assumptions(
+        context,
         *varying,
         message="The full ODE study requires parameter assumptions; state coordinates vary on the grid "
         "and quote distances remain unrestricted",
     )
 
 
-def solve_quotes(case: VerificationContext, *, rtol=1e-8, atol=1e-10, max_step=None, points=101) -> QuoteSolution:
+def solve_quotes(context: VerificationContext, *, rtol=1e-8, atol=1e-10, max_step=None, points=101) -> QuoteSolution:
     """Integrate in remaining time, using the declared HJB's RHS and gates."""
-    _state_roles(case)
-    horizon, capacity, step = (_number(case, name) for name in ("horizon", "capacity", "step"))
-    ratio = case.expression("capacity") / case.expression("step")
+    _state_roles(context)
+    horizon, capacity, step = (_number(context, name) for name in ("horizon", "capacity", "step"))
+    ratio = context.expression("capacity") / context.expression("step")
     if ratio.is_integer is not True or ratio.is_positive is not True:
         raise ValueError("Capacity must be a positive integral number of lots")
     if (
@@ -192,21 +192,21 @@ def solve_quotes(case: VerificationContext, *, rtol=1e-8, atol=1e-10, max_step=N
     count = int(ratio)
     grid = np.arange(-count, count + 1, dtype=float) * step
     grid[0], grid[-1] = -capacity, capacity
-    q = case._reference("inventory")
-    hb, ha = case._reference("bid.value"), case._reference("ask.value")
-    theta_t = case._reference("continuation.time_derivative")
-    residual = case.expression("residual", wrt=q).doit()
+    q = context._reference("inventory")
+    hb, ha = context._reference("bid.value"), context._reference("ask.value")
+    theta_t = context._reference("continuation.time_derivative")
+    residual = context.expression("residual", wrt=q).doit()
     if diff(residual, theta_t) != -1:
         raise ValueError("The declared HJB must be affine in theta_t with coefficient -1")
     rhs_expression = -residual.subs(theta_t, 0)
-    terminal = case.expression("terminal_value", wrt=q).doit()
+    terminal = context.expression("terminal_value", wrt=q).doit()
     if rhs_expression.free_symbols - {q, hb, ha} or terminal.free_symbols - {q}:
         raise ValueError("Bind all coefficients before integrating the HJB")
     rhs = lambdify((q, hb, ha), rhs_expression, modules="math")
     bid_gate = lambdify(q, diff(rhs_expression, hb), modules="math")
     ask_gate = lambdify(q, diff(rhs_expression, ha), modules="math")
     initial = np.array([float(terminal.subs(q, position)) for position in grid])
-    bid, ask = QuoteEvaluator.from_case(case, "bid"), QuoteEvaluator.from_case(case, "ask")
+    bid, ask = QuoteEvaluator.from_context(context, "bid"), QuoteEvaluator.from_context(context, "ask")
 
     def evaluated(values):
         bid_values, ask_values = np.zeros(len(grid)), np.zeros(len(grid))
@@ -282,17 +282,17 @@ def solve_quotes(case: VerificationContext, *, rtol=1e-8, atol=1e-10, max_step=N
     )
 
 
-def run_quotes(case: VerificationContext, **settings) -> VerificationResult[QuoteSolution]:
+def run_quotes(context: VerificationContext, **settings) -> VerificationResult[QuoteSolution]:
     method = Method(
         "CARA inventory ODE",
         solve_quotes,
-        solver_requirements(case),
+        solver_preconditions(context),
         ("residual", "terminal_value", "bid.gain", "ask.gain"),
     )
-    return case.run(method, **settings)
+    return context.run(method, **settings)
 
 
-def exponential_reference(case: VerificationContext, times) -> np.ndarray:
+def exponential_reference(context: VerificationContext, times) -> np.ndarray:
     """Independent linear transformation, equation (3.13) in Guéant's paper."""
 
     def compute(current):
@@ -335,5 +335,5 @@ def exponential_reference(case: VerificationContext, times) -> np.ndarray:
             rows.append(step / k * np.log(value))
         return np.array(rows)
 
-    obligations = (*solver_requirements(case), exponential_requirement("bid"), exponential_requirement("ask"))
-    return case.run(Method("Exponential linear reference", compute, obligations)).data
+    obligations = (*solver_preconditions(context), exponential_precondition("bid"), exponential_precondition("ask"))
+    return context.run(Method("Exponential linear reference", compute, obligations)).data

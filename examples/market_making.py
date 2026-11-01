@@ -1,4 +1,4 @@
-"""Explore Guéant's continuous-time CARA market maker and its component requirements.
+"""Explore Guéant's continuous-time CARA market maker and its component obligations.
 
 Run ``python -m examples.market_making`` for the lightweight baseline, or add
 ``--study --output DIRECTORY`` for the time-dependent verification study.
@@ -31,14 +31,14 @@ SOURCE = "https://arxiv.org/html/1605.01862"
 
 
 def intensity_contracts(prefix="") -> tuple[Obligation, ...]:
-    """Use the same intensity hypotheses for declarations and quote theorems."""
+    """Use the same intensity hypotheses for declarations and quote optimization."""
     path = f"{prefix}." if prefix else ""
     rate, distance = path + "rate", path + "distance"
     return tuple(
         replace(claim, consumer="quote_uniqueness", reason=reason, source=SOURCE)
         for claim, reason in (
             (positive(rate, wrt=distance), "Trades need a positive arrival intensity."),
-            (continuously_differentiable(rate, wrt=distance), "Guéant's quote theorem requires C2 intensity."),
+            (continuously_differentiable(rate, wrt=distance), "Guéant's quote optimizer uses C2 intensity."),
             (strictly_decreasing(rate, wrt=distance), "Increasing distance must strictly reduce the arrival rate."),
             (tends_to_zero(rate, wrt=distance), "The intensity must vanish at large positive quote distance."),
             (derivative_ratio_bound(rate, wrt=distance), "A uniform curvature bound establishes a unique maximizer."),
@@ -176,7 +176,7 @@ class MarketMaker(MarketMakingState):
 
 
 def main() -> None:
-    """Print the definition checks and one exact interior HJB calculation."""
+    """Print declaration evidence and one exact interior HJB calculation."""
     import argparse
     from pathlib import Path
 
