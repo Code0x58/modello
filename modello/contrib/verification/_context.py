@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field as dataclass_field, replace
 from functools import cached_property
 from types import MappingProxyType, new_class
@@ -32,7 +32,7 @@ from sympy.logic.boolalg import Boolean
 from sympy.polys.polyerrors import PolynomialError
 
 from modello import ConstraintKind, Coordinate, Modello, annotate, annotate_model, component, inspect_model
-from modello._evaluation import _BINDERS, _evaluate, _expression_key, _predicate_parts, _rebind, _unique_expressions
+from modello._evaluation import _BINDERS, _evaluate, _expression_key, _predicate_parts, _rebind
 from modello._expressions import _definition_resolver, _DefinitionResolver
 from modello._operators import _bound_coordinates, _scalar_atoms, _ScopedExpression, _SymbolicTemplate
 from modello._problem import ModelConstraint
@@ -73,6 +73,11 @@ from ._records import (
 
 ModelT = TypeVar("ModelT", bound=Modello)
 ValueT = TypeVar("ValueT")
+
+
+def _unique_expressions(values: Iterable[Basic]) -> tuple[Basic, ...]:
+    """Deduplicate verification premises without merging substitution scopes."""
+    return tuple({_expression_key(value): value for value in values}.values())
 
 
 @dataclass

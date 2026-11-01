@@ -336,4 +336,16 @@ def exponential_reference(context: VerificationContext, times) -> np.ndarray:
         return np.array(rows)
 
     obligations = (*solver_preconditions(context), exponential_precondition("bid"), exponential_precondition("ask"))
-    return context.run(Method("Exponential linear reference", compute, obligations)).data
+    uses = (
+        "capacity",
+        "step",
+        "horizon",
+        "gamma",
+        "bid.intensity.decay",
+        "ask.intensity.decay",
+        "bid.intensity.scale",
+        "ask.intensity.scale",
+        "risk.cost",
+        "terminal_value",
+    )
+    return context.run(Method("Exponential linear reference", compute, obligations, uses)).data

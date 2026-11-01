@@ -272,7 +272,9 @@ Default tolerances are ``rtol=1e-8``, ``atol=1e-10``, and a maximum time step
 of ``T/100``. The report compares a tighter run, measures independent central
 time-difference defects, and checks the exponential context against its linear
 matrix-exponential transformation. Both calculations use the context's declared
-risk and terminal laws, including supported component replacements. The
+risk and terminal laws, including supported component replacements. Their method
+contracts declare the consumed fields, so automatic source obligations block
+undefined costs before either numerical callback starts. The
 comparisons record numerical differences and residuals; they do not prove
 error bounds. Source fingerprints, exact parameters, solver settings, and
 dependency versions accompany the results.

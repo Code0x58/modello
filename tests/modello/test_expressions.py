@@ -11,18 +11,71 @@ from sympy import (
     Function,
     Integral,
     Limit,
+    Mul,
+    Piecewise,
+    Pow,
     Product,
     Rational,
     S,
+    Subs,
     Sum,
     Symbol,
     exp,
     fibonacci,
+    log,
 )
 
-from modello import Index, InstanceDummy, Modello, Vector, component, inspect_model
+from modello import Index, InstanceDummy, Modello, ModelSolveError, Vector, component, inspect_model
 from modello._expressions import _evaluate
+from modello.diagnostics import Candidate, FieldValue
 from modello.errors import ModelInputError
+
+
+@pytest.mark.parametrize(
+    "formula,expected",
+    [
+        pytest.param(lambda x: Mul(0, log(x), evaluate=False), 0, id="zero-product"),
+        pytest.param(lambda x: Add(log(x), -log(x), evaluate=False), 0, id="cancellation"),
+        pytest.param(lambda x: Pow(log(x), 0, evaluate=False), 1, id="zero-power"),
+        pytest.param(
+            lambda x: Piecewise((1, Eq(log(x), log(x), evaluate=False)), (2, True), evaluate=False),
+            1,
+            id="selector",
+        ),
+    ],
+)
+def test_plain_models_retain_undefined_sources_through_simplification(formula, expected):
+    class Partial(Modello):
+        x = InstanceDummy("x", real=True)
+        value = formula(x)
+
+    assert Partial("defined", x=1).value == expected
+    with pytest.raises(ModelSolveError):
+        Partial("undefined", x=0)
+    for point, verdict in ((0, "violated"), (1, "satisfied")):
+        problem = inspect_model(Partial, "audit", x=point)
+        candidate = Candidate((FieldValue(problem.field("x"), point), FieldValue(problem.field("value"), expected)))
+        assert problem.check(candidate).verdict == verdict
+
+
+def test_plain_model_rebinding_keeps_equal_substitutions_in_distinct_local_scopes():
+    class Scoped(Modello):
+        left = InstanceDummy("left", real=True)
+        right = InstanceDummy("right", positive=True)
+        value = Add(
+            Subs(Derivative(S.Zero, left, evaluate=False), left, 0),
+            Subs(Derivative(S.Zero, right, evaluate=False), right, 0),
+            evaluate=False,
+        )
+
+    for problem in (inspect_model(Scoped, "first"), inspect_model(Scoped, "fresh")):
+        value = next(constraint.right for constraint in problem.constraints if constraint.path == ("value",))
+        assert len(value.args) == 2
+        assert value.args[0] == value.args[1]
+        assert tuple(term.variables for term in value.args) == (
+            (problem.field("left").symbol,),
+            (problem.field("right").symbol,),
+        )
 
 
 @pytest.mark.parametrize("first,last", [(0, 3), (-4, -1), (2, 1), (2, 0), (3, 0)])

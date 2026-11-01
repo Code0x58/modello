@@ -217,6 +217,38 @@ reconstruct a context. The market-making study compiles its RHS from the shared
 HJB and checks it against independent time differences and an exponential linear
 reference.
 
+Keep the extension boundary at evidence and proof policy. Core model
+declarations must preserve the meaning of their equations before any extension
+can inspect them. The shared symbolic changes have the following scope:
+
+``_evaluation.py``
+    Rebind and reconstruct expressions without losing operand domains or local
+    binder identities. A held ``0*log(x)`` and a selector involving ``log(x)``
+    must still be undefined at zero in an ordinary ``Modello``. Equal native
+    ``Subs`` expressions can have different local coordinates; tree-rewrite
+    caches must preserve both scopes.
+
+``_expressions.py``
+    Preserve declaration sources and expand directed dependencies with local
+    coordinates protected. The resolver factory separates dependency ordering
+    from evaluation, so ordinary solving and symbolic inspection share cycle
+    handling without forcing either consumer to execute native operators.
+
+``_operators.py``
+    Retain domain guards inside their binders and handle empty reductions using
+    native identities, including a zero-length integral whose inactive body
+    contains a cycle. Reversed discrete bounds retain SymPy semantics.
+
+``contrib/verification``
+    Interpret obligations, quantify domains, retain source guards used by proofs,
+    deduplicate premises and observations, evaluate native-operation
+    preconditions, apply inference rules, classify evidence, and gate methods.
+
+Core modules import no extension, including inside functions. They do not
+register proof predicates or select verification policies. Keep general fixes
+in core only when plain-model regressions establish their behavior; keep
+verification-specific interpretation and bookkeeping in the extension.
+
 ``series.py`` declares relative recurrences. ``contrib/stochastic.py`` provides
 the opt-in Itô extension; the core resolver uses scoped declaration hooks without
 importing domain extensions.

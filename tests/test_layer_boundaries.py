@@ -34,9 +34,10 @@ def test_core_imports_follow_the_dependency_layers(pytestconfig: pytest.Config) 
             )
         )
     }
-    for module, level in layers.items():
-        filename = "__init__.py" if module == "modello" else module.rsplit(".", 1)[1] + ".py"
-        tree = ast.parse((pytestconfig.rootpath / "modello" / filename).read_text())
+    for source in sorted((pytestconfig.rootpath / "modello").glob("*.py")):
+        module = "modello" if source.stem == "__init__" else f"modello.{source.stem}"
+        level = layers.get(module)
+        tree = ast.parse(source.read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING":
                 node.body = []
@@ -52,7 +53,10 @@ def test_core_imports_follow_the_dependency_layers(pytestconfig: pytest.Config) 
             else:
                 continue
             for dependency in dependencies:
-                if dependency in layers:
+                assert dependency != "modello.contrib" and not dependency.startswith("modello.contrib."), (
+                    f"{module} imports the extension layer {dependency}"
+                )
+                if level is not None and dependency in layers:
                     assert layers[dependency] < level, f"{module} imports the higher layer {dependency}"
 
 

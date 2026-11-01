@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from functools import cache, wraps
-from typing import Callable, Iterable, Mapping, NamedTuple
+from typing import Callable, Mapping, NamedTuple
 
 from sympy import (
     Add,
@@ -65,7 +65,7 @@ _BINDERS = (*_NATIVE_OPERATORS, _VectorFormula, _SymbolicTemplate, _ScopedOperat
 
 
 def _expression_key(value):
-    """Retain substitution scopes when matching expressions or their contexts."""
+    """Distinguish native substitutions with different bound coordinates."""
     if isinstance(value, tuple):
         return tuple(_expression_key(item) for item in value)
     if isinstance(value, frozenset):
@@ -96,12 +96,8 @@ def _cache_by_expression(function: Callable[[Basic], Basic]) -> Callable[[Basic]
     return resolved
 
 
-def _unique_expressions(values: Iterable[Basic]) -> tuple[Basic, ...]:
-    return tuple({_expression_key(value): value for value in values}.values())
-
-
 def _operation_keys(value, operators, *, exclude=()):
-    """Operands that must survive reconstruction until their premises are checked."""
+    """Retained operations whose local scopes must survive a tree rewrite."""
     if isinstance(value, tuple):
         return set().union(*(_operation_keys(item, operators, exclude=exclude) for item in value))
     if not isinstance(value, Basic) or not value.has(*operators):
@@ -235,7 +231,7 @@ def _tracks_operand_sources(expression: Basic) -> bool:
 
 
 def _construct(expression: Basic, args: tuple[Basic, ...], *, domains_separated: bool = False) -> Basic:
-    """Reconstruct a node while retaining operations that still need checking."""
+    """Rebuild a node without discarding operand domains or local scopes."""
     pending_operations = _operation_keys(args, _NATIVE_OPERATORS)
     operand_sources = _source_keys(args) if not domains_separated and _tracks_operand_sources(expression) else set()
     operand_domain = (

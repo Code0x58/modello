@@ -5,11 +5,11 @@ from math import inf, nan
 
 import numpy as np
 import pytest
-from sympy import S, assuming, exp
+from sympy import Abs, Derivative, S, Subs, assuming, exp
 
 from examples._market_making_models import CARAMarketMaker, LogisticIntensity, study_context
 from examples._market_making_numerics import QuoteEvaluator, exponential_reference, run_quotes
-from examples.market_making import CARAUtility, QuadraticTerminalPenalty
+from examples.market_making import CARAUtility, QuadraticInventoryRisk, QuadraticTerminalPenalty
 from examples.market_making_study import _provenance, compare, write_study
 from modello import Coordinate
 from modello.contrib.verification import VerificationError
@@ -175,6 +175,33 @@ def test_reference_derives_terminal_inputs_and_validates_its_domain():
         exponential_reference(study_context(capacity=S(3) / 2), (0, 1))
     with pytest.raises(VerificationError, match="within the model horizon"):
         exponential_reference(context, (-1, 1))
+
+
+@pytest.mark.parametrize(
+    "component,base,formula",
+    [
+        ("risk", QuadraticInventoryRisk, lambda model: model.gamma * model.variance / 2),
+        ("terminal", QuadraticTerminalPenalty, lambda model: model.eta * model.inventory**2),
+    ],
+)
+def test_reference_verifies_cost_sources_before_numerical_evaluation(
+    monkeypatch, capacity_one_context, component, base, formula
+):
+    class UndefinedCost(base):
+        cost = formula(base) + Subs(Derivative(Abs(base.inventory), base.inventory, evaluate=False), base.inventory, 0)
+
+    context = capacity_one_context.replace(component, UndefinedCost)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Unestablished sources must block the numerical callback")
+
+    monkeypatch.setattr("examples._market_making_numerics._state_roles", forbidden)
+    with pytest.raises(VerificationError, match="unestablished premises") as error:
+        exponential_reference(context, (0, 1))
+    assert error.value.context is context
+    assert any(
+        item.verdict == "strictly false" and item.id.startswith(f"{component}.") for item in error.value.report.evidence
+    )
 
 
 def test_coordinate_renaming_preserves_the_declared_gain_and_numerical_model(capacity_one_context):
