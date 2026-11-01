@@ -42,10 +42,10 @@ The proposed value is
 
 .. math::
 
-   P(Bx)=\begin{contexts}
+   P(Bx)=\begin{cases}
        K-Bx,&0<x\leq1,\\
        (K-B)x^\beta,&x>1.
-   \end{contexts}
+   \end{cases}
 
 Merton uses :math:`\gamma=2r/\sigma^2=-\beta` and names the exercise boundary
 :math:`C^*`. The implementation retains the fixed domains ``(0,1]`` and

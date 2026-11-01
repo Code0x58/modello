@@ -152,14 +152,16 @@ def _resolve_piecewise(expression: Piecewise, resolve: Callable[[Basic], Basic])
     branches = []
     validity = S.true
     for value, condition in expression.args:
-        condition, domain = _predicate_parts(condition, resolve)
-        validity = And(validity, domain)
+        selector = _predicate_parts(condition, resolve)
+        # Every selector reached so far must be defined before this branch
+        # can be selected, even when an earlier selector is false.
+        validity = And(validity, selector.condition)
         if validity is S.false:
             break
-        if condition is S.false:
+        if selector.value is S.false:
             continue
-        branches.append((resolve(value), And(validity, condition)))
-        if condition is S.true:
+        branches.append((resolve(value), And(validity, selector.value)))
+        if selector.value is S.true:
             break
     if validity is not S.true:
         branches.append((S.NaN, S.true))
@@ -210,62 +212,79 @@ def _evaluate(expression: Basic) -> Basic:
     return _rebuild(expression, args, _denominator_condition(expression))
 
 
-def _construct(expression: Basic, args: tuple[Basic, ...], *, domains_separated: bool = False) -> Basic:
-    """Reconstruct a node while retaining operations that still need checking."""
-    pending = _operation_keys(args, _NATIVE_OPERATORS)
-    sources = (
-        _source_keys(args)
-        if not domains_separated
-        and isinstance(expression, (Expr, Boolean, Set, Tuple))
+def _is_compound_boolean(expression: Basic) -> bool:
+    """A relation or logical expression, rather than a scalar or truth atom.
+
+    SymPy symbols also inherit Boolean; their scalar domains are handled as
+    expressions, not by reconstructing logical truth.
+    """
+    return isinstance(expression, Boolean) and not isinstance(expression, Expr) and not expression.is_Atom
+
+
+def _tracks_operand_sources(expression: Basic) -> bool:
+    """Ordinary expression nodes retain their operands' unevaluated sources.
+
+    Binders handle source domains in their local scopes. Boolean atoms have
+    no scalar operands whose domains need retaining.
+    """
+    return (
+        isinstance(expression, (Expr, Boolean, Set, Tuple))
         and not isinstance(expression, (*_BINDERS, _VectorElement))
         and not (isinstance(expression, Boolean) and expression.is_Atom)
-        else set()
     )
-    domain = (
+
+
+def _construct(expression: Basic, args: tuple[Basic, ...], *, domains_separated: bool = False) -> Basic:
+    """Reconstruct a node while retaining operations that still need checking."""
+    pending_operations = _operation_keys(args, _NATIVE_OPERATORS)
+    operand_sources = _source_keys(args) if not domains_separated and _tracks_operand_sources(expression) else set()
+    operand_domain = (
         And(*(_predicate_parts(arg).condition for arg in args))
-        if not domains_separated
-        and isinstance(expression, Boolean)
-        and not isinstance(expression, Expr)
-        and not expression.is_Atom
+        if not domains_separated and _is_compound_boolean(expression)
         else S.true
     )
     try:
         if isinstance(expression, (Add, Mul)) and any(_pending(arg) for arg in args):
             # Cached constructors can merge equal Subs with different coordinates.
             value = expression.func._from_args(args)
-        elif isinstance(expression, (Sum, Product, Integral)) and pending:
+        elif isinstance(expression, (Sum, Product, Integral)) and pending_operations:
             value = _held_reduction(expression, args)
         elif isinstance(expression, Piecewise):
             value = Piecewise(*args, evaluate=False)
         elif not domains_separated and isinstance(expression, (Add, Mul, Pow, Function, Min, Max)):
             # Renaming alone must not erase retained sources such as 0*log(a).
             value = expression.func(*args, evaluate=False)
-            if isinstance(expression, (Add, Mul)) and not pending:
+            if isinstance(expression, (Add, Mul)) and not pending_operations:
                 canonical = expression.func(*args)
-                if sources.issubset(_source_keys(canonical)):
+                if operand_sources.issubset(_source_keys(canonical)):
                     value = canonical
-        elif isinstance(expression, (Relational, BooleanFunction, Contains)) and (pending or not domains_separated):
+        elif isinstance(expression, (Relational, BooleanFunction, Contains)) and (
+            pending_operations or not domains_separated
+        ):
             # Symbols can still expand to partial functions after rebinding.
             value = expression.func(*args, evaluate=False)
         elif not domains_separated and isinstance(expression, (Complement, Intersection, Union)):
+            # Set simplification can discard operands whose definedness is
+            # still open, just as Boolean simplification can.
             value = expression.func(*args, evaluate=False)
         else:
-            value = (
-                expression.func(*args)
-                if (domains_separated and isinstance(expression, Boolean) and bool(args))
-                or _expression_key(args) != _expression_key(expression.args)
-                else expression
-            )
+            # Once operand domains are retained separately, Boolean truth
+            # may simplify even when the operands themselves did not change.
+            simplify_truth = domains_separated and isinstance(expression, Boolean) and bool(args)
+            rebuild_node = simplify_truth or _expression_key(args) != _expression_key(expression.args)
+            value = expression.func(*args) if rebuild_node else expression
     except (TypeError, ValueError) as error:
         raise ModelInputError("The resolved operands cannot reconstruct this symbolic expression") from error
-    if pending and not pending.issubset(_operation_keys(value, _NATIVE_OPERATORS)):
+    if pending_operations and not pending_operations.issubset(_operation_keys(value, _NATIVE_OPERATORS)):
         raise ModelInputError(
             "Native operation scopes could not be preserved during rebinding; "
             "declare the expression with its new coordinates"
         )
-    if sources and not sources.issubset(_source_keys(value)):
+    if operand_sources and not operand_sources.issubset(_source_keys(value)):
         raise ModelInputError("Scalar operand sources could not be preserved during rebinding")
-    if domain is not S.true and _expression_key(_predicate_parts(value).condition) != _expression_key(domain):
+    if operand_domain is not S.true and _expression_key(_predicate_parts(value).condition) != _expression_key(
+        operand_domain
+    ):
         raise ModelInputError("Boolean reconstruction could not preserve its scalar operand domains")
     return value
 

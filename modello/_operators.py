@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -35,6 +35,7 @@ from sympy import (
     sympify,
 )
 
+from modello._enums import StrEnum
 from modello.errors import ModelInputError
 
 if TYPE_CHECKING:
@@ -132,12 +133,19 @@ def _empty_reduction(expression: Basic) -> Expr | None:
     if not isinstance(expression, (Sum, Product, Integral)):
         return None
     if isinstance(expression, Integral) and len(expression.limits) != 1:
+        # Only integrals with one limit have a supported shortcut.
         return None
-    width = 0 if isinstance(expression, Integral) else -1
-    if not any(len(limit) == 3 and simplify(limit[2] - limit[1]) == width for limit in expression.limits):
+    # Discrete reductions are empty at upper=lower-1. Further reversal changes
+    # the sum's sign or takes the product's reciprocal.
+    empty_width = 0 if isinstance(expression, Integral) else -1
+    has_empty_limit = any(
+        len(limit) == 3 and simplify(limit[2] - limit[1]) == empty_width for limit in expression.limits
+    )
+    if not has_empty_limit:
         return None
-    condition = And(*(_denominator_condition(bound) for limit in expression.limits for bound in limit[1:]))
-    return _conditioned(S.One if isinstance(expression, Product) else S.Zero, condition)
+    endpoint_domain = And(*(_denominator_condition(bound) for limit in expression.limits for bound in limit[1:]))
+    identity = S.One if isinstance(expression, Product) else S.Zero
+    return _conditioned(identity, endpoint_domain)
 
 
 class _ScopedExpression:
@@ -242,12 +250,33 @@ def _definitely_undefined(expression: Basic) -> bool:
     return any(_definitely_undefined(arg) for arg in expression.args)
 
 
-def _value_condition(requirements: Mapping[str, bool], value: Expr) -> Basic:
-    """Retain declared domain requirements on an evaluated scalar value."""
+class _SignPredicate(StrEnum):
+    """Sign assumptions with relational guards for a known real value."""
+
+    POSITIVE = "positive"
+    NONNEGATIVE = "nonnegative"
+    NEGATIVE = "negative"
+    NONPOSITIVE = "nonpositive"
+    ZERO = "zero"
+    NONZERO = "nonzero"
+
+
+_SIGN_RELATIONS: Mapping[str, Callable[[Expr], Basic]] = {
+    _SignPredicate.POSITIVE: lambda value: value > 0,
+    _SignPredicate.NONNEGATIVE: lambda value: value >= 0,
+    _SignPredicate.NEGATIVE: lambda value: value < 0,
+    _SignPredicate.NONPOSITIVE: lambda value: value <= 0,
+    _SignPredicate.ZERO: lambda value: Eq(value, 0),
+    _SignPredicate.NONZERO: lambda value: ~Eq(value, 0),
+}
+
+
+def _value_condition(assumptions: Mapping[str, bool], value: Expr) -> Basic:
+    """Retain declared SymPy assumptions on an evaluated scalar value."""
     if _definitely_undefined(value):
         return S.false
     conditions = []
-    for predicate, expected in requirements.items():
+    for predicate, expected in assumptions.items():
         known = getattr(value, f"is_{predicate}", None)
         if known is not None:
             if known != expected:
@@ -255,22 +284,11 @@ def _value_condition(requirements: Mapping[str, bool], value: Expr) -> Basic:
             continue
         if not hasattr(Q, predicate):
             raise ModelInputError(f"Symbolic laws do not support the {predicate!r} assumption")
-        if value.is_real is True and predicate in {
-            "positive",
-            "nonnegative",
-            "negative",
-            "nonpositive",
-            "zero",
-            "nonzero",
-        }:
-            condition = {
-                "positive": value > 0,
-                "nonnegative": value >= 0,
-                "negative": value < 0,
-                "nonpositive": value <= 0,
-                "zero": Eq(value, 0),
-                "nonzero": ~Eq(value, 0),
-            }[predicate]
+        relation = _SIGN_RELATIONS.get(predicate)
+        if value.is_real is True and relation is not None:
+            # Solvers can consume these relations directly. For other values
+            # or assumptions, retain SymPy's predicate without an order claim.
+            condition = relation(value)
         else:
             condition = getattr(Q, predicate)(value)
         conditions.append(condition if expected else ~condition)

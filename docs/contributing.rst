@@ -58,7 +58,7 @@ studies; retain distinct boundary cases and method gates.
 
 CI runs the complete suite on every supported Python version. Python 3.14
 collects full-library coverage. Python 3.10 collects coverage for
-``modello._problem`` through its string-enum compatibility test, after running
+``modello._enums`` through the string-enum compatibility checks, after running
 the complete suite without tracing. The other versions run without coverage
 instrumentation. This covers both runtime paths while limiting tracing overhead
 on the oldest interpreter. Keep this check aligned with new version-dependent
@@ -194,6 +194,7 @@ Text and LaTeX contexts receive the explicit vector schema, including public and
 chart aliases. They choose names within the current component without guessing
 vector identities from their scalar coordinate paths.
 
+``_enums.py`` shares string-enum compatibility between core modules.
 ``_values.py`` holds structural input types; ``_symbols.py`` owns independent
 quantity identities and local indices. ``vectors.py`` implements immutable
 scalar containers and finite comprehensions without importing model or GUI

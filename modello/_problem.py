@@ -2,33 +2,19 @@
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, Mapping, TypeVar
 
 from sympy import Basic, Expr, FiniteSet, Interval, S, Set, Symbol
 from sympy.printing.str import StrPrinter
 
+from modello._enums import StrEnum
 from modello._expressions import _DefinitionResolver, _expand_definitions
 from modello._operators import _scalar_expression, _SymbolicTemplate
 from modello._paths import FieldPath as FieldPath, _path_label
 from modello._symbols import Index
 from modello.errors import ModelValidationError
 from modello.vectors import Vector
-
-if sys.version_info >= (3, 11):
-    from enum import StrEnum as _StrEnum
-else:
-    from enum import Enum
-
-    class _StrEnum(str, Enum):
-        """String-enum behaviour for the supported Python 3.10 runtime."""
-
-        __str__ = str.__str__
-
-        def __format__(self, format_spec: str) -> str:
-            return str.__format__(self, format_spec)
-
 
 if TYPE_CHECKING:
     from modello import Modello, ScalarValue
@@ -40,7 +26,7 @@ Status = Literal["consistent", "inconsistent", "unknown"]
 Verdict = Literal["satisfied", "violated", "unknown"]
 
 
-class ConstraintKind(_StrEnum):
+class ConstraintKind(StrEnum):
     """A defining equation, supplied input, or inferred component result."""
 
     DEFINITION = "definition"

@@ -21,13 +21,13 @@ from sympy import (
     Tuple,
     simplify,
 )
-from sympy.logic.boolalg import Boolean
 
 from modello._evaluation import (
     _OPERATORS,
     _construct,
     _evaluate as _evaluate,
     _expression_key,
+    _is_compound_boolean,
     _predicate_parts,
     _rebuild,
     _resolve_piecewise,
@@ -135,12 +135,9 @@ class _DefinitionResolver:
             return expression
         if isinstance(expression, _OPERATORS):
             return self(expression)
-        if (
-            self.evaluate_operators
-            and isinstance(expression, Boolean)
-            and not isinstance(expression, Expr)
-            and not expression.is_Atom
-        ):
+        if self.evaluate_operators and _is_compound_boolean(expression):
+            # Scalar operand domains must survive a predicate becoming True
+            # or False when its local operators are evaluated.
             return And(*_predicate_parts(expression, self.operators))
         args = tuple(self.operators(arg) for arg in expression.args)
         if not isinstance(expression, Expr):
@@ -195,6 +192,8 @@ class _DefinitionResolver:
             held = _held_reduction(expression, (expression.function, *(Tuple(*limit) for limit in limits)))
             empty = _empty_reduction(held)
             if empty is not None:
+                # An empty domain skips its body, including inactive cyclic
+                # definitions. Symbolic inspection still retains the binder.
                 return empty if self.evaluate_operators else held
             if isinstance(expression, Integral):
                 self._check_calculus(expression.function, protected | variables)
