@@ -247,7 +247,7 @@ proposed uniform upper bound 1 and that :math:`1<2`. The nonzero derivative
 premise is checked before cancellation. A pointwise inequality strictly below
 2 would not by itself establish a supremum strictly below 2.
 
-An incorrect hint leaves the obligation unresolved; it does not refute the property.
+An incorrect hint supplies no certificate; it does not refute the property.
 The ``upper`` value is a proposed proof aid, not an assumption or an obligation
 that is accepted without checking. A uniform target bound must also be
 independent of the quantified coordinate, including after resolving aliases.
@@ -583,9 +583,8 @@ Native ``Subs`` and ``Derivative`` expressions on either side of an identity,
 in target bounds, evaluation points, domains, and proposed hints are evaluated
 after checking their own derivative scopes. Their local evaluation points
 need an established real neighborhood inside the derivative coordinate's domain.
-Undefined evaluation points remain failures. An invalid optional hint leaves
-the attempted proof unresolved; it
-does not refute the requested bound.
+Undefined evaluation points remain failures. An invalid optional hint supplies
+no certificate; it does not refute the requested bound.
 Native derivative premises in ``Piecewise`` expressions respect the active
 branch's domain. Missing regularity proofs remain unresolved, including when
 the operation occurs in a conditional branch.
@@ -625,7 +624,10 @@ in finite or closed interval domains. This obligation also applies to
 the requested domain.
 
 A uniform-bound hint supplies a sufficient certificate. If its parameter guard
-fails, the attempted proof is unresolved; a loose hint cannot refute the bound.
+fails, that certificate remains unestablished; a loose hint cannot refute the
+bound. A failed certificate also cannot erase an independently checked failure
+of a necessary premise. A curvature ratio still fails when its subject has a
+checked nondifferentiable join, even if the ratio simplifies to a smooth expression.
 Consumed hint keys, including canonical paths and inference-rule premise hints,
 are excluded from unused-hint diagnostics.
 

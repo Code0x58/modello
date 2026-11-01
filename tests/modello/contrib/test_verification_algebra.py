@@ -421,6 +421,50 @@ def test_a_loose_conditional_hint_cannot_refute_a_true_bound(kind):
     assert tight.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
 
 
+def test_a_bound_hint_cannot_hide_a_refuted_curvature_prerequisite():
+    class Curve(VerificationModel):
+        x = Coordinate("x", real=True)
+        p = InstanceDummy("p", real=True)
+        value = Piecewise((x + x**3, x <= 0), (2 * (x + x**3), True))
+
+    context = VerificationContext.for_model(Curve)
+    claim = derivative_ratio_bound("value", wrt="x", bound=10)
+    p = context.symbols.p
+    native = Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, p)
+    guarded_hint = Add(5, Mul(0, native, evaluate=False), evaluate=False)
+    # The ratio simplifies to a smooth bounded expression on either side,
+    # but the subject's one-sided slopes at zero are 1 and 2.
+    for upper, point in ((None, None), (5, None), (-1, None), (guarded_hint, 0), (guarded_hint, 1)):
+        current = context if point is None else context.assume(Eq(p, point))
+        if upper is not None:
+            current = current.with_bound_hint(claim.name, upper=upper)
+        evidence = current.verify(obligations=(claim,)).explain(claim.name)
+        assert evidence.verdict == "strictly false"
+        assert "do not match" in " ".join(evidence.steps)
+    calls = []
+    with pytest.raises(VerificationError) as failure:
+        context.with_bound_hint(claim.name, upper=5).run(
+            Method("curvature", lambda current: calls.append(current), (claim,))
+        )
+    assert failure.value.report.explain(claim.name).verdict == "strictly false"
+    assert not calls
+
+
+def test_uniform_hints_and_targets_share_the_subjects_parameter_assumptions():
+    class Curve(VerificationModel):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+        value = a * sin(x)
+
+    context = VerificationContext.for_model(Curve)
+    a = context.symbols.a
+    context = context.assume(a > 0)
+    claim = supremum_below("value", 2 * a, wrt="x")
+    for upper, expected in ((3 * a, "unresolved"), (a, "strictly true")):
+        evidence = context.with_bound_hint(claim.name, upper=upper).verify(obligations=(claim,)).explain(claim.name)
+        assert evidence.verdict == expected
+
+
 @pytest.mark.parametrize("point", (0, 1))
 def test_optional_native_hint_conditions_cannot_refute_the_subject(point):
     class Curve(VerificationModel):

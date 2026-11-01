@@ -97,7 +97,6 @@ class Attempt:
     condition: Basic | None
     steps: tuple[str, ...]
     witness: tuple[tuple[Symbol, Expr], ...] = ()
-    sufficient_only: bool = False
 
 
 _TOTAL_FUNCTIONS = (Abs, exp, sin, cos, sinh, cosh, erf, erfc, frac, floor, ceiling, sign, conjugate, re, im)
@@ -695,7 +694,7 @@ def _convex(expression, variable, domain) -> Attempt:
     return Attempt(None, (*regular.steps, "Failure of a C2 certificate alone does not refute convexity."))
 
 
-def _uniform(expression, variable, domain, bound, hint) -> Attempt:
+def _uniform(expression, variable, domain, bound, hint, assumptions: tuple[Basic, ...]) -> Attempt:
     defined = _defined(expression, variable, domain)
     if defined.condition is S.false or defined.condition is None:
         return defined
@@ -709,13 +708,16 @@ def _uniform(expression, variable, domain, bound, hint) -> Attempt:
     if variable in hint.free_symbols:
         return Attempt(None, ("A uniform bound must be independent of the quantified coordinate.",))
     upper = _sign(simplify(hint - expression), variable, domain, False)
-    gap = hint < bound
-    if upper.condition is S.false or gap is S.false:
+    certificate = conjunction(upper.condition, hint < bound)
+    if certificate is not None:
+        certificate = truth(certificate, assumptions)
+    # Failure of this sufficient certificate cannot refute the bound. Keep
+    # that interpretation local so it cannot hide a refuted prerequisite.
+    if certificate is S.false:
         return Attempt(None, ("The proposed upper bound does not certify this claim.",))
     return Attempt(
-        conjunction(defined.condition, upper.condition, gap),
+        conjunction(defined.condition, certificate),
         (*upper.steps, f"sup <= {hint} < {bound}."),
-        sufficient_only=True,
     )
 
 
@@ -956,6 +958,8 @@ def attempt(
     specialized, reverse = _specialize(expression, variable, assumptions)
     specialized_expected = expected
     forward = {old: new for new, old in reverse.items()}
+    specialized_assumptions = tuple(item.xreplace(forward) for item in assumptions)
+    specialized_bound = None if claim.bound is None else claim.bound.xreplace(forward)
     if expected is not None:
         specialized_expected = expected.xreplace(forward)
     specialized_hint = None if hint is None else hint.xreplace(forward)
@@ -980,7 +984,7 @@ def attempt(
         result = source
     elif kind == "predicate":
         result = Attempt(
-            truth(expression, tuple(item.xreplace(forward) for item in assumptions)),
+            truth(expression, specialized_assumptions),
             ("The parameter predicate is retained or established by the explicit assumptions.",),
         )
     elif not isinstance(expression, Expr):
@@ -1050,7 +1054,9 @@ def attempt(
                     witness,
                 )
     elif kind == "supremum_below":
-        result = _uniform(expression, variable, claim.domain, claim.bound, specialized_hint)
+        result = _uniform(
+            expression, variable, claim.domain, specialized_bound, specialized_hint, specialized_assumptions
+        )
     elif kind == "derivative_ratio_bound":
         if (scope := _calculus_scope(variable)) is not None:
             return scope
@@ -1064,29 +1070,32 @@ def attempt(
             )
         else:
             ratio = simplify(curve * diff(curve, variable, 2) / slope**2)
-            upper = _uniform(ratio, variable, claim.domain, claim.bound, specialized_hint)
+            upper = _uniform(
+                ratio, variable, claim.domain, specialized_bound, specialized_hint, specialized_assumptions
+            )
             result = Attempt(
                 conjunction(regular.condition, curve_source.condition, nonzero.condition, upper.condition),
                 (*regular.steps, *nonzero.steps, f"Curvature ratio: {ratio}.", *upper.steps),
-                sufficient_only=upper.sufficient_only,
             )
     else:
         result = Attempt(None, ("No registered inference rule establishes this conclusion.",))
     hint_condition = conjunction(*hint_guards)
     if hint_condition is not None and (variable is None or variable not in hint_condition.free_symbols):
         hint_condition = truth(hint_condition, assumptions)
-    if hint_condition is S.false:
-        return Attempt(None, (*result.steps, "The proposed hint's native premises are not established."))
     condition = conjunction(source.condition, result.condition)
     condition = condition.xreplace(reverse) if condition is not None else None
-    condition = conjunction(condition, *derivative_guards, hint_condition)
+    condition = conjunction(condition, *derivative_guards)
+    # A failed optional hint cannot establish the claim or overturn an
+    # independently refuted necessary premise.
+    if hint_condition is not S.false:
+        condition = conjunction(condition, hint_condition)
     if condition is not None:
         if variable is not None and variable in condition.free_symbols:
             condition = None
         else:
             condition = truth(condition, assumptions)
-    if condition is S.false and result.sufficient_only:
-        condition = None
+    if hint_condition is S.false and condition is not S.false:
+        return Attempt(None, (*result.steps, "The proposed hint's native premises are not established."))
     return Attempt(
         condition,
         result.steps,
