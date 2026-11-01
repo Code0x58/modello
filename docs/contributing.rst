@@ -221,12 +221,17 @@ Keep the extension boundary at evidence and proof policy. Core model
 declarations must preserve the meaning of their equations before any extension
 can inspect them. The shared symbolic changes have the following scope:
 
-``_evaluation.py``
+``_reconstruction.py``
     Rebind and reconstruct expressions without losing operand domains or local
     binder identities. A held ``0*log(x)`` and a selector involving ``log(x)``
     must still be undefined at zero in an ordinary ``Modello``. Equal native
     ``Subs`` expressions can have different local coordinates; tree-rewrite
     caches must preserve both scopes.
+
+``_evaluation.py``
+    Evaluate native calculus operations and finite indexed data. Resolved
+    operands use the shared reconstruction layer, so construction and evaluation
+    preserve the same source domains and local coordinates.
 
 ``_expressions.py``
     Preserve declaration sources and expand directed dependencies with local

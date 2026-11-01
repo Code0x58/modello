@@ -32,10 +32,11 @@ from sympy.logic.boolalg import Boolean
 from sympy.polys.polyerrors import PolynomialError
 
 from modello import ConstraintKind, Coordinate, Modello, annotate, annotate_model, component, inspect_model
-from modello._evaluation import _BINDERS, _evaluate, _expression_key, _predicate_parts, _rebind
+from modello._evaluation import _evaluate
 from modello._expressions import _definition_resolver, _DefinitionResolver
 from modello._operators import _bound_coordinates, _scalar_atoms, _ScopedExpression, _SymbolicTemplate
 from modello._problem import ModelConstraint
+from modello._reconstruction import _BINDERS, _expression_key, _predicate_parts, _rebind
 from modello._symbols import BoundInstanceDummy
 from modello.diagnostics import ModelProblem
 from modello.errors import ModelDefinitionError, ModelInputError, ModelValidationError

@@ -22,18 +22,7 @@ from sympy import (
     simplify,
 )
 
-from modello._evaluation import (
-    _OPERATORS,
-    _construct,
-    _evaluate as _evaluate,
-    _expression_key,
-    _is_compound_boolean,
-    _predicate_parts,
-    _rebuild,
-    _resolve_piecewise,
-    _source_keys,
-    _substitute as _substitute,
-)
+from modello._evaluation import _evaluate as _evaluate, _substitute as _substitute
 from modello._operators import (
     _conditioned,
     _denominator_condition,
@@ -42,6 +31,16 @@ from modello._operators import (
     _ScopedExpression,
     _ScopedOperator,
     _SymbolicTemplate,
+)
+from modello._reconstruction import (
+    _OPERATORS,
+    _construct,
+    _expression_key,
+    _is_compound_boolean,
+    _predicate_parts,
+    _rebuild,
+    _resolve_piecewise,
+    _source_keys,
 )
 from modello.series import _project_series, _RecurrenceValue, _SeriesTerm
 from modello.vectors import _VectorFormula

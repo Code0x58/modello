@@ -36,7 +36,6 @@ from sympy import (
 from sympy.core.function import AppliedUndef
 from sympy.solvers.solveset import NonlinearError
 
-from modello._evaluation import _rebind
 from modello._expressions import _evaluate, _substitute
 from modello._inputs import _InputCapture
 from modello._model import ModelloMeta, _ModelReference
@@ -61,6 +60,7 @@ from modello._problem import (
     _domain,
     _FieldPrinter,
 )
+from modello._reconstruction import _rebind
 from modello.errors import ModelInputError, ModelSolveError as ModelSolveError, ModelValidationError
 from modello.solutions import SolutionFamily
 from modello.vectors import Vector

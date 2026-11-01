@@ -69,15 +69,7 @@ from sympy.logic.boolalg import Boolean
 from sympy.logic.inference import satisfiable
 from sympy.polys.polyerrors import PolynomialError
 
-from modello._evaluation import (
-    _BINDERS,
-    _cache_by_expression,
-    _construct,
-    _evaluate,
-    _predicate_parts,
-    _rebuild,
-    _resolve_piecewise,
-)
+from modello._evaluation import _evaluate
 from modello._operators import (
     _bound_coordinates,
     _conditioned,
@@ -85,6 +77,14 @@ from modello._operators import (
     _denominator_condition,
     _empty_reduction,
     _held_reduction,
+)
+from modello._reconstruction import (
+    _BINDERS,
+    _cache_by_expression,
+    _construct,
+    _predicate_parts,
+    _rebuild,
+    _resolve_piecewise,
 )
 from modello.solutions import _field_domain, _membership
 

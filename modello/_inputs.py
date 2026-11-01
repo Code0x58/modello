@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING, Mapping
 from sympy import Expr, Symbol
 
 from modello._collections import ModelObservations
-from modello._evaluation import _rebind
 from modello._model import _BoundField
 from modello._operators import _FunctionSymbol, _scalar_expression
 from modello._paths import _path_label, _path_value
 from modello._problem import ConstraintKind, FieldPath, ModelConstraint
+from modello._reconstruction import _rebind
 from modello.errors import ModelInputError
 from modello.vectors import _vector_input
 

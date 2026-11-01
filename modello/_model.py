@@ -11,12 +11,12 @@ from sympy.matrices import MatrixBase
 from sympy.tensor.array import NDimArray
 
 from modello._collections import _Location, _ModelVectorSpec, _Selection, _UnresolvedSelection
-from modello._evaluation import _rebind
 from modello._expressions import _declaration, _DefinitionResolver, _substitute
 from modello._model_laws import ModelRecurrence, _ModelLawSpec
 from modello._operators import _FunctionSymbol, _SymbolicTemplate
 from modello._paths import _path_label, _path_value
 from modello._problem import ConstraintKind, FieldPath, _algebra
+from modello._reconstruction import _rebind
 from modello._shapes import _dimensions
 from modello._symbols import BoundInstanceDummy as BoundInstanceDummy, Coordinate, InstanceDummy as InstanceDummy
 from modello._values import (

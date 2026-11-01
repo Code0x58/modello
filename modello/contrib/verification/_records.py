@@ -10,7 +10,7 @@ from sympy import Basic, Expr, S, Set, Symbol, sympify
 from sympy.assumptions import global_assumptions
 
 from modello import Annotation
-from modello._evaluation import _expression_key
+from modello._reconstruction import _expression_key
 from modello.errors import ModelDefinitionError, ModelValidationError
 
 if TYPE_CHECKING:
