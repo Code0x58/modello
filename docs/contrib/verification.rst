@@ -720,7 +720,9 @@ trust boundary; a citation or user assertion alone supplies no proof.
 This record is labelled numerical observation and cannot discharge a global
 obligation. Points must be fully bound finite real scalars in the coordinate's
 declared domain, and their evaluated values must be fully bound, finite, and
-real. Invalid points and unresolved symbolic values raise
+real. Point expressions also retain their original operand domains and native
+derivative premises: an unevaluated ``log(0)**0`` cannot supply a valid point
+by simplifying to one. Invalid points and unresolved symbolic values raise
 ``ModelValidationError``.
 
 .. _verification-api:

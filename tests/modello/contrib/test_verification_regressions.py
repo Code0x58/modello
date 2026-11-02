@@ -13,6 +13,7 @@ from sympy import (
     Interval,
     Ne,
     Piecewise,
+    Pow,
     S,
     Subs,
     Symbol,
@@ -33,7 +34,7 @@ from sympy import (
     sqrt,
 )
 
-from modello import Coordinate, InstanceDummy, component
+from modello import Coordinate, InstanceDummy, Modello, component
 from modello.contrib.verification import (
     Method,
     VerificationContext,
@@ -345,6 +346,31 @@ def test_sampling_rejects_invalid_points_and_intrinsic_domain_violations(point):
     with pytest.raises(ModelValidationError):
         context.sample("value", wrt="x", points=(point,))
     assert tuple(float(value) for value in context.sample("value", wrt="x", points=(1, 2)).values) == (1, 2)
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        lambda x, point: Subs(Derivative(Abs(x), x, evaluate=False), x, point),
+        lambda x, point: log(point, evaluate=False),
+        lambda x, point: arg(point, evaluate=False),
+    ),
+    ids=("native-derivative", "logarithm", "argument"),
+)
+def test_sampling_points_retain_native_premises_and_scalar_source_domains(source):
+    class Curve(Modello):
+        x = Coordinate("x", real=True)
+        value = x**2
+
+    context = VerificationContext.for_model(Curve)
+    invalid = Pow(source(Curve.x, S.Zero), S.Zero, evaluate=False)
+    with pytest.raises(ModelValidationError, match="Sampling points"):
+        context.sample("value", wrt="x", points=(invalid,))
+
+    valid = Pow(source(Curve.x, S.One), S.Zero, evaluate=False)
+    sample = context.sample("value", wrt="x", points=(valid,))
+    assert sample.points == (valid,)
+    assert sample.values == (1.0,)
 
 
 def test_sampling_rejects_unbound_parameters_and_symbolic_points():

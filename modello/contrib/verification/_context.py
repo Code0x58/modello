@@ -1543,23 +1543,29 @@ class VerificationContext(Generic[ModelT]):
         except (SympifyError, TypeError) as error:
             raise ModelValidationError("Sampling points must be finite real scalar values") from error
         domain = coordinate_domain(variable)
-        if any(
-            not isinstance(point, Expr)
-            or point.free_symbols
-            or point.is_finite is not True
-            or point.is_real is not True
-            or _membership(point, domain, ()) is not S.true
-            for point in samples
-        ):
-            raise ModelValidationError("Sampling points must be bound finite real values in the coordinate's domain")
-        if any(
-            premise.condition is not S.true
-            for point in samples
-            for value in (expression, *sources)
-            for premise in derivative_premises(value, variable, domain, {variable: point})
-        ):
-            raise ModelValidationError("Sampling needs established native derivative premises")
         try:
+            # Finite flags can hide undefined operands in a point such as log(0)**0.
+            # Retain its native premises and source domains before using its value.
+            if any(
+                not isinstance(point, Expr)
+                or point.free_symbols
+                or any(premise.condition is not S.true for premise in derivative_premises(point, None, S.Reals))
+                or _defined(evaluate_native(guard_source(point)), None, S.Reals).condition is not S.true
+                or point.is_finite is not True
+                or point.is_real is not True
+                or _membership(point, domain, ()) is not S.true
+                for point in samples
+            ):
+                raise ModelValidationError(
+                    "Sampling points must be bound finite real values in the coordinate's domain"
+                )
+            if any(
+                premise.condition is not S.true
+                for point in samples
+                for value in (expression, *sources)
+                for premise in derivative_premises(value, variable, domain, {variable: point})
+            ):
+                raise ModelValidationError("Sampling needs established native derivative premises")
             if any(
                 _defined(evaluate_native(source).subs(variable, point), None, S.Reals).condition is not S.true
                 for point in samples
