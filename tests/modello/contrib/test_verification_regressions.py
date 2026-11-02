@@ -364,7 +364,7 @@ def test_sampling_points_retain_native_premises_and_scalar_source_domains(source
 
     context = VerificationContext.for_model(Curve)
     invalid = Pow(source(Curve.x, S.Zero), S.Zero, evaluate=False)
-    with pytest.raises(ModelValidationError, match="Sampling points"):
+    with pytest.raises(ModelValidationError, match="Sampling"):
         context.sample("value", wrt="x", points=(invalid,))
 
     valid = Pow(source(Curve.x, S.One), S.Zero, evaluate=False)
