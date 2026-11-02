@@ -6,12 +6,16 @@ import pytest
 from sympy import (
     Abs,
     Add,
+    And,
     Derivative,
     Eq,
     FiniteSet,
+    Function,
+    Integral,
     Interval,
     Mul,
     Piecewise,
+    Pow,
     Q,
     Range,
     S,
@@ -28,6 +32,7 @@ from modello import Coordinate, Index, InstanceDummy
 from modello.contrib.verification import (
     InferenceRule,
     Method,
+    Obligation,
     VerificationContext,
     VerificationError,
     VerificationModel,
@@ -42,6 +47,7 @@ from modello.contrib.verification import (
     specifies,
     supremum_below,
 )
+from modello.contrib.verification._proof import derivative_premises
 from modello.errors import ModelDefinitionError, ModelValidationError
 
 
@@ -926,4 +932,288 @@ def test_ordinary_derivative_certificates_preserve_closed_real_intervals(nonnega
     )
     result = context.run(Method("slope", lambda current: current.expression("slope").doit(), claims, uses=("slope",)))
     assert result.data == 2 * Curve.x
+    assert all(item.verdict == "strictly true" for item in result.report.evidence)
+
+
+@pytest.mark.parametrize(
+    ("order", "offset", "valid"),
+    (
+        ("parameter", 0, False),
+        ("parameter", 1, True),
+        ("parameter_first", 0, False),
+        ("parameter_first", 1, True),
+        ("coordinate_first", 0, False),
+        ("coordinate_first", 1, False),
+    ),
+)
+def test_native_substitutions_do_not_capture_the_derivative_coordinate(order, offset, valid):
+    class Curve(VerificationModel):
+        x = Coordinate("x", real=True)
+        y = Coordinate("y", real=True)
+        _slope = Derivative(Abs(x - y), x)
+        if order == "parameter":
+            value = Subs(_slope, y, x - offset)
+        elif order == "parameter_first":
+            value = Subs(_slope, (y, x), (x - offset, y))
+        else:
+            value = Subs(_slope, (x, y), (y, x - offset))
+
+    expected = "strictly true" if valid else "strictly false"
+    assert Curve.definition_report().explain("value/auto:1").verdict == expected
+    context = VerificationContext.for_model(Curve)
+    identity = equal_to("value", int(valid), name="identity")
+    report = context.verify(obligations=(identity,))
+    assert report.explain(identity.name).verdict == expected
+    assert report.to_dict()["evidence_sha256"] == context.verify(obligations=(identity,)).to_dict()["evidence_sha256"]
+    calls = []
+
+    def execute(current):
+        calls.append(current)
+        return current.expression("value").doit()
+
+    methods = (Method("automatic", execute, uses=("value",)), Method("explicit", execute, (identity,)))
+    for method in methods:
+        if valid:
+            assert context.run(method).data == 1
+        else:
+            with pytest.raises(VerificationError):
+                context.run(method)
+    assert len(calls) == (2 if valid else 0)
+
+
+def test_a_constant_function_remains_smooth_under_overlapping_native_bindings():
+    class Curve(VerificationModel):
+        x = Coordinate("x", real=True)
+        y = Coordinate("y", real=True)
+        a = InstanceDummy("a", real=True)
+        value = Subs(Derivative(Abs(a * x - y), x), y, a * x)
+
+    assert Curve.definition_report().explain("value/auto:1").verdict == "conditionally true"
+    context = VerificationContext.for_model(Curve)
+    calls = []
+    method = Method(
+        "slope", lambda current: calls.append(current) or current.expression("value").doit(), uses=("value",)
+    )
+    assert context.observe(a=0).run(method).data == 0
+    with pytest.raises(VerificationError) as failure:
+        context.observe(a=1).run(method)
+    assert failure.value.report.explain("value/auto:1").verdict == "strictly false"
+    assert len(calls) == 1
+
+
+def test_compound_native_bindings_preserve_denominator_sources():
+    class Curve(VerificationModel):
+        x = Coordinate("x", real=True)
+        p = InstanceDummy("p", real=True)
+        value = Subs(1 / (x**2 - 1), (x, x**2), (p, 2))
+
+    context = VerificationContext.for_model(Curve)
+    invalid = context.assume(Eq(context.symbols.p, 1))
+    report = invalid.verify()
+    assert report.consistent is True
+    assert report.explain("value/auto:1").condition is not S.true
+    calls = []
+    method = Method(
+        "value", lambda current: calls.append(current) or current.expression("value").doit(), uses=("value",)
+    )
+    with pytest.raises(VerificationError):
+        invalid.run(method)
+    assert not calls
+    valid = context.observe(p=2)
+    assert valid.run(method).data == S.One / 3
+    assert calls == [valid]
+
+
+def test_compound_substitutions_support_polynomials_but_do_not_certify_derivative_scopes():
+    class Curve(VerificationModel):
+        x = Coordinate("x", real=True)
+        y = Coordinate("y", real=True)
+        polynomial = Subs(x**2 + y**2, x**2, 2)
+        slope = Subs(Derivative(Abs(x**2 - 1), x), x**2, 2)
+
+    context = VerificationContext.for_model(Curve)
+    report = context.verify()
+    assert report.explain("slope/auto:1").verdict == "unresolved"
+    method = Method("polynomial", lambda current: current.expression("polynomial").doit(), uses=("polynomial",))
+    assert context.run(method).data == Curve.y**2 + 2
+    with pytest.raises(VerificationError):
+        context.run(Method("slope", lambda current: "must not execute", uses=("slope",)))
+
+
+@pytest.mark.parametrize("layout", ("sibling", "inside", "compound_sibling", "compound_inside", "integrand"))
+def test_native_premises_do_not_require_finiteness_of_unrelated_symbolic_values(layout):
+    class Curve(VerificationModel):
+        x = Coordinate("x", real=True)
+        y = Coordinate("y", real=True)
+        upper = InstanceDummy("upper", positive=True)
+        _slope = Derivative(x + y, x)
+        _formal = Function("f")(x)
+        if layout == "sibling":
+            value = Subs(_slope, y, x) + _formal
+        elif layout == "inside":
+            value = Subs(_slope + _formal, y, x)
+        elif layout == "compound_sibling":
+            value = Subs(x**2, x**2, 2) + _formal
+        elif layout == "compound_inside":
+            value = Subs(x**2 + _formal, x**2, 2)
+        else:
+            value = Integral(Subs(_slope, y, x) + _formal, (x, 0, upper))
+
+    context = VerificationContext.for_model(Curve)
+    method = Method("inspect", lambda current: current.expression("value"), uses=("value",))
+    result = context.run(method)
+    assert result.data == context.expression("value")
+    assert all(item.verdict == "strictly true" for item in result.report.evidence)
+
+
+@pytest.mark.parametrize("selector", ("square", "fourth", "observed_alias"))
+def test_compound_substitutions_do_not_prune_a_native_derivative_using_the_unsubstituted_selector(selector):
+    class Curve(VerificationModel):
+        x = Coordinate("x", real=True)
+        p = InstanceDummy("p", real=True)
+        a = InstanceDummy("a", real=True)
+        value = Subs(
+            Piecewise(
+                (Derivative(Abs(x), x), Eq(p**2 if selector == "square" else p**4 if selector == "fourth" else a, 0)),
+                (1, True),
+            ),
+            p**2,
+            0,
+        )
+
+    context = VerificationContext.for_model(Curve)
+    context = context.observe(a=context.symbols.p**4, p=1) if selector == "observed_alias" else context.observe(p=1)
+    calls = []
+    with pytest.raises(VerificationError):
+        context.run(Method("slope", lambda current: calls.append(current), uses=("value",)))
+    assert not calls
+
+
+def test_native_range_witnesses_restore_the_original_coordinate_in_keys_and_values():
+    x, y, z = (Coordinate(name, real=True) for name in ("x", "y", "z"))
+    body = Subs(Derivative(Abs(x - y - z), x), y, x - z)
+    source = Subs(Sum(body, (x, -1, 1)), z, x)
+    failure = next(item for item in derivative_premises(source, x, S.Reals) if item.condition is S.false)
+    assert failure.witness == ((x, x),)
+
+
+def test_a_ranged_denominator_does_not_identify_its_axis_with_an_external_value():
+    class Curve(VerificationModel):
+        x = Coordinate("x", real=True)
+        y = Coordinate("y", real=True)
+        value = Subs(Sum(1 / (x - y), (x, 1, 2)), y, x - 1)
+
+    context = VerificationContext.for_model(Curve).assume(Eq(Curve.x, 2))
+    calls = []
+    with pytest.raises(VerificationError):
+        context.run(Method("sum", lambda current: calls.append(current), uses=("value",)))
+    assert not calls
+
+
+@pytest.mark.parametrize("ranged", (False, True))
+def test_unrelated_compound_patterns_keep_inactive_native_operations_inactive(ranged):
+    class Curve(VerificationModel):
+        x = Coordinate("x", real=True)
+        y = Coordinate("y", real=True)
+        a = InstanceDummy("a", real=True)
+        q = InstanceDummy("q", real=True)
+        if ranged:
+            value = Subs(Sum(Piecewise((1 / q, And(a > 0, y > 0)), (1, True)), (y, 1, 2)), x**2, 2)
+        else:
+            value = Subs(Piecewise((1 / q, a > 0), (1, True)), x**2, 2)
+
+    context = VerificationContext.for_model(Curve).observe(a=-1, q=0)
+    result = context.run(Method("inspect", lambda current: current.expression("value"), uses=("value",)))
+    assert result.data.doit() == (2 if ranged else 1)
+    assert result.report.consistent is True
+
+
+@pytest.mark.parametrize("pointed", (False, True))
+@pytest.mark.parametrize("operation", ("derivative", "division"))
+def test_captured_native_operands_keep_sources_before_observations_can_collapse_them(pointed, operation):
+    class Curve(VerificationModel):
+        x = Coordinate("x", real=True)
+        y = Coordinate("y", real=True)
+        a = InstanceDummy("a", real=True)
+        _body = Mul(a, y + log(x), evaluate=False)
+        _operation = (
+            Derivative(_body, x, evaluate=False)
+            if operation == "derivative"
+            else Pow(Add(1, _body, evaluate=False), -1, evaluate=False)
+        )
+        value = Subs(_operation, (x, y), (1, x)) if pointed else Subs(_operation, y, x)
+
+    context = VerificationContext.for_model(Curve).observe(a=0)
+    calls = []
+    method = Method(
+        "read", lambda current: calls.append(current) or current.expression("value").doit(), uses=("value",)
+    )
+    if pointed:
+        assert context.run(method).data == (0 if operation == "derivative" else 1)
+        assert calls == [context]
+    else:
+        with pytest.raises(VerificationError):
+            context.run(method)
+        assert not calls
+
+
+def test_an_unregistered_rule_does_not_evaluate_unsupported_native_operations():
+    class Parameters(VerificationModel):
+        x = Coordinate("x", real=True)
+        y = Coordinate("y", real=True)
+        q = InstanceDummy("q", real=True)
+
+    context = VerificationContext.for_model(Parameters).observe(q=0)
+    subject = Subs(Sum(1 / context.symbols.q, (Parameters.y, 1, 2)), Parameters.x**2, 2)
+    claim = Obligation("unproved", subject, "rule")
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
+    calls = []
+    with pytest.raises(VerificationError):
+        context.run(Method("unproved", lambda current: calls.append(current), (claim,)))
+    assert not calls
+
+
+@pytest.mark.parametrize("ranged", (False, True))
+def test_unrelated_compound_patterns_preserve_established_selector_domains(ranged):
+    class Curve(VerificationModel):
+        x = Coordinate("x", real=True)
+        y = Coordinate("y", real=True)
+        q = InstanceDummy("q", real=True)
+        if ranged:
+            value = Subs(Sum(Piecewise((2, And(Eq(1 / q, 1), y > 0)), (1, True)), (y, 1, 2)), x**2, 2)
+        else:
+            value = Subs(Piecewise((2, Eq(1 / q, 1 / q, evaluate=False)), (1, True), evaluate=False), x**2, 2)
+
+    context = VerificationContext.for_model(Curve).observe(q=1)
+    result = context.run(Method("inspect", lambda current: current.expression("value"), uses=("value",)))
+    assert result.data.doit() == (4 if ranged else 2)
+    assert all(item.verdict == "strictly true" for item in result.report.evidence)
+
+
+def test_compound_selector_truth_cannot_erase_an_affected_operand_domain():
+    class Curve(VerificationModel):
+        p = InstanceDummy("p", real=True)
+        value = Subs(
+            Piecewise((2, Eq(log(p**2 - 1), log(p**2 - 1), evaluate=False)), (1, True), evaluate=False),
+            p**2,
+            1,
+        )
+
+    context = VerificationContext.for_model(Curve)
+    calls = []
+    with pytest.raises(VerificationError):
+        context.run(Method("inspect", lambda current: calls.append(current), uses=("value",)))
+    assert not calls
+
+
+@pytest.mark.parametrize("operator", (Sum, Integral))
+def test_unrelated_compound_patterns_preserve_native_range_metadata(operator):
+    class Curve(VerificationModel):
+        x = Coordinate("x", real=True)
+        y = Coordinate("y", real=True)
+        value = Subs(operator(1 / y, (y, 1, 2)), x**2, 2)
+
+    context = VerificationContext.for_model(Curve)
+    result = context.run(Method("value", lambda current: current.expression("value").doit(), uses=("value",)))
+    assert result.data == (S(3) / 2 if operator is Sum else log(2))
     assert all(item.verdict == "strictly true" for item in result.report.evidence)

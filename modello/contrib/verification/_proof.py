@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 from sympy import (
@@ -83,6 +84,7 @@ from modello._reconstruction import (
     _cache_by_expression,
     _construct,
     _predicate_parts,
+    _rebind,
     _rebuild,
     _resolve_piecewise,
 )
@@ -100,6 +102,15 @@ class Attempt:
 
 
 _TOTAL_FUNCTIONS = (Abs, exp, sin, cos, sinh, cosh, erf, erfc, frac, floor, ceiling, sign, conjugate, re, im)
+
+
+class _DerivativePremises(Boolean):
+    """Retain native derivative scopes without asserting a parent's finiteness."""
+
+    is_Atom = True
+
+    def _sympystr(self, printer):
+        return f"derivatives_defined({printer._print(self.args[0])})"
 
 
 class _SourceFinite(Boolean):
@@ -167,7 +178,7 @@ def guard_source(expression: Basic) -> Basic:
 
     @_cache_by_expression
     def visit(value):
-        if not value.args or isinstance(value, _SourceFinite):
+        if not value.args or isinstance(value, (_SourceFinite, _DerivativePremises)):
             return value
         if isinstance(value, Piecewise):
             return _resolve_piecewise(value, visit)
@@ -505,12 +516,23 @@ def _differentiable(expression, variable, domain, order, point=None) -> Attempt:
                 elif joined.failure_order is not None and joined.failure_order <= order:
                     if (variable, point) in joined.witness:
                         return Attempt(S.false, joined.steps, joined.witness)
-        if expression == Abs(variable):
-            return Attempt(
-                Ne(point, 0),
-                ("Absolute value is locally affine away from zero and has a cusp at zero.",),
-                ((variable, point),) if point == 0 else (),
-            )
+        if expression.func is Abs:
+            argument = expression.args[0]
+            try:
+                polynomial = Poly(argument, variable)
+            except PolynomialError:
+                polynomial = None
+            if polynomial is not None and polynomial.degree() <= 1 and argument.is_real is True:
+                slope = polynomial.coeff_monomial(variable)
+                condition = Or(Eq(slope, 0), Ne(argument.subs(variable, point), 0))
+                return Attempt(
+                    condition,
+                    (
+                        "Absolute value of a real affine function is smooth away from its cusp, "
+                        "or everywhere if constant.",
+                    ),
+                    ((variable, point),) if condition is S.false else (),
+                )
         body = _defined_part(expression)
         value = expression.subs(variable, point)
         if value.is_finite is False or value in (S.NaN, S.ComplexInfinity):
@@ -744,6 +766,31 @@ def native_domains(value, resolve=lambda value: value, protected=frozenset()):
     return domains
 
 
+def substitution_points(value: Subs, points: Mapping[Basic, Basic]) -> dict[Basic, Basic]:
+    """Compose native Subs bindings in their declared order, then outer scopes."""
+    local: dict[Basic, Basic] = {}
+    for symbol, point in zip(reversed(value.variables), reversed(value.point)):
+        local[symbol] = point.subs(local, simultaneous=True)
+    return {**points, **{symbol: point.subs(points, simultaneous=True) for symbol, point in local.items()}}
+
+
+def captures_coordinate(variable: Symbol, points: Mapping[Basic, Basic], *, source: Basic | None = None) -> bool:
+    """A replacement would identify an external value with a local derivative axis."""
+    symbols = None if source is None else source.free_symbols
+    return any(
+        (symbols is None or symbol == variable or symbol.free_symbols & symbols)
+        and (variable in point.free_symbols or symbol != variable and variable in symbol.free_symbols)
+        for symbol, point in points.items()
+    )
+
+
+def scoped_source(value: Basic, scopes: tuple[Basic, ...]) -> Basic:
+    """Keep a source operand under its original native binders and substitutions."""
+    for scope in reversed(scopes):
+        value = _construct(scope, (value, *scope.args[1:]))
+    return value
+
+
 def derivative_premises(value, variable, domain, points=None):
     """Check retained native derivatives before evaluation or arithmetic collapse."""
     points = {} if points is None else points
@@ -762,12 +809,22 @@ def derivative_premises(value, variable, domain, points=None):
             yield Attempt(None, ("The native binder's coordinate scope remains unresolved.",))
             return
         inner = next(iter(scopes))
+        original_inner = inner
+        inner_domain = scopes[inner]
         local = {symbol: point for symbol, point in points.items() if symbol not in scopes}
-        for premise in derivative_premises(value.args[0], inner, scopes[inner], local):
+        body = value.args[0]
+        if captures_coordinate(inner, local, source=body):
+            # The range coordinate is local; an incoming value that uses its
+            # spelling remains an independent parameter of the ranged body.
+            fresh = Dummy(inner.name, **inner.assumptions0)
+            body = _rebind(body, {inner: fresh})
+            inner = fresh
+        restore = {inner: original_inner} if inner != original_inner else {}
+        for premise in derivative_premises(body, inner, inner_domain, local):
             condition = premise.condition
             if condition is not None and inner in condition.free_symbols:
-                parameters, allowed, unknown = _guard_scope(condition, inner, scopes[inner])
-                missing = scopes[inner] - allowed
+                parameters, allowed, unknown = _guard_scope(condition, inner, inner_domain)
+                missing = inner_domain - allowed
                 condition = (
                     parameters
                     if not unknown and missing.is_empty is True
@@ -777,11 +834,18 @@ def derivative_premises(value, variable, domain, points=None):
                 )
             if condition is S.false and isinstance(value, (Integral, Limit)):
                 condition = None
-            yield Attempt(condition, premise.steps, premise.witness if condition is S.false else ())
+            witness = tuple(
+                (original_inner if symbol == inner else symbol, _rebind(point, restore))
+                for symbol, point in premise.witness
+            )
+            yield Attempt(condition, premise.steps, witness if condition is S.false else ())
         return
     if isinstance(value, Subs):
-        local = {symbol: point.subs(points, simultaneous=True) for symbol, point in zip(value.variables, value.point)}
-        yield from derivative_premises(value.expr, variable, domain, {**points, **local})
+        if any(not isinstance(symbol, Symbol) for symbol in value.variables):
+            if value.has(Derivative):
+                yield Attempt(None, ("Native derivative premises under compound substitutions remain unresolved.",))
+            return
+        yield from derivative_premises(value.expr, variable, domain, substitution_points(value, points))
         for point in value.point:
             yield from derivative_premises(point, variable, domain, points)
         return
@@ -828,14 +892,27 @@ def derivative_premises(value, variable, domain, points=None):
         return
     if isinstance(value, Derivative):
         variables = tuple(dict.fromkeys(value.variables))
-        if len(variables) != 1:
-            yield Attempt(None, ("Mixed derivative regularity remains unresolved.",))
+        if len(variables) != 1 or not isinstance(variables[0], Symbol):
+            yield Attempt(None, ("Native differentiation needs one supported scalar coordinate.",))
             return
         inner = variables[0]
-        curve = value.expr.subs({symbol: point for symbol, point in points.items() if symbol != inner})
+        local = inner
+        curve = guard_source(value.expr)
+        point = points.get(inner)
         inner_domain = domain if inner == variable and inner not in points else coordinate_domain(inner)
-        regularity = _differentiable(curve, inner, inner_domain, len(value.variables), points.get(inner))
-        if inner != variable and inner not in points and regularity.condition in (None, S.false):
+        if captures_coordinate(inner, points, source=curve):
+            local = Dummy(inner.name, **inner.assumptions0)
+            curve = _rebind(curve, {inner: local})
+            point = points.get(inner, inner)
+            inner_domain = coordinate_domain(inner)
+        curve = curve.subs({symbol: value for symbol, value in points.items() if symbol != inner}, simultaneous=True)
+        regularity = _differentiable(curve, local, inner_domain, len(value.variables), point)
+        if local != inner:
+            regularity = replace(
+                regularity,
+                witness=tuple((inner if symbol == local else symbol, value) for symbol, value in regularity.witness),
+            )
+        if inner != variable and point is None and regularity.condition in (None, S.false):
             yield Attempt(
                 None,
                 (
@@ -853,6 +930,10 @@ def evaluate_native(value):
     """Normalize native values, pruning supported inactive bodies first."""
     if value is None:
         return None
+    if isinstance(value, _DerivativePremises):
+        # The proof walker retains these premises before evaluation. The
+        # scalar value of an enclosing sum or integral is not this claim.
+        return S.true
     value = value.replace(
         lambda part: isinstance(part, (Sum, Product, Integral)),
         lambda part: part if (empty := _empty_reduction(part)) is None else empty,
@@ -873,6 +954,10 @@ def attempt(
     sources: tuple[Basic, ...] = (),
     hint_sources: tuple[Basic, ...] = (),
 ) -> Attempt:
+    if claim.property == "rule":
+        # Registered rules are handled by the context. An unproved conclusion
+        # must not execute unsupported native operations just to stay unresolved.
+        return Attempt(None, ("No registered inference rule establishes this conclusion.",))
     derivative_guards: list[Basic] = []
     hint_guards: list[Basic] = []
     source_values: list[Expr] = []

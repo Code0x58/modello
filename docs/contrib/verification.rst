@@ -585,6 +585,25 @@ after checking their own derivative scopes. Their local evaluation points
 need an established real neighborhood inside the derivative coordinate's domain.
 Undefined evaluation points remain failures. An invalid optional hint supplies
 no certificate; it does not refute the requested bound.
+
+Native ``Subs`` bindings retain their declared order. A derivative's local
+coordinate also stays independent of symbols introduced by those bindings.
+For example, ``Subs(Derivative(Abs(x - y), x), y, x)`` evaluates the original
+curve's derivative at a cusp. Simplifying ``Abs(x - x)`` first would change
+the function being differentiated. Replacing ``y`` with ``x - 1`` instead
+keeps the local derivative well-defined.
+
+When flattening would lose that scope, the automatic obligation retains the
+derivative and its native binders in a premise predicate. This checks the
+derivative without imposing finiteness on unrelated symbolic terms or
+convergence on an enclosing integral. Division obligations likewise preserve
+their original substitution scopes: a later replacement of ``x**2`` cannot
+erase a pole introduced by an earlier binding of ``x``. Native derivative
+premises under compound substitutions, such as replacing ``x**2``, currently
+remain unresolved. Overlapping or compound substitutions inside a ranged
+denominator also remain unresolved when their coordinate scopes cannot be
+established.
+
 Native derivative premises in ``Piecewise`` expressions respect the active
 branch's domain. Missing regularity proofs remain unresolved, including when
 the operation occurs in a conditional branch.
@@ -692,6 +711,8 @@ that resolve expressions from the supplied ``current`` context can remain unboun
 and version. ``with_rule`` adds it to a context. The engine recursively checks
 the premises and retains them in the conclusion's evidence. Failed premises
 make a sufficient rule inapplicable; they do not refute its conclusion.
+An unregistered rule conclusion remains unresolved; its proof attempt does not
+evaluate unsupported native operations.
 Circular rules remain unresolved. The inference-rule implementation and CAS form the
 trust boundary; a citation or user assertion alone supplies no proof.
 

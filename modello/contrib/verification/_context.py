@@ -12,6 +12,7 @@ from typing import ClassVar, Generic, TypeVar, cast
 from sympy import (
     And,
     Basic,
+    Contains,
     Derivative,
     Expr,
     Integral,
@@ -34,7 +35,7 @@ from sympy.polys.polyerrors import PolynomialError
 from modello import ConstraintKind, Coordinate, Modello, annotate, annotate_model, component, inspect_model
 from modello._evaluation import _evaluate
 from modello._expressions import _definition_resolver, _DefinitionResolver
-from modello._operators import _bound_coordinates, _scalar_atoms, _ScopedExpression, _SymbolicTemplate
+from modello._operators import _bound_coordinates, _empty_reduction, _scalar_atoms, _ScopedExpression, _SymbolicTemplate
 from modello._problem import ModelConstraint
 from modello._reconstruction import _BINDERS, _expression_key, _predicate_parts, _rebind
 from modello._symbols import BoundInstanceDummy
@@ -46,7 +47,9 @@ from modello.solutions import _field_domain, _membership
 from ._proof import (
     Attempt,
     _defined,
+    _DerivativePremises,
     attempt,
+    captures_coordinate,
     conjunction,
     consistency,
     coordinate_domain,
@@ -54,6 +57,8 @@ from ._proof import (
     evaluate_native,
     guard_source,
     native_domains,
+    scoped_source,
+    substitution_points,
     truth,
 )
 from ._records import (
@@ -524,6 +529,16 @@ class VerificationContext(Generic[ModelT]):
         context.expressions[key] = result, sources
         return result
 
+    def _independent_binding(
+        self, value: Basic, protected: frozenset[Basic], patterns: frozenset[Basic]
+    ) -> Basic | None:
+        """Resolve a value only when native patterns cannot affect it or its sources."""
+        scoped = protected | patterns
+        resolved = self._bind(value, scoped)
+        _, operands = self._context.expressions[_expression_key(value), scoped]
+        dependencies = resolved.free_symbols | set().union(*(operand.free_symbols for operand in operands))
+        return None if patterns & dependencies else resolved
+
     def expression(self, subject: str | Basic, *, wrt: str | Symbol | None = None) -> Expr:
         """Resolve a law, preserving an independent ``wrt`` symbol from observations."""
         variable = self._coordinate(wrt) if wrt is not None else None
@@ -926,23 +941,48 @@ class VerificationContext(Generic[ModelT]):
                 elif not uncertain:
                     conditional.discard(key)
 
-            def visit(value, points=None, bound=(), active=(), uncertain=False, scopes=None):
+            def visit(value, points=None, bound=(), active=(), uncertain=False, scopes=None, native=()):
                 points = points or {}
                 scopes = {} if scopes is None else scopes
+                compound = any(
+                    isinstance(scope, Subs) and any(not isinstance(symbol, Symbol) for symbol in scope.variables)
+                    for scope in native
+                )
                 if isinstance(value, (Integral, Sum, Product, Limit)):
                     variables = tuple(_bound_coordinates(value))
                     protected = frozenset((*quantified, *bound))
-                    local = {
-                        **scopes,
-                        **native_domains(
+                    if compound:
+                        domains = dict.fromkeys(variables, S.Complexes)
+                        targets = tuple(
+                            symbol for scope in native if isinstance(scope, Subs) for symbol in scope.variables
+                        )
+                        patterns = frozenset().union(*(symbol.free_symbols for symbol in targets))
+                        if all(symbol.free_symbols for symbol in targets) and not any(
+                            patterns & variable.free_symbols for variable in variables
+                        ):
+                            endpoints = (
+                                (value.args[2],)
+                                if isinstance(value, Limit)
+                                else tuple(endpoint for limit in value.limits for endpoint in limit[1:])
+                            )
+                            resolved = {
+                                _expression_key(endpoint): self._independent_binding(endpoint, protected, patterns)
+                                for endpoint in endpoints
+                            }
+                            if all(endpoint is not None for endpoint in resolved.values()):
+                                domains = native_domains(
+                                    value, lambda endpoint: resolved[_expression_key(endpoint)], protected
+                                )
+                    else:
+                        domains = native_domains(
                             value,
                             lambda endpoint: self._bind(endpoint, protected).subs(points, simultaneous=True),
                             protected,
-                        ),
-                    }
+                        )
+                    local = {**scopes, **domains}
                     if isinstance(value, Limit):
-                        visit(value.args[2], points, bound, active, uncertain, scopes)
-                        visit(value.args[0], points, (*bound, *variables), active, True, local)
+                        visit(value.args[2], points, bound, active, uncertain, scopes, native)
+                        visit(value.args[0], points, (*bound, *variables), active, True, local, (*native, value))
                         return
                     for index, limit in enumerate(value.limits):
                         outer = tuple(item[0] for item in value.limits[index + 1 :])
@@ -954,8 +994,11 @@ class VerificationContext(Generic[ModelT]):
                                 active,
                                 uncertain,
                                 {**scopes, **{symbol: local[symbol] for symbol in outer}},
+                                native,
                             )
-                    if any(local[variable].is_empty is True for variable in variables):
+                    if any(local[variable].is_empty is True for variable in variables) or (
+                        compound and _empty_reduction(value) is not None
+                    ):
                         return
                     visit(
                         value.function,
@@ -964,15 +1007,34 @@ class VerificationContext(Generic[ModelT]):
                         active,
                         uncertain or isinstance(value, Integral),
                         local,
+                        (*native, value),
                     )
                     return
                 if isinstance(value, Piecewise):
+                    protected = frozenset((*quantified, *bound))
+                    targets = tuple(symbol for scope in native if isinstance(scope, Subs) for symbol in scope.variables)
+                    patterns = frozenset().union(*(symbol.free_symbols for symbol in targets))
+                    symbolic_patterns = all(symbol.free_symbols for symbol in targets)
                     for branch, condition in value.args:
-                        visit(condition, points, bound, active, uncertain, scopes)
-                        protected = frozenset((*quantified, *bound))
+                        visit(condition, points, bound, active, uncertain, scopes, native)
                         _, source_domain = _predicate_parts(guard_source(self._law(condition, protected)))
-                        source_domain = source_domain.subs(points, simultaneous=True)
-                        if source_domain is not S.true:
+                        domain_independent = (
+                            not compound
+                            or source_domain is S.true
+                            or (
+                                symbolic_patterns
+                                and self._independent_binding(source_domain, protected, patterns) is not None
+                            )
+                        )
+                        if domain_independent:
+                            source_domain = source_domain.subs(points, simultaneous=True)
+                        elif source_domain is not S.true:
+                            record(
+                                Obligation("selector_defined", scoped_source(condition, native), "rule"),
+                                "The compound substitution leaves the selector's scalar domain unresolved.",
+                                True,
+                            )
+                        if domain_independent and source_domain is not S.true:
                             coordinates = set(source_domain.atoms(Coordinate)) | (
                                 set(bound) & source_domain.free_symbols
                             )
@@ -992,12 +1054,31 @@ class VerificationContext(Generic[ModelT]):
                                 "A branch selector requires defined scalar operands before choosing its value.",
                                 uncertain,
                             )
-                        selected = self._bind(condition, protected).subs(points, simultaneous=True)
-                        selected, source_domain = _predicate_parts(selected)
-                        if source_domain is S.false:
-                            return
-                        if source_domain is not S.true:
+                        if compound:
                             selected = None
+                            if symbolic_patterns:
+                                try:
+                                    candidate = self._independent_binding(condition, protected, patterns)
+                                    if candidate is not None:
+                                        selected = candidate
+                                    # Apply the native patterns before observing
+                                    # their component symbols (p**4 can match p**2).
+                                    elif not any(
+                                        isinstance(scope, (Integral, Sum, Product, Limit)) for scope in native
+                                    ):
+                                        held = self._bind(scoped_source(condition, native), protected | patterns)
+                                        if not held.has(Integral, Sum, Product, Limit, Derivative):
+                                            selected = self._bind(held.doit(), protected)
+                                except (NotImplementedError, ModelInputError, TypeError, ValueError, RecursionError):
+                                    pass
+                        else:
+                            selected = self._bind(condition, protected).subs(points, simultaneous=True)
+                        if selected is not None:
+                            selected, source_domain = _predicate_parts(selected)
+                            if source_domain is S.false:
+                                return
+                            if source_domain is not S.true:
+                                selected = None
                         if selected is None or selected.free_symbols & protected or selected.has(*_BINDERS):
                             selected = None
                         else:
@@ -1006,54 +1087,73 @@ class VerificationContext(Generic[ModelT]):
                                 tuple(condition for condition in assumptions if not condition.free_symbols & protected),
                             )
                         if selected is S.true:
-                            visit(branch, points, bound, active, uncertain, scopes)
+                            visit(branch, points, bound, active, uncertain, scopes, native)
                             return
                         if selected is not S.false:
-                            visit(branch, points, bound, active, True, scopes)
+                            visit(branch, points, bound, active, True, scopes, native)
                             uncertain = True
                     return
                 if isinstance(value, Subs):
-                    local = {
-                        symbol: point.subs(points, simultaneous=True)
-                        for symbol, point in zip(value.variables, value.point)
-                    }
                     visit(
                         value.expr,
-                        {**points, **local},
+                        points
+                        if any(not isinstance(symbol, Symbol) for symbol in value.variables)
+                        else substitution_points(value, points),
                         bound,
                         active,
                         uncertain,
                         {symbol: domain for symbol, domain in scopes.items() if symbol not in value.variables},
+                        (*native, value),
                     )
                     for point in value.point:
-                        visit(point, points, bound, active, uncertain, scopes)
+                        visit(point, points, bound, active, uncertain, scopes, native)
                     return
                 if value in sources:
                     if value not in active:
                         for source in sources[value]:
-                            visit(source, points, bound, (*active, value), uncertain, scopes)
+                            visit(source, points, bound, (*active, value), uncertain, scopes, native)
                     return
                 if isinstance(value, Derivative):
                     variables = tuple(dict.fromkeys(value.variables))
-                    if len(variables) == 1:
+                    if len(variables) == 1 and isinstance(variables[0], Symbol):
                         variable = variables[0]
-                        curve = self._law(value.expr, frozenset((*bound, *variables))).subs(
-                            {symbol: point for symbol, point in points.items() if symbol not in variables},
-                            simultaneous=True,
-                        )
-                        claim = differentiable(
-                            curve,
-                            wrt=variable,
-                            domain=scopes.get(variable, coordinate_domain(variable)),
-                            order=len(value.variables),
-                            at=points.get(variable),
-                            name="derivative",
-                        )
-                        if (curve.free_symbols | (points.get(variable, S.Zero).free_symbols)) & (
-                            set(bound) - {variable}
-                        ):
-                            claim = replace(claim, property="rule")
-                            uncertain = True
+                        curve = self._law(guard_source(value.expr), frozenset((*bound, *variables)))
+                        domain = scopes.get(variable, coordinate_domain(variable))
+                        if compound or captures_coordinate(variable, points, source=curve):
+                            # Keep the native scope intact. The shared premise
+                            # checker separates the derivative axis from values
+                            # that happen to use the same coordinate identity.
+                            claim = Obligation(
+                                "derivative",
+                                _DerivativePremises(
+                                    guard_source(
+                                        scoped_source(Derivative(curve, *value.variable_count, evaluate=False), native)
+                                    )
+                                ),
+                                "predicate",
+                                variable,
+                                domain,
+                                order=len(value.variables),
+                                at=points.get(variable),
+                            )
+                        else:
+                            curve = curve.subs(
+                                {symbol: point for symbol, point in points.items() if symbol not in variables},
+                                simultaneous=True,
+                            )
+                            claim = differentiable(
+                                curve,
+                                wrt=variable,
+                                domain=domain,
+                                order=len(value.variables),
+                                at=points.get(variable),
+                                name="derivative",
+                            )
+                            if (curve.free_symbols | (points.get(variable, S.Zero).free_symbols)) & (
+                                set(bound) - {variable}
+                            ):
+                                claim = replace(claim, property="rule")
+                                uncertain = True
                     else:
                         claim = Obligation("mixed_derivative", value, "rule")
                     record(
@@ -1063,21 +1163,54 @@ class VerificationContext(Generic[ModelT]):
                     )
                     bound = (*bound, *variables)
                 if isinstance(value, Expr) and value.is_Pow and value.exp.is_negative is True:
-                    denominator = self._law(value.base, frozenset(bound)).subs(points, simultaneous=True)
-                    coordinates = set(denominator.atoms(Coordinate)) | (set(bound) & denominator.free_symbols)
-                    if len(coordinates) <= 1:
-                        variable = next(iter(coordinates), None)
-                        claim = nonzero(
-                            denominator,
-                            wrt=variable,
-                            domain=scopes.get(variable, coordinate_domain(variable)),
-                            name="denominator",
+                    base = self._law(guard_source(value.base), frozenset(bound))
+                    captured_range = any(captures_coordinate(symbol, points, source=base) for symbol in scopes)
+                    independent = None
+                    if compound:
+                        targets = tuple(
+                            symbol for scope in native if isinstance(scope, Subs) for symbol in scope.variables
                         )
+                        if all(symbol.free_symbols for symbol in targets):
+                            patterns = frozenset().union(*(symbol.free_symbols for symbol in targets))
+                            independent = self._independent_binding(base, frozenset(bound), patterns)
+                    if (compound and independent is None) or captured_range:
+                        operand = scoped_source(value, native)
+                        if any(isinstance(scope, (Integral, Sum, Product, Limit)) for scope in native):
+                            record(
+                                Obligation("denominator", operand, "rule"),
+                                "Overlapping or compound substitutions in a ranged denominator remain unresolved.",
+                                True,
+                            )
+                        else:
+                            coordinates = operand.atoms(Coordinate) | (set(bound) & operand.free_symbols)
+                            for variable in sorted(coordinates, key=default_sort_key) or (None,):
+                                record(
+                                    Obligation(
+                                        "denominator",
+                                        Contains(operand, S.Complexes, evaluate=False),
+                                        "predicate",
+                                        variable,
+                                        scopes.get(variable, coordinate_domain(variable)),
+                                    ),
+                                    "The original scoped division must be defined before cancellation.",
+                                    uncertain,
+                                )
                     else:
-                        claim = Obligation("multivariate_denominator", denominator, "rule")
-                    record(claim, "The original denominator must be nonzero before cancellation.", uncertain)
+                        denominator = independent if independent is not None else base.subs(points, simultaneous=True)
+                        coordinates = set(denominator.atoms(Coordinate)) | (set(bound) & denominator.free_symbols)
+                        if len(coordinates) <= 1:
+                            variable = next(iter(coordinates), None)
+                            claim = nonzero(
+                                denominator,
+                                wrt=variable,
+                                domain=scopes.get(variable, coordinate_domain(variable)),
+                                name="denominator",
+                            )
+                        else:
+                            claim = Obligation("multivariate_denominator", denominator, "rule")
+                        record(claim, "The original denominator must be nonzero before cancellation.", uncertain)
                 for arg in value.args:
-                    visit(arg, points, bound, active, uncertain, scopes)
+                    visit(arg, points, bound, active, uncertain, scopes, native)
 
             # Follow source equations under operator scopes before algebra
             # can cancel an original division or erase a local derivative.
