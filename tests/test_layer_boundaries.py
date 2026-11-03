@@ -104,6 +104,7 @@ class VerificationCurve(VerificationModel):
     value = specifies(x**3, strictly_increasing('value', wrt='x', consumer='test', reason='Order matters'))
 assert VerificationCurve.definition_report().evidence[0].verdict == 'strictly true'
 assert VerificationContext.for_model(VerificationCurve).verify().to_dict()['evidence']
+import examples.record_review
 assert not {'numpy', 'scipy', 'matplotlib'} & sys.modules.keys()
 """
     result = subprocess.run(

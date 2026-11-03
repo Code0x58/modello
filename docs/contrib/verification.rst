@@ -1,78 +1,38 @@
 Deductive verification of model properties
 ==========================================
 
-A model change can preserve a useful formula while invalidating the method that
-uses it. A new utility function may need a different reduction; an execution
-law may retain convexity while losing a closed-form optimizer.
-``modello.contrib.verification`` checks whether specified properties follow
-from a model's definitions, observations, and assumptions. These properties
-become **proof obligations**: statements to establish before a computation
-that needs them can run.
+A calculation can depend on more than a formula: an optimum may need
+concavity, or a local approximation may need continuous second derivatives.
+Changing a component can invalidate those premises even when the new formula
+still evaluates successfully. ``modello.contrib.verification`` attempts to
+establish such properties from a model's definitions, observations, and
+assumptions, and records the evidence needed before a method runs.
 
-This guide is for researchers who use Python and SymPy to express models.
-:doc:`/getting-started` introduces Modello's quantities, components, and
-observations. The symbolic workflow below uses the regular ``modello``
-installation; numerical and plotting dependencies are needed for the later
-worked studies.
+Start with :doc:`planning record checking <../examples/record-review/index>`.
+That worked example builds a workload model from a familiar budget, explains
+its calculus, and follows the same decision through assumptions, component
+replacement, a failed smoothness claim, and exported evidence. It needs
+undergraduate calculus and the ordinary ``modello`` installation. Plotting is
+optional.
 
-Work through one small loop first: specify a property, inspect its verdict,
-add an assumption or observation, run a method, and export its evidence.
-Then revise a premise or try a bound hint before following a :doc:`worked model
-<../examples/financial-models/index>`. Detailed replacement and proof-domain
-rules follow the walkthrough as reference material.
+This page is a reference for readers applying that workflow to their own
+models. :doc:`/getting-started` introduces the underlying declarations.
 
-.. _declare-a-function-and-its-requirements:
+Read an obligation in its context
+----------------------------------
 
-Specify a function and its properties
--------------------------------------
+An **obligation** is a mathematical claim to establish. The same record can
+serve as a declaration's property, a method's precondition, or an
+inference-rule premise. ``specifies`` attaches obligations without assuming
+their truth. ``VerificationModel`` checks them at definition time; ordinary
+``Modello`` classes can be checked explicitly with a ``VerificationContext``.
 
-Suppose a valuation needs a utility function that prefers more wealth and has
-continuous first and second derivatives. Keep risk aversion unrestricted so
-you can ask which values make the method applicable. ``VerificationModel``
-checks each declaration, and ``specifies`` attaches the properties the
-valuation needs:
-
->>> from sympy import exp
->>> from modello import Coordinate, InstanceDummy
->>> from modello.contrib.verification import (
-...     VerificationContext, VerificationModel, continuously_differentiable,
-...     positive, specifies, strictly_increasing,
-... )
->>> class Utility(VerificationModel):
-...     wealth = Coordinate("w", real=True)
-...     gamma = InstanceDummy("gamma", real=True)
-...     value = specifies(
-...         -exp(-gamma*wealth),
-...         strictly_increasing(
-...             "value", wrt="wealth",
-...             reason="More wealth must be preferred.",
-...         ),
-...         continuously_differentiable(
-...             "value", wrt="wealth", order=2,
-...             reason="This calculation uses C2 regularity.",
-...         ),
-...     )
->>> Utility.definition_report().explain("value/strictly_increasing").verdict
-'conditionally true'
-
-Each property function returns an ``Obligation``. The ``wrt`` path selects
-the variable; ``reason`` explains why the computation needs that property.
-Here ``continuously_differentiable(order=2)`` requires continuous first and
-second derivatives, the usual C2 condition.
-
-In this declaration, ``wealth`` is the curve's argument, represented by a
-``Coordinate``. These properties are checked over the real line. ``gamma`` is
-a parameter represented by ``InstanceDummy``. An assumption restricts its
-allowed values; an observation can fix it for a particular context.
-
-Interpret the first verdict
----------------------------
-
-The utility's increase is conditional because ``gamma`` is still unrestricted.
-Read a verdict in the context of its coordinate domain and current assumptions:
+A context retains definitions, observations, and assumptions for one branch.
+Operations such as ``observe``, ``assume``, and ``replace`` return new contexts.
+A report interprets every claim under its coordinate domain and those premises:
 
 ``strictly true``
-   The property is established under those premises.
+   The property is established under the recorded premises.
 
 ``conditionally true``
    ``condition`` gives a sufficient parameter condition. It need not be the
@@ -82,201 +42,21 @@ Read a verdict in the context of its coordinate domain and current assumptions:
    A checked refutation establishes that the stated property fails.
 
 ``unresolved``
-   The checker has an open obligation: for example, an unsupported operation,
+   The attempt leaves an open obligation: for example, an unsupported operation,
    a missing proof, an exhausted attempt budget, or an inapplicable inference rule.
 
-Definition checks keep all four outcomes available for exploration. A method
-can run once the premises it consumes are established. The next step is to
-make the utility's parameter condition explicit on a context.
-
-Branch assumptions and observations
------------------------------------
-
-A ``VerificationContext`` combines a model declaration with assumptions and
-observations for one branch of a study. Start with a common branch point,
-then use its actual symbols when stating assumptions:
-
->>> context = VerificationContext.for_model(Utility)
->>> needed = context.explain("value/strictly_increasing")
->>> needed.condition == (context.symbols.gamma > 0)
-True
->>> positive_context = context.assume(context.symbols.gamma > 0)
->>> positive_context.verify().explain("value/strictly_increasing").verdict
-'strictly true'
->>> context.observe(gamma=0).verify().explain("value/strictly_increasing").verdict
-'strictly false'
->>> context.verify().explain("value/strictly_increasing").verdict
-'conditionally true'
-
-``observe`` accepts the same scalar and component observations as model
-inspection. It retains the original equations and input provenance through the
-existing solution-family machinery. Observations accumulate; use a new branch
-from the earlier context to change one. Use exact values, such as
-``Rational("0.1")``, for symbolic checks. Numerical tolerances belong to a
-numerical method's settings.
-
-``VerificationContext.for_model`` also accepts an ordinary ``Modello`` class, which
-then receives checks when explicitly inspected.
-
-Run a method with established premises
---------------------------------------
-
-A ``Method`` pairs a computation with an explicit contract. Set ``uses`` to
-the model fields the computation reads directly; the runner follows their
-model dependencies. State extra mathematical premises in ``Method.preconditions``.
-This symbolic valuation reads the utility curve from whichever context is
-supplied:
-
->>> from modello.contrib.verification import Method, VerificationError
->>> valuation = Method(
-...     "symbolic valuation",
-...     lambda current: current.expression("value", wrt="wealth"),
-...     uses=("value",),
-... )
->>> valued = positive_context.observe(gamma=1).run(valuation)
->>> valued.data.subs(Utility.wealth, 0)
--1
->>> valued.report.explain("value/strictly_increasing").verdict
-'strictly true'
-
-The result's ``data`` is a SymPy utility curve; here it is evaluated at zero
-wealth. Its ``report`` retains the premises that permitted the computation.
-Running the same method on the unrestricted context exposes the premise still
-needed:
-
->>> try:
-...     context.run(valuation)
-... except VerificationError as error:
-...     print(error.report.explain("value/strictly_increasing").verdict)
-conditionally true
-
-``VerificationError`` retains the originating context in ``context`` and its
-evidence in ``report``. Before calling ``Method.execute``, ``run`` requires
-established evidence for the method's explicit preconditions and the
-applicable obligations from declarations and symbolic operations. Unrelated
-open claims remain available in the report. Context-specific method factories
-and trusted inference rules are described under
-:ref:`verification-method-reference`.
-
-Inspect and export evidence
----------------------------
-
-Use ``valued.report.explain(id)`` to inspect the premises checked for that
-computation. ``context.explain(id)`` or ``context.verify().explain(id)`` instead
-verifies the context with its own observations and assumptions.
-Evidence includes the claim, coordinate domain, condition and its strength,
-derivation steps, dependencies, counterexamples, and recursively checked
-rule premises. Expected forms, target bounds, and checked hints retain their
-specialized values in the audit and its fingerprint. ``to_json()`` and
-``to_html()`` return text strings that you can save to files. Export the
-successful computation's report:
-
->>> audit_json = valued.report.to_json()
->>> html_page = valued.report.to_html(title="Utility valuation")
->>> import json
->>> json.loads(audit_json)["assumptions_consistent"]
-True
-
-Exports retain the declared subject and the expected formula before parameter
-observations, alongside the specialized expression actually checked. This
-keeps a successful equality readable even when both evaluated sides become
-the same number. ``VerificationReport.evidence`` holds the verification
-attempts; schema version 2 exports them under ``evidence``. Study records use
-``context`` or ``contexts`` for their model contexts. The JSON remains
-descriptive; it cannot reconstruct a context or execute a stored formula.
-
-.. _revise-an-assumption-or-requirement:
-
-Revise assumptions and obligations
-----------------------------------
-
-Explicit assumptions can be removed on a new branch, with a recorded reason:
-
->>> relaxed = positive_context.without_assumptions(
-...     context.symbols.gamma > 0, reason="Compare zero and negative risk aversion.")
->>> relaxed.verify().explain("value/strictly_increasing").verdict
-'conditionally true'
->>> positive_context.verify().explain("value/strictly_increasing").verdict
-'strictly true'
-
-The report records why an explicit premise changed. Declared symbol domains
-and existing observations remain part of the context.
-
-You can add a proof obligation for exploration, then retire it on a new branch:
-
->>> exploratory = context.with_obligations(positive("gamma", name="positive_risk"))
->>> exploratory.verify().explain("positive_risk").verdict
-'conditionally true'
->>> restored = exploratory.without_obligations(
-...     "positive_risk", reason="Compare using only the declared utility obligations.")
->>> len(exploratory.obligations), len(restored.obligations)
-(1, 0)
->>> restored.verify().explain("value/strictly_increasing").verdict
-'conditionally true'
-
-Retiring this added obligation leaves the utility's declared obligations
-in place. A method still needs evidence for its preconditions.
-
-Check consistency when combining assumptions. Contradictory premises produce
-an inconsistent report and cannot establish a result:
-
->>> impossible = context.assume(context.symbols.gamma > 0, context.symbols.gamma < 0).verify()
->>> impossible.consistent, impossible.evidence[0].verdict
-(False, 'unresolved')
-
-.. _check-a-proposed-proof:
-
-Propose a uniform bound
------------------------
-
-An unresolved result can call for a mathematical argument rather than a new
-parameter value. A logistic trade-arrival intensity has a uniform
-derivative-ratio obligation that illustrates this distinction:
-
->>> from examples.market_making_study import LogisticIntensity
->>> logistic = VerificationContext.for_model(LogisticIntensity)
->>> logistic.verify().explain("rate/derivative_ratio_bound").verdict
-'unresolved'
->>> bounded = logistic.with_bound_hint("rate/derivative_ratio_bound", upper=1)
->>> bounded.verify().explain("rate/derivative_ratio_bound").verdict
-'strictly true'
-
-For :math:`\Lambda(\delta)=A/(1+e^{k\delta})`, with :math:`A,k>0`, the checker
-derives :math:`\Lambda\Lambda''/(\Lambda')^2=1-e^{-k\delta}`. It verifies the
-proposed uniform upper bound 1 and that :math:`1<2`. The nonzero derivative
-premise is checked before cancellation. A pointwise inequality strictly below
-2 would not by itself establish a supremum strictly below 2.
-
-An incorrect hint supplies no certificate; it does not refute the property.
-The ``upper`` value is a proposed proof aid, not an assumption or an obligation
-that is accepted without checking. A uniform target bound must also be
-independent of the quantified coordinate, including after resolving aliases.
-A coordinate-dependent target is a ``ModelDefinitionError``; it cannot become
-a uniform bound by assuming a predicate about that coordinate.
-Parameter poles are also retained. For example, regularity of :math:`e^{x/a}`
-cannot be unconditional when the declaration allows :math:`a=0`.
-
-Continue with a worked model
-----------------------------
-
-Start with :doc:`Markowitz allocation
-<../examples/financial-models/markowitz>` to compare economic restrictions on
-one scalar decision. The :doc:`model collection
-<../examples/financial-models/index>` then develops component replacement,
-deterministic schedules, stochastic premises, and piecewise regularity.
-
-For the complete utility/risk/liquidity application, continue with
-:doc:`market making <../examples/market-making/index>`. It connects checked
-component obligations to the coupled time-dependent numerical study and its
-offline reports.
+Assumption consistency is reported separately; contradictory premises cannot
+establish a result. Numerical samples remain observations, rather than proofs
+of global claims. A ``Method`` can run once the premises it consumes are
+established. Its result retains the report that permitted execution;
+``VerificationError`` retains the context and report when execution is blocked.
 
 Reference: contracts, domains, and proof limits
 -----------------------------------------------
 
 Use these rules when a replacement or proof attempt needs closer inspection.
 The :ref:`API reference <verification-api>` below lists the workflow objects and
-property functions. For a study written against the earlier draft, see the
-:ref:`name migration tables <verification-draft-migration>`.
+property functions.
 
 Specifications, obligations, and inference rules
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -393,7 +173,7 @@ identity even when reached through several component paths. Report printers
 label the original symbolic tree without substituting or simplifying it, so
 formatting cannot turn a difference of independent coordinates into zero.
 
-.. _retire-explicit-assumptions-and-requirements:
+.. _verification-retire-premises:
 
 Retire explicit assumptions and obligations
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -695,18 +475,20 @@ A locally evaluated expression such as ``Subs(curve, x, 1)`` keeps its own
 scope: its obligations concern that evaluation, while the unevaluated source
 curve can still have a pole elsewhere.
 
->>> from modello.contrib.verification import Method
->>> def valuation(current):
-...     curve = current.expression("value", wrt="wealth")
+>>> from examples.record_review import ExponentialReview
+>>> from modello.contrib.verification import Method, VerificationContext
+>>> def response_method(current):
+...     curve = current.expression("value", wrt="effort")
 ...     return Method(
-...         "symbolic valuation", lambda inner: curve, uses=("value",),
+...         "response curve", lambda inner: curve, uses=("value",),
 ...     ).bind(current)
->>> positive_context.run(valuation).report.explain("value/strictly_increasing").verdict
+>>> measured = VerificationContext.for_model(ExponentialReview, rate=1)
+>>> measured.run(response_method).report.explain("value/strictly_increasing").verdict
 'strictly true'
 
-Use ``context.run(valuation)`` after branching: it builds the method from the
-current context on every call. The model examples use this form, such as
-``context.run(symbolic_method)`` or ``context.run(numerical_method, xatol=1e-10)``.
+Use ``context.run(response_method)`` after branching: it builds the method from
+the current context on every call. Computation settings can be supplied as
+additional keyword arguments to ``run``.
 
 Factories capturing expressions bind the returned method with
 ``Method(...).bind(context)``. If a prepared method is retained for later use,
@@ -833,91 +615,3 @@ ways to declare an obligation.
 .. autoclass:: Sample
 
 .. autoexception:: VerificationError
-
-.. _verification-draft-migration:
-
-Names changed from the draft research API
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The earlier ``modello.contrib.research`` namespace was a draft on this branch.
-Use the following names throughout code, reports, and studies. The extension
-has one public vocabulary, without compatibility aliases for the draft names.
-
-.. list-table:: Workflow terminology
-   :header-rows: 1
-   :widths: 45 55
-
-   * - Draft name
-     - Current name
-   * - ``ResearchModel``
-     - ``VerificationModel``
-   * - ``ResearchCase``
-     - ``VerificationContext``
-   * - ``Requirement``
-     - ``Obligation``
-   * - ``ResearchReport``
-     - ``VerificationReport``
-   * - ``ResearchResult``
-     - ``VerificationResult``
-   * - ``ResearchError``
-     - ``VerificationError``
-   * - ``Theorem``
-     - ``InferenceRule``
-   * - ``with_theorem``
-     - ``with_rule``
-   * - ``Experiment``
-     - ``Sample``
-   * - ``requires``
-     - ``specifies``
-   * - ``require``
-     - ``with_obligations``
-   * - ``without_requirements``
-     - ``without_obligations``
-   * - ``check``
-     - ``verify``
-   * - ``with_hint``
-     - ``with_bound_hint``
-   * - ``Method.requirements``
-     - ``Method.preconditions``
-   * - ``ResearchError.case``
-     - ``VerificationError.context``
-   * - ``VerificationReport.checks``
-     - ``VerificationReport.evidence``
-   * - ``portfolio_case`` and other ``*_case`` factories
-     - ``portfolio_context`` and ``*_context`` factories
-   * - ``from_case``
-     - ``from_context``
-   * - ``SymbolicChecks``
-     - ``SymbolicVerification``
-   * - ``NumericalCheck``
-     - ``NumericalComparison``
-   * - ``checked_upper_bound`` in exported evidence
-     - ``bound_hint``
-
-JSON schema version 2 uses ``evidence`` in place of ``checks``, and ``context``
-or ``contexts`` in place of ``case`` or ``cases``. The bound hint is exported
-as ``bound_hint``. Reports do not emit the earlier draft keys.
-
-.. list-table:: Mathematical property terminology
-   :header-rows: 1
-   :widths: 45 55
-
-   * - Draft name
-     - Current name
-   * - ``increasing``
-     - ``strictly_increasing``
-   * - ``decreasing``
-     - ``strictly_decreasing``
-   * - ``smooth``
-     - ``continuously_differentiable``
-   * - ``uniform_bound``
-     - ``supremum_below``
-   * - ``curvature_bound``
-     - ``derivative_ratio_bound``
-   * - ``exact_form``
-     - ``equal_to``
-   * - ``vanishes``
-     - ``tends_to_zero``
-
-The numerical extra is now ``modello[numerics]``. The example collection is
-``examples.financial_models``; its reports live under ``financial-models``.

@@ -173,9 +173,11 @@ class VerificationCurve(VerificationModel):
 assert VerificationCurve.definition_report().evidence[0].verdict == "strictly true"
 assert VerificationContext.for_model(VerificationCurve).verify().to_dict()["evidence"]
 assert not {"numpy", "scipy", "matplotlib"} & sys.modules.keys()
-import importlib
-for name in ("black_scholes", "participation_execution", "markowitz", "cir_bond", "perpetual_put"):
-    importlib.import_module("examples.financial_models." + name)
+from examples.record_review import review_context, review_plan
+from sympy import log
+decision = review_context().observe(candidate=2*log(3)).run(review_plan).data
+assert decision.minutes_per_record == 6 + 2*log(3)
+assert decision.workload_curvature*2 == 1
 assert not {"numpy", "scipy", "matplotlib"} & sys.modules.keys()
 vector_snapshot = Explorer(window).snapshot()
 assert vector_snapshot["vectors"][0]["shape"] == [3]
@@ -288,31 +290,22 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
     assert (directory / "report.html").read_text().startswith("<!doctype html>")
     print(f"Validated all installed example runners from {wheel.name}", flush=True)
     install("numerics")
-    study = directory / "market-making"
+    study = directory / "record-review"
     subprocess.run(
-        [str(python), "-I", "-m", "examples.market_making", "--study", "--output", str(study)],
+        [str(python), "-I", "-m", "examples.record_review", "--plot", "--output", str(study)],
         cwd=directory,
         check=True,
         stdout=subprocess.DEVNULL,
     )
-    study_report = json.loads((study / "report.json").read_text())
-    assert set(study_report["contexts"]) == {"exponential", "logistic"}
-    assert study_report["contexts"]["exponential"]["convergence"]["matrix_exponential_theta_error"] < 1e-6
-    assert (study / "figures" / "quotes.svg").is_file()
-    print("Validated the installed market-making study and its optional numerical dependencies", flush=True)
-    collection = directory / "financial-models"
-    subprocess.run(
-        [str(python), "-I", "-m", "examples.financial_models", "--compact", "--output", str(collection)],
-        cwd=directory,
-        check=True,
-        stdout=subprocess.DEVNULL,
-    )
-    models = json.loads((collection / "collection.json").read_text())["studies"]
-    assert set(models) == {"black-scholes", "participation-execution", "markowitz", "cir-bond", "perpetual-put"}
-    for name in models:
-        assert (collection / name / "figures" / "overview.svg").is_file()
-        assert (collection / name / "results.csv").is_file()
-    print("Validated all five installed model studies and their evidence artifacts", flush=True)
+    plans = json.loads((study / "results.json").read_text())["plans"]
+    assert set(plans) == {"exponential", "rational", "capped"}
+    assert plans["exponential"]["workload_curvature"]["exact"] == "1/2"
+    assert "blocked" in plans["capped"]
+    for name in plans:
+        assert json.loads((study / f"{name}.json").read_text())["evidence"]
+        assert (study / f"{name}.html").is_file()
+    assert (study / "curves.svg").is_file()
+    print("Validated the installed record-review study, evidence, and optional plot", flush=True)
     install("gui")
     subprocess.run([str(python), "-I", "-c", GUI_SMOKE_TEST], cwd=directory, check=True)
     typing_checks = []

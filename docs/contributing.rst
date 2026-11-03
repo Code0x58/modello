@@ -67,12 +67,12 @@ Measure slow tests before changing their implementation:
 .. code-block:: console
 
    $ uv run --locked --dev pytest --no-cov --durations=25 \
-       tests/examples/financial_models
-   $ uv run --locked --dev python -m cProfile -o /tmp/financial-tests.prof \
-       -m pytest --no-cov tests/examples/financial_models/test_cir_bond.py
+       tests/modello/contrib/test_verification*.py
+   $ uv run --locked --dev python -m cProfile -o /tmp/verification-tests.prof \
+       -m pytest --no-cov tests/modello/contrib/test_verification_piecewise.py
    $ uv run --locked --dev python -c \
        "import pstats; \
-       pstats.Stats('/tmp/financial-tests.prof').sort_stats('cumulative').print_stats(25)"
+       pstats.Stats('/tmp/verification-tests.prof').sort_stats('cumulative').print_stats(25)"
 
 Use the same interpreter and coverage settings for before/after timings.
 Inspect repeated domain proofs, expression binding, and solver work separately;
@@ -213,9 +213,9 @@ Proof attempts retain parameter guards, inference-rule premises, and unresolved
 outcomes. Method contracts select the evidence they consume. Numerical and
 plotting dependencies remain in optional example methods; the symbolic
 extension imports neither. Report JSON is a descriptive audit export; it cannot
-reconstruct a context. The market-making study compiles its RHS from the shared
-HJB and checks it against independent time differences and an exponential linear
-reference.
+reconstruct a context. The record-review example connects exact stationary
+candidates to a concavity argument, then rechecks the same premises after
+replacing its response curve.
 
 Keep the extension boundary at evidence and proof policy. Core model
 declarations must preserve the meaning of their equations before any extension

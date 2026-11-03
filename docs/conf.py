@@ -42,16 +42,9 @@ def write_example_reports(app: Sphinx, exception: Exception | None) -> None:
             check=True,
             stdout=subprocess.DEVNULL,
         )
-        study = Path(app.outdir) / "examples" / "market-making" / "study"
+        study = Path(app.outdir) / "examples" / "record-review" / "study"
         subprocess.run(
-            [sys.executable, "-m", "examples.market_making", "--study", "--output", str(study)],
-            cwd=Path(__file__).resolve().parents[1],
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
-        collection = Path(app.outdir) / "examples" / "financial-models" / "study"
-        subprocess.run(
-            [sys.executable, "-m", "examples.financial_models", "--compact", "--output", str(collection)],
+            [sys.executable, "-m", "examples.record_review", "--plot", "--output", str(study)],
             cwd=Path(__file__).resolve().parents[1],
             check=True,
             stdout=subprocess.DEVNULL,

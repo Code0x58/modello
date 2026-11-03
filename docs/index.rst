@@ -83,20 +83,18 @@ the API and diagnostic guarantees are separate reference material.
 
    recipes/dataframe-validation
 
-For research that changes a model's components or assumptions, start with the
-:doc:`verification workflow <contrib/verification>`. Follow the
-:doc:`worked studies <examples/financial-models/index>` from scalar constraints
-to stochastic and piecewise models, then the
-:doc:`market-making application <examples/market-making/index>` for a coupled
-time-dependent study.
+To explore how mathematical properties affect a model's calculations, work
+through :doc:`planning record checking <examples/record-review/index>`.
+It builds one practical example using calculus, then revisits the decision
+as assumptions and components change. The :doc:`verification reference
+<contrib/verification>` describes the extension's contracts and proof limits.
 
 .. toctree::
    :caption: Applications
    :maxdepth: 1
 
    examples/applications/index
-   examples/financial-models/index
-   examples/market-making/index
+   examples/record-review/index
    examples/portfolio/index
    examples/reconciliation/index
    examples/solution_families/index
