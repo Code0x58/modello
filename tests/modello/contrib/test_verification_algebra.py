@@ -421,26 +421,39 @@ def test_a_loose_conditional_hint_cannot_refute_a_true_bound(kind):
     assert tight.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly true"
 
 
-def test_a_bound_hint_cannot_hide_a_refuted_curvature_prerequisite():
+@pytest.mark.parametrize("order", (1, 2))
+def test_a_bound_hint_cannot_hide_a_refuted_curvature_prerequisite(order):
     class Curve(VerificationModel):
         x = Coordinate("x", real=True)
         p = InstanceDummy("p", real=True)
-        value = Piecewise((x + x**3, x <= 0), (2 * (x + x**3), True))
+        value = (
+            Piecewise((x + x**3, x <= 0), (2 * (x + x**3), True))
+            if order == 1
+            else Piecewise((x, x < 0), (x + x**2, True))
+        )
 
     context = VerificationContext.for_model(Curve)
     claim = derivative_ratio_bound("value", wrt="x", bound=10)
     p = context.symbols.p
     native = Subs(Derivative(Abs(Curve.x), Curve.x), Curve.x, p)
     guarded_hint = Add(5, Mul(0, native, evaluate=False), evaluate=False)
-    # The ratio simplifies to a smooth bounded expression on either side,
-    # but the subject's one-sided slopes at zero are 1 and 2.
-    for upper, point in ((None, None), (5, None), (-1, None), (guarded_hint, 0), (guarded_hint, 1)):
+    # The ratio is bounded on each side, but the subject's first or second
+    # derivatives do not match at zero.
+    for upper, point in (
+        (None, None),
+        (5, None),
+        (-1, None),
+        (S.ImaginaryUnit, None),
+        (guarded_hint, 0),
+        (guarded_hint, 1),
+    ):
         current = context if point is None else context.assume(Eq(p, point))
         if upper is not None:
             current = current.with_bound_hint(claim.name, upper=upper)
         evidence = current.verify(obligations=(claim,)).explain(claim.name)
         assert evidence.verdict == "strictly false"
         assert "do not match" in " ".join(evidence.steps)
+    assert evidence.witness == ((Curve.x, S.Zero),)
     calls = []
     with pytest.raises(VerificationError) as failure:
         context.with_bound_hint(claim.name, upper=5).run(
@@ -448,6 +461,139 @@ def test_a_bound_hint_cannot_hide_a_refuted_curvature_prerequisite():
         )
     assert failure.value.report.explain(claim.name).verdict == "strictly false"
     assert not calls
+
+
+@pytest.mark.parametrize("kind", ("uniform", "curvature"))
+@pytest.mark.parametrize("scope", ("native", "compound", "observation", "binding"))
+def test_failed_optional_hint_premises_cannot_hide_an_independent_refutation(kind, scope):
+    class Curve(Modello):
+        x = Coordinate("x", real=True)
+        a = InstanceDummy("a", real=True)
+        b = InstanceDummy("b", real=True)
+        delta = a - b
+        value = S.One
+        if scope == "binding":
+            y = InstanceDummy("y", real=True)
+            y = y / 2
+
+    context = VerificationContext.for_model(Curve)
+    native = Subs(Derivative(Abs(Curve.x), Curve.x, evaluate=False), Curve.x, 0)
+    if scope == "observation":
+        context = context.observe(a=context.symbols.b, b=context.symbols.a + native)
+        hint = 1 + context.symbols.delta
+    elif scope == "compound":
+        hint = Subs(Derivative(Abs(Curve.x), Curve.x, evaluate=False), Curve.x**2, 0)
+    elif scope == "binding":
+        hint = Derivative(context.symbols.y, Curve.x, evaluate=False)
+    else:
+        hint = native
+    claim = supremum_below("value", 0, wrt="x") if kind == "uniform" else derivative_ratio_bound("value", wrt="x")
+    assert context.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
+    hinted = context.with_bound_hint(claim.name, upper=hint)
+    evidence = hinted.verify(obligations=(claim,)).explain(claim.name)
+    assert evidence.verdict == "strictly false"
+    assert evidence.hint is not None
+    if scope == "observation":
+        assert evidence.source_operands
+    calls = []
+    with pytest.raises(VerificationError) as failure:
+        hinted.run(Method("refuted", lambda current: calls.append(current), (claim,), uses=("value",)))
+    assert failure.value.report.explain(claim.name).verdict == "strictly false"
+    assert not calls
+    if scope == "binding":
+        unrefuted = supremum_below(sin(Curve.x), 2, wrt="x", name="unrefuted")
+        uncertain = context.with_bound_hint(unrefuted.name, upper=hint)
+        evidence = uncertain.verify(obligations=(unrefuted,)).explain(unrefuted.name)
+        assert evidence.verdict == "unresolved"
+        assert evidence.hint is not None
+        assert "cyclic" in " ".join(evidence.steps)
+        repaired = uncertain.with_bound_hint(unrefuted.name, upper=1)
+        assert repaired.run(Method("repaired", lambda current: 1, (unrefuted,))).data == 1
+        foreign = context.with_bound_hint(claim.name, upper=Symbol("foreign", real=True))
+        with pytest.raises(ModelValidationError, match="context's symbols"):
+            foreign.verify(obligations=(claim,))
+
+
+@pytest.mark.parametrize("kind", ("uniform_native", "curvature_native", "uniform_margin"))
+def test_conditional_hint_conditions_cannot_refute_an_admissible_subject(kind):
+    class Curve(Modello):
+        x = Coordinate("x", real=True)
+        p = InstanceDummy("p", real=True)
+        if kind == "uniform_margin":
+            value = Piecewise((-1 - x**2, p**2 <= 0), (S.NaN, True), evaluate=False)
+        elif kind == "curvature_native":
+            value = exp(x / p)
+        else:
+            value = Mul(0, 1 / p, evaluate=False)
+
+    context = VerificationContext.for_model(Curve)
+    p = context.symbols.p
+    if kind == "uniform_margin":
+        claim = supremum_below("value", p**2, wrt="x")
+        hint, valid_hint, point = S.Zero, -S.One, 0
+    else:
+        claim = (
+            derivative_ratio_bound("value", wrt="x")
+            if kind == "curvature_native"
+            else supremum_below("value", 1, wrt="x")
+        )
+        hint = Derivative(Piecewise((Curve.x, Curve.x < 0), ((p + 1) * Curve.x, True)), Curve.x, evaluate=False)
+        valid_hint, point = S.One if kind == "curvature_native" else S.Zero, 1
+    baseline = context.with_bound_hint(claim.name, upper=valid_hint)
+    assert baseline.verify(obligations=(claim,)).explain(claim.name).verdict == "conditionally true"
+    hinted = context.with_bound_hint(claim.name, upper=hint)
+    evidence = hinted.verify(obligations=(claim,)).explain(claim.name)
+    assert evidence.verdict == "unresolved"
+    assert evidence.hint is not None
+    calls = []
+    with pytest.raises(VerificationError):
+        hinted.run(Method("conditional", lambda current: calls.append(current), (claim,), uses=("value",)))
+    assert not calls
+    observed = hinted.observe(p=point)
+    assert observed.verify(obligations=(claim,)).explain(claim.name).verdict == "unresolved"
+    repaired = observed.with_bound_hint(claim.name, upper=valid_hint)
+    assert repaired.run(Method("repaired", lambda current: 1, (claim,), uses=("value",))).data == 1
+
+
+def test_bound_source_refutations_precede_optional_certificates():
+    class Curve(Modello):
+        x = Coordinate("x", real=True)
+        p = InstanceDummy("p", real=True)
+        value = Add(-exp(-(x**2)), Mul(0, 1 / (p - 1), evaluate=False), evaluate=False)
+
+    base = VerificationContext.for_model(Curve)
+    context = base.assume(Eq(base.symbols.p, 1))
+    claim = supremum_below("value", 1, wrt="x")
+    for hint in (None, 0, 2, S.ImaginaryUnit):
+        current = context if hint is None else context.with_bound_hint(claim.name, upper=hint)
+        assert current.verify(obligations=(claim,)).explain(claim.name).verdict == "strictly false"
+    calls = []
+    with pytest.raises(VerificationError) as failure:
+        current.run(Method("undefined", lambda current: calls.append(current), (claim,), uses=("value",)))
+    assert failure.value.report.explain(claim.name).verdict == "strictly false"
+    assert not calls
+    valid = base.observe(p=2).with_bound_hint(claim.name, upper=0)
+    assert valid.run(Method("defined", lambda current: 1, (claim,), uses=("value",))).data == 1
+
+
+def test_finite_piecewise_values_do_not_need_conditional_continuity():
+    class Curve(Modello):
+        x = Coordinate("x", real=True)
+        p = InstanceDummy("p", real=True)
+        q = InstanceDummy("q", real=True)
+        value = Piecewise((0, x < 0), (p + q, True))
+
+    base = VerificationContext.for_model(Curve)
+    context = base.assume(Eq(base.symbols.p + base.symbols.q, 1))
+    identity = equal_to("value", lambda reference: reference("value"), wrt="x")
+    bound = supremum_below("value", 2, wrt="x")
+    report = context.with_bound_hint(bound.name, upper=1).verify(obligations=(identity, bound))
+    assert report.explain(identity.name).verdict == "strictly true"
+    assert report.explain(bound.name).verdict != "strictly false"
+    observed = base.observe(p=1, q=0).with_bound_hint(bound.name, upper=1)
+    assert observed.run(Method("finite", lambda current: 1, (identity, bound), uses=("value",))).data == 1
+    smooth = differentiable("value", wrt="x")
+    assert observed.verify(obligations=(smooth,)).explain(smooth.name).verdict == "strictly false"
 
 
 def test_uniform_hints_and_targets_share_the_subjects_parameter_assumptions():

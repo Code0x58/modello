@@ -1354,12 +1354,12 @@ class VerificationContext(Generic[ModelT]):
                 self._require_symbols(expected)
                 expected = bind(expected)
 
-            def payload(value, *, optional=False):
+            def payload(value):
                 if value is None:
                     return None
                 value = native(value)
                 self._require_symbols(value)
-                return bind(value, optional=optional)
+                return bind(value)
 
             domain, bound, point = payload(claim.domain), payload(claim.bound), payload(claim.at)
             if variable is not None and variable in domain.free_symbols:
@@ -1436,9 +1436,30 @@ class VerificationContext(Generic[ModelT]):
             )
             hint_key = key if key in bound_hints else f"{canonical}/{claim.name}"
             hint = bound_hints.get(hint_key)
+            hint_failure = None
             if hint is not None:
                 used_hints.add(hint_key)
-                hint = cast(Expr, payload(hint, optional=True))
+                hint_binding_error = None
+                try:
+                    hint = native(hint)
+                except (NotImplementedError, ValueError, TypeError, PolynomialError, RecursionError) as error:
+                    hint_binding_error = error
+                if hint_binding_error is None:
+                    self._require_symbols(hint)
+                    try:
+                        hint = cast(Expr, bind(hint, optional=True))
+                    except (NotImplementedError, ValueError, TypeError, PolynomialError, RecursionError) as error:
+                        hint_binding_error = error
+                if hint_binding_error is not None:
+                    # Retain the proposal when only its resolution failed;
+                    # necessary subject premises still need to be checked.
+                    hint_failure = Attempt(
+                        None,
+                        (
+                            "Unsupported optional hint binding: "
+                            f"{type(hint_binding_error).__name__}: {hint_binding_error}",
+                        ),
+                    )
             source_operands = _unique_expressions(sources)
             hint_operands = _unique_expressions(hint_sources)
             attempt_key = _expression_key(
@@ -1455,6 +1476,7 @@ class VerificationContext(Generic[ModelT]):
                     hint,
                     source_operands,
                     hint_operands,
+                    hint_failure,
                 )
             )
             attempts = self._context.attempts
@@ -1462,7 +1484,15 @@ class VerificationContext(Generic[ModelT]):
             if result is None:
                 try:
                     result = attempt(
-                        resolved, expression, variable, expected, assumptions, hint, source_operands, hint_operands
+                        resolved,
+                        expression,
+                        variable,
+                        expected,
+                        assumptions,
+                        hint,
+                        source_operands,
+                        hint_operands,
+                        hint_failure=hint_failure,
                     )
                 except (NotImplementedError, ValueError, TypeError, PolynomialError, RecursionError) as error:
                     result = Attempt(None, (f"Unsupported CAS proof attempt: {type(error).__name__}: {error}",))

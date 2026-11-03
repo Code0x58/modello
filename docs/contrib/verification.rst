@@ -555,6 +555,7 @@ as ``source_operands``, alongside the resolved expression.
 Supported source domains are checked alongside the simplified formula;
 unsupported operand domains remain unresolved. These checks keep local
 substitutions and derivative evaluation points in their original scopes.
+Known finite piecewise values do not need continuity to establish definedness.
 Real continuity domains provide sufficient definedness and regularity
 certificates. Their failure alone does not refute claims involving finite
 complex intermediate values, such as ``0*log(x)`` or ``cos(sqrt(x))`` on a
@@ -645,7 +646,13 @@ the requested domain.
 A uniform-bound hint supplies a sufficient certificate. If its parameter guard
 fails, that certificate remains unestablished; a loose hint cannot refute the
 bound. A failed certificate also cannot erase an independently checked failure
-of a necessary premise. A curvature ratio still fails when its subject has a
+of a necessary premise. This includes hints with undefined or unsupported native
+operations, whether supplied directly or retained from observations.
+If a hint cannot be resolved from the model, the report retains its original
+expression and checks necessary premises independently.
+An optional certificate that conflicts with the subject's admissible source
+conditions stays unresolved; that contradiction does not refute the subject.
+A curvature ratio still fails when its subject has a
 checked nondifferentiable join, even if the ratio simplifies to a smooth expression.
 Consumed hint keys, including canonical paths and inference-rule premise hints,
 are excluded from unused-hint diagnostics.

@@ -96,9 +96,12 @@ from ._records import Obligation
 
 @dataclass(frozen=True)
 class Attempt:
+    """A result condition with any optional bound certificate kept separate."""
+
     condition: Basic | None
     steps: tuple[str, ...]
     witness: tuple[tuple[Symbol, Expr], ...] = ()
+    certificate: Basic | None = S.true
 
 
 _TOTAL_FUNCTIONS = (Abs, exp, sin, cos, sinh, cosh, erf, erfc, frac, floor, ceiling, sign, conjugate, re, im)
@@ -335,6 +338,13 @@ def truth(condition: Basic, assumptions: tuple[Basic, ...]) -> Basic:
     return condition
 
 
+def _parameter_condition(condition, variable, assumptions):
+    """Discharge parameter conditions without assuming a quantified coordinate."""
+    if condition is None or variable is not None and variable in condition.free_symbols:
+        return None
+    return truth(condition, assumptions)
+
+
 def consistency(assumptions: tuple[Basic, ...]) -> bool | None:
     if not assumptions:
         return True
@@ -469,7 +479,7 @@ def _defined(expression: Expr, variable: Symbol | None, domain: Set) -> Attempt:
     if source.condition is None or source.condition is S.false:
         return source
     finite_steps = ("The expression is finite; continuity is not required for this claim.",)
-    if not body.has(Piecewise) and body.is_finite is True:
+    if body.is_finite is True:
         guard = _parameter_guards(body, variable)
         if guard is not None:
             return Attempt(conjunction(source.condition, guard), finite_steps)
@@ -716,30 +726,43 @@ def _convex(expression, variable, domain) -> Attempt:
     return Attempt(None, (*regular.steps, "Failure of a C2 certificate alone does not refute convexity."))
 
 
-def _uniform(expression, variable, domain, bound, hint, assumptions: tuple[Basic, ...]) -> Attempt:
+def _uniform(expression, variable, domain, bound, hint) -> Attempt:
     defined = _defined(expression, variable, domain)
-    if defined.condition is S.false or defined.condition is None:
+    if defined.condition is S.false:
         return defined
+    if defined.condition is None:
+        return Attempt(S.true, defined.steps, certificate=None)
     if variable is None or variable not in expression.free_symbols:
         return Attempt(
-            conjunction(defined.condition, expression < bound),
+            expression < bound,
             (f"The coordinate-independent supremum is {expression}.",),
+            certificate=defined.condition,
         )
     if hint is None:
-        return Attempt(None, ("Supply a checked uniform upper-bound hint; a pointwise inequality is insufficient.",))
+        return Attempt(
+            S.true,
+            ("Supply a checked uniform upper-bound hint; a pointwise inequality is insufficient.",),
+            certificate=None,
+        )
     if variable in hint.free_symbols:
-        return Attempt(None, ("A uniform bound must be independent of the quantified coordinate.",))
-    upper = _sign(simplify(hint - expression), variable, domain, False)
-    certificate = conjunction(upper.condition, hint < bound)
-    if certificate is not None:
-        certificate = truth(certificate, assumptions)
-    # Failure of this sufficient certificate cannot refute the bound. Keep
-    # that interpretation local so it cannot hide a refuted prerequisite.
-    if certificate is S.false:
-        return Attempt(None, ("The proposed upper bound does not certify this claim.",))
+        return Attempt(
+            S.true,
+            ("A uniform bound must be independent of the quantified coordinate.",),
+            certificate=None,
+        )
+    try:
+        upper = _sign(simplify(hint - expression), variable, domain, False)
+        certificate = conjunction(defined.condition, upper.condition, hint < bound)
+    except (NotImplementedError, ValueError, TypeError, PolynomialError, RecursionError) as error:
+        return Attempt(
+            S.true,
+            (f"Unsupported optional certificate: {type(error).__name__}: {error}",),
+            certificate=None,
+        )
     return Attempt(
-        conjunction(defined.condition, certificate),
-        (*upper.steps, f"sup <= {hint} < {bound}."),
+        S.true,
+        (*upper.steps, f"Candidate certificate: sup <= {hint} < {bound}."),
+        certificate=certificate,
     )
 
 
@@ -944,6 +967,28 @@ def evaluate_native(value):
     )
 
 
+def _observation_sources(sources, variable, domain) -> tuple[Attempt, tuple[Expr, ...]]:
+    """Check source premises once; the caller decides whether they are required."""
+    guards: list[Basic] = []
+    values: list[Expr] = []
+    for operand in sources:
+        for regularity in derivative_premises(operand, variable, domain):
+            if regularity.condition is None or regularity.condition is S.false:
+                return regularity, ()
+            guards.append(regularity.condition)
+        value = piecewise_fold(evaluate_native(operand))
+        if not isinstance(value, Expr):
+            return Attempt(None, ("Observation source checks require scalar expressions.",)), ()
+        finite = _defined(_defined_part(value), None, S.Reals)
+        if finite.condition is None or finite.condition is S.false:
+            return finite, ()
+        guards.append(finite.condition)
+        values.append(value)
+    condition = And(*guards)
+    steps = ("The observation source conditions cannot all hold.",) if condition is S.false else ()
+    return Attempt(condition, steps), tuple(values)
+
+
 def attempt(
     claim: Obligation,
     expression: Basic,
@@ -953,33 +998,18 @@ def attempt(
     hint: Expr | None,
     sources: tuple[Basic, ...] = (),
     hint_sources: tuple[Basic, ...] = (),
+    *,
+    hint_failure: Attempt | None = None,
 ) -> Attempt:
     if claim.property == "rule":
         # Registered rules are handled by the context. An unproved conclusion
         # must not execute unsupported native operations just to stay unresolved.
         return Attempt(None, ("No registered inference rule establishes this conclusion.",))
-    derivative_guards: list[Basic] = []
-    hint_guards: list[Basic] = []
-    source_values: list[Expr] = []
-    hint_values: list[Expr] = []
-    for operands, optional in ((sources, False), (hint_sources, True)):
-        for operand in operands:
-            for regularity in derivative_premises(operand, variable, claim.domain):
-                if regularity.condition is None or regularity.condition is S.false:
-                    return (
-                        Attempt(None, (*regularity.steps, "The proposed hint has unestablished observation sources."))
-                        if optional
-                        else regularity
-                    )
-                (hint_guards if optional else derivative_guards).append(regularity.condition)
-            value = piecewise_fold(evaluate_native(operand))
-            if not isinstance(value, Expr):
-                return Attempt(None, ("Observation source checks require scalar expressions.",))
-            finite = _defined(_defined_part(value), None, S.Reals)
-            if finite.condition is None or finite.condition is S.false:
-                return Attempt(None, finite.steps) if optional else finite
-            (hint_guards if optional else derivative_guards).append(finite.condition)
-            (hint_values if optional else source_values).append(value)
+    source_premises, source_values = _observation_sources(sources, variable, claim.domain)
+    if source_premises.condition is None or source_premises.condition is S.false:
+        return source_premises
+    derivative_guards: list[Basic] = [source_premises.condition]
+    original_domain = claim.domain
     # Bounds and evaluation scopes have their own native coordinates. Their
     # derivatives must not borrow the quantified subject's interval.
     for value in (claim.domain, claim.bound, claim.at):
@@ -989,18 +1019,12 @@ def attempt(
             if regularity.condition is None or regularity.condition is S.false:
                 return regularity
             derivative_guards.append(regularity.condition)
-    if hint is not None:
-        for regularity in derivative_premises(hint, None, S.Reals):
-            if regularity.condition is None or regularity.condition is S.false:
-                return Attempt(None, (*regularity.steps, "The proposed bound hint has unestablished native premises."))
-            hint_guards.append(regularity.condition)
     claim = replace(
         claim,
         domain=evaluate_native(claim.domain),
         bound=evaluate_native(claim.bound),
         at=evaluate_native(claim.at),
     )
-    hint = evaluate_native(hint)
     if variable is not None:
         declared = coordinate_domain(variable)
         if claim.domain.is_subset(declared) is not True:
@@ -1035,9 +1059,6 @@ def attempt(
             expression = Piecewise((expression, condition), (S.NaN, True))
         elif isinstance(expression, Boolean):
             expression = And(expression, condition)
-    if hint_values and hint is not None:
-        condition = And(*(_denominator_condition(value) for value in hint_values))
-        hint = Piecewise((hint, condition), (S.NaN, True))
     expression = piecewise_fold(expression)
     expected = piecewise_fold(expected)
     specialized, reverse = _specialize(expression, variable, assumptions)
@@ -1047,7 +1068,32 @@ def attempt(
     specialized_bound = None if claim.bound is None else claim.bound.xreplace(forward)
     if expected is not None:
         specialized_expected = expected.xreplace(forward)
-    specialized_hint = None if hint is None else hint.xreplace(forward)
+    specialized_hint = None
+    hint_condition = S.true
+    if hint is not None and hint_failure is None:
+        # Optional certificates do not decide the subject's necessary premises.
+        # Keep their failures until those premises have been checked below.
+        try:
+            hint_premises, hint_values = _observation_sources(hint_sources, variable, original_domain)
+            if hint_premises.condition is None or hint_premises.condition is S.false:
+                hint_failure = hint_premises
+            else:
+                hint_guards = [hint_premises.condition]
+                for regularity in derivative_premises(hint, None, S.Reals):
+                    if regularity.condition is None or regularity.condition is S.false:
+                        hint_failure = regularity
+                        break
+                    hint_guards.append(regularity.condition)
+                if hint_failure is None:
+                    hint = evaluate_native(hint)
+                    if hint_values:
+                        condition = And(*(_denominator_condition(value) for value in hint_values))
+                        hint = Piecewise((hint, condition), (S.NaN, True))
+                    specialized_hint = piecewise_fold(hint).xreplace(forward)
+                    hint_condition = conjunction(*hint_guards)
+        except (NotImplementedError, ValueError, TypeError, PolynomialError, RecursionError) as error:
+            specialized_hint = None
+            hint_failure = Attempt(None, (f"Unsupported optional hint: {type(error).__name__}: {error}",))
     kind, expression = claim.property, specialized
     source = Attempt(S.true, ())
     if isinstance(expression, Expr) and kind not in {
@@ -1139,50 +1185,67 @@ def attempt(
                     witness,
                 )
     elif kind == "supremum_below":
-        result = _uniform(
-            expression, variable, claim.domain, specialized_bound, specialized_hint, specialized_assumptions
-        )
+        result = _uniform(expression, variable, claim.domain, specialized_bound, specialized_hint)
     elif kind == "derivative_ratio_bound":
         if (scope := _calculus_scope(variable)) is not None:
             return scope
-        regular = _differentiable(expression, variable, claim.domain, 2)
-        curve, curve_source = _source_domain(expression, variable, claim.domain)
-        slope = diff(curve, variable)
-        nonzero = _nonzero(slope, variable, claim.domain)
-        if nonzero.condition is S.false:
-            result = Attempt(
-                S.false, (*nonzero.steps, "The original curvature ratio has a zero denominator."), nonzero.witness
-            )
+        differentiability = _differentiable(expression, variable, claim.domain, 2)
+        if differentiability.condition is S.false:
+            result = differentiability
         else:
-            ratio = simplify(curve * diff(curve, variable, 2) / slope**2)
-            upper = _uniform(
-                ratio, variable, claim.domain, specialized_bound, specialized_hint, specialized_assumptions
-            )
-            result = Attempt(
-                conjunction(regular.condition, curve_source.condition, nonzero.condition, upper.condition),
-                (*regular.steps, *nonzero.steps, f"Curvature ratio: {ratio}.", *upper.steps),
-            )
+            curve, curve_source = _source_domain(expression, variable, claim.domain)
+            slope = diff(curve, variable)
+            nonzero = _nonzero(slope, variable, claim.domain)
+            if nonzero.condition is S.false:
+                result = Attempt(
+                    S.false, (*nonzero.steps, "The original curvature ratio has a zero denominator."), nonzero.witness
+                )
+            else:
+                ratio = simplify(curve * diff(curve, variable, 2) / slope**2)
+                upper = _uniform(ratio, variable, claim.domain, specialized_bound, specialized_hint)
+                result = Attempt(
+                    conjunction(
+                        differentiability.condition, curve_source.condition, nonzero.condition, upper.condition
+                    ),
+                    (*differentiability.steps, *nonzero.steps, f"Curvature ratio: {ratio}.", *upper.steps),
+                    certificate=upper.certificate,
+                )
     else:
         result = Attempt(None, ("No registered inference rule establishes this conclusion.",))
-    hint_condition = conjunction(*hint_guards)
-    if hint_condition is not None and (variable is None or variable not in hint_condition.free_symbols):
-        hint_condition = truth(hint_condition, assumptions)
     condition = conjunction(source.condition, result.condition)
     condition = condition.xreplace(reverse) if condition is not None else None
-    condition = conjunction(condition, *derivative_guards)
-    # A failed optional hint cannot establish the claim or overturn an
-    # independently refuted necessary premise.
-    if hint_condition is not S.false:
-        condition = conjunction(condition, hint_condition)
-    if condition is not None:
-        if variable is not None and variable in condition.free_symbols:
+    required = conjunction(condition, *derivative_guards)
+    condition = _parameter_condition(required, variable, assumptions)
+    steps = result.steps
+    if condition is S.false and required is not S.false:
+        steps = (*steps, f"The required condition {required} is refuted by the context assumptions.")
+    if condition is not S.false:
+        # A contradiction introduced by an optional certificate cannot refute
+        # a subject whose required conditions have not independently failed.
+        try:
+            certificate = result.certificate
+            if certificate is not None:
+                certificate = certificate.xreplace(reverse)
+            certificate = conjunction(certificate, hint_condition)
+            if certificate is not S.true:
+                condition = _parameter_condition(conjunction(condition, certificate), variable, assumptions)
+                if condition is S.false:
+                    condition = None
+                    hint_failure = Attempt(None, ("The optional certificate conflicts with the retained premises.",))
+        except (NotImplementedError, ValueError, TypeError, PolynomialError, RecursionError) as error:
             condition = None
-        else:
-            condition = truth(condition, assumptions)
-    if hint_condition is S.false and condition is not S.false:
-        return Attempt(None, (*result.steps, "The proposed hint's native premises are not established."))
+            hint_failure = Attempt(None, (f"Unsupported optional certificate: {type(error).__name__}: {error}",))
+    if hint_failure is not None and condition is not S.false:
+        return Attempt(
+            None,
+            (
+                *steps,
+                *hint_failure.steps,
+                "The proposed hint's premises are not established.",
+            ),
+        )
     return Attempt(
         condition,
-        result.steps,
+        steps,
         tuple((symbol.xreplace(reverse), value.xreplace(reverse)) for symbol, value in result.witness),
     )
