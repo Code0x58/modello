@@ -158,15 +158,19 @@ review_plan = Method(
 )
 
 
-def review_context() -> VerificationContext[ReviewPlanning]:
-    """Prepare the example's inputs and stationary-point rule, leaving the candidate open."""
+def review_context(*, entry_minutes=4, avoidable_minutes=6, rate=Rational(1, 2)) -> VerificationContext[ReviewPlanning]:
+    """Start a fresh context with these inputs and the stationary-point rule.
+
+    The candidate stays open. To compare input estimates, call this helper
+    again with new values; observations on an existing context accumulate.
+    """
     return (
         VerificationContext.for_model(ReviewPlanning, "records")
         .with_rule(STATIONARY_MAXIMUM)
         .observe(
-            entry_minutes=4,
-            avoidable_minutes=6,
-            review=ExponentialReview("response", rate=Rational(1, 2)),
+            entry_minutes=entry_minutes,
+            avoidable_minutes=avoidable_minutes,
+            review=ExponentialReview("response", rate=rate),
         )
     )
 

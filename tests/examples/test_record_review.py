@@ -72,6 +72,24 @@ def test_capacity_and_staff_budget_can_be_supplied_in_either_direction(proposed)
     assert target.staff_minutes == 360 + 120 * log(3)
 
 
+def test_revised_inputs_recheck_the_optimum_and_its_derivative_domain(measured):
+    revised = review_context(entry_minutes=3, avoidable_minutes=8, rate=Rational(1, 4))
+    result = revised.observe(candidate=4 * log(2)).run(review_plan)
+    assert result.report.explain("global_maximum").verdict == "strictly true"
+    assert simplify(result.data.effort - 4 * log(2)) == 0
+    assert simplify(result.data.minutes_per_record - 7 - 4 * log(2)) == 0
+    assert result.data.workload_curvature == Rational(1, 4)
+    assert measured.expression("avoidable_minutes") == 6
+
+    # Formal substitution at zero does not establish a two-sided derivative
+    # within the coordinate's nonnegative domain.
+    endpoint = review_context(entry_minutes=3, avoidable_minutes=4, rate=Rational(1, 4)).observe(candidate=0)
+    assert endpoint.expression("candidate_marginal").doit() == 0
+    with pytest.raises(VerificationError) as error:
+        endpoint.run(review_plan)
+    assert error.value.report.explain("global_maximum/stationarity").verdict == "unresolved"
+
+
 def test_a_wrong_candidate_and_an_unregistered_rule_do_not_establish_an_optimum(measured):
     wrong = measured.observe(candidate=1)
     with pytest.raises(VerificationError) as error:

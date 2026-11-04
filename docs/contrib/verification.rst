@@ -554,8 +554,9 @@ consumes the response's declared increase, concavity, and C2 properties.
 workload. The callback executes after those premises are established; its
 Python implementation is trusted too.
 
-The convenience function registers the rule, records the illustrative inputs,
-and leaves the candidate available for each branch to supply:
+The convenience function registers the rule, records the supplied inputs, and
+leaves the candidate available for each branch to supply. Keyword arguments
+let a caller start a new context with different inputs:
 
 .. literalinclude:: ../../examples/record_review.py
    :language: python

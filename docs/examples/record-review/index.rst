@@ -31,8 +31,10 @@ minutes per record. Declare that relationship as an ordinary Modello model:
    :pyobject: EntryBudget
 
 Each ``InstanceDummy`` names a quantity whose value can be supplied or inferred.
+``records`` is the field name used for inputs; ``"n"`` is its symbolic label.
 These two quantities are positive. We can supply values on either side of the
-equation; the examples below import the declaration from the executable module.
+equation. The examples below import this declaration; the first argument to
+``EntryBudget`` names the instance.
 
 >>> from examples.record_review import EntryBudget
 >>> day = EntryBudget("day", staff_minutes=480, minutes_per_record=4)
@@ -128,12 +130,13 @@ A property we ask the checker to establish is a **proof obligation**.
 ``specifies`` attaches obligations to a field. ``VerificationModel`` attempts
 them when the class is defined, retaining each result for inspection.
 
-In the declaration below, ``effort`` is a ``Coordinate``: the argument that
-varies along the curve. ``rate`` is an ``InstanceDummy`` parameter. Although
+In the declaration below, ``effort`` is a ``Coordinate`` for the curve's argument
+:math:`t`. ``rate`` is an ``InstanceDummy`` parameter for :math:`k`. Although
 our story expects a positive rate, we leave it unrestricted so the checker
 can tell us which values establish the requested properties.
 
-``wrt="effort"`` selects the argument of each property. ``EFFORT_DOMAIN`` is
+Field paths use the Python attribute names: ``wrt="effort"`` selects
+:math:`t`. ``EFFORT_DOMAIN`` is
 the interval of nonnegative real efforts, so the claims concern every
 :math:`t\geq0`. The module uses these imports and domain:
 
@@ -267,7 +270,8 @@ With our inputs,
    G(t)=6(1-e^{-t/2})-t,\qquad G'(t)=3e^{-t/2}-1.
 
 Setting :math:`G'(t)=0` gives the candidate :math:`t_*=2\log3`, about
-2.20 minutes. A point with zero derivative is called a stationary point.
+2.20 minutes, where :math:`\log` denotes the natural logarithm. A point with
+zero derivative is called a stationary point.
 We can confirm this exactly. ``doit()`` carries out the deferred derivative
 and substitution in ``candidate_marginal``:
 
@@ -359,10 +363,36 @@ cost. This is a local approximation, while the concavity argument establishes
 global optimality. Expected workload capacity also remains an approximation;
 it is not a guarantee of how many records finish in a particular day.
 
+Change the repair-time estimate
+-------------------------------
+
+Suppose later repairs take thirty staff minutes instead of sixty. With one
+record in ten needing repair, the avoidable work becomes :math:`a=3` minutes
+per record. The new marginal saving is :math:`G'(t)=\tfrac32e^{-t/2}-1`, giving
+the candidate :math:`t_*=2\log(3/2)`.
+
+``review_context`` accepts the entry time, avoidable repair work, and rate as
+keyword arguments. Each call starts a fresh context with those inputs, so the
+original observations remain available for comparison:
+
+>>> revised = review_context(avoidable_minutes=3)
+>>> revised = revised.observe(candidate=2*log(Rational(3, 2)))
+>>> revised_result = revised.run(review_plan)
+>>> round(float(revised_result.data.effort), 2)
+0.81
+>>> revised_result.report.explain("global_maximum").verdict
+'strictly true'
+>>> measured.expression("avoidable_minutes")
+6
+
+Cheaper repairs make less checking worthwhile. The same method establishes
+its preconditions for the revised inputs.
+
 Try a different response without changing the argument
 ------------------------------------------------------
 
-The exponential curve was a modelling choice. Suppose we instead propose
+Return to ``measured``, with six avoidable repair minutes per record. The
+exponential curve was a modelling choice. Suppose we instead propose
 
 .. math::
 
@@ -436,6 +466,8 @@ the join and falls after it. Our smooth stationary-point method cannot
 establish that result. A method for corners would need a different argument,
 such as the one-sided slopes. The capped response also has a plateau, so the
 original strict increase claim no longer describes it.
+Adopting it would require a response specification that permits this shape,
+as well as an appropriate method.
 
 Evaluate a few points to explore the proposed shape:
 
@@ -503,9 +535,9 @@ originating context and report when a method is blocked.
 True
 >>> html_page = result.report.to_html(title="Record-checking decision")
 
-These are descriptive exports, not executable saved contexts. To reproduce the
-complete example, including the blocked replacement and exact result values,
-run the module:
+These are descriptive exports, not executable saved contexts. To export the
+comparisons of the three responses with the original inputs, including the
+blocked capped response, run the module:
 
 .. code-block:: console
 
@@ -519,12 +551,16 @@ the `results <study/results.json>`_, `baseline evidence <study/exponential.html>
 `alternative evidence <study/rational.html>`_, and
 `blocked replacement <study/capped.html>`_.
 
-For a further experiment, change the avoidable repair work in a new context,
-derive a new candidate, and reuse the same rule. Check which premises still
-hold before trusting the resulting capacity. A constrained or corner optimum
-may require a different argument. For example, if :math:`ak<1`, checking has
-negative marginal saving from the start and the best choice is no checking;
-our zero-derivative method does not cover that boundary optimum.
+For a further experiment, try ``review_context(rate=Rational(1, 3))``. For
+positive :math:`a,k` with :math:`ak>1`, solving :math:`G'(t)=0` gives the
+positive candidate :math:`t_*=\log(ak)/k`. Check its premises before trusting
+the new capacity.
+
+If :math:`ak\leq1`, the best choice is zero checking time. This method checks
+ordinary two-sided derivatives. The nonnegative effort domain supplies only
+one side at zero, so the endpoint check stays unresolved even when
+:math:`ak=1` gives a formal derivative of zero. A boundary argument using the
+right-hand behavior is needed for this case.
 
 Continue with :ref:`writing the proof contract <verification-example-contract>`
 when you want to adapt the method, or :ref:`checked bounds
