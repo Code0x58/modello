@@ -13,7 +13,22 @@ from dataclasses import dataclass, fields
 from importlib import metadata
 from pathlib import Path
 
-from sympy import Derivative, Expr, Interval, Piecewise, Rational, S, Subs, diff, exp, lambdify, log, simplify, sqrt
+from sympy import (
+    Derivative,
+    Dummy,
+    Expr,
+    Interval,
+    Piecewise,
+    Rational,
+    S,
+    Subs,
+    diff,
+    lambdify,
+    limit,
+    log,
+    simplify,
+    sqrt,
+)
 
 from modello import Coordinate, InstanceDummy, Modello, component
 from modello.contrib.verification import (
@@ -41,6 +56,32 @@ class EntryBudget(Modello):
     staff_minutes = records * minutes_per_record
 
 
+class CheckingStep(Modello):
+    """Approximate a short check that catches a share of the errors still left.
+
+    Physical inputs need error_fraction <= 1 and 0 <= rate * checking_minutes <= 1.
+    These are modelling assumptions here, not automatically checked bounds.
+    """
+
+    error_fraction = InstanceDummy("p", nonnegative=True)
+    repair_minutes = InstanceDummy("L", positive=True)
+    checking_minutes = InstanceDummy("h", nonnegative=True)
+    rate = InstanceDummy("k", real=True)
+    caught_share = rate * checking_minutes
+    remaining_share = 1 - caught_share
+    remaining_error_fraction = error_fraction * remaining_share
+    avoidable_minutes = error_fraction * repair_minutes
+    expected_repair_minutes = remaining_error_fraction * repair_minutes
+
+
+def derive_checking_response(effort: Expr, rate: Expr) -> Expr:
+    """Take the continuous limit of repeated short checks over ``effort`` minutes."""
+    steps = Dummy("N", integer=True, positive=True)
+    step = CheckingStep("part", checking_minutes=effort / steps, rate=rate)
+    remaining_share = limit(step.remaining_share**steps, steps, S.Infinity)
+    return 1 - remaining_share
+
+
 EFFORT_DOMAIN = Interval(0, S.Infinity)
 
 
@@ -48,13 +89,14 @@ class ExponentialReview(VerificationModel):
     """Fraction of otherwise missed errors caught after ``effort`` minutes.
 
     ``rate`` is deliberately unrestricted: increasing response needs rate > 0.
-    The curve is a modelling assumption, not a fitted or validated error law.
+    The curve follows from a constant detection rate for errors still left;
+    that assumption has not been fitted or validated against a real team.
     """
 
     effort = Coordinate("t", nonnegative=True)
     rate = InstanceDummy("k", real=True)
     value = specifies(
-        1 - exp(-rate * effort),
+        derive_checking_response(effort, rate),
         strictly_increasing(
             "value",
             wrt="effort",

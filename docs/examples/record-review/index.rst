@@ -49,8 +49,8 @@ provide 480 staff minutes. We use a continuous record count as a planning
 estimate. So far we have counted only typing; checking and later repairs must
 come from the same pool of staff time.
 
-Give checking a benefit and a cost
-----------------------------------
+Model a short check
+-------------------
 
 Suppose typing takes four minutes per record. One in ten records would need
 a later repair, taking sixty staff minutes. Without checking, repairs therefore
@@ -58,18 +58,94 @@ add :math:`(1/10)\times60=6` minutes per record **in expectation**. Total expect
 work is ten minutes per record, giving capacity of 48 records per 480 staff
 minutes under this workload approximation.
 
-Let :math:`t\geq0` be checking minutes per record, and let :math:`u(t)` be the
-fraction of those otherwise missed errors that checking catches. For a first
-model, use
+How might checking reduce that repair work? Start with a short check and
+assume a constant checking rate. A short check catches a proportion of the
+errors **still left**, approximately the rate multiplied by the time spent.
+For example, a rate of one half per minute means a six-second check catches
+about five percent of the errors present at the start of that check.
+
+The same short check then catches fewer errors on a second pass, because
+fewer remain. This is our modelling assumption about diminishing returns.
+It describes how checking might work; we would need measurements to assess it.
+
+Add a second ordinary Modello model for this step. Its inputs are the fraction
+of records containing an error, the time to repair one, the checking time,
+and the checking rate:
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: CheckingStep
+
+``caught_share`` is a fraction of the errors present at the start of the step.
+``remaining_error_fraction`` is a fraction of **all records**. With our inputs:
+
+>>> from sympy import Rational
+>>> from examples.record_review import CheckingStep
+>>> short = CheckingStep("short", error_fraction=Rational(1, 10),
+...                      repair_minutes=60, checking_minutes=Rational(1, 10),
+...                      rate=Rational(1, 2))
+>>> short.caught_share
+1/20
+>>> 1000 * short.remaining_error_fraction
+95
+>>> short.avoidable_minutes
+6
+
+Out of an illustrative 1,000 records, 100 initially need repair; the short
+check is expected to catch five and leave 95. The last output recovers our six
+expected repair minutes per record before checking. The error fraction must lie between
+zero and one, and a step must be short enough that its caught share also lies
+between zero and one. This ordinary model records the relationships; it does
+not enforce those bounds.
+
+Build up a longer check
+-----------------------
+
+To describe a longer check, divide its total time :math:`t\geq0` into
+:math:`N` equal steps. Write :math:`k` for the constant checking rate, measured
+per minute. Each step lasts :math:`t/N` minutes and leaves the fraction
+:math:`1-kt/N` of the errors it started with. After two steps we multiply
+that fraction by itself; after :math:`N` steps the fraction still missed is
+:math:`(1-kt/N)^N`.
+
+Use the same Modello declaration with symbolic inputs, then let SymPy take
+the limit as the steps become shorter and more numerous:
+
+>>> from sympy import S, Symbol, limit
+>>> t = Symbol("t", nonnegative=True)
+>>> k = Symbol("k", positive=True)
+>>> N = Symbol("N", integer=True, positive=True)
+>>> part = CheckingStep("part", checking_minutes=t/N, rate=k)
+>>> part.remaining_share
+1 - k*t/N
+>>> remaining = limit(part.remaining_share**N, N, S.Infinity)
+>>> remaining
+exp(-k*t)
+>>> 1 - remaining
+1 - exp(-k*t)
+
+We have derived a continuous response from our short-step assumption. Write
+:math:`u(t)` for the fraction of the original errors caught after checking
+for :math:`t` minutes:
 
 .. math::
 
    u(t)=1-e^{-kt},\qquad k>0.
 
-The parameter :math:`k` controls how quickly checking becomes effective.
-The curve starts at zero and approaches one: extra checking keeps helping,
-with diminishing returns. We assume that a caught error needs no further
-repair time beyond the checking time already counted.
+With no checking, no errors are caught. More checking catches more, but the
+gain shrinks as fewer errors remain. For a positive rate the caught fraction
+approaches one. The example's ``derive_checking_response`` function performs
+this limit and supplies the curve to the verification model below. SymPy has
+derived a consequence of our assumption; it has not validated the assumption.
+
+Count the benefit and cost in minutes
+-------------------------------------
+
+We assume that a caught error needs no further repair time beyond the checking
+time already counted. If the initial error fraction is :math:`p` and a repair
+takes :math:`L` minutes, checking leaves expected repair work
+:math:`pL(1-u(t))` per record. The product :math:`pL` is exactly the
+``avoidable_minutes`` field we calculated above.
 
 Let :math:`b` be entry time and :math:`a` be the expected repair work that
 perfect checking could avoid. Our illustrative inputs are:
@@ -142,7 +218,8 @@ the interval of nonnegative real efforts, so the claims concern every
 
 .. code-block:: python
 
-   from sympy import Interval, S, exp
+   from sympy import Interval, S
+   from examples.record_review import derive_checking_response
    from modello import Coordinate, InstanceDummy
    from modello.contrib.verification import (
        VerificationModel, concave, continuously_differentiable,
@@ -253,7 +330,7 @@ inspect the inputs:
 
 >>> from sympy import log
 >>> from examples.record_review import review_context
->>> measured = review_context()
+>>> measured = review_context(avoidable_minutes=short.avoidable_minutes, rate=short.rate)
 >>> measured.expression("entry_minutes"), measured.expression("avoidable_minutes")
 (4, 6)
 >>> measured.expression("review.rate")
@@ -378,7 +455,9 @@ the candidate :math:`t_*=2\log(3/2)`.
 keyword arguments. Each call starts a fresh context with those inputs, so the
 original observations remain available for comparison:
 
->>> revised = review_context(avoidable_minutes=3)
+>>> shorter_repairs = CheckingStep("shorter repairs", error_fraction=short.error_fraction,
+...                               repair_minutes=30)
+>>> revised = review_context(avoidable_minutes=shorter_repairs.avoidable_minutes)
 >>> revised = revised.observe(candidate=2*log(Rational(3, 2)))
 >>> revised_result = revised.run(review_plan)
 >>> round(float(revised_result.data.effort), 2)

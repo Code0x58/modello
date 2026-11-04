@@ -4,14 +4,16 @@ import json
 from pathlib import Path
 
 import pytest
-from sympy import Rational, log, simplify, sqrt
+from sympy import Rational, Symbol, exp, log, simplify, sqrt
 
 from examples.record_review import (
     CappedReview,
+    CheckingStep,
     EntryBudget,
     ExponentialReview,
     RationalReview,
     ReviewPlanning,
+    derive_checking_response,
     review_context,
     review_plan,
     write_reports,
@@ -27,6 +29,32 @@ def measured() -> VerificationContext[ReviewPlanning]:
 @pytest.fixture(scope="module")
 def proposed(measured: VerificationContext[ReviewPlanning]) -> VerificationContext[ReviewPlanning]:
     return measured.observe(candidate=2 * log(3))
+
+
+def test_short_checks_derive_the_continuous_response():
+    short = CheckingStep(
+        "short",
+        error_fraction=Rational(1, 10),
+        repair_minutes=60,
+        checking_minutes=Rational(1, 10),
+        rate=Rational(1, 2),
+    )
+    assert short.caught_share == Rational(1, 20)
+    assert 1000 * short.remaining_error_fraction == 95
+    assert short.avoidable_minutes == 6
+    assert short.expected_repair_minutes == Rational(57, 10)
+
+    # Use the same name as the helper's bound variable to exercise its scope.
+    effort = Symbol("N", integer=True, positive=True)
+    rate = Symbol("k", real=True)
+    response = derive_checking_response(effort, rate)
+    assert response == 1 - exp(-rate * effort)
+    assert response.subs(effort, 0) == 0
+    assert response.subs(rate, 0) == 0
+    context = VerificationContext.for_model(ExponentialReview)
+    assert context.expression("value", wrt="effort") == derive_checking_response(
+        context.problem.model.effort, context.symbols.rate
+    )
 
 
 def test_definition_reports_distinguish_parameter_conditions_and_regularity():
