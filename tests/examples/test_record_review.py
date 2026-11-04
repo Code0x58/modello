@@ -132,4 +132,5 @@ def test_reports_include_exact_results_and_the_blocked_replacement(tmp_path: Pat
     for name in ("exponential", "rational", "capped"):
         assert json.loads((tmp_path / f"{name}.json").read_text())["evidence"]
         assert "<!doctype html>" in (tmp_path / f"{name}.html").read_text()
-    assert "Changing the response curve" in (tmp_path / "curves.svg").read_text()
+    assert "Why spend time checking?" in (tmp_path / "benefit.svg").read_text()
+    assert "Changing the response curve" in (tmp_path / "responses.svg").read_text()

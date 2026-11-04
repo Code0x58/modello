@@ -304,7 +304,8 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
     for name in plans:
         assert json.loads((study / f"{name}.json").read_text())["evidence"]
         assert (study / f"{name}.html").is_file()
-    assert (study / "curves.svg").is_file()
+    assert (study / "benefit.svg").is_file()
+    assert (study / "responses.svg").is_file()
     print("Validated the installed record-review study, evidence, and optional plot", flush=True)
     install("gui")
     subprocess.run([str(python), "-I", "-c", GUI_SMOKE_TEST], cwd=directory, check=True)

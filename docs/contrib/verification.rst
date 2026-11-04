@@ -514,6 +514,80 @@ derivative premises: an unevaluated ``log(0)**0`` cannot supply a valid point
 by simplifying to one. Invalid points and unresolved symbolic values raise
 ``ModelValidationError``.
 
+.. _verification-example-contract:
+
+Write the record-review method's contract
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The :doc:`record-review walkthrough <../examples/record-review/index>` uses
+``review_context()`` to prepare its inputs and mathematical argument. Here is
+how the example connects that argument to a computation.
+
+An ``Obligation`` names a claim. ``GLOBAL_MAXIMUM`` states
+:math:`G(s)\geq G(t)` for every nonnegative effort :math:`t`, where :math:`s`
+is the proposed checking time. ``InferenceRule`` records the supporting-line
+argument from the walkthrough as a trusted implication. Its premises ask the
+checker to establish concavity, differentiability, a zero derivative at the
+candidate, and candidate feasibility:
+
+.. literalinclude:: ../../examples/record_review.py
+   :language: python
+   :start-at: GLOBAL_MAXIMUM = Obligation(
+   :end-before: @dataclass
+
+A registered implication is part of the trust boundary. The engine checks its
+premises; it does not prove that they imply the conclusion. A failed premise
+makes this argument inapplicable and leaves the conclusion unresolved.
+
+The example's ``_evaluate_plan`` callback evaluates the proposed checking time,
+net saving, workload, and workload curvature. A ``Method`` pairs that callback
+with the properties it needs:
+
+.. literalinclude:: ../../examples/record_review.py
+   :language: python
+   :start-at: review_plan = Method(
+   :end-before: def review_context(
+
+``uses`` names the fields read by the computation. Following their dependencies
+consumes the response's declared increase, concavity, and C2 properties.
+``preconditions`` adds the global-maximum conclusion and a positive candidate
+workload. The callback executes after those premises are established; its
+Python implementation is trusted too.
+
+The convenience function registers the rule, records the illustrative inputs,
+and leaves the candidate available for each branch to supply:
+
+.. literalinclude:: ../../examples/record_review.py
+   :language: python
+   :pyobject: review_context
+
+.. _verification-bound-hints:
+
+Help an open proof with a checked bound
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A bound can need an explicit argument even when each parameter is fixed.
+Continue with the same record-review model. Could *any* checking time save
+seven minutes per record? There are only six repair minutes to avoid, and
+checking itself costs time, so six is a uniform upper bound on net saving.
+
+>>> from sympy import log
+>>> from examples.record_review import EFFORT_DOMAIN, review_context
+>>> from modello.contrib.verification import supremum_below
+>>> proposed = review_context().observe(candidate=2*log(3))
+>>> ceiling = proposed.with_obligations(supremum_below(
+...     "net_saving", wrt="effort", domain=EFFORT_DOMAIN,
+...     bound=7, name="saving_ceiling"))
+>>> ceiling.explain("saving_ceiling").verdict
+'unresolved'
+>>> bounded = ceiling.with_bound_hint("saving_ceiling", upper=6)
+>>> bounded.explain("saving_ceiling").verdict
+'strictly true'
+
+``with_bound_hint`` proposes a certificate; it adds no assumption. The checker
+establishes :math:`G(t)\leq6<7` uniformly. A loose or incorrect hint cannot
+refute the original bound. Here ``unresolved`` meant a proof aid was missing.
+
 .. _verification-api:
 
 API

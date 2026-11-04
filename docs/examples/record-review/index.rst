@@ -5,12 +5,11 @@ An archive is digitising paper records. Typing faster increases its daily
 output, but mistakes create work later. A colleague can spend time checking
 each entry before it leaves the team. How much checking is worthwhile?
 
-We will build one model of that decision, propose a checking time using
-calculus, and establish the properties that make the calculation valid. Then
-we will change the response curve and revisit the same argument. You need
-Python, derivatives, and the idea of a concave function; no finance or
-optimisation background is assumed. :doc:`/getting-started` introduces the
-underlying Modello declarations.
+We will build a workload model, use calculus to propose a checking time, and
+check the properties that justify that decision. Then we will change the
+checking response and revisit the result. You need Python and undergraduate
+calculus; we explain the concavity argument as we use it.
+:doc:`/getting-started` introduces Modello's declarations and observations.
 
 The executable example is ``examples.record_review``. Its symbolic calculations
 need only the ordinary ``modello`` installation. Every input below is
@@ -20,10 +19,20 @@ response curve describes a real team.
 Start with the workload budget
 -------------------------------
 
-The older ``examples.streaming`` data-entry example relates staff, processing
-rates, and cost. We start from the same practical question using a simpler
-identity: staff minutes equal records multiplied by minutes per record.
-Modello lets us supply quantities on either side of that equation.
+Start with a familiar identity: staff minutes equal records multiplied by
+minutes per record. Declare that relationship as an ordinary Modello model:
+
+.. code-block:: python
+
+   from modello import InstanceDummy, Modello
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: EntryBudget
+
+Each ``InstanceDummy`` names a quantity whose value can be supplied or inferred.
+These two quantities are positive. We can supply values on either side of the
+equation; the examples below import the declaration from the executable module.
 
 >>> from examples.record_review import EntryBudget
 >>> day = EntryBudget("day", staff_minutes=480, minutes_per_record=4)
@@ -33,9 +42,10 @@ Modello lets us supply quantities on either side of that equation.
 >>> target.staff_minutes
 600
 
-This budget counts work, rather than elapsed time or queueing delays. Its
-record count is a continuous planning quantity. We have so far counted only
-typing; checking and later repairs must come from the same pool of staff time.
+Staff time adds across the team: two people working for 240 minutes each
+provide 480 staff minutes. We use a continuous record count as a planning
+estimate. So far we have counted only typing; checking and later repairs must
+come from the same pool of staff time.
 
 Give checking a benefit and a cost
 ----------------------------------
@@ -59,25 +69,16 @@ The curve starts at zero and approaches one: extra checking keeps helping,
 with diminishing returns. We assume that a caught error needs no further
 repair time beyond the checking time already counted.
 
-Use minutes as the common unit for benefit and cost:
+Let :math:`b` be entry time and :math:`a` be the expected repair work that
+perfect checking could avoid. Our illustrative inputs are:
 
-.. math::
-
-   G(t)&=a\,u(t)-t,\\
-   M(t)&=e+t+a(1-u(t))=e+a-G(t).
-
-Here :math:`G` is net staff time saved compared with no checking, and :math:`M`
-is total expected staff time per record. Maximising :math:`G` minimises
-:math:`M`. The benefit :math:`a\,u(t)` plays the role of a utility function;
-its units are avoided repair minutes, so we can interpret its scale directly.
-
-.. list-table:: Illustrative inputs
+.. list-table:: Inputs and units
    :header-rows: 1
 
    * - Quantity
      - Meaning
      - Value
-   * - :math:`e`
+   * - :math:`b`
      - Entry time
      - 4 minutes per record
    * - :math:`a`
@@ -87,12 +88,23 @@ its units are avoided repair minutes, so we can interpret its scale directly.
      - Checking effectiveness rate
      - :math:`1/2` per minute
 
+Now use minutes as the common unit for benefit and cost:
+
+.. math::
+
+   G(t)&=a\,u(t)-t,\\
+   M(t)&=b+t+a(1-u(t))=b+a-G(t).
+
+Here :math:`G` is net staff time saved compared with no checking, and :math:`M`
+is total expected staff time per record. Maximising :math:`G` minimises
+:math:`M`. Avoided repair minutes give us a concrete measure of utility, in
+the same units as the checking cost.
+
 .. raw:: html
 
    <figure>
-     <img src="study/curves.svg" alt="Checking has diminishing benefit. Net saving rises and then falls; exponential, rational, and capped responses give different checking decisions." style="max-width:100%;height:auto">
-     <figcaption>The left panel separates benefit, checking cost, and net saving.
-     The right panel compares net saving for the replacements we will investigate below.</figcaption>
+     <img src="study/benefit.svg" alt="Avoided repair time rises with diminishing returns. Net saving rises to a peak, then falls as checking costs outweigh the extra benefit." style="max-width:100%;height:auto">
+     <figcaption>Net saving is the avoided repair time minus the time spent checking.</figcaption>
    </figure>
 
 State what the calculation needs
@@ -101,8 +113,8 @@ State what the calculation needs
 Three distinct properties matter:
 
 * **Strict increase:** more checking should catch a larger fraction of errors.
-* **Concavity:** the marginal benefit should diminish. A concave net saving
-  lets us turn a stationary point into a global maximum.
+* **Concavity:** the marginal benefit should diminish. For a concave net saving,
+  a point with zero derivative is a global maximum.
 * **C² regularity:** the first two derivatives should be continuous. We will
   use a second-order approximation to describe workload near the chosen time.
 
@@ -112,19 +124,38 @@ For the exponential curve, ordinary calculus gives
 These are separate mathematical facts. A smooth curve can still be a poor
 description of checking.
 
-``specifies`` attaches these claims to the response field. ``VerificationModel``
-attempts them when the class is defined, retaining conditional and failed
-claims so we can explore them:
+A property we ask the checker to establish is a **proof obligation**.
+``specifies`` attaches obligations to a field. ``VerificationModel`` attempts
+them when the class is defined, retaining each result for inspection.
+
+In the declaration below, ``effort`` is a ``Coordinate``: the argument that
+varies along the curve. ``rate`` is an ``InstanceDummy`` parameter. Although
+our story expects a positive rate, we leave it unrestricted so the checker
+can tell us which values establish the requested properties.
+
+``wrt="effort"`` selects the argument of each property. ``EFFORT_DOMAIN`` is
+the interval of nonnegative real efforts, so the claims concern every
+:math:`t\geq0`. The module uses these imports and domain:
+
+.. code-block:: python
+
+   from sympy import Interval, S, exp
+   from modello import Coordinate, InstanceDummy
+   from modello.contrib.verification import (
+       VerificationModel, concave, continuously_differentiable,
+       specifies, strictly_increasing,
+   )
+
+   EFFORT_DOMAIN = Interval(0, S.Infinity)
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
    :pyobject: ExponentialReview
 
-``effort`` is a ``Coordinate``: the argument that varies along the curve.
-``rate`` is an ``InstanceDummy`` parameter. The coordinate and the obligations
-both state the nonnegative effort domain; an observation of ``rate`` can
-specialise a curve without fixing its argument. Keep symbolic inputs exact,
-for example ``Rational(1, 2)`` rather than a rounded decimal.
+``definition_report()`` contains the results of those checks. ``explain(id)``
+selects one result: ``value/strictly_increasing`` combines the field path
+``value`` with the obligation's name. The commands below import the class
+whose declaration we have just read.
 
 >>> from examples.record_review import ExponentialReview
 >>> definition = ExponentialReview.definition_report()
@@ -135,18 +166,19 @@ for example ``Rational(1, 2)`` rather than a rounded decimal.
 >>> definition.explain("value/continuously_differentiable").verdict
 'strictly true'
 
-A verdict describes a claim under its recorded domain and premises.
-``strictly true`` means established, ``conditionally true`` retains a
-sufficient parameter condition, and ``strictly false`` records a checked
-refutation. ``unresolved`` means the current attempt supplies neither a proof
-nor a refutation. It can call for a different argument, not just different data.
+A verdict concerns the stated domain and the available definitions, data,
+and assumptions. ``strictly true`` means established. ``conditionally true``
+retains a sufficient parameter condition; we will inspect it next.
+``strictly false`` means the checker established a failure. ``unresolved``
+means the attempt established neither the claim nor its failure.
 
-Explore a premise before choosing data
---------------------------------------
+Find the parameter condition
+-----------------------------
 
-A ``VerificationContext`` is an immutable branch of the investigation.
-Inspect the parameter condition using that context's symbols, then add it as
-an explicit assumption:
+A ``VerificationContext`` holds the definitions, observations, and assumptions
+for one branch of the investigation. Its methods return new contexts, leaving
+earlier branches available for comparison. Inspect the parameter condition
+using the symbols that belong to this context, then add it as an assumption:
 
 >>> from modello.contrib.verification import VerificationContext
 >>> curve = VerificationContext.for_model(ExponentialReview)
@@ -166,48 +198,57 @@ the strict increase claim fails:
 >>> curve.explain("value/strictly_increasing").verdict
 'conditionally true'
 
-The earlier context still has its original premises. We can also remove an
-explicit assumption on a new branch, recording why it changed:
-
->>> reopened = positive_rate.without_assumptions(
-...     curve.symbols.rate > 0, reason="Investigate ineffective checking too.")
->>> reopened.explain("value/strictly_increasing").verdict
-'conditionally true'
-
-Observations accumulate. To compare different data, branch from the common
-context before either value was supplied. Contradictory premises cannot
-establish a conclusion; reports track assumption consistency separately.
+The earlier context is unchanged. Observations accumulate;
+to compare different values, branch from the common context before either
+value was supplied. Keep symbolic inputs exact, for example ``Rational(1, 2)``.
+The reference covers :ref:`removing assumptions <verification-retire-premises>`
+when you need to reopen an earlier choice.
 
 Compose the decision model
 --------------------------
 
-Now put the response inside the workload model. ``candidate`` is a proposed
-checking time; it is separate from the coordinate over which we compare all
-possible checking times.
+Now put the response inside the workload model. ``component(ExponentialReview)``
+creates a nested response whose fields are available as ``review.value`` and
+``review.rate``. ``candidate`` is a proposed checking time, separate from the
+``effort`` coordinate over which we compare all possible times.
+
+We also record the derivative of net saving and evaluate it at the candidate.
+SymPy's ``Derivative(..., evaluate=False)`` keeps differentiation deferred until
+Modello has resolved the named quantity to its formula. Without that delay,
+it would differentiate the field's placeholder symbol. ``Subs`` substitutes
+the candidate for the effort coordinate:
+
+.. code-block:: python
+
+   from sympy import Derivative, Subs
+   from modello import component
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
    :pyobject: ReviewPlanning
 
-``Derivative(..., evaluate=False)`` defers differentiation until Modello has
-resolved ``net_saving`` to its formula. An eager derivative of a named field
-would differentiate its placeholder symbol instead. ``Subs`` then evaluates
-that derivative, or another curve, at the candidate.
+Writing the derivative generates a differentiability obligation automatically.
+The C² claim declared on the response is stronger: it also asks for continuous
+first and second derivatives, for our later quadratic approximation.
 
-The native derivative also creates a differentiability obligation
-automatically. That obligation needs an existing derivative; the declared C²
-claim is stronger and serves our later quadratic approximation.
+The example's ``review_context()`` helper supplies our inputs and registers the
+stationary-point argument explained below. It leaves the candidate open.
+This helper belongs to the example; :ref:`its implementation
+<verification-example-contract>` shows how to prepare the same context yourself.
+``expression(path)`` returns a field's resolved SymPy expression, so we can
+inspect the inputs:
 
->>> from sympy import Rational, log, simplify
->>> from examples.record_review import ReviewPlanning
->>> measured = VerificationContext.for_model(
-...     ReviewPlanning, "records", entry_minutes=4, avoidable_minutes=6,
-...     review=ExponentialReview("response", rate=Rational(1, 2)))
+>>> from sympy import log
+>>> from examples.record_review import review_context
+>>> measured = review_context()
+>>> measured.expression("entry_minutes"), measured.expression("avoidable_minutes")
+(4, 6)
+>>> measured.expression("review.rate")
+1/2
 >>> measured.explain("review.value/strictly_increasing").verdict
 'strictly true'
 
 The nested response keeps its claims with the prefix ``review.value``.
-This context still leaves the candidate open.
 
 Propose a checking time
 -----------------------
@@ -219,8 +260,9 @@ With our inputs,
    G(t)=6(1-e^{-t/2})-t,\qquad G'(t)=3e^{-t/2}-1.
 
 Setting :math:`G'(t)=0` gives the candidate :math:`t_*=2\log3`, about
-2.20 minutes. We can confirm stationarity exactly before making any numerical
-comparison:
+2.20 minutes. A point with zero derivative is called a stationary point.
+We can confirm this exactly. ``doit()`` carries out the deferred derivative
+and substitution in ``candidate_marginal``:
 
 >>> proposed = measured.observe(candidate=2*log(3))
 >>> proposed.expression("candidate_marginal").doit()
@@ -241,27 +283,21 @@ For a differentiable concave function, its tangent line lies above its graph:
    G(y)\leq G(s)+G'(s)(y-s).
 
 If :math:`s\geq0` and :math:`G'(s)=0`, this becomes
-:math:`G(y)\leq G(s)` for every :math:`y\geq0`. Thus a feasible stationary
+:math:`G(y)\leq G(s)` for every :math:`y\geq0`. Thus a nonnegative stationary
 candidate maximises net saving over the whole effort domain. Subtracting the
 linear checking cost preserves the concavity of the response benefit.
 
-``InferenceRule`` records this mathematical implication, with named premises.
-The rule is **trusted reasoning supplied by the example**; the library
-recursively checks its premises and retains them in the evidence. Registering
-a rule does not make the library prove the implication itself.
+The example provides ``review_plan``, a ``Method``: a Python computation
+paired with its **preconditions**, the claims to establish before it runs.
+It needs the response's declared properties, a global maximum, and a positive
+workload for the capacity calculation.
 
-.. literalinclude:: ../../../examples/record_review.py
-   :language: python
-   :start-at: GLOBAL_MAXIMUM = Obligation(
-   :end-before: @dataclass
+``review_context()`` registered the stationary-point implication as a trusted
+inference rule. The checker establishes its premises for our particular curve
+and candidate; it does not prove the general implication itself. Run the
+method, then inspect the premises checked for this candidate:
 
-The conclusion states :math:`G(s)\geq G(t)` on the effort domain. The premises
-establish concavity, differentiability, stationarity, and feasibility. Add the
-rule to the common branch point, then supply the proposed candidate:
-
->>> from examples.record_review import STATIONARY_MAXIMUM, review_plan
->>> ready = measured.with_rule(STATIONARY_MAXIMUM)
->>> proposed = ready.observe(candidate=2*log(3))
+>>> from examples.record_review import review_plan
 >>> result = proposed.run(review_plan)
 >>> result.report.explain("global_maximum").verdict
 'strictly true'
@@ -269,12 +305,9 @@ rule to the common branch point, then supply the proposed candidate:
 ...     for p in result.report.explain("global_maximum").premises)
 True
 
-The ``review_plan`` method reads the candidate workload and saving. Its
-``uses`` paths consume the response's declared properties through those
-dependencies. Its explicit preconditions add the global-maximum conclusion
-and a positive workload. Execution starts only once the consumed premises are
-established. Its Python callback evaluates the resulting expressions; that
-callback, the registered rule, and the CAS remain part of the trust boundary.
+``result.data`` holds the exact calculation; ``result.report`` retains the
+evidence that permitted it. The implementation of the method and rule is
+shown in :ref:`the contract reference <verification-example-contract>`.
 
 >>> result.data.net_saving
 4 - 2*log(3)
@@ -296,12 +329,12 @@ interpretation:
 >>> round(float(target.staff_minutes), 1)
 491.8
 
-The workload curvature is :math:`M''(t_*)=1/2`. C² regularity justifies the
-local expansion
+The workload curvature is :math:`M''(t_*)=1/2`. C² regularity lets us use
+Taylor's formula to approximate the workload for a small change :math:`h`:
 
 .. math::
 
-   M(t_*+h)=M(t_*)+\tfrac14h^2+o(h^2).
+   M(t_*+h)\approx M(t_*)+\tfrac14h^2.
 
 Small changes around the optimum therefore have only a second-order workload
 cost. This is a local approximation, while the concavity argument establishes
@@ -320,11 +353,17 @@ The exponential curve was a modelling choice. Suppose we instead propose
 This response has the same initial slope :math:`k`, but saturates more slowly.
 ``RationalReview`` inherits the same property declarations. Replacing the
 component rechecks them against the new formula and preserves the observed
-rate. Start from ``ready`` so the candidate has not yet been fixed:
+rate. This is the replacement declaration:
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: RationalReview
+
+Start from ``measured`` so the candidate has not yet been fixed:
 
 >>> from sympy import sqrt
 >>> from examples.record_review import RationalReview
->>> changed = ready.replace("review", RationalReview)
+>>> changed = measured.replace("review", RationalReview)
 >>> changed = changed.observe(candidate=2*(sqrt(3)-1))
 >>> alternative = changed.run(review_plan)
 >>> alternative.report.explain("global_maximum").verdict
@@ -350,12 +389,20 @@ benefit per minute until all errors have been caught. At :math:`k=1/2`, the
 join is at two minutes. The left derivative is :math:`1/2`, while the right
 derivative is zero. The curve is not differentiable there, hence cannot be C².
 
-``CappedReview`` inherits the original claims too. A failed claim is retained
-for inspection rather than preventing the class from being defined:
+``CappedReview`` expresses the two parts with SymPy's ``Piecewise``. The first
+branch applies while :math:`kt<1`; the final ``True`` branch covers the rest.
+It inherits the original claims too:
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: CappedReview
+
+A failed claim is retained for inspection, so we can define this model and
+find out why our method cannot use it:
 
 >>> from examples.record_review import CappedReview
 >>> from modello.contrib.verification import VerificationError
->>> capped = ready.replace("review", CappedReview).observe(candidate=2)
+>>> capped = measured.replace("review", CappedReview).observe(candidate=2)
 >>> capped.explain("review.value/continuously_differentiable").verdict
 'strictly false'
 >>> try:
@@ -370,7 +417,7 @@ establish that result. A method for corners would need a different argument,
 such as the one-sided slopes. The capped response also has a plateau, so the
 original strict increase claim no longer describes it.
 
-Finite observations are still useful for exploring its shape:
+Evaluate a few points to explore the proposed shape:
 
 >>> sampled = capped.sample("review.value", wrt="effort", points=(1, 2, 3))
 >>> tuple(float(value) for value in sampled.values)
@@ -378,14 +425,26 @@ Finite observations are still useful for exploring its shape:
 >>> sampled.kind
 'numerical observation'
 
-A ``Sample`` supplies observations, not evidence of a global property or
-regularity at a join. It cannot discharge the method's failed premises.
+A ``Sample`` records numerical evaluations. A few points cannot establish a
+global property or regularity at a join, so they cannot satisfy the method's
+failed premises.
+
+.. raw:: html
+
+   <figure>
+     <img src="study/responses.svg" alt="Net saving for the exponential and rational curves peaks smoothly. The capped curve reaches its peak at a corner at two minutes." style="max-width:100%;height:auto">
+     <figcaption>Changing the response changes the best checking time.
+     A curve can have a useful maximum even when our smooth method cannot establish it.</figcaption>
+   </figure>
 
 Separate a policy target from a mathematical premise
 ----------------------------------------------------
 
-Suppose the team hopes to save at least two minutes per record. Add that as
-an exploratory goal, associated with the method that must respect it:
+Return to the exponential plan in ``proposed``. Suppose the team hopes to save
+at least two minutes per record. That target is a goal to check, rather than
+an assumption we can use to justify the plan. ``predicate`` turns the
+inequality into an obligation, and ``consumer="review_plan"`` makes the method
+respect it:
 
 >>> from modello.contrib.verification import predicate
 >>> ambitious = proposed.with_obligations(predicate(
@@ -409,30 +468,6 @@ investigating another process, retire the experimental target explicitly:
 This removes a context-added goal. It does not remove the response's
 declarations or the method's preconditions. A real two-minute target would
 call for changing the process, its inputs, or the target itself.
-
-Help an open proof with a checked bound
----------------------------------------
-
-Another question is whether *any* checking time could save seven minutes per
-record. Our model has only six repair minutes to avoid, and checking itself
-costs time, so six is a valid uniform upper bound on net saving. Use that
-argument to help a bound obligation:
-
->>> from examples.record_review import EFFORT_DOMAIN
->>> from modello.contrib.verification import supremum_below
->>> ceiling = proposed.with_obligations(supremum_below(
-...     "net_saving", wrt="effort", domain=EFFORT_DOMAIN,
-...     bound=7, name="saving_ceiling"))
->>> ceiling.explain("saving_ceiling").verdict
-'unresolved'
->>> bounded = ceiling.with_bound_hint("saving_ceiling", upper=6)
->>> bounded.explain("saving_ceiling").verdict
-'strictly true'
-
-``with_bound_hint`` proposes a certificate; it adds no assumption. The checker
-establishes :math:`G(t)\leq6<7` uniformly. A loose or incorrect hint cannot
-refute the original bound. Here ``unresolved`` meant a proof aid was missing,
-even though the mathematical argument was short.
 
 Keep evidence with the decision
 -------------------------------
@@ -458,7 +493,7 @@ run the module:
 
 The output contains ``results.json`` with inputs, package versions, and exact
 and decimal results, plus a JSON audit and an offline HTML report for each
-response. To draw the figure as well, install the optional
+response. To draw both figures as well, install the optional
 ``modello[numerics]`` extra and add ``--plot``. The documentation build publishes
 the `results <study/results.json>`_, `baseline evidence <study/exponential.html>`_,
 `alternative evidence <study/rational.html>`_, and
@@ -467,6 +502,12 @@ the `results <study/results.json>`_, `baseline evidence <study/exponential.html>
 For a further experiment, change the avoidable repair work in a new context,
 derive a new candidate, and reuse the same rule. Check which premises still
 hold before trusting the resulting capacity. A constrained or corner optimum
-may require a different method rather than a different parameter value.
-The :doc:`verification reference </contrib/verification>` explains the binding,
-replacement, proof-domain, and execution rules in detail.
+may require a different argument. For example, if :math:`ak<1`, checking has
+negative marginal saving from the start and the best choice is no checking;
+our zero-derivative method does not cover that boundary optimum.
+
+Continue with :ref:`writing the proof contract <verification-example-contract>`
+when you want to adapt the method, or :ref:`checked bounds
+<verification-bound-hints>` when a proof needs an extra argument. The
+:doc:`verification reference </contrib/verification>` covers the detailed
+binding, replacement, domain, and execution rules.

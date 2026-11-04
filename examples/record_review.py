@@ -1,4 +1,4 @@
-"""Choose checking time for digitised records using exact, verified premises.
+"""Verify proposed checking times for digitised records and compare their workloads.
 
 Run ``python -m examples.record_review --output artefacts/record-review``.
 Add ``--plot`` with ``modello[numerics]`` installed to draw the response curves.
@@ -31,6 +31,15 @@ from modello.contrib.verification import (
     specifies,
     strictly_increasing,
 )
+
+
+class EntryBudget(Modello):
+    """Staff minutes = records * minutes per record; supply any two quantities."""
+
+    records = InstanceDummy("n", positive=True)
+    minutes_per_record = InstanceDummy("m", positive=True)
+    staff_minutes = records * minutes_per_record
+
 
 EFFORT_DOMAIN = Interval(0, S.Infinity)
 
@@ -68,27 +77,12 @@ class ExponentialReview(VerificationModel):
     )
 
 
-class RationalReview(ExponentialReview):
-    """An alternative with the same initial slope and slower saturation."""
-
-    value = ExponentialReview.rate * ExponentialReview.effort / (1 + ExponentialReview.rate * ExponentialReview.effort)
-
-
-class CappedReview(ExponentialReview):
-    """A tempting replacement whose kink violates the inherited C2 obligation."""
-
-    value = Piecewise(
-        (ExponentialReview.rate * ExponentialReview.effort, ExponentialReview.rate * ExponentialReview.effort < 1),
-        (1, True),
-    )
-
-
 class ReviewPlanning(VerificationModel):
     """Expected staff minutes per record, including later repair of missed errors."""
 
     review = component(ExponentialReview)
     effort = ExponentialReview.effort
-    entry_minutes = InstanceDummy("e", positive=True)
+    entry_minutes = InstanceDummy("b", positive=True)
     avoidable_minutes = InstanceDummy("a", positive=True)
     candidate = InstanceDummy("s", nonnegative=True)
     net_saving = avoidable_minutes * review.value - effort
@@ -99,14 +93,6 @@ class ReviewPlanning(VerificationModel):
     candidate_marginal = Subs(marginal_saving, effort, candidate)
     candidate_saving = Subs(net_saving, effort, candidate)
     candidate_minutes = Subs(expected_minutes, effort, candidate)
-
-
-class EntryBudget(Modello):
-    """Continuous workload budget: supply any two quantities to infer the third."""
-
-    records = InstanceDummy("n", positive=True)
-    minutes_per_record = InstanceDummy("m", positive=True)
-    staff_minutes = records * minutes_per_record
 
 
 GLOBAL_MAXIMUM = Obligation(
@@ -139,6 +125,8 @@ STATIONARY_MAXIMUM = InferenceRule(
 
 @dataclass(frozen=True)
 class ReviewDecision:
+    """Exact checking time, saving, expected workload, and its second derivative."""
+
     effort: Expr
     net_saving: Expr
     minutes_per_record: Expr
@@ -146,14 +134,15 @@ class ReviewDecision:
 
 
 def _evaluate_plan(current: VerificationContext) -> ReviewDecision:
-    effort = current.expression("candidate")
-    curve = current.expression("expected_minutes", wrt="effort")
-    axis = current.problem.model.effort
+    """Evaluate the proposed plan after its Method has established the premises."""
+    candidate = current.expression("candidate")
+    workload = current.expression("expected_minutes", wrt="effort")
+    effort = current.problem.model.effort
     values = (
-        effort,
+        candidate,
         current.expression("candidate_saving").doit(),
         current.expression("candidate_minutes").doit(),
-        diff(curve, axis, 2).subs(axis, effort),
+        diff(workload, effort, 2).subs(effort, candidate),
     )
     values = tuple(simplify(value) for value in values)
     if any(value.free_symbols or value.is_finite is not True or value.is_real is not True for value in values):
@@ -170,7 +159,7 @@ review_plan = Method(
 
 
 def review_context() -> VerificationContext[ReviewPlanning]:
-    """Illustrative inputs: four minutes to enter, six avoidable repair minutes."""
+    """Prepare the example's inputs and stationary-point rule, leaving the candidate open."""
     return (
         VerificationContext.for_model(ReviewPlanning, "records")
         .with_rule(STATIONARY_MAXIMUM)
@@ -179,6 +168,21 @@ def review_context() -> VerificationContext[ReviewPlanning]:
             avoidable_minutes=6,
             review=ExponentialReview("response", rate=Rational(1, 2)),
         )
+    )
+
+
+class RationalReview(ExponentialReview):
+    """An alternative with the same initial slope and slower saturation."""
+
+    value = ExponentialReview.rate * ExponentialReview.effort / (1 + ExponentialReview.rate * ExponentialReview.effort)
+
+
+class CappedReview(ExponentialReview):
+    """A linear response with a plateau whose join violates the inherited C2 claim."""
+
+    value = Piecewise(
+        (ExponentialReview.rate * ExponentialReview.effort, ExponentialReview.rate * ExponentialReview.effort < 1),
+        (1, True),
     )
 
 
@@ -219,43 +223,51 @@ def write_reports(directory: Path, *, plot: bool = False) -> None:
         (directory / f"{name}.html").write_text(report.to_html(title=f"Record review: {name}"), encoding="utf-8")
     (directory / "results.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     if plot:
-        _plot(contexts, directory / "curves.svg")
+        _write_plots(contexts, directory)
 
 
-def _plot(contexts: dict[str, VerificationContext[ReviewPlanning]], path: Path) -> None:
-    """Draw observations of the curves; the figure supplies no proof evidence."""
+def _write_plots(contexts: dict[str, VerificationContext[ReviewPlanning]], directory: Path) -> None:
+    """Draw the initial tradeoff and later replacements separately as numerical observations."""
     from matplotlib.backends.backend_svg import FigureCanvasSVG
     from matplotlib.figure import Figure
 
-    figure = Figure(figsize=(9, 3.8), layout="constrained")
-    FigureCanvasSVG(figure)
-    benefit_axes, comparison_axes = figure.subplots(1, 2)
-    times = [Rational(index, 50) for index in range(301)]
-    baseline = contexts["exponential"]
-    axis = baseline.problem.model.effort
-    gain = baseline.expression("net_saving", wrt="effort")
-    for expression, label, style in (
-        (gain + axis, "Repair time avoided", "-"),
-        (axis, "Checking time", "--"),
-        (gain, "Net saving", "-"),
-    ):
-        evaluate = lambdify(axis, expression, "math")
-        benefit_axes.plot(times, [evaluate(float(time)) for time in times], style, label=label)
-    for name, current in contexts.items():
-        evaluate = lambdify(axis, current.expression("net_saving", wrt="effort"), "math")
-        comparison_axes.plot(times, [evaluate(float(time)) for time in times], label=name.capitalize())
-    for axes, title in ((benefit_axes, "Why spend time checking?"), (comparison_axes, "Changing the response curve")):
-        axes.set(title=title, xlabel="Checking time (minutes per record)", ylabel="Minutes per record")
+    def new_plot(title, ylabel):
+        figure = Figure(figsize=(6, 3.8), layout="constrained")
+        FigureCanvasSVG(figure)
+        axes = figure.subplots()
+        axes.set(title=title, xlabel="Checking time (minutes per record)", ylabel=ylabel)
         axes.axhline(0, color="0.5", linewidth=0.7)
-        axes.legend(fontsize="small")
-    comparison_axes.set_ylabel("Net minutes saved per record")
-    figure.savefig(path, metadata={"Date": None})
+        return figure, axes
+
+    times = [index / 50 for index in range(301)]
+    baseline = contexts["exponential"]
+    effort = baseline.problem.model.effort
+    net_saving = baseline.expression("net_saving", wrt="effort")
+    benefit, benefit_axes = new_plot("Why spend time checking?", "Minutes per record")
+    for expression, label, style in (
+        (net_saving, "Net saving", "-"),
+        (net_saving + effort, "Repair time avoided", "-"),
+        (effort, "Checking time", "--"),
+    ):
+        evaluate = lambdify(effort, expression, "math")
+        benefit_axes.plot(times, [evaluate(time) for time in times], style, label=label)
+    benefit_axes.legend()
+    benefit.savefig(directory / "benefit.svg", metadata={"Date": None})
+
+    comparison, comparison_axes = new_plot("Changing the response curve", "Net minutes saved per record")
+    for name, current in contexts.items():
+        evaluate = lambdify(effort, current.expression("net_saving", wrt="effort"), "math")
+        comparison_axes.plot(times, [evaluate(time) for time in times], label=name.capitalize())
+    comparison_axes.legend()
+    comparison.savefig(directory / "responses.svg", metadata={"Date": None})
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("artefacts/record-review"))
-    parser.add_argument("--plot", action="store_true", help="also draw curves.svg; needs modello[numerics]")
+    parser.add_argument(
+        "--plot", action="store_true", help="also draw benefit.svg and responses.svg; needs modello[numerics]"
+    )
     arguments = parser.parse_args()
     write_reports(arguments.output, plot=arguments.plot)
     print(f"Record-review evidence and results: {arguments.output}")
