@@ -154,7 +154,7 @@ review_plan = Method(
     "review_plan",
     _evaluate_plan,
     preconditions=(GLOBAL_MAXIMUM, positive("candidate_minutes", name="positive_workload")),
-    uses=("candidate", "candidate_saving", "candidate_minutes"),
+    uses=("candidate", "candidate_saving", "candidate_minutes", "expected_minutes"),
 )
 
 

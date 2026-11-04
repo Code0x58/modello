@@ -222,6 +222,9 @@ creates a nested response whose fields are available as ``review.value`` and
 :math:`b` and :math:`a`. ``candidate`` is a proposed checking time, separate from
 the ``effort`` coordinate over which we compare all possible times.
 
+``effort = ExponentialReview.effort`` reuses the response's coordinate, so its
+benefit and the total workload vary with the same :math:`t`.
+
 We also record the derivative of net saving and evaluate it at the candidate.
 SymPy's ``Derivative(..., evaluate=False)`` keeps differentiation deferred until
 Modello has resolved the named quantity to its formula. Without that delay,
