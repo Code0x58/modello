@@ -138,6 +138,51 @@ approaches one. The example's ``derive_checking_response`` function performs
 this limit and supplies the curve to the verification model below. SymPy has
 derived a consequence of our assumption; it has not validated the assumption.
 
+.. note::
+
+   **Expressing the repeated checks as a recursive sequence**
+
+   If your model is naturally recursive, you can declare the update instead
+   of writing the power explicitly. Start with a remaining share of one: all
+   original errors are still present. Each check multiplies the previous
+   share by ``part.remaining_share``.
+
+   Modello's :doc:`Series and Recurrence <../../series>` express that process:
+
+   >>> from modello import Index, Recurrence, Series
+   >>> j = Index("j", nonnegative=True)
+   >>> R = Series("R", j)
+   >>> law = Recurrence(R[j], part.remaining_share * R[j - 1], initial={0: 1})
+   >>> law.at(0).doit()
+   1
+   >>> 1 - limit(law.at(N).doit(), N, S.Infinity)
+   1 - exp(-k*t)
+
+   Here ``j`` counts completed checks within one sequence; ``N`` is its fixed
+   total number of checks. ``law.at(N).doit()`` derives the expression after
+   those updates, which we then pass to ``limit``. The geometric power is a
+   result of the recurrence, giving another way to derive the same response.
+
+   You can also use SymPy's `RecursiveSeq
+   <https://docs.sympy.org/latest/modules/series/sequences.html#sympy.series.sequences.RecursiveSeq>`_
+   directly with the same short-step expression:
+
+   >>> from sympy import Function, rsolve
+   >>> from sympy.series.sequences import RecursiveSeq
+   >>> i = Symbol("i", integer=True, nonnegative=True)
+   >>> r = Function("r")
+   >>> sequence = RecursiveSeq(part.remaining_share * r(i - 1), r(i), i, [1])
+   >>> sequence[:3]
+   [1, 1 - k*t/N, (1 - k*t/N)**2]
+   >>> formula = rsolve(sequence.recurrence, sequence.yn, {r(0): 1})
+   >>> 1 - limit(formula.subs(i, N), N, S.Infinity)
+   1 - exp(-k*t)
+
+   ``RecursiveSeq`` computes individual terms; `rsolve
+   <https://docs.sympy.org/latest/modules/solvers/solvers.html#sympy.solvers.recurr.rsolve>`_
+   finds a closed form for this linear recurrence. Both routes use the same
+   initial value and transition, and give the same continuous response.
+
 Count the benefit and cost in minutes
 -------------------------------------
 
