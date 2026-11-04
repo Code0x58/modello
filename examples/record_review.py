@@ -65,7 +65,7 @@ class ExponentialReview(VerificationModel):
             "value",
             wrt="effort",
             domain=EFFORT_DOMAIN,
-            reason="Each extra minute has diminishing benefit.",
+            reason="The marginal benefit must not increase.",
         ),
         continuously_differentiable(
             "value",

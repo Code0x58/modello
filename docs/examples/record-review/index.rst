@@ -113,7 +113,7 @@ State what the calculation needs
 Three distinct properties matter:
 
 * **Strict increase:** more checking should catch a larger fraction of errors.
-* **Concavity:** the marginal benefit should diminish. For a concave net saving,
+* **Concavity:** the marginal benefit should not increase. For a concave net saving,
   a point with zero derivative is a global maximum.
 * **C² regularity:** the first two derivatives should be continuous. We will
   use a second-order approximation to describe workload near the chosen time.
@@ -190,18 +190,24 @@ True
 'strictly true'
 
 An assumption restricts allowed parameter values; an observation fixes a value
-for a particular branch. With zero effectiveness, the curve is constant and
-the strict increase claim fails:
+for a particular branch. SymPy's ``Rational(1, 2)`` keeps the observed rate as
+an exact fraction:
+
+>>> from sympy import Rational
+>>> curve.observe(rate=Rational(1, 2)).explain("value/strictly_increasing").verdict
+'strictly true'
+
+With zero effectiveness, the curve is constant and the strict increase claim
+fails:
 
 >>> curve.observe(rate=0).explain("value/strictly_increasing").verdict
 'strictly false'
 >>> curve.explain("value/strictly_increasing").verdict
 'conditionally true'
 
-The earlier context is unchanged. Observations accumulate;
-to compare different values, branch from the common context before either
-value was supplied. Keep symbolic inputs exact, for example ``Rational(1, 2)``.
-The reference covers :ref:`removing assumptions <verification-retire-premises>`
+The earlier context is unchanged. Observations accumulate; to compare different
+values, branch from the common context before either value was supplied. The
+reference covers :ref:`removing assumptions <verification-retire-premises>`
 when you need to reopen an earlier choice.
 
 Compose the decision model
@@ -209,8 +215,9 @@ Compose the decision model
 
 Now put the response inside the workload model. ``component(ExponentialReview)``
 creates a nested response whose fields are available as ``review.value`` and
-``review.rate``. ``candidate`` is a proposed checking time, separate from the
-``effort`` coordinate over which we compare all possible times.
+``review.rate``. The fields ``entry_minutes`` and ``avoidable_minutes`` represent
+:math:`b` and :math:`a`. ``candidate`` is a proposed checking time, separate from
+the ``effort`` coordinate over which we compare all possible times.
 
 We also record the derivative of net saving and evaluate it at the candidate.
 SymPy's ``Derivative(..., evaluate=False)`` keeps differentiation deferred until
@@ -232,7 +239,7 @@ The C² claim declared on the response is stronger: it also asks for continuous
 first and second derivatives, for our later quadratic approximation.
 
 The example's ``review_context()`` helper supplies our inputs and registers the
-stationary-point argument explained below. It leaves the candidate open.
+optimality argument explained below. It leaves the candidate open.
 This helper belongs to the example; :ref:`its implementation
 <verification-example-contract>` shows how to prepare the same context yourself.
 ``expression(path)`` returns a field's resolved SymPy expression, so we can
@@ -276,13 +283,15 @@ be a minimum, and a numerical grid might miss a better point.
 Explain why it is a global optimum
 ----------------------------------
 
-For a differentiable concave function, its tangent line lies above its graph:
+Let :math:`s\geq0` denote the proposed checking time and :math:`y\geq0` any
+other checking time. For a differentiable concave function, the tangent
+line at :math:`s` lies above its graph:
 
 .. math::
 
    G(y)\leq G(s)+G'(s)(y-s).
 
-If :math:`s\geq0` and :math:`G'(s)=0`, this becomes
+If :math:`G'(s)=0`, this becomes
 :math:`G(y)\leq G(s)` for every :math:`y\geq0`. Thus a nonnegative stationary
 candidate maximises net saving over the whole effort domain. Subtracting the
 linear checking cost preserves the concavity of the response benefit.
@@ -294,16 +303,23 @@ workload for the capacity calculation.
 
 ``review_context()`` registered the stationary-point implication as a trusted
 inference rule. The checker establishes its premises for our particular curve
-and candidate; it does not prove the general implication itself. Run the
-method, then inspect the premises checked for this candidate:
+and candidate; it does not prove the general implication itself.
+``stationarity`` means a zero derivative at the candidate; ``feasibility``
+means a nonnegative candidate. Run the method, then inspect the four premises:
 
 >>> from examples.record_review import review_plan
 >>> result = proposed.run(review_plan)
 >>> result.report.explain("global_maximum").verdict
 'strictly true'
->>> all(p.verdict == "strictly true"
-...     for p in result.report.explain("global_maximum").premises)
-True
+>>> for premise in result.report.explain("global_maximum").premises:
+...     print(premise.obligation.name, premise.verdict)
+concavity strictly true
+differentiability strictly true
+stationarity strictly true
+feasibility strictly true
+
+The global-maximum result retains these premise results so we can inspect a
+failed argument too.
 
 ``result.data`` holds the exact calculation; ``result.report`` retains the
 evidence that permitted it. The implementation of the method and rule is
@@ -329,8 +345,10 @@ interpretation:
 >>> round(float(target.staff_minutes), 1)
 491.8
 
-The workload curvature is :math:`M''(t_*)=1/2`. C² regularity lets us use
-Taylor's formula to approximate the workload for a small change :math:`h`:
+The workload curvature is :math:`M''(t_*)=1/2`. Also :math:`M'(t_*)=0`, since
+:math:`M=b+a-G` and the candidate has :math:`G'(t_*)=0`. C² regularity lets us
+use Taylor's formula for a small change :math:`h`. The linear term vanishes,
+and the quadratic coefficient is :math:`M''(t_*)/2=1/4`:
 
 .. math::
 
@@ -359,7 +377,10 @@ rate. This is the replacement declaration:
    :language: python
    :pyobject: RationalReview
 
-Start from ``measured`` so the candidate has not yet been fixed:
+With the same inputs, the new marginal saving is
+:math:`G'(t)=3/(1+t/2)^2-1`. Solving :math:`G'(t)=0` on :math:`t\geq0`
+gives :math:`t_*=2(\sqrt{3}-1)`. Start from ``measured`` so the candidate
+has not yet been fixed:
 
 >>> from sympy import sqrt
 >>> from examples.record_review import RationalReview
@@ -375,7 +396,6 @@ Start from ``measured`` so the candidate has not yet been fixed:
 >>> result.data.minutes_per_record == 6 + 2*log(3)
 True
 
-The new candidate solves :math:`G'(t)=3/(1+t/2)^2-1=0`.
 The same concavity argument establishes its optimum. Keeping the exponential
 candidate instead would fail the stationarity premise; replacing a component
 does not preserve conclusions about the old formula. Our earlier result

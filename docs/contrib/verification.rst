@@ -629,6 +629,9 @@ container types. Their mathematical meanings are explicit:
 * ``strictly_increasing`` and ``strictly_decreasing`` require strict
   monotonicity on the domain. A strictly positive derivative is one sufficient
   certificate, rather than the definition of strict monotonicity.
+* ``convex`` and ``concave`` allow linear sections. For a twice differentiable
+  scalar function on an interval, a nonnegative second derivative is sufficient
+  for convexity; a nonpositive second derivative is sufficient for concavity.
 * ``continuously_differentiable(order=n)`` requires :math:`C^n` regularity,
   with continuous derivatives through the finite order n.
   ``differentiable(order=n)`` only requires those derivatives to exist.
