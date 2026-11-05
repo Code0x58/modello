@@ -480,11 +480,11 @@ curve can still have a pole elsewhere.
 >>> from examples.record_review import ExponentialReview
 >>> from modello.contrib.verification import Method, VerificationContext
 >>> def response_method(current):
-...     curve = current.expression("caught_share", wrt="effort")
+...     curve = current.expression("caught_share", wrt="minutes_per_record")
 ...     return Method(
 ...         "response curve", lambda inner: curve, uses=("caught_share",),
 ...     ).bind(current)
->>> measured = VerificationContext.for_model(ExponentialReview, rate=1)
+>>> measured = VerificationContext.for_model(ExponentialReview, detection_rate=1)
 >>> measured.run(response_method).report.explain("caught_share/strictly_increasing").verdict
 'strictly true'
 
@@ -526,9 +526,10 @@ The :doc:`record-review walkthrough <../examples/record-review/index>` uses
 how the example connects that argument to a computation.
 
 An ``Obligation`` names a claim. ``GLOBAL_MAXIMUM`` names the statement
-:math:`G(s)\geq G(t)` for every nonnegative effort :math:`t`, where :math:`s`
-is the proposed checking time. ``InferenceRule`` records the supporting-line
-argument from the walkthrough as a trusted implication. Its premises ask the
+:math:`G(s)\geq G(t)` for every nonnegative number of checking minutes
+:math:`t`, where :math:`s` is the proposed checking minutes per record.
+``InferenceRule`` records the supporting-line argument from the walkthrough as
+a trusted implication. Its premises ask the
 checker to establish concavity, differentiability, a zero derivative at the
 candidate, and candidate feasibility. The ``rule`` property marks this as a
 custom conclusion to establish through a registered implication, rather than a
@@ -539,11 +540,11 @@ built-in property check:
    :start-at: GLOBAL_MAXIMUM = Obligation(
    :end-before: @dataclass
 
-The candidate is a ``ReviewWorkload`` component. Its ``net_saving`` field
-serves both the point evaluation and the function checks. The conclusion
-concerns its saving at the observed effort. The rule's shape checks use
-``wrt="candidate.review.effort"`` to keep the response's input symbolic; its
-stationarity check evaluates the derivative at the observed point. The
+The candidate is a ``ReviewWorkload`` component. Its ``minutes_saved_per_record``
+field serves both the point evaluation and the function checks. The conclusion
+concerns its minutes saved at the observed checking minutes. The rule's shape
+checks use ``wrt="candidate.review.minutes_per_record"`` to keep the response's
+input symbolic; its stationarity check evaluates the derivative at the observed point. The
 alternative :math:`t` in the mathematical statement belongs to the general
 argument above, so the decision model needs no extra input or coordinate for it.
 
@@ -551,9 +552,10 @@ A registered implication is part of the trust boundary. The engine checks its
 premises; it does not prove that they imply the conclusion. A failed premise
 makes this argument inapplicable and leaves the conclusion unresolved.
 
-The example's ``_evaluate_plan`` callback reads the proposed checking time,
-net saving, workload, and workload curvature from that component. A ``Method``
-pairs that callback with the properties it needs:
+The example's ``_evaluate_plan`` callback reads the checking minutes per record,
+minutes saved per record, total minutes per record, and the total's second
+derivative from that component. A ``Method`` pairs that callback with the
+properties it needs:
 
 .. literalinclude:: ../../examples/record_review.py
    :language: python
@@ -567,9 +569,9 @@ workload. The callback executes after those premises are established; its
 Python implementation is trusted too.
 
 The convenience function registers the rule and accepts a ``RecordWork``
-component containing the entry and repair estimates, plus the checking rate.
+component containing the entry and repair estimates, plus the detection rate.
 Its defaults provide the walkthrough's baseline. Each call builds a candidate
-workload in a fresh context, leaving its effort and staffing budget open:
+workload in a fresh context, leaving its checking minutes and staffing budget open:
 
 .. literalinclude:: ../../examples/record_review.py
    :language: python
@@ -583,14 +585,15 @@ Help an open proof with a checked bound
 A bound can need an explicit argument even when each parameter is fixed.
 Continue with the same record-review model. Could *any* checking time save
 seven minutes per record? There are only six repair minutes to avoid, and
-checking itself costs time, so six is a uniform upper bound on net saving.
+checking itself costs time, so six is a uniform upper bound on minutes saved.
 
 >>> from sympy import log
->>> from examples.record_review import EFFORT_DOMAIN, review_context
+>>> from examples.record_review import CHECKING_MINUTES_DOMAIN, review_context
 >>> from modello.contrib.verification import supremum_below
->>> proposed = review_context().observe(**{"candidate.review.effort": 2*log(3)})
+>>> proposed = review_context().observe(**{"candidate.review.minutes_per_record": 2*log(3)})
 >>> ceiling = proposed.with_obligations(supremum_below(
-...     "candidate.net_saving", wrt="candidate.review.effort", domain=EFFORT_DOMAIN,
+...     "candidate.minutes_saved_per_record", wrt="candidate.review.minutes_per_record",
+...     domain=CHECKING_MINUTES_DOMAIN,
 ...     bound=7, name="saving_ceiling"))
 >>> ceiling.explain("saving_ceiling").verdict
 'unresolved'

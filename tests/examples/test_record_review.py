@@ -29,33 +29,35 @@ def measured() -> VerificationContext[ReviewPlanning]:
 
 @pytest.fixture(scope="module")
 def proposed(measured: VerificationContext[ReviewPlanning]) -> VerificationContext[ReviewPlanning]:
-    return measured.observe(**{"candidate.review.effort": 2 * log(3)})
+    return measured.observe(**{"candidate.review.minutes_per_record": 2 * log(3)})
 
 
 def test_short_checks_derive_the_continuous_response():
     short = CheckingStep(
         "short",
-        record=RecordWork("record", entry_minutes=4, error_fraction=Rational(1, 10), repair_minutes=60),
-        checking_minutes=Rational(1, 10),
-        rate=Rational(1, 2),
+        record=RecordWork(
+            "record", entry_minutes_per_record=4, error_fraction=Rational(1, 10), repair_minutes_per_error=60
+        ),
+        minutes_per_record=Rational(1, 10),
+        detection_rate=Rational(1, 2),
     )
     assert short.caught_share == Rational(1, 20)
     assert 1000 * short.remaining_error_fraction == 95
-    assert short.record.avoidable_minutes == 6
-    assert short.expected_repair_minutes == Rational(57, 10)
+    assert short.record.repair_minutes_per_record == 6
+    assert short.repair_minutes_per_record == Rational(57, 10)
 
     # Use the same name as the helper's bound variable to exercise its scope.
-    effort = Symbol("N", integer=True, positive=True)
-    rate = Symbol("k", real=True)
-    response = derive_checking_response(effort, rate)
-    assert response == 1 - exp(-rate * effort)
-    assert response.subs(effort, 0) == 0
-    assert response.subs(rate, 0) == 0
+    minutes_per_record = Symbol("N", integer=True, positive=True)
+    detection_rate = Symbol("k", real=True)
+    response = derive_checking_response(minutes_per_record, detection_rate)
+    assert response == 1 - exp(-detection_rate * minutes_per_record)
+    assert response.subs(minutes_per_record, 0) == 0
+    assert response.subs(detection_rate, 0) == 0
     context = VerificationContext.for_model(ExponentialReview)
-    assert context.expression("caught_share", wrt="effort") == derive_checking_response(
-        context.symbols.effort, context.symbols.rate
+    assert context.expression("caught_share", wrt="minutes_per_record") == derive_checking_response(
+        context.symbols.minutes_per_record, context.symbols.detection_rate
     )
-    review = ExponentialReview("observed", effort=2, rate=Rational(1, 2))
+    review = ExponentialReview("observed", minutes_per_record=2, detection_rate=Rational(1, 2))
     assert review.caught_share == 1 - exp(-1)
 
 
@@ -65,19 +67,19 @@ def test_definition_reports_distinguish_parameter_conditions_and_regularity():
     assert definition.explain("caught_share/concave").verdict == "strictly true"
     assert definition.explain("caught_share/continuously_differentiable").verdict == "strictly true"
     context = VerificationContext.for_model(ExponentialReview)
-    positive_rate = context.assume(context.symbols.rate > 0)
-    assert positive_rate.explain("caught_share/strictly_increasing").verdict == "strictly true"
-    assert context.observe(rate=0).explain("caught_share/strictly_increasing").verdict == "strictly false"
+    positive_detection_rate = context.assume(context.symbols.detection_rate > 0)
+    assert positive_detection_rate.explain("caught_share/strictly_increasing").verdict == "strictly true"
+    assert context.observe(detection_rate=0).explain("caught_share/strictly_increasing").verdict == "strictly false"
     assert context.explain("caught_share/strictly_increasing").verdict == "conditionally true"
 
 
 def test_stationary_candidate_has_a_global_certificate_and_local_curvature(proposed):
     result = proposed.run(review_plan)
     decision = result.data
-    assert simplify(decision.effort - 2 * log(3)) == 0
-    assert decision.net_saving == 4 - 2 * log(3)
+    assert simplify(decision.checking_minutes_per_record - 2 * log(3)) == 0
+    assert decision.minutes_saved_per_record == 4 - 2 * log(3)
     assert decision.minutes_per_record == 6 + 2 * log(3)
-    assert decision.workload_curvature == Rational(1, 2)
+    assert decision.minutes_per_record_second_derivative == Rational(1, 2)
     maximum = result.report.explain("global_maximum")
     assert maximum.verdict == "strictly true"
     premises = {item.obligation.name: item for item in maximum.premises}
@@ -88,16 +90,16 @@ def test_stationary_candidate_has_a_global_certificate_and_local_curvature(propo
         "feasibility",
     }
     assert all(item.verdict == "strictly true" for item in premises.values())
-    assert simplify(maximum.expression - decision.net_saving) == 0
+    assert simplify(maximum.expression - decision.minutes_saved_per_record) == 0
     # The rule checks the whole curve despite the observed checking time;
     # stationarity is checked at that observed point instead.
-    axis = proposed.symbols.candidate.review.effort
+    axis = proposed.symbols.candidate.review.minutes_per_record
     for name in ("concavity", "differentiability"):
         assert premises[name].expression.free_symbols == {axis}
         assert premises[name].coordinate == axis
     assert premises["stationarity"].expression.doit() == 0
     # Independent values of the workload on either side of the proposed point.
-    workload = proposed.expression("candidate.expected_minutes", wrt="candidate.review.effort").doit()
+    workload = proposed.expression("candidate.minutes_per_record", wrt="candidate.review.minutes_per_record").doit()
     assert workload.subs(axis, 2) > decision.minutes_per_record
     assert workload.subs(axis, Rational(5, 2)) > decision.minutes_per_record
 
@@ -112,34 +114,40 @@ def test_capacity_and_staff_budget_can_be_supplied_in_either_direction(proposed)
 
 
 def test_revised_inputs_recheck_the_optimum_and_its_derivative_domain(measured):
-    record = RecordWork("revised", entry_minutes=3, error_fraction=Rational(1, 5), avoidable_minutes=8)
-    revised = review_context(record, rate=Rational(1, 4))
-    result = revised.observe(**{"candidate.review.effort": 4 * log(2)}).run(review_plan)
+    record = RecordWork(
+        "revised", entry_minutes_per_record=3, error_fraction=Rational(1, 5), repair_minutes_per_record=8
+    )
+    revised = review_context(record, detection_rate=Rational(1, 4))
+    result = revised.observe(**{"candidate.review.minutes_per_record": 4 * log(2)}).run(review_plan)
     assert result.report.explain("global_maximum").verdict == "strictly true"
-    assert simplify(result.data.effort - 4 * log(2)) == 0
+    assert simplify(result.data.checking_minutes_per_record - 4 * log(2)) == 0
     assert simplify(result.data.minutes_per_record - 7 - 4 * log(2)) == 0
-    assert result.data.workload_curvature == Rational(1, 4)
-    assert measured.expression("candidate.record.avoidable_minutes") == 6
-    assert revised.expression("candidate.record.repair_minutes") == 40
+    assert result.data.minutes_per_record_second_derivative == Rational(1, 4)
+    assert measured.expression("candidate.record.repair_minutes_per_record") == 6
+    assert revised.expression("candidate.record.repair_minutes_per_error") == 40
 
     # Formal substitution at zero does not establish a two-sided derivative
     # within the coordinate's nonnegative domain.
-    endpoint_record = RecordWork("endpoint", entry_minutes=3, error_fraction=Rational(1, 5), avoidable_minutes=4)
-    endpoint = review_context(endpoint_record, rate=Rational(1, 4)).observe(**{"candidate.review.effort": 0})
-    assert endpoint.expression("candidate.marginal_saving").doit() == 0
+    endpoint_record = RecordWork(
+        "endpoint", entry_minutes_per_record=3, error_fraction=Rational(1, 5), repair_minutes_per_record=4
+    )
+    endpoint = review_context(endpoint_record, detection_rate=Rational(1, 4)).observe(
+        **{"candidate.review.minutes_per_record": 0}
+    )
+    assert endpoint.expression("candidate.minutes_saved_derivative").doit() == 0
     with pytest.raises(VerificationError) as error:
         endpoint.run(review_plan)
     assert error.value.report.explain("global_maximum/stationarity").verdict == "unresolved"
 
 
 def test_a_wrong_candidate_and_an_unregistered_rule_do_not_establish_an_optimum(measured):
-    wrong = measured.observe(**{"candidate.review.effort": 1})
+    wrong = measured.observe(**{"candidate.review.minutes_per_record": 1})
     with pytest.raises(VerificationError) as error:
         wrong.run(review_plan)
     assert error.value.context is wrong
     assert error.value.report.explain("global_maximum/stationarity").verdict == "strictly false"
     assert error.value.report.explain("global_maximum").verdict == "unresolved"
-    unregistered = VerificationContext.for_model(ReviewPlanning).observe(**{"candidate.review.effort": 1})
+    unregistered = VerificationContext.for_model(ReviewPlanning).observe(**{"candidate.review.minutes_per_record": 1})
     with pytest.raises(VerificationError) as error:
         unregistered.run(review_plan)
     assert error.value.report.explain("global_maximum").verdict == "unresolved"
@@ -151,29 +159,31 @@ def test_replacement_rechecks_the_candidate_and_preserves_the_baseline(measured,
         stale.run(review_plan)
     assert error.value.report.explain("global_maximum/stationarity").verdict == "strictly false"
     changed = measured.replace("candidate.review", RationalReview).observe(
-        **{"candidate.review.effort": 2 * (sqrt(3) - 1)}
+        **{"candidate.review.minutes_per_record": 2 * (sqrt(3) - 1)}
     )
     decision = changed.run(review_plan).data
-    assert decision.net_saving == 8 - 4 * sqrt(3)
+    assert decision.minutes_saved_per_record == 8 - 4 * sqrt(3)
     assert decision.minutes_per_record == 2 + 4 * sqrt(3)
-    assert decision.workload_curvature == sqrt(3) / 3
-    assert measured.expression("candidate.review.rate") == Rational(1, 2)
+    assert decision.minutes_per_record_second_derivative == sqrt(3) / 3
+    assert measured.expression("candidate.review.detection_rate") == Rational(1, 2)
     assert proposed.run(review_plan).data.minutes_per_record == 6 + 2 * log(3)
 
 
 def test_the_capped_curve_retains_its_claims_and_exposes_its_kink(measured):
-    capped = measured.replace("candidate.review", CappedReview).observe(**{"candidate.review.effort": 2})
+    capped = measured.replace("candidate.review", CappedReview).observe(**{"candidate.review.minutes_per_record": 2})
     with pytest.raises(VerificationError) as error:
         capped.run(review_plan)
     regularity = error.value.report.explain("candidate.review.caught_share/continuously_differentiable")
     assert regularity.verdict == "strictly false"
-    assert dict(regularity.witness)[capped.symbols.candidate.review.effort] == 2
+    assert dict(regularity.witness)[capped.symbols.candidate.review.minutes_per_record] == 2
     assert error.value.report.explain("global_maximum").verdict == "unresolved"
 
 
 def test_retiring_an_exploratory_saving_target_does_not_waive_the_method_contract(proposed):
     target = proposed.with_obligations(
-        predicate(proposed.symbols.candidate.net_saving >= 2, name="saving_target", consumer="review_plan")
+        predicate(
+            proposed.symbols.candidate.minutes_saved_per_record >= 2, name="saving_target", consumer="review_plan"
+        )
     )
     with pytest.raises(VerificationError) as error:
         target.run(review_plan)
@@ -188,10 +198,10 @@ def test_reports_include_exact_results_and_the_blocked_replacement(tmp_path: Pat
     write_reports(tmp_path, plot=True)
     summary = json.loads((tmp_path / "results.json").read_text())
     assert summary["inputs"] == {
-        "candidate.record.entry_minutes": "4",
+        "candidate.record.entry_minutes_per_record": "4",
         "candidate.record.error_fraction": "1/10",
-        "candidate.record.repair_minutes": "60",
-        "candidate.review.rate": "1/2",
+        "candidate.record.repair_minutes_per_error": "60",
+        "candidate.review.detection_rate": "1/2",
     }
     assert summary["plans"]["exponential"]["minutes_per_record"]["exact"] == "2*log(3) + 6"
     assert summary["plans"]["rational"]["minutes_per_record"]["decimal"] > 8.9

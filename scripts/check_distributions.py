@@ -175,9 +175,9 @@ assert VerificationContext.for_model(VerificationCurve).verify().to_dict()["evid
 assert not {"numpy", "scipy", "matplotlib"} & sys.modules.keys()
 from examples.record_review import review_context, review_plan
 from sympy import log
-decision = review_context().observe(**{"candidate.review.effort": 2*log(3)}).run(review_plan).data
+decision = review_context().observe(**{"candidate.review.minutes_per_record": 2*log(3)}).run(review_plan).data
 assert decision.minutes_per_record == 6 + 2*log(3)
-assert decision.workload_curvature*2 == 1
+assert decision.minutes_per_record_second_derivative*2 == 1
 assert not {"numpy", "scipy", "matplotlib"} & sys.modules.keys()
 vector_snapshot = Explorer(window).snapshot()
 assert vector_snapshot["vectors"][0]["shape"] == [3]
@@ -299,7 +299,7 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
     )
     plans = json.loads((study / "results.json").read_text())["plans"]
     assert set(plans) == {"exponential", "rational", "capped"}
-    assert plans["exponential"]["workload_curvature"]["exact"] == "1/2"
+    assert plans["exponential"]["minutes_per_record_second_derivative"]["exact"] == "1/2"
     assert "blocked" in plans["capped"]
     for name in plans:
         assert json.loads((study / f"{name}.json").read_text())["evidence"]

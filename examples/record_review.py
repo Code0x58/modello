@@ -55,87 +55,88 @@ class EntryBudget(Modello):
 
 
 class RecordWork(Modello):
-    """Entry time and expected repair work per record before checking."""
+    """Entry and expected repair minutes per record before checking."""
 
-    entry_minutes = InstanceDummy("b", positive=True)
+    entry_minutes_per_record = InstanceDummy("b", positive=True)
     error_fraction = InstanceDummy("p", nonnegative=True)
-    repair_minutes = InstanceDummy("L", positive=True)
-    avoidable_minutes = error_fraction * repair_minutes
-    expected_minutes = entry_minutes + avoidable_minutes
+    repair_minutes_per_error = InstanceDummy("L", positive=True)
+    repair_minutes_per_record = error_fraction * repair_minutes_per_error
+    minutes_per_record = entry_minutes_per_record + repair_minutes_per_record
 
 
 class CheckingStep(Modello):
     """Approximate a short check that catches a share of the errors still left.
 
-    Physical inputs need record.error_fraction <= 1 and 0 <= rate * checking_minutes <= 1.
+    Physical inputs need record.error_fraction <= 1 and 0 <= detection_rate * minutes_per_record <= 1.
     These are modelling assumptions here, not automatically checked bounds.
     """
 
     record = component(RecordWork)
-    checking_minutes = InstanceDummy("h", nonnegative=True)
-    rate = InstanceDummy("k", real=True)
-    caught_share = rate * checking_minutes
+    minutes_per_record = InstanceDummy("h", nonnegative=True)
+    detection_rate = InstanceDummy("k", real=True)
+    caught_share = detection_rate * minutes_per_record
     remaining_share = 1 - caught_share
     remaining_error_fraction = record.error_fraction * remaining_share
-    expected_repair_minutes = remaining_error_fraction * record.repair_minutes
+    repair_minutes_per_record = remaining_error_fraction * record.repair_minutes_per_error
 
 
-def derive_checking_response(effort: Expr, rate: Expr) -> Expr:
-    """Take the continuous limit of repeated short checks over ``effort`` minutes."""
+def derive_checking_response(minutes_per_record: Expr, detection_rate: Expr) -> Expr:
+    """Derive the caught share from the checking minutes per record and detection rate."""
     steps = Dummy("N", integer=True, positive=True)
-    step = CheckingStep("part", checking_minutes=effort / steps, rate=rate)
+    step = CheckingStep("part", minutes_per_record=minutes_per_record / steps, detection_rate=detection_rate)
     remaining_share = limit(step.remaining_share**steps, steps, S.Infinity)
     return 1 - remaining_share
 
 
-EFFORT_DOMAIN = Interval(0, S.Infinity)
+CHECKING_MINUTES_DOMAIN = Interval(0, S.Infinity)
 
 
 class ExponentialReview(VerificationModel):
-    """Fraction of otherwise missed errors caught after ``effort`` minutes.
+    """Share of otherwise missed errors caught by checking each record.
 
-    ``rate`` is deliberately unrestricted: increasing response needs rate > 0.
+    ``minutes_per_record`` measures checking; ``detection_rate`` is per minute.
+    The rate is deliberately real: increasing response needs detection_rate > 0.
     The curve follows from a constant detection rate for errors still left;
     that assumption has not been fitted or validated against a real team.
     """
 
-    effort = InstanceDummy("t", nonnegative=True)
-    rate = InstanceDummy("k", real=True)
+    minutes_per_record = InstanceDummy("t", nonnegative=True)
+    detection_rate = InstanceDummy("k", real=True)
     caught_share = specifies(
-        derive_checking_response(effort, rate),
+        derive_checking_response(minutes_per_record, detection_rate),
         strictly_increasing(
             "caught_share",
-            wrt="effort",
-            domain=EFFORT_DOMAIN,
+            wrt="minutes_per_record",
+            domain=CHECKING_MINUTES_DOMAIN,
             reason="Extra checking must catch a larger fraction of the missed errors.",
         ),
         concave(
             "caught_share",
-            wrt="effort",
-            domain=EFFORT_DOMAIN,
+            wrt="minutes_per_record",
+            domain=CHECKING_MINUTES_DOMAIN,
             reason="The marginal benefit must not increase.",
         ),
         continuously_differentiable(
             "caught_share",
-            wrt="effort",
-            domain=EFFORT_DOMAIN,
+            wrt="minutes_per_record",
+            domain=CHECKING_MINUTES_DOMAIN,
             order=2,
-            reason="The plan includes a second-order approximation of workload near the chosen effort.",
+            reason="The plan approximates total minutes per record near the chosen checking minutes to second order.",
         ),
     )
 
 
 class ReviewWorkload(Modello):
-    """Response, saving, workload, and local derivatives at a supplied effort."""
+    """Minutes saved and total minutes per record, with their derivatives."""
 
     record = component(RecordWork)
     review = component(ExponentialReview)
-    net_saving = record.avoidable_minutes * review.caught_share - review.effort
-    expected_minutes = record.expected_minutes - net_saving
+    minutes_saved_per_record = record.repair_minutes_per_record * review.caught_share - review.minutes_per_record
+    minutes_per_record = record.minutes_per_record - minutes_saved_per_record
     # A deferred derivative acts on the resolved curve, rather than the field's
     # placeholder symbol. It also generates a differentiability obligation.
-    marginal_saving = Derivative(net_saving, review.effort, evaluate=False)
-    workload_curvature = Derivative(expected_minutes, review.effort, 2, evaluate=False)
+    minutes_saved_derivative = Derivative(minutes_saved_per_record, review.minutes_per_record, evaluate=False)
+    minutes_per_record_second_derivative = Derivative(minutes_per_record, review.minutes_per_record, 2, evaluate=False)
 
 
 class ReviewPlanning(VerificationModel):
@@ -144,31 +145,36 @@ class ReviewPlanning(VerificationModel):
     candidate = component(ReviewWorkload)
     budget = component(EntryBudget)
     minutes_per_record = budget.minutes_per_record
-    minutes_per_record = candidate.expected_minutes
+    minutes_per_record = candidate.minutes_per_record
 
 
 GLOBAL_MAXIMUM = Obligation(
     "global_maximum",
-    "candidate.net_saving",
+    "candidate.minutes_saved_per_record",
     "rule",
-    domain=EFFORT_DOMAIN,
-    reason="The proposed checking time maximizes net saving over all nonnegative efforts.",
+    domain=CHECKING_MINUTES_DOMAIN,
+    reason="The chosen checking minutes maximize minutes saved per record over the nonnegative checking domain.",
 )
 
 STATIONARY_MAXIMUM = InferenceRule(
     "concave_stationary_maximum",
     GLOBAL_MAXIMUM,
     (
-        concave("candidate.net_saving", wrt="candidate.review.effort", domain=EFFORT_DOMAIN, name="concavity"),
+        concave(
+            "candidate.minutes_saved_per_record",
+            wrt="candidate.review.minutes_per_record",
+            domain=CHECKING_MINUTES_DOMAIN,
+            name="concavity",
+        ),
         continuously_differentiable(
-            "candidate.net_saving",
-            wrt="candidate.review.effort",
-            domain=EFFORT_DOMAIN,
+            "candidate.minutes_saved_per_record",
+            wrt="candidate.review.minutes_per_record",
+            domain=CHECKING_MINUTES_DOMAIN,
             order=1,
             name="differentiability",
         ),
-        equal_to("candidate.marginal_saving", 0, name="stationarity"),
-        nonnegative("candidate.review.effort", name="feasibility"),
+        equal_to("candidate.minutes_saved_derivative", 0, name="stationarity"),
+        nonnegative("candidate.review.minutes_per_record", name="feasibility"),
     ),
     source="Concave supporting-line inequality; docs/examples/record-review/index.rst#why-this-is-a-global-optimum",
 )
@@ -176,51 +182,62 @@ STATIONARY_MAXIMUM = InferenceRule(
 
 @dataclass(frozen=True)
 class ReviewDecision:
-    """Exact checking time, saving, expected workload, and its second derivative."""
+    """Checking, saved, and total minutes per record, plus the total's second derivative."""
 
-    effort: Expr
-    net_saving: Expr
+    checking_minutes_per_record: Expr
+    minutes_saved_per_record: Expr
     minutes_per_record: Expr
-    workload_curvature: Expr
+    minutes_per_record_second_derivative: Expr
 
 
 def _evaluate_plan(current: VerificationContext) -> ReviewDecision:
     """Evaluate the proposed plan after its Method has established the premises."""
     values = tuple(
         simplify(current.expression(f"candidate.{field}").doit())
-        for field in ("review.effort", "net_saving", "expected_minutes", "workload_curvature")
+        for field in (
+            "review.minutes_per_record",
+            "minutes_saved_per_record",
+            "minutes_per_record",
+            "minutes_per_record_second_derivative",
+        )
     )
     if any(value.free_symbols or value.is_finite is not True or value.is_real is not True for value in values):
-        raise ValueError("Observe all parameters and the effort before evaluating a plan")
+        raise ValueError("Observe all parameters and checking minutes per record before evaluating a plan")
     return ReviewDecision(*values)
 
 
 review_plan = Method(
     "review_plan",
     _evaluate_plan,
-    preconditions=(GLOBAL_MAXIMUM, positive("candidate.expected_minutes", name="positive_workload")),
+    preconditions=(GLOBAL_MAXIMUM, positive("candidate.minutes_per_record", name="positive_workload")),
     uses=(
-        "candidate.review.effort",
-        "candidate.net_saving",
-        "candidate.expected_minutes",
-        "candidate.workload_curvature",
+        "candidate.review.minutes_per_record",
+        "candidate.minutes_saved_per_record",
+        "candidate.minutes_per_record",
+        "candidate.minutes_per_record_second_derivative",
     ),
 )
 
 
-def review_context(record: RecordWork | None = None, *, rate=Rational(1, 2)) -> VerificationContext[ReviewPlanning]:
+def review_context(
+    record: RecordWork | None = None, *, detection_rate=Rational(1, 2)
+) -> VerificationContext[ReviewPlanning]:
     """Start a fresh context with these inputs and the stationary-point rule.
 
     Supply a RecordWork instance to reuse estimates. With no instance, use the
-    walkthrough's baseline. The effort and staffing budget stay open.
+    walkthrough's baseline. Checking minutes and the staffing budget stay open.
     """
     if record is None:
-        record = RecordWork("record", entry_minutes=4, error_fraction=Rational(1, 10), repair_minutes=60)
+        record = RecordWork(
+            "record", entry_minutes_per_record=4, error_fraction=Rational(1, 10), repair_minutes_per_error=60
+        )
     return (
         VerificationContext.for_model(ReviewPlanning, "records")
         .with_rule(STATIONARY_MAXIMUM)
         .observe(
-            candidate=ReviewWorkload("candidate", record=record, review=ExponentialReview("response", rate=rate)),
+            candidate=ReviewWorkload(
+                "candidate", record=record, review=ExponentialReview("response", detection_rate=detection_rate)
+            ),
         )
     )
 
@@ -229,7 +246,9 @@ class RationalReview(ExponentialReview):
     """An alternative with the same initial slope and slower saturation."""
 
     caught_share = (
-        ExponentialReview.rate * ExponentialReview.effort / (1 + ExponentialReview.rate * ExponentialReview.effort)
+        ExponentialReview.detection_rate
+        * ExponentialReview.minutes_per_record
+        / (1 + ExponentialReview.detection_rate * ExponentialReview.minutes_per_record)
     )
 
 
@@ -237,7 +256,10 @@ class CappedReview(ExponentialReview):
     """A linear response with a plateau whose join violates the inherited C2 claim."""
 
     caught_share = Piecewise(
-        (ExponentialReview.rate * ExponentialReview.effort, ExponentialReview.rate * ExponentialReview.effort < 1),
+        (
+            ExponentialReview.detection_rate * ExponentialReview.minutes_per_record,
+            ExponentialReview.detection_rate * ExponentialReview.minutes_per_record < 1,
+        ),
         (1, True),
     )
 
@@ -251,21 +273,23 @@ def write_reports(directory: Path, *, plot: bool = False) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     measured = review_context()
     contexts = {
-        "exponential": measured.observe(**{"candidate.review.effort": 2 * log(3)}),
+        "exponential": measured.observe(**{"candidate.review.minutes_per_record": 2 * log(3)}),
         "rational": measured.replace("candidate.review", RationalReview).observe(
-            **{"candidate.review.effort": 2 * (sqrt(3) - 1)}
+            **{"candidate.review.minutes_per_record": 2 * (sqrt(3) - 1)}
         ),
-        "capped": measured.replace("candidate.review", CappedReview).observe(**{"candidate.review.effort": 2}),
+        "capped": measured.replace("candidate.review", CappedReview).observe(
+            **{"candidate.review.minutes_per_record": 2}
+        ),
     }
     summary: dict = {
         "versions": {name: metadata.version(name) for name in ("modello", "sympy")},
         "inputs": {
             path: str(measured.expression(path))
             for path in (
-                "candidate.record.entry_minutes",
+                "candidate.record.entry_minutes_per_record",
                 "candidate.record.error_fraction",
-                "candidate.record.repair_minutes",
-                "candidate.review.rate",
+                "candidate.record.repair_minutes_per_error",
+                "candidate.review.detection_rate",
             )
         },
         "plans": {},
@@ -299,32 +323,45 @@ def _write_plots(contexts: dict[str, VerificationContext[ReviewPlanning]], direc
         figure = Figure(figsize=(6, 3.8), layout="constrained")
         FigureCanvasSVG(figure)
         axes = figure.subplots()
-        axes.set(title=title, xlabel=r"Checking time $t$ (minutes per record)", ylabel=ylabel)
+        axes.set(title=title, xlabel=r"Checking minutes per record $t$", ylabel=ylabel)
         axes.axhline(0, color="0.5", linewidth=0.7)
         return figure, axes
 
-    times = [index / 50 for index in range(301)]
+    sample_minutes_per_record = [index / 50 for index in range(301)]
     baseline = contexts["exponential"]
-    effort = baseline.symbols.candidate.review.effort
-    net_saving = baseline.expression("candidate.net_saving", wrt="candidate.review.effort").doit()
+    minutes_per_record = baseline.symbols.candidate.review.minutes_per_record
+    minutes_saved_per_record = baseline.expression(
+        "candidate.minutes_saved_per_record", wrt="candidate.review.minutes_per_record"
+    ).doit()
     benefit, benefit_axes = new_plot("Why spend time checking?", "Minutes per record")
     for expression, label, style in (
-        (net_saving, r"Net saving $G(t)$", "-"),
-        (net_saving + effort, r"Repair time avoided $a\,u(t)$", "-"),
-        (effort, r"Checking time $t$", "--"),
+        (minutes_saved_per_record, r"Minutes saved $G(t)$", "-"),
+        (minutes_saved_per_record + minutes_per_record, r"Repair minutes avoided $a\,u(t)$", "-"),
+        (minutes_per_record, r"Checking minutes $t$", "--"),
     ):
-        evaluate = lambdify(effort, expression, "math")
-        benefit_axes.plot(times, [evaluate(time) for time in times], style, label=label)
+        evaluate = lambdify(minutes_per_record, expression, "math")
+        benefit_axes.plot(
+            sample_minutes_per_record,
+            [evaluate(minutes) for minutes in sample_minutes_per_record],
+            style,
+            label=label,
+        )
     benefit_axes.legend()
     benefit.savefig(directory / "benefit.svg", metadata={"Date": None})
 
-    comparison, comparison_axes = new_plot("Changing the response curve", r"Net saving $G(t)$ (minutes per record)")
+    comparison, comparison_axes = new_plot("Changing the response curve", r"Minutes saved per record $G(t)$")
     for name, current in contexts.items():
-        axis = current.symbols.candidate.review.effort
+        axis = current.symbols.candidate.review.minutes_per_record
         evaluate = lambdify(
-            axis, current.expression("candidate.net_saving", wrt="candidate.review.effort").doit(), "math"
+            axis,
+            current.expression("candidate.minutes_saved_per_record", wrt="candidate.review.minutes_per_record").doit(),
+            "math",
         )
-        comparison_axes.plot(times, [evaluate(time) for time in times], label=name.capitalize())
+        comparison_axes.plot(
+            sample_minutes_per_record,
+            [evaluate(minutes) for minutes in sample_minutes_per_record],
+            label=name.capitalize(),
+        )
     comparison_axes.legend()
     comparison.savefig(directory / "responses.svg", metadata={"Date": None})
 

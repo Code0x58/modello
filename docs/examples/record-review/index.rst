@@ -52,8 +52,9 @@ come from the same pool of staff time.
 Model a short check
 -------------------
 
-Suppose typing takes four minutes per record. One in ten records would need
-a later repair, taking sixty staff minutes. Without checking, repairs therefore
+Suppose typing takes four minutes per record. One in ten records has an error
+that takes sixty staff minutes to repair. We count at most one error per record.
+Without checking, repairs therefore
 add :math:`(1/10)\times60=6` minutes per record **in expectation**. Total expected
 work is ten minutes per record, giving capacity of 48 records per 480 staff
 minutes under this workload approximation.
@@ -67,16 +68,21 @@ can reuse for both a short check and the final plan:
 
 >>> from sympy import Rational
 >>> from examples.record_review import RecordWork
->>> record = RecordWork("record", entry_minutes=4,
-...                     error_fraction=Rational(1, 10), repair_minutes=60)
->>> record.avoidable_minutes, record.expected_minutes
+>>> record = RecordWork("record", entry_minutes_per_record=4,
+...                     error_fraction=Rational(1, 10), repair_minutes_per_error=60)
+>>> record.repair_minutes_per_record, record.minutes_per_record
 (6, 10)
 
+The names state the units: ``repair_minutes_per_error`` is the duration of one
+repair. Multiplying by ``error_fraction`` gives the expected
+``repair_minutes_per_record``. Adding ``entry_minutes_per_record`` gives the
+total ``minutes_per_record`` before checking.
+
 How might checking reduce that repair work? Start with a short check and
-assume a constant checking rate. A short check catches a proportion of the
-errors **still left**, approximately the rate multiplied by the time spent.
-For example, a rate of one half per minute means a six-second check catches
-about five percent of the errors present at the start of that check.
+assume a constant detection rate. A short check catches a proportion of the
+errors **still left**, approximately the detection rate multiplied by the checking
+minutes. For example, a detection rate of one half per minute means a six-second
+check catches about five percent of the errors present at the start of that check.
 
 The same short check then catches fewer errors on a second pass, because
 fewer remain. This is our modelling assumption about diminishing returns.
@@ -84,7 +90,8 @@ It describes how checking might work; we would need measurements to assess it.
 
 Reuse these estimates as a ``record`` component in the short-check model.
 ``component(RecordWork)`` gives it the record's quantities, such as
-``record.error_fraction``. The other inputs are the checking time and rate:
+``record.error_fraction``. The other inputs are checking minutes per record and
+the detection rate:
 
 .. code-block:: python
 
@@ -98,13 +105,13 @@ Reuse these estimates as a ``record`` component in the short-check model.
 ``remaining_error_fraction`` is a fraction of **all records**. With our inputs:
 
 >>> from examples.record_review import CheckingStep
->>> short = CheckingStep("short", record=record, checking_minutes=Rational(1, 10),
-...                      rate=Rational(1, 2))
+>>> short = CheckingStep("short", record=record, minutes_per_record=Rational(1, 10),
+...                      detection_rate=Rational(1, 2))
 >>> short.caught_share
 1/20
 >>> 1000 * short.remaining_error_fraction
 95
->>> short.record.avoidable_minutes
+>>> short.record.repair_minutes_per_record
 6
 
 Out of an illustrative 1,000 records, 100 initially need repair; the short
@@ -118,7 +125,7 @@ Build up a longer check
 -----------------------
 
 To describe a longer check, divide its total time :math:`t\geq0` into
-:math:`N` equal steps. Write :math:`k` for the constant checking rate, measured
+:math:`N` equal steps. Write :math:`k` for the constant detection rate, measured
 per minute. Each step lasts :math:`t/N` minutes and leaves the fraction
 :math:`1-kt/N` of the errors it started with. After two steps we multiply
 that fraction by itself; after :math:`N` steps the fraction still missed is
@@ -131,7 +138,7 @@ the limit as the steps become shorter and more numerous:
 >>> t = Symbol("t", nonnegative=True)
 >>> k = Symbol("k", positive=True)
 >>> N = Symbol("N", integer=True, positive=True)
->>> part = CheckingStep("part", checking_minutes=t/N, rate=k)
+>>> part = CheckingStep("part", minutes_per_record=t/N, detection_rate=k)
 >>> part.remaining_share
 1 - k*t/N
 >>> remaining = limit(part.remaining_share**N, N, S.Infinity)
@@ -149,7 +156,7 @@ for :math:`t` minutes:
    u(t)=1-e^{-kt},\qquad k>0.
 
 With no checking, no errors are caught. More checking catches more, but the
-gain shrinks as fewer errors remain. For a positive rate the caught fraction
+gain shrinks as fewer errors remain. For a positive detection rate the caught fraction
 approaches one. SymPy has derived a consequence of our assumption; it has not
 validated the assumption.
 
@@ -204,15 +211,16 @@ Reuse the derivation
 --------------------
 
 We will need this response when we build the workload model. Put the calculation
-into an ordinary Python function, ``derive_checking_response(effort, rate)``.
-Its two arguments are the total checking time, ``effort`` (our :math:`t`), and
-the constant checking rate, ``rate`` (our :math:`k`). It returns a SymPy
-expression for the fraction of the original errors caught.
+into an ordinary Python function,
+``derive_checking_response(minutes_per_record, detection_rate)``. Its arguments
+use the same names as the short-check model: ``minutes_per_record`` is the
+checking duration :math:`t`, and ``detection_rate`` is :math:`k`, measured per
+minute. It returns a SymPy expression for the share of the original errors caught.
 The initial error fraction and repair cost enter later, when we convert that
 caught share into saved minutes.
 
-The function follows the steps above: divide the effort among short checks,
-take the limit of the share still missed, then subtract that share from one.
+The function follows the steps above: divide the checking minutes among short
+checks, take the limit of the share still missed, then subtract that share from one.
 Its temporary count ``steps`` plays the role of :math:`N`. SymPy's ``Dummy``
 gives that count a fresh symbol so it cannot clash with the input symbols;
 ``Expr`` is the SymPy expression type used in the type annotations.
@@ -245,7 +253,7 @@ We assume that a caught error needs no further repair time beyond the checking
 time already counted. If the initial error fraction is :math:`p` and a repair
 takes :math:`L` minutes, checking leaves expected repair work
 :math:`pL(1-u(t))` per record. The product :math:`pL` is exactly the
-``record.avoidable_minutes`` field we calculated above.
+``record.repair_minutes_per_record`` field we calculated above.
 
 Let :math:`b` be entry time and :math:`a` be the expected repair work that
 perfect checking could avoid. Our illustrative inputs are:
@@ -254,16 +262,20 @@ perfect checking could avoid. Our illustrative inputs are:
    :header-rows: 1
 
    * - Quantity
+     - Field
      - Meaning
      - Value
    * - :math:`b`
-     - Entry time
+     - ``record.entry_minutes_per_record``
+     - Entry minutes per record
      - 4 minutes per record
    * - :math:`a`
-     - Repair work that perfect checking could avoid
+     - ``record.repair_minutes_per_record``
+     - Expected repair minutes per record before checking
      - 6 minutes per record
    * - :math:`k`
-     - Checking effectiveness rate
+     - ``detection_rate``
+     - Detection rate
      - :math:`1/2` per minute
 
 Now use minutes as the common unit for benefit and cost:
@@ -273,20 +285,20 @@ Now use minutes as the common unit for benefit and cost:
    G(t)&=a\,u(t)-t,\\
    M(t)&=b+t+a(1-u(t))=b+a-G(t).
 
-Here :math:`G(t)` is **net saving**, the staff time saved compared with no
+Here :math:`G(t)` is **minutes saved**, the staff time saved compared with no
 checking. :math:`M(t)` is total expected staff time per record. Maximising
 :math:`G` minimises :math:`M`. Avoided repair minutes give us a concrete measure of utility, in
 the same units as the checking cost.
 
-The plot labels pair these names with their expressions: **repair time avoided**
-is :math:`a\,u(t)`, **checking time** is :math:`t`, and **net saving** is
+The plot labels pair these names with their expressions: **repair minutes avoided**
+is :math:`a\,u(t)`, **checking minutes** is :math:`t`, and **minutes saved** is
 :math:`G(t)=a\,u(t)-t`.
 
 .. raw:: html
 
    <figure>
-     <img src="study/benefit.svg" alt="Repair time avoided rises with diminishing returns. Net saving rises to a peak, then falls as checking time outweighs the extra benefit." style="max-width:100%;height:auto">
-     <figcaption>Repair time avoided minus checking time gives net saving G(t).</figcaption>
+     <img src="study/benefit.svg" alt="Repair minutes avoided rise with diminishing returns. Minutes saved rise to a peak, then fall as checking minutes outweigh the extra benefit." style="max-width:100%;height:auto">
+     <figcaption>Repair minutes avoided minus checking minutes gives minutes saved G(t).</figcaption>
    </figure>
 
 State what the calculation needs
@@ -295,8 +307,8 @@ State what the calculation needs
 Three distinct properties matter:
 
 * **Strict increase:** more checking should catch a larger fraction of errors.
-* **Concavity:** the marginal benefit should not increase. For a concave net saving,
-  a point with zero derivative is a global maximum.
+* **Concavity:** the marginal benefit should not increase. When the function for
+  minutes saved is concave, a point with zero derivative is a global maximum.
 * **C² regularity:** the first two derivatives should be continuous. We will
   use a second-order approximation to describe workload near the chosen time.
 
@@ -310,21 +322,23 @@ A property we ask the checker to establish is a **proof obligation**.
 ``specifies`` attaches obligations to a field. ``VerificationModel`` attempts
 them when the class is defined, retaining each result for inspection.
 
-In the declaration below, ``effort`` and ``rate`` are ``InstanceDummy`` inputs
-for checking time :math:`t` and effectiveness :math:`k`. We can supply a
-particular time or keep it symbolic to study the whole response curve.
-Although our story expects a positive rate, we leave it unrestricted so the
-checker can tell us which values establish the requested properties.
+In the declaration below, ``minutes_per_record`` and ``detection_rate`` are
+``InstanceDummy`` inputs for checking minutes :math:`t` and detection rate
+:math:`k`. We can supply checking minutes or keep them symbolic to study the
+whole response curve. Although our story expects a positive detection rate,
+we leave it unrestricted so the checker can tell us which values establish
+the requested properties.
 
-The ``caught_share`` field calls ``derive_checking_response(effort, rate)``. This is
+The ``caught_share`` field calls
+``derive_checking_response(minutes_per_record, detection_rate)``. This is
 :ref:`the function we built from the short-step model
 <record-review-response-function>`, now using the model's symbols for :math:`t`
 and :math:`k`. ``specifies`` pairs its returned expression with the three
 requested properties.
 
-Field paths use the Python attribute names: ``wrt="effort"`` selects
-:math:`t`. ``EFFORT_DOMAIN`` is
-the interval of nonnegative real efforts, so the claims concern every
+Field paths use the Python attribute names: ``wrt="minutes_per_record"`` selects
+:math:`t`. ``CHECKING_MINUTES_DOMAIN`` is
+the interval of nonnegative checking minutes, so the claims concern every
 :math:`t\geq0`. With the function above already defined, add these imports and
 the domain for the verification declaration:
 
@@ -337,7 +351,7 @@ the domain for the verification declaration:
        specifies, strictly_increasing,
    )
 
-   EFFORT_DOMAIN = Interval(0, S.Infinity)
+   CHECKING_MINUTES_DOMAIN = Interval(0, S.Infinity)
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
@@ -374,24 +388,24 @@ using the symbols that belong to this context, then add it as an assumption:
 >>> from modello.contrib.verification import VerificationContext
 >>> curve = VerificationContext.for_model(ExponentialReview)
 >>> increase = curve.explain("caught_share/strictly_increasing")
->>> increase.condition == (curve.symbols.rate > 0)
+>>> increase.condition == (curve.symbols.detection_rate > 0)
 True
->>> positive_rate = curve.assume(curve.symbols.rate > 0)
->>> positive_rate.explain("caught_share/strictly_increasing").verdict
+>>> positive_detection_rate = curve.assume(curve.symbols.detection_rate > 0)
+>>> positive_detection_rate.explain("caught_share/strictly_increasing").verdict
 'strictly true'
 
 An assumption restricts allowed parameter values; an observation fixes a value
-for a particular branch. SymPy's ``Rational(1, 2)`` keeps the observed rate as
+for a particular branch. SymPy's ``Rational(1, 2)`` keeps the observed detection rate as
 an exact fraction:
 
 >>> from sympy import Rational
->>> curve.observe(rate=Rational(1, 2)).explain("caught_share/strictly_increasing").verdict
+>>> curve.observe(detection_rate=Rational(1, 2)).explain("caught_share/strictly_increasing").verdict
 'strictly true'
 
-With zero effectiveness, the curve is constant and the strict increase claim
+With zero detection rate, the curve is constant and the strict increase claim
 fails:
 
->>> curve.observe(rate=0).explain("caught_share/strictly_increasing").verdict
+>>> curve.observe(detection_rate=0).explain("caught_share/strictly_increasing").verdict
 'strictly false'
 >>> curve.explain("caught_share/strictly_increasing").verdict
 'conditionally true'
@@ -407,11 +421,34 @@ Compose the decision model
 Turn the saving and workload formulas into a reusable model, ``ReviewWorkload``.
 Its ``record`` component supplies entry time, avoidable repair work, and baseline
 workload. Its ``review`` component supplies the response curve and its declared
-properties. Read its checking time as ``review.effort`` and its caught fraction
-as ``review.caught_share``. The workload uses those quantities directly to
+properties. Read its checking minutes as ``review.minutes_per_record`` and its
+caught share as ``review.caught_share``. The workload uses those quantities directly to
 express :math:`G(t)` and :math:`M(t)`.
 
-Keep the slope of saving and the curvature of workload in this model too.
+The component path tells us which activity a field measures:
+
+.. list-table:: Minutes per record in the workload model
+   :header-rows: 1
+
+   * - Field
+     - Meaning
+     - Expression
+   * - ``record.minutes_per_record``
+     - Total before checking
+     - :math:`b+a`
+   * - ``review.minutes_per_record``
+     - Checking minutes
+     - :math:`t`
+   * - ``minutes_saved_per_record``
+     - Minutes saved compared with no checking
+     - :math:`G(t)`
+   * - ``minutes_per_record``
+     - Total including checking and remaining repairs
+     - :math:`M(t)`
+
+Keep the derivatives in this model too. ``minutes_saved_derivative`` is
+:math:`G'(t)`, and ``minutes_per_record_second_derivative`` is :math:`M''(t)`.
+Both differentiate with respect to ``review.minutes_per_record``.
 SymPy's ``Derivative(..., evaluate=False)`` defers differentiation until
 Modello has resolved the named quantity to its formula. Without that delay,
 it would differentiate the field's placeholder symbol:
@@ -443,8 +480,8 @@ derivatives all come from the same candidate component; no separate candidate
 formulas are needed in this model.
 
 The example's ``review_context()`` helper accepts our ``RecordWork`` instance
-and checking rate, builds the candidate workload, and registers the optimality
-argument explained below. It leaves the effort and staffing budget open.
+and detection rate, builds the candidate workload, and registers the optimality
+argument explained below. It leaves the checking minutes and staffing budget open.
 This helper belongs to the example; :ref:`its implementation
 <verification-example-contract>` shows how to prepare the same context yourself.
 ``expression(path)`` returns a field's resolved SymPy expression, so we can
@@ -452,18 +489,19 @@ inspect the inputs:
 
 >>> from sympy import log
 >>> from examples.record_review import review_context
->>> measured = review_context(record, rate=short.rate)
->>> measured.expression("candidate.record.entry_minutes"), measured.expression("candidate.record.avoidable_minutes")
+>>> measured = review_context(record, detection_rate=short.detection_rate)
+>>> (measured.expression("candidate.record.entry_minutes_per_record"),
+...  measured.expression("candidate.record.repair_minutes_per_record"))
 (4, 6)
->>> measured.expression("candidate.review.rate")
+>>> measured.expression("candidate.review.detection_rate")
 1/2
 >>> measured.explain("candidate.review.caught_share/strictly_increasing").verdict
 'strictly true'
 
 The nested response keeps its claims with the prefix ``candidate.review.caught_share``.
 
-Propose a checking time
------------------------
+Propose checking minutes
+----------------------------
 
 With our inputs,
 
@@ -474,23 +512,26 @@ With our inputs,
 Setting :math:`G'(t)=0` gives the candidate :math:`t_*=2\log3`, about
 2.20 minutes, where :math:`\log` denotes the natural logarithm. A point with
 zero derivative is called a stationary point.
-We can confirm this exactly. Effort belongs to the nested response, at
-``candidate.review.effort``. Supply that scalar using its dotted path as a
+We can confirm this exactly. Checking minutes belong to the nested response, at
+``candidate.review.minutes_per_record``. Supply that scalar using its dotted path as a
 dictionary key; Python's ``**`` passes the dictionary to ``observe``.
 ``doit()`` carries out the deferred derivative
-and substitution in ``candidate.marginal_saving``:
+and substitution in ``candidate.minutes_saved_derivative``:
 
->>> proposed = measured.observe(**{"candidate.review.effort": 2*log(3)})
->>> proposed.expression("candidate.marginal_saving").doit()
+>>> proposed = measured.observe(**{"candidate.review.minutes_per_record": 2*log(3)})
+>>> proposed.expression("candidate.minutes_saved_derivative").doit()
 0
 
 An observation evaluates the workload at that input. To inspect the whole
-saving curve instead, pass ``wrt="candidate.review.effort"``: this keeps the input symbolic
-while substituting the observed record estimates and checking rate.
-The returned expression uses this context's effort symbol:
+minutes-saved curve instead, pass ``wrt="candidate.review.minutes_per_record"``.
+This keeps the input symbolic while substituting the observed record estimates
+and detection rate.
+The returned expression uses this context's symbol for checking minutes:
 
->>> saving_curve = proposed.expression("candidate.net_saving", wrt="candidate.review.effort").doit()
->>> saving_curve.free_symbols == {proposed.symbols.candidate.review.effort}
+>>> saving_curve = proposed.expression(
+...     "candidate.minutes_saved_per_record",
+...     wrt="candidate.review.minutes_per_record").doit()
+>>> saving_curve.free_symbols == {proposed.symbols.candidate.review.minutes_per_record}
 True
 
 Stationarity alone does not establish an optimum. A stationary point might
@@ -501,8 +542,8 @@ be a minimum, and a numerical grid might miss a better point.
 Explain why it is a global optimum
 ----------------------------------
 
-Let :math:`s\geq0` denote the proposed checking time and :math:`y\geq0` any
-other checking time. For a differentiable concave function, the tangent
+Let :math:`s\geq0` denote the proposed checking minutes and :math:`y\geq0` any
+other number of checking minutes. For a differentiable concave function, the tangent
 line at :math:`s` lies above its graph:
 
 .. math::
@@ -511,7 +552,7 @@ line at :math:`s` lies above its graph:
 
 If :math:`G'(s)=0`, this becomes
 :math:`G(y)\leq G(s)` for every :math:`y\geq0`. Thus a nonnegative stationary
-candidate maximises net saving over the whole effort domain. Subtracting the
+candidate maximises minutes saved over the whole nonnegative checking domain. Subtracting the
 linear checking cost preserves the concavity of the response benefit.
 
 The example provides ``review_plan``, a ``Method``: a Python computation
@@ -522,7 +563,7 @@ workload for the capacity calculation.
 ``review_context()`` registered the stationary-point implication as a trusted
 inference rule. The checker establishes its premises for our particular curve
 and candidate; it does not prove the general implication itself.
-Its concavity and differentiability checks select ``candidate.review.effort`` with
+Its concavity and differentiability checks select ``candidate.review.minutes_per_record`` with
 ``wrt``, keeping the whole curve available despite the observed checking time.
 The zero-slope check uses the observed point. Thus both kinds of check reuse
 the workload's definitions.
@@ -547,11 +588,11 @@ failed argument too.
 evidence that permitted it. The implementation of the method and rule is
 shown in :ref:`the contract reference <verification-example-contract>`.
 
->>> result.data.net_saving
+>>> result.data.minutes_saved_per_record
 4 - 2*log(3)
 >>> result.data.minutes_per_record
 2*log(3) + 6
->>> result.data.workload_curvature
+>>> result.data.minutes_per_record_second_derivative
 1/2
 
 We save about 1.80 staff minutes per record. Total expected work falls from
@@ -571,7 +612,8 @@ a set of possible answers. Here each set contains one result:
 >>> target.family.values(target.symbols.budget.staff_minutes).evalf(4)
 {491.8}
 
-The workload curvature is :math:`M''(t_*)=1/2`. Also :math:`M'(t_*)=0`, since
+The second derivative of total minutes per record is :math:`M''(t_*)=1/2`.
+Also :math:`M'(t_*)=0`, since
 :math:`M=b+a-G` and the candidate has :math:`G'(t_*)=0`. C² regularity lets us
 use Taylor's formula for a small change :math:`h`. The linear term vanishes,
 and the quadratic coefficient is :math:`M''(t_*)/2=1/4`:
@@ -597,16 +639,17 @@ Supply revised estimates in a new ``RecordWork`` instance. Its existing
 relationship recalculates the avoidable work. Each ``review_context`` call
 starts a fresh context, so the original observations remain for comparison:
 
->>> shorter_repairs = RecordWork("shorter repairs", entry_minutes=record.entry_minutes,
-...                              error_fraction=record.error_fraction, repair_minutes=30)
->>> revised = review_context(shorter_repairs, rate=short.rate)
->>> revised = revised.observe(**{"candidate.review.effort": 2*log(Rational(3, 2))})
+>>> shorter_repairs = RecordWork(
+...     "shorter repairs", entry_minutes_per_record=record.entry_minutes_per_record,
+...     error_fraction=record.error_fraction, repair_minutes_per_error=30)
+>>> revised = review_context(shorter_repairs, detection_rate=short.detection_rate)
+>>> revised = revised.observe(**{"candidate.review.minutes_per_record": 2*log(Rational(3, 2))})
 >>> revised_result = revised.run(review_plan)
->>> round(float(revised_result.data.effort), 2)
+>>> round(float(revised_result.data.checking_minutes_per_record), 2)
 0.81
 >>> revised_result.report.explain("global_maximum").verdict
 'strictly true'
->>> measured.expression("candidate.record.avoidable_minutes")
+>>> measured.expression("candidate.record.repair_minutes_per_record")
 6
 
 Cheaper repairs make less checking worthwhile. The same method establishes
@@ -625,7 +668,7 @@ exponential curve was a modelling choice. Suppose we instead propose
 This response has the same initial slope :math:`k`, but saturates more slowly.
 ``RationalReview`` inherits the same property declarations. Replacing the
 component rechecks them against the new formula and preserves the observed
-rate. This is the replacement declaration:
+detection rate. This is the replacement declaration:
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
@@ -633,19 +676,19 @@ rate. This is the replacement declaration:
 
 With the same inputs, the new marginal saving is
 :math:`G'(t)=3/(1+t/2)^2-1`. Solving :math:`G'(t)=0` on :math:`t\geq0`
-gives :math:`t_*=2(\sqrt{3}-1)`. Start from ``measured`` so the effort
-has not yet been fixed:
+gives :math:`t_*=2(\sqrt{3}-1)`. Start from ``measured`` so the checking minutes
+have not yet been fixed:
 
 >>> from sympy import sqrt
 >>> from examples.record_review import RationalReview
 >>> changed = measured.replace("candidate.review", RationalReview)
->>> changed = changed.observe(**{"candidate.review.effort": 2*(sqrt(3)-1)})
+>>> changed = changed.observe(**{"candidate.review.minutes_per_record": 2*(sqrt(3)-1)})
 >>> alternative = changed.run(review_plan)
 >>> alternative.report.explain("global_maximum").verdict
 'strictly true'
 >>> alternative.data.minutes_per_record
 2 + 4*sqrt(3)
->>> round(float(alternative.data.effort), 2)
+>>> round(float(alternative.data.checking_minutes_per_record), 2)
 1.46
 >>> result.data.minutes_per_record == 6 + 2*log(3)
 True
@@ -677,7 +720,8 @@ find out why our method cannot use it:
 
 >>> from examples.record_review import CappedReview
 >>> from modello.contrib.verification import VerificationError
->>> capped = measured.replace("candidate.review", CappedReview).observe(**{"candidate.review.effort": 2})
+>>> capped = measured.replace("candidate.review", CappedReview).observe(
+...     **{"candidate.review.minutes_per_record": 2})
 >>> capped.explain("candidate.review.caught_share/continuously_differentiable").verdict
 'strictly false'
 >>> try:
@@ -686,7 +730,7 @@ find out why our method cannot use it:
 ...     print(error.report.explain("global_maximum").verdict)
 unresolved
 
-Two minutes actually maximises this piecewise model: net saving rises before
+Two minutes actually maximises this piecewise model: minutes saved rises before
 the join and falls after it. Our smooth stationary-point method cannot
 establish that result. A method for corners would need a different argument,
 such as the one-sided slopes. The capped response also has a plateau, so the
@@ -695,9 +739,11 @@ Adopting it would require a response specification that permits this shape,
 as well as an appropriate method.
 
 Evaluate a few points to explore the proposed response shape, selecting its
-own effort coordinate:
+checking-minutes input:
 
->>> sampled = capped.sample("candidate.review.caught_share", wrt="candidate.review.effort", points=(1, 2, 3))
+>>> sampled = capped.sample(
+...     "candidate.review.caught_share",
+...     wrt="candidate.review.minutes_per_record", points=(1, 2, 3))
 >>> tuple(float(value) for value in sampled.values)
 (0.5, 1.0, 1.0)
 >>> sampled.kind
@@ -710,8 +756,8 @@ failed premises.
 .. raw:: html
 
    <figure>
-     <img src="study/responses.svg" alt="Net saving for the exponential and rational curves peaks smoothly. The capped curve reaches its peak at a corner at two minutes." style="max-width:100%;height:auto">
-     <figcaption>Changing the response changes the best checking time.
+     <img src="study/responses.svg" alt="Minutes saved for the exponential and rational curves peaks smoothly. The capped curve reaches its peak at a corner at two minutes." style="max-width:100%;height:auto">
+     <figcaption>Changing the response changes the best number of checking minutes.
      A curve can have a useful maximum even when our smooth method cannot establish it.</figcaption>
    </figure>
 
@@ -726,7 +772,7 @@ respect it:
 
 >>> from modello.contrib.verification import predicate
 >>> ambitious = proposed.with_obligations(predicate(
-...     proposed.symbols.candidate.net_saving >= 2,
+...     proposed.symbols.candidate.minutes_saved_per_record >= 2,
 ...     name="saving_target", consumer="review_plan",
 ...     reason="The proposed process should save two minutes per record."))
 >>> ambitious.explain("saving_target").verdict
@@ -777,13 +823,13 @@ the `results <study/results.json>`_, `baseline evidence <study/exponential.html>
 `alternative evidence <study/rational.html>`_, and
 `blocked replacement <study/capped.html>`_.
 
-For a further experiment, try ``review_context(record, rate=Rational(1, 3))``. For
+For a further experiment, try ``review_context(record, detection_rate=Rational(1, 3))``. For
 positive :math:`a,k` with :math:`ak>1`, solving :math:`G'(t)=0` gives the
 positive candidate :math:`t_*=\log(ak)/k`. Check its premises before trusting
 the new capacity.
 
-If :math:`ak\leq1`, the best choice is zero checking time. This method checks
-ordinary two-sided derivatives. The nonnegative effort domain supplies only
+If :math:`ak\leq1`, the best choice is zero checking minutes. This method checks
+ordinary two-sided derivatives. The nonnegative checking minutes domain supplies only
 one side at zero, so the endpoint check stays unresolved even when
 :math:`ak=1` gives a formal derivative of zero. A boundary argument using the
 right-hand behavior is needed for this case.
