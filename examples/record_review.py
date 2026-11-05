@@ -92,7 +92,7 @@ CHECKING_MINUTES_DOMAIN = Interval(0, S.Infinity)
 
 
 class ExponentialReview(VerificationModel):
-    """Share of otherwise missed errors caught by checking each record.
+    """A constant-rate checking response that introduces no errors.
 
     ``minutes_per_record`` measures checking; ``detection_rate`` is per minute.
     The rate is deliberately real: increasing response needs detection_rate > 0.
@@ -102,6 +102,7 @@ class ExponentialReview(VerificationModel):
 
     minutes_per_record = InstanceDummy("t", nonnegative=True)
     detection_rate = InstanceDummy("k", real=True)
+    introduced_error_share = S.Zero
     caught_share = specifies(
         derive_checking_response(minutes_per_record, detection_rate),
         strictly_increasing(
@@ -131,10 +132,13 @@ class ReviewWorkload(Modello):
 
     record = component(RecordWork)
     review = component(ExponentialReview)
-    always_correct_fraction = 1 - record.error_fraction
     corrected_fraction = record.error_fraction * review.caught_share
-    remaining_error_fraction = record.error_fraction - corrected_fraction
-    minutes_saved_per_record = corrected_fraction * record.repair_minutes_per_error - review.minutes_per_record
+    introduced_error_fraction = (1 - record.error_fraction) * review.introduced_error_share
+    always_correct_fraction = 1 - record.error_fraction - introduced_error_fraction
+    remaining_error_fraction = record.error_fraction - corrected_fraction + introduced_error_fraction
+    minutes_saved_per_record = (
+        corrected_fraction - introduced_error_fraction
+    ) * record.repair_minutes_per_error - review.minutes_per_record
     minutes_per_record = record.minutes_per_record - minutes_saved_per_record
     # A deferred derivative acts on the resolved curve, rather than the field's
     # placeholder symbol. It also generates a differentiability obligation.
@@ -265,6 +269,13 @@ class CappedReview(ExponentialReview):
         ),
         (1, True),
     )
+
+
+class FallibleReview(ExponentialReview):
+    """Also introduce errors into initially correct records at a constant rate."""
+
+    error_creation_rate = InstanceDummy("r", nonnegative=True)
+    introduced_error_share = derive_checking_response(ExponentialReview.minutes_per_record, error_creation_rate)
 
 
 def write_reports(directory: Path, *, plot: bool = False) -> None:

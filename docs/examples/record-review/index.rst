@@ -368,6 +368,10 @@ The ``caught_share`` field calls
 and :math:`k`. ``specifies`` pairs its returned expression with the three
 requested properties.
 
+``introduced_error_share = S.Zero`` states the assumption that checking creates
+no errors; ``S.Zero`` is SymPy's zero. Keeping this outcome in the review
+component lets us change that assumption later.
+
 Field paths use the Python attribute names: ``wrt="minutes_per_record"`` selects
 :math:`t`. ``CHECKING_MINUTES_DOMAIN`` is
 the interval of nonnegative checking minutes, so the claims concern every
@@ -468,6 +472,12 @@ In contrast, ``review.caught_share`` is the share of **initial errors** caught.
 Multiplying by ``record.error_fraction`` converts it to the corrected fraction
 of all records. Each correction avoids ``record.repair_minutes_per_error``
 minutes of later repair, which gives the minutes-saved formula.
+
+The workload also counts ``introduced_error_fraction``: initially correct
+records made incorrect by checking. It is zero for the response above. If the
+review introduces errors, they join ``remaining_error_fraction`` and their
+repair cost reduces the minutes saved. The same workload equations cover both
+possibilities; only the review component needs to change.
 
 The component path tells us which activity a field measures:
 
@@ -925,20 +935,89 @@ binding, replacement, domain, and execution rules.
 
 .. _record-review-equilibrium:
 
-Extend the model: review can introduce errors
----------------------------------------------
+Extend the review component: checking can introduce errors
+----------------------------------------------------------
 
-So far, a correct record stays correct. That made the all-correct state an
-uneventful endpoint of repeated checking. Suppose checking can also introduce
-an error, perhaps while editing an already-correct entry. We can extend the
-model by supplying probabilities for every possible transition.
+The review component is the place to change the process. It supplies the
+response; ``ReviewWorkload`` turns that response into corrected and remaining
+error fractions, staff minutes, and derivatives.
 
-Track current correctness as two states: **correct** and **incorrect**.
-The always-correct and corrected groups from the introduction both belong to
-the correct state here. Every ordered pair of states is possible, including
-staying in the same state. This is a **complete directed graph with
-self-loops**, with transition pairs :math:`S\times S`. Two states give four
-transition probabilities:
+So far, ``review.introduced_error_share`` is zero. Let it instead describe
+the share of initially correct records made incorrect by a check. Use the
+same constant-rate construction that gave us ``caught_share``, now with an
+``error_creation_rate`` per minute:
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: FallibleReview
+
+This reuses ``derive_checking_response`` to give
+:math:`1-e^{-rt}`, where :math:`r` is the error-creation rate. It is zero
+when checking takes no time or the rate is zero. ``caught_share`` retains
+its existing definition. We count each pass's outcomes from the record's
+state at the start of that pass.
+
+Replace the existing review component, as we did for the rational response.
+For illustration, use an error-creation rate of one hundredth per minute and
+the same two checking minutes as before:
+
+>>> from examples.record_review import FallibleReview
+>>> extended = measured.replace("candidate.review", FallibleReview)
+>>> extended = extended.observe(**{"candidate.review.error_creation_rate": Rational(1, 100)})
+>>> fallible = extended.observe(**{"candidate.review.minutes_per_record": 2})
+>>> tuple(round(float(fallible.expression(f"candidate.{field}")), 4)
+...       for field in outcome_fields)
+(0.8822, 0.0632, 0.0546)
+>>> round(float(fallible.expression("candidate.introduced_error_fraction")), 4)
+0.0178
+
+The corrected fraction is still 6.32% of all records. Checking also introduces
+errors into 1.78%, leaving 5.46% incorrect instead of the earlier 3.68%.
+Introduced errors are part of the remaining-error group, so the same three
+outcome groups still account for every record:
+
+>>> simplify(sum(fallible.expression(f"candidate.{field}") for field in outcome_fields))
+1
+
+Assume an introduced error takes the same repair minutes as an original error.
+The existing workload now counts those repairs too. No staffing or derivative
+formulas need replacing:
+
+>>> tuple(round(float(current.expression("candidate.minutes_per_record")), 4)
+...       for current in (two_minutes, fallible))
+(8.2073, 9.2765)
+
+A zero error-creation rate recovers the original result:
+
+>>> no_new_errors = measured.replace("candidate.review", FallibleReview).observe(**{
+...     "candidate.review.error_creation_rate": 0,
+...     "candidate.review.minutes_per_record": 2,
+... })
+>>> no_new_errors.expression("candidate.minutes_per_record") == two_minutes.expression("candidate.minutes_per_record")
+True
+
+The old optimal checking time needs reconsidering. At :math:`2\log3`, the
+updated minutes-saved derivative is negative:
+
+>>> old_choice = extended.observe(**{"candidate.review.minutes_per_record": 2 * log(3)})
+>>> old_choice.expression("candidate.minutes_saved_derivative").doit().is_negative
+True
+
+That point no longer satisfies the stationarity premise of ``review_plan``.
+The response replacement updates the model's derivatives; the verification
+workflow checks the premises needed to justify a new decision.
+
+View the same outcomes as transitions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For repeated checking, collect the review component's two responses in a
+transition matrix. Write :math:`a` for ``introduced_error_share`` and
+:math:`c` for ``caught_share``. They are conditional on starting correct and
+incorrect respectively. ``corrected_fraction`` is :math:`pc`, a share of
+all records.
+
+Every ordered pair of the two states is possible, including staying in the
+same state. This is a complete directed graph with self-loops:
 
 .. mermaid::
    :alt: Correct records stay correct with probability 1 minus a or become incorrect with probability a. Incorrect records become correct with probability c or stay incorrect with probability 1 minus c.
@@ -952,182 +1031,108 @@ transition probabilities:
        correct -->|"Stays correct: 1 - a"| correct
        incorrect -->|"Stays incorrect: 1 - c"| incorrect
 
-The arrows carry probabilities for **one check**. A rate per minute gives a
-short-step probability by multiplying it by the checking minutes, just as in
-``CheckingStep``. Write :math:`a` for the probability of introducing an error
-on a correct record, and :math:`c` for correcting an incorrect record. Each
-outgoing row must sum to one, so the two change probabilities determine the
-two stay probabilities. Valid inputs have :math:`0\leq a,c\leq1`.
-
-Collect the four probabilities in a **transition matrix**, ordering the states
-as (correct, incorrect). Rows describe the current state; columns describe the
-next state:
+Each arrow carries a probability for one pass, here lasting two minutes.
+Order the states as (correct, incorrect), with rows for the current state and
+columns for the next:
 
 .. math::
 
    P=\begin{pmatrix}1-a&a\\c&1-c\end{pmatrix},\qquad
-   \boldsymbol{v}_{n+1}=\boldsymbol{v}_n P,\qquad
-   \boldsymbol{v}_n=(1-q_n,\ q_n).
+   \boldsymbol{v}_{n+1}=\boldsymbol{v}_nP.
 
-We use row vectors, so the distribution multiplies :math:`P` on the right.
-Each row sums to one. The incorrect component of the product is exactly
-:math:`(1-q_n)a+q_n(1-c)`.
+Build :math:`P` from the same review component and apply it to the initial
+distribution. Its incorrect component is the remaining-error fraction already
+calculated by the workload model. ``applyfunc`` resolves each matrix entry
+using the observed context:
 
-Keep the update as a native SymPy expression in :math:`P`. A
-``MatrixSymbol`` names a matrix without choosing its entries yet. Here
-:math:`N` is the number of states, and :math:`v` is a row distribution:
-
->>> from sympy import Matrix, MatrixSymbol
->>> state_count = Symbol("N", integer=True, positive=True)
->>> P = MatrixSymbol("P", state_count, state_count)
->>> v = MatrixSymbol("v", 1, state_count)
->>> one_check = v * P
-
-First supply the current distribution, then the original check's matrix.
-A correct record stays correct; an incorrect one is caught or missed according
-to the short-check model we already built:
-
+>>> from sympy import Matrix
+>>> review = extended.symbols.candidate.review
+>>> symbolic_P = Matrix([
+...     [1 - review.introduced_error_share, review.introduced_error_share],
+...     [review.caught_share, 1 - review.caught_share],
+... ])
+>>> P = symbolic_P.applyfunc(fallible.expression)
 >>> initial = Matrix([[1 - record.error_fraction, record.error_fraction]])
->>> from_records = one_check.subs(v, initial)
->>> original_P = Matrix([[1, 0], [short.caught_share, short.remaining_share]])
->>> from_records.subs(P, original_P).doit()[0, 1] == short.remaining_error_fraction
-True
+>>> after_one = initial * P
+>>> simplify(after_one[0, 1] - fallible.expression("candidate.remaining_error_fraction"))
+0
 
-Now supply an error-creation rate of one tenth per minute. Our short check
-takes one tenth of a minute, giving :math:`a=1/100`; its existing detection
-model gives :math:`c=1/20`. This extends the calculation by substituting a
-different value for :math:`P`:
+Keep this pass's duration and rates fixed for repeated checks. An equilibrium
+error fraction :math:`q_*` satisfies :math:`q_*=(1-q_*)a+q_*(1-c)`:
 
->>> error_creation_rate = Rational(1, 10)
->>> a = error_creation_rate * short.minutes_per_record
->>> c = short.caught_share
->>> fallible_P = Matrix([[1 - a, a], [c, 1 - c]])
->>> after_one = from_records.subs(P, fallible_P).doit()
->>> list(after_one)
-[112/125, 13/125]
-
-The expected error fraction rises from 10% to 10.4% after this check: many more
-records start correct than incorrect. Better detection alone does not ensure
-that checking improves the overall error fraction.
-
-The update expression stays the same. More elaborate models of reviewer skill,
-checking minutes, or record difficulty can supply other entries for :math:`P`.
-
-Find stationary distributions from the equally general equation
-:math:`\pi P=\pi`, with their entries summing to one:
-
->>> from sympy import solve, symbols
->>> stationary = MatrixSymbol("pi", 1, state_count)
->>> balance = stationary * P - stationary
->>> weights = symbols(f"pi_0:{fallible_P.rows}", nonnegative=True)
->>> candidate = Matrix(1, fallible_P.rows, weights)
->>> equations = list(balance.subs({P: fallible_P, stationary: candidate}).doit())
->>> solve(equations + [sum(candidate) - 1], weights, dict=True)
-[{pi_0: 5/6, pi_1: 1/6}]
-
-Errors introduced and corrected balance at this distribution. Its incorrect
-fraction is one sixth. A stationary distribution and convergence to it are
-separate questions.
-
-Matrix powers describe repeated checks: :math:`v_n=v_0P^n`. Leave the matrix
-and the number of checks symbolic, then substitute their values:
-
->>> checks = Symbol("n", integer=True, nonnegative=True)
->>> repeated_checks = v * P**checks
->>> after_three = repeated_checks.subs({v: initial, P: fallible_P, checks: 3}).doit()
-
-For two states we can also recover the scalar recurrence from :math:`P`.
-There is no separately maintained update formula:
-
+>>> from sympy import Eq, solve
 >>> q = Symbol("q", nonnegative=True)
->>> next_fraction = one_check.subs({v: Matrix([[1 - q, q]]), P: fallible_P}).doit()[0, 1]
+>>> next_fraction = (Matrix([[1 - q, q]]) * P)[0, 1]
+>>> equilibrium = solve(Eq(q, next_fraction), q)[0]
+>>> round(float(equilibrium), 4)
+0.0304
+
+Matrix powers give the distribution after several passes. The same update
+also supplies a scalar recurrence, with no separately maintained formula:
+
 >>> from modello import Index, Recurrence, Series
 >>> n = Index("n", nonnegative=True)
 >>> errors = Series("errors", n)
 >>> repeated = Recurrence(
 ...     errors[n], next_fraction.subs(q, errors[n - 1]),
 ...     initial={0: record.error_fraction})
->>> limit(repeated.at(n).doit(), n, S.Infinity)
-1/6
->>> after_three[0, 1] == repeated.at(3).doit()
-True
+>>> simplify((initial * P**3)[0, 1] - repeated.at(3).doit())
+0
+>>> round(float((initial * P**3)[0, 1]), 4)
+0.0333
 
-The expressions also work with more states. Substitute a three-state matrix
-and a matching initial distribution; no new model or context class is needed:
+After three passes, about 3.33% remain incorrect. This is a different question
+from extending the duration of one pass, which changes both responses and
+therefore changes :math:`P`.
 
->>> cycle = Matrix([[0, 1, 0], [0, 0, 1], [1, 0, 0]])
->>> cycle_initial = Matrix([[1, 0, 0]])
->>> list(one_check.subs({v: cycle_initial, P: cycle}).doit())
-[0, 1, 0]
->>> list(repeated_checks.subs({v: cycle_initial, P: cycle, checks: 3}).doit())
-[1, 0, 0]
+Check the transition properties in the same context
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-This valid transition matrix keeps cycling from that initial distribution.
-Row sums of one do not by themselves establish convergence.
-
-Check the interpretation of P
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Substitution performs the algebra. To check that the entries are probabilities,
-add obligations to an ordinary verification context. We can reuse
-``CheckingStep``, retaining its inputs as symbols before observing them:
+The matrix is a view of the review model. Add probability obligations to its
+existing context, using symbolic component fields so they follow observations:
 
 >>> from modello.contrib.verification import equal_to, nonnegative, positive
->>> transitions = VerificationContext.for_model(CheckingStep, record=record)
->>> a = error_creation_rate * transitions.symbols.minutes_per_record
->>> c = transitions.symbols.caught_share
->>> review_P = Matrix([[1 - a, a], [c, 1 - c]])
->>> probabilities = (
-...     *(nonnegative(review_P[i, j], name=f"P_{i}_{j}_nonnegative")
-...       for i in range(review_P.rows) for j in range(review_P.cols)),
-...     *(equal_to(sum(review_P.row(i)), 1, name=f"P_row_{i}_sum")
-...       for i in range(review_P.rows)),
+>>> probability_obligations = (
+...     *(nonnegative(symbolic_P[i, j], name=f"P_{i}_{j}_nonnegative")
+...       for i in range(symbolic_P.rows) for j in range(symbolic_P.cols)),
+...     *(equal_to(sum(symbolic_P.row(i)), 1, name=f"P_row_{i}_sum")
+...       for i in range(symbolic_P.rows)),
 ... )
->>> transitions = transitions.with_obligations(*probabilities)
->>> transitions.explain("P_0_0_nonnegative").verdict
-'conditionally true'
-
-These obligations describe a row-stochastic matrix: entries are nonnegative
-and each row sums to one. Nonnegativity and the row sums also bound every
-entry above by one. They refer to the model's symbols, so observations and
-assumptions are checked in the usual way:
-
->>> bounded = transitions.assume(a <= 1)
->>> bounded.explain("P_0_0_nonnegative").verdict
+>>> transitions = extended.with_obligations(*probability_obligations)
+>>> checked = transitions.observe(**{"candidate.review.minutes_per_record": 2})
+>>> checked.explain("P_0_1_nonnegative").verdict
 'strictly true'
->>> checked = transitions.observe(
-...     minutes_per_record=short.minutes_per_record,
-...     detection_rate=short.detection_rate)
->>> checked.explain("P_0_0_nonnegative").verdict
-'strictly true'
->>> review_P.applyfunc(checked.expression) == fallible_P
+>>> symbolic_P.applyfunc(checked.expression) == P
 True
 
-``applyfunc`` resolves each entry through the context. The resulting matrix
-can be substituted for :math:`P` in the same expressions above. An invalid
-short-check input fails the nonnegativity obligation:
+These obligations describe a row-stochastic matrix: entries are nonnegative
+and each row sums to one. They also bound every entry above by one.
 
->>> invalid = transitions.observe(minutes_per_record=20, detection_rate=0)
->>> invalid.explain("P_0_0_nonnegative").verdict
-'strictly false'
-
-For convergence, a useful sufficient condition for a finite row-stochastic
-matrix is that every entry is strictly positive. Add those stronger obligations
-to the same context when exploring that argument:
+For convergence to a unique stationary distribution, a useful sufficient
+condition for a finite row-stochastic matrix is that every entry is strictly
+positive. Add those stronger obligations when exploring that argument:
 
 >>> mixing = checked.with_obligations(*(
 ...     positive(entry, name=f"positive_P_{i}", consumer="convergence")
-...     for i, entry in enumerate(review_P)))
->>> mixing.explain("positive_P_0").verdict
+...     for i, entry in enumerate(symbolic_P)))
+>>> mixing.explain("positive_P_1").verdict
 'strictly true'
 
-These are proof goals; they do not automatically guard direct SymPy
-substitutions. A computation that relies on them can list them as a
-``Method``'s preconditions, as in the optimisation above. Matrix probability
-checks also do not validate an arbitrary initial distribution: its entries
-must be nonnegative and sum to one separately.
+Row sums alone do not establish convergence. For example, a three-state
+transition matrix can keep cycling:
 
-This extension revisits the original assumption that checking cannot create
-errors. Its equilibrium concerns repeated checking; a staffing optimum would
-also need a workload model that counts the newly introduced errors. The
-earlier optimum was established for the original response and assumptions.
+>>> cycle = Matrix([[0, 1, 0], [0, 0, 1], [1, 0, 0]])
+>>> cycle_initial = Matrix([[1, 0, 0]])
+>>> list(cycle_initial * cycle)
+[0, 1, 0]
+>>> list(cycle_initial * cycle**3)
+[1, 0, 0]
+
+These are proof goals; they do not automatically guard native SymPy
+calculations. A computation that relies on them can list them as a
+``Method``'s preconditions. An initial distribution also needs nonnegative
+entries summing to one.
+
+The same model now supports questions about outcome fractions, workload,
+checking time, and repeated passes. Changing its response component updates
+the dependent calculations; each argument still needs its own premises.
