@@ -281,7 +281,7 @@ def _write_plots(contexts: dict[str, VerificationContext[ReviewPlanning]], direc
         figure = Figure(figsize=(6, 3.8), layout="constrained")
         FigureCanvasSVG(figure)
         axes = figure.subplots()
-        axes.set(title=title, xlabel="Checking time (minutes per record)", ylabel=ylabel)
+        axes.set(title=title, xlabel=r"Checking time $t$ (minutes per record)", ylabel=ylabel)
         axes.axhline(0, color="0.5", linewidth=0.7)
         return figure, axes
 
@@ -291,16 +291,16 @@ def _write_plots(contexts: dict[str, VerificationContext[ReviewPlanning]], direc
     net_saving = baseline.expression("net_saving", wrt="effort")
     benefit, benefit_axes = new_plot("Why spend time checking?", "Minutes per record")
     for expression, label, style in (
-        (net_saving, "Net saving", "-"),
-        (net_saving + effort, "Repair time avoided", "-"),
-        (effort, "Checking time", "--"),
+        (net_saving, r"Net saving $G(t)$", "-"),
+        (net_saving + effort, r"Repair time avoided $a\,u(t)$", "-"),
+        (effort, r"Checking time $t$", "--"),
     ):
         evaluate = lambdify(effort, expression, "math")
         benefit_axes.plot(times, [evaluate(time) for time in times], style, label=label)
     benefit_axes.legend()
     benefit.savefig(directory / "benefit.svg", metadata={"Date": None})
 
-    comparison, comparison_axes = new_plot("Changing the response curve", "Net minutes saved per record")
+    comparison, comparison_axes = new_plot("Changing the response curve", r"Net saving $G(t)$ (minutes per record)")
     for name, current in contexts.items():
         evaluate = lambdify(effort, current.expression("net_saving", wrt="effort"), "math")
         comparison_axes.plot(times, [evaluate(time) for time in times], label=name.capitalize())

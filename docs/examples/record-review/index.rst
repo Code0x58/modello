@@ -218,16 +218,20 @@ Now use minutes as the common unit for benefit and cost:
    G(t)&=a\,u(t)-t,\\
    M(t)&=b+t+a(1-u(t))=b+a-G(t).
 
-Here :math:`G` is net staff time saved compared with no checking, and :math:`M`
-is total expected staff time per record. Maximising :math:`G` minimises
-:math:`M`. Avoided repair minutes give us a concrete measure of utility, in
+Here :math:`G(t)` is **net saving**, the staff time saved compared with no
+checking. :math:`M(t)` is total expected staff time per record. Maximising
+:math:`G` minimises :math:`M`. Avoided repair minutes give us a concrete measure of utility, in
 the same units as the checking cost.
+
+The plot labels pair these names with their expressions: **repair time avoided**
+is :math:`a\,u(t)`, **checking time** is :math:`t`, and **net saving** is
+:math:`G(t)=a\,u(t)-t`.
 
 .. raw:: html
 
    <figure>
-     <img src="study/benefit.svg" alt="Avoided repair time rises with diminishing returns. Net saving rises to a peak, then falls as checking costs outweigh the extra benefit." style="max-width:100%;height:auto">
-     <figcaption>Net saving is the avoided repair time minus the time spent checking.</figcaption>
+     <img src="study/benefit.svg" alt="Repair time avoided rises with diminishing returns. Net saving rises to a peak, then falls as checking time outweighs the extra benefit." style="max-width:100%;height:auto">
+     <figcaption>Repair time avoided minus checking time gives net saving G(t).</figcaption>
    </figure>
 
 State what the calculation needs
