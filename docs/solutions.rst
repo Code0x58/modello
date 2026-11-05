@@ -85,8 +85,15 @@ copying and input/inferred provenance rules as ordinary construction:
 >>> observed.observe(total=6).is_empty
 True
 
-Use symbolic relations to constrain a nested quantity without constructing its
-component, or to relate quantities across layers:
+To supply one nested scalar directly, use its dotted field path as a dictionary
+key. Python's ``**`` passes that dictionary as keyword arguments. Constructors,
+``inspect_model``, and ``observe`` all accept these paths:
+
+>>> direct = family.observe(**{"reading.x": 2}).one()
+>>> direct.reading.x, direct.total
+(2, 5)
+
+Use symbolic relations to relate quantities across layers or add inequalities:
 
 >>> from sympy import Eq
 >>> family.where(Eq(check.reading.squared, 4), check.reading.x > 0).one().total

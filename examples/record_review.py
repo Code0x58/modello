@@ -21,7 +21,6 @@ from sympy import (
     Piecewise,
     Rational,
     S,
-    Subs,
     lambdify,
     limit,
     log,
@@ -29,7 +28,7 @@ from sympy import (
     sqrt,
 )
 
-from modello import Coordinate, InstanceDummy, Modello, component
+from modello import InstanceDummy, Modello, component
 from modello.contrib.verification import (
     InferenceRule,
     Method,
@@ -131,33 +130,27 @@ class ReviewWorkload(Modello):
 
     record = component(RecordWork)
     review = component(ExponentialReview)
-    effort = review.effort
-    caught_share = review.caught_share
-    net_saving = record.avoidable_minutes * caught_share - effort
+    net_saving = record.avoidable_minutes * review.caught_share - review.effort
     expected_minutes = record.expected_minutes - net_saving
     # A deferred derivative acts on the resolved curve, rather than the field's
     # placeholder symbol. It also generates a differentiability obligation.
-    marginal_saving = Derivative(net_saving, effort, evaluate=False)
-    workload_curvature = Derivative(expected_minutes, effort, 2, evaluate=False)
+    marginal_saving = Derivative(net_saving, review.effort, evaluate=False)
+    workload_curvature = Derivative(expected_minutes, review.effort, 2, evaluate=False)
 
 
 class ReviewPlanning(VerificationModel):
-    """A candidate workload, its staffing budget, and an alternative effort."""
+    """A proposed review workload linked to a staffing budget."""
 
     candidate = component(ReviewWorkload)
     budget = component(EntryBudget)
-    effort = candidate.effort
-    other_effort = Coordinate("t", nonnegative=True)
     minutes_per_record = budget.minutes_per_record
     minutes_per_record = candidate.expected_minutes
 
 
 GLOBAL_MAXIMUM = Obligation(
     "global_maximum",
-    ReviewPlanning.candidate.net_saving
-    >= Subs(ReviewPlanning.candidate.net_saving, ReviewPlanning.candidate.effort, ReviewPlanning.other_effort),
+    "candidate.net_saving",
     "rule",
-    wrt="other_effort",
     domain=EFFORT_DOMAIN,
     reason="The proposed checking time maximizes net saving over all nonnegative efforts.",
 )
@@ -166,16 +159,16 @@ STATIONARY_MAXIMUM = InferenceRule(
     "concave_stationary_maximum",
     GLOBAL_MAXIMUM,
     (
-        concave("candidate.net_saving", wrt="candidate.effort", domain=EFFORT_DOMAIN, name="concavity"),
+        concave("candidate.net_saving", wrt="candidate.review.effort", domain=EFFORT_DOMAIN, name="concavity"),
         continuously_differentiable(
             "candidate.net_saving",
-            wrt="candidate.effort",
+            wrt="candidate.review.effort",
             domain=EFFORT_DOMAIN,
             order=1,
             name="differentiability",
         ),
         equal_to("candidate.marginal_saving", 0, name="stationarity"),
-        nonnegative("candidate.effort", name="feasibility"),
+        nonnegative("candidate.review.effort", name="feasibility"),
     ),
     source="Concave supporting-line inequality; docs/examples/record-review/index.rst#why-this-is-a-global-optimum",
 )
@@ -195,7 +188,7 @@ def _evaluate_plan(current: VerificationContext) -> ReviewDecision:
     """Evaluate the proposed plan after its Method has established the premises."""
     values = tuple(
         simplify(current.expression(f"candidate.{field}").doit())
-        for field in ("effort", "net_saving", "expected_minutes", "workload_curvature")
+        for field in ("review.effort", "net_saving", "expected_minutes", "workload_curvature")
     )
     if any(value.free_symbols or value.is_finite is not True or value.is_real is not True for value in values):
         raise ValueError("Observe all parameters and the effort before evaluating a plan")
@@ -206,7 +199,12 @@ review_plan = Method(
     "review_plan",
     _evaluate_plan,
     preconditions=(GLOBAL_MAXIMUM, positive("candidate.expected_minutes", name="positive_workload")),
-    uses=("candidate.effort", "candidate.net_saving", "candidate.expected_minutes", "candidate.workload_curvature"),
+    uses=(
+        "candidate.review.effort",
+        "candidate.net_saving",
+        "candidate.expected_minutes",
+        "candidate.workload_curvature",
+    ),
 )
 
 
@@ -253,9 +251,11 @@ def write_reports(directory: Path, *, plot: bool = False) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     measured = review_context()
     contexts = {
-        "exponential": measured.observe(effort=2 * log(3)),
-        "rational": measured.replace("candidate.review", RationalReview).observe(effort=2 * (sqrt(3) - 1)),
-        "capped": measured.replace("candidate.review", CappedReview).observe(effort=2),
+        "exponential": measured.observe(**{"candidate.review.effort": 2 * log(3)}),
+        "rational": measured.replace("candidate.review", RationalReview).observe(
+            **{"candidate.review.effort": 2 * (sqrt(3) - 1)}
+        ),
+        "capped": measured.replace("candidate.review", CappedReview).observe(**{"candidate.review.effort": 2}),
     }
     summary: dict = {
         "versions": {name: metadata.version(name) for name in ("modello", "sympy")},
@@ -305,8 +305,8 @@ def _write_plots(contexts: dict[str, VerificationContext[ReviewPlanning]], direc
 
     times = [index / 50 for index in range(301)]
     baseline = contexts["exponential"]
-    effort = baseline.symbols.effort
-    net_saving = baseline.expression("candidate.net_saving", wrt="effort").doit()
+    effort = baseline.symbols.candidate.review.effort
+    net_saving = baseline.expression("candidate.net_saving", wrt="candidate.review.effort").doit()
     benefit, benefit_axes = new_plot("Why spend time checking?", "Minutes per record")
     for expression, label, style in (
         (net_saving, r"Net saving $G(t)$", "-"),
@@ -320,8 +320,10 @@ def _write_plots(contexts: dict[str, VerificationContext[ReviewPlanning]], direc
 
     comparison, comparison_axes = new_plot("Changing the response curve", r"Net saving $G(t)$ (minutes per record)")
     for name, current in contexts.items():
-        axis = current.symbols.effort
-        evaluate = lambdify(axis, current.expression("candidate.net_saving", wrt="effort").doit(), "math")
+        axis = current.symbols.candidate.review.effort
+        evaluate = lambdify(
+            axis, current.expression("candidate.net_saving", wrt="candidate.review.effort").doit(), "math"
+        )
         comparison_axes.plot(times, [evaluate(time) for time in times], label=name.capitalize())
     comparison_axes.legend()
     comparison.savefig(directory / "responses.svg", metadata={"Date": None})

@@ -30,6 +30,13 @@ in a triangle model and reuse it:
 ``parcel.base`` is a ``Triangle`` instance. Component paths such as ``base.c``
 let you express relationships across the whole model.
 
+You can also supply nested scalar quantities directly using their dotted paths.
+Put them in a dictionary and pass it with Python's ``**`` syntax:
+
+>>> direct = Box("direct", height=12, **{"base.a": 3, "base.b": 4})
+>>> direct.base.c, direct.diagonal
+(5, 13)
+
 Infer a quantity inside a component
 -----------------------------------
 

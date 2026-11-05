@@ -38,8 +38,9 @@ class _InputCapture:
     ) -> tuple[ModelConstraint, ...]:
         """Append observations in constructor order without changing the source."""
         for attr, value in values.items():
-            if attr in self.model._modello_namespace.dummies:
-                self._add_scalar((attr,), value, self.bindings, attr)
+            path = tuple(attr.split("."))
+            if path in self.fields:
+                self._add_scalar(path, value, self.bindings, attr)
             elif attr in self.model._modello_namespace.vectors:
                 vector = self.model._modello_namespace.vectors[attr]
                 entries = _vector_input(value, len(vector), attr)

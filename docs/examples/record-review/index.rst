@@ -407,14 +407,9 @@ Compose the decision model
 Turn the saving and workload formulas into a reusable model, ``ReviewWorkload``.
 Its ``record`` component supplies entry time, avoidable repair work, and baseline
 workload. Its ``review`` component supplies the response curve and its declared
-properties. An ``effort`` input supplies the checking time for this workload.
-
-Reuse the response's quantities directly: ``effort = review.effort`` names
-the same checking-time input, and ``caught_share = review.caught_share`` names
-the same caught fraction. These are aliases, so supplying effort through either
-path updates one shared quantity. The workload can use that fraction to express
-:math:`G(t)` and :math:`M(t)` without substituting a separate argument into the
-response.
+properties. Read its checking time as ``review.effort`` and its caught fraction
+as ``review.caught_share``. The workload uses those quantities directly to
+express :math:`G(t)` and :math:`M(t)`.
 
 Keep the slope of saving and the curvature of workload in this model too.
 SymPy's ``Derivative(..., evaluate=False)`` defers differentiation until
@@ -424,7 +419,7 @@ it would differentiate the field's placeholder symbol:
 .. code-block:: python
 
    from sympy import Derivative
-   from modello import Coordinate, component
+   from modello import component
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
@@ -435,11 +430,7 @@ The C² claim declared on the response is stronger: it also asks for continuous
 first and second derivatives, for our later quadratic approximation.
 
 Now make a proposed workload the ``candidate`` component of the decision model.
-``effort = candidate.effort`` exposes its input at the top level, so we can
-supply it with ``observe(effort=...)``. ``other_effort`` will let us compare
-the candidate with every alternative checking time in the optimality argument.
-It is a ``Coordinate``: a local formula variable, separate from the shared
-input we observe for the candidate.
+The decision model connects it to the staffing budget:
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
@@ -483,20 +474,23 @@ With our inputs,
 Setting :math:`G'(t)=0` gives the candidate :math:`t_*=2\log3`, about
 2.20 minutes, where :math:`\log` denotes the natural logarithm. A point with
 zero derivative is called a stationary point.
-We can confirm this exactly. ``doit()`` carries out the deferred derivative
+We can confirm this exactly. Effort belongs to the nested response, at
+``candidate.review.effort``. Supply that scalar using its dotted path as a
+dictionary key; Python's ``**`` passes the dictionary to ``observe``.
+``doit()`` carries out the deferred derivative
 and substitution in ``candidate.marginal_saving``:
 
->>> proposed = measured.observe(effort=2*log(3))
+>>> proposed = measured.observe(**{"candidate.review.effort": 2*log(3)})
 >>> proposed.expression("candidate.marginal_saving").doit()
 0
 
 An observation evaluates the workload at that input. To inspect the whole
-saving curve instead, pass ``wrt="effort"``: this keeps the input symbolic
+saving curve instead, pass ``wrt="candidate.review.effort"``: this keeps the input symbolic
 while substituting the observed record estimates and checking rate.
 The returned expression uses this context's effort symbol:
 
->>> saving_curve = proposed.expression("candidate.net_saving", wrt="effort").doit()
->>> saving_curve.free_symbols == {proposed.symbols.effort}
+>>> saving_curve = proposed.expression("candidate.net_saving", wrt="candidate.review.effort").doit()
+>>> saving_curve.free_symbols == {proposed.symbols.candidate.review.effort}
 True
 
 Stationarity alone does not establish an optimum. A stationary point might
@@ -528,7 +522,7 @@ workload for the capacity calculation.
 ``review_context()`` registered the stationary-point implication as a trusted
 inference rule. The checker establishes its premises for our particular curve
 and candidate; it does not prove the general implication itself.
-Its concavity and differentiability checks select ``candidate.effort`` with
+Its concavity and differentiability checks select ``candidate.review.effort`` with
 ``wrt``, keeping the whole curve available despite the observed checking time.
 The zero-slope check uses the observed point. Thus both kinds of check reuse
 the workload's definitions.
@@ -606,7 +600,7 @@ starts a fresh context, so the original observations remain for comparison:
 >>> shorter_repairs = RecordWork("shorter repairs", entry_minutes=record.entry_minutes,
 ...                              error_fraction=record.error_fraction, repair_minutes=30)
 >>> revised = review_context(shorter_repairs, rate=short.rate)
->>> revised = revised.observe(effort=2*log(Rational(3, 2)))
+>>> revised = revised.observe(**{"candidate.review.effort": 2*log(Rational(3, 2))})
 >>> revised_result = revised.run(review_plan)
 >>> round(float(revised_result.data.effort), 2)
 0.81
@@ -645,7 +639,7 @@ has not yet been fixed:
 >>> from sympy import sqrt
 >>> from examples.record_review import RationalReview
 >>> changed = measured.replace("candidate.review", RationalReview)
->>> changed = changed.observe(effort=2*(sqrt(3)-1))
+>>> changed = changed.observe(**{"candidate.review.effort": 2*(sqrt(3)-1)})
 >>> alternative = changed.run(review_plan)
 >>> alternative.report.explain("global_maximum").verdict
 'strictly true'
@@ -683,7 +677,7 @@ find out why our method cannot use it:
 
 >>> from examples.record_review import CappedReview
 >>> from modello.contrib.verification import VerificationError
->>> capped = measured.replace("candidate.review", CappedReview).observe(effort=2)
+>>> capped = measured.replace("candidate.review", CappedReview).observe(**{"candidate.review.effort": 2})
 >>> capped.explain("candidate.review.caught_share/continuously_differentiable").verdict
 'strictly false'
 >>> try:
@@ -703,7 +697,7 @@ as well as an appropriate method.
 Evaluate a few points to explore the proposed response shape, selecting its
 own effort coordinate:
 
->>> sampled = capped.sample("candidate.caught_share", wrt="effort", points=(1, 2, 3))
+>>> sampled = capped.sample("candidate.review.caught_share", wrt="candidate.review.effort", points=(1, 2, 3))
 >>> tuple(float(value) for value in sampled.values)
 (0.5, 1.0, 1.0)
 >>> sampled.kind

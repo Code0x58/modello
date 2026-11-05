@@ -324,6 +324,29 @@ def test_typed_symbol_tree_and_nested_observations_share_constructor_provenance(
     assert section.expression(symbols.left.total) == symbols.left.reading.x**2 + 1
 
 
+def test_scalar_path_inputs_work_in_construction_inspection_and_observation():
+    constructed = Check("constructed", **{"reading.x": 2})
+    assert constructed.reading.squared == 4 and constructed.total == 5
+
+    problem = inspect_model(Check, "paths")
+    family = problem.solutions()
+    observed = family.observe(**{"reading.x": 2})
+    point = observed.one()
+    assert point.reading.x == 2 and point.total == 5
+    constraint = observed.problem.constraints[-1]
+    assert (constraint.path, constraint.kind, constraint.input) == (("reading", "x"), ConstraintKind.INPUT, "reading.x")
+    assert inspect_model(Check, "inspected", **{"reading.x": 2}).solutions().one().total == 5
+    assert observed.observe(**{"reading.x": 3}).is_empty is True
+    assert family.observe(**{"reading.x": S.ImaginaryUnit}).is_empty is True
+
+    original = problem.constraints
+    with pytest.raises(ModelInputError, match="Unknown model attribute"):
+        family.observe(**{"reading.x": 2, "reading.missing": 3})
+    with pytest.raises(ModelInputError, match="scalar"):
+        family.observe(**{"reading.x": {"x": 2}})
+    assert problem.constraints is original and family.problem is problem
+
+
 def test_failed_component_observation_leaves_existing_snapshots_unchanged(check_problem):
     """Partially captured inputs cannot leak from a failed immutable refinement."""
     problem = check_problem

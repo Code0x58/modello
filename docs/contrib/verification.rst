@@ -525,12 +525,14 @@ The :doc:`record-review walkthrough <../examples/record-review/index>` uses
 ``review_context()`` to prepare its inputs and mathematical argument. Here is
 how the example connects that argument to a computation.
 
-An ``Obligation`` names a claim. ``GLOBAL_MAXIMUM`` states
+An ``Obligation`` names a claim. ``GLOBAL_MAXIMUM`` names the statement
 :math:`G(s)\geq G(t)` for every nonnegative effort :math:`t`, where :math:`s`
 is the proposed checking time. ``InferenceRule`` records the supporting-line
 argument from the walkthrough as a trusted implication. Its premises ask the
 checker to establish concavity, differentiability, a zero derivative at the
-candidate, and candidate feasibility:
+candidate, and candidate feasibility. The ``rule`` property marks this as a
+custom conclusion to establish through a registered implication, rather than a
+built-in property check:
 
 .. literalinclude:: ../../examples/record_review.py
    :language: python
@@ -538,13 +540,12 @@ candidate, and candidate feasibility:
    :end-before: @dataclass
 
 The candidate is a ``ReviewWorkload`` component. Its ``net_saving`` field
-serves both the point evaluation and the function checks. Its ``effort`` and
-``caught_share`` fields alias the response component's quantities directly.
-In ``GLOBAL_MAXIMUM``,
-``Subs`` evaluates the same field at ``other_effort``, leaving that alternative
-free while the left side uses the observed effort. The rule's shape checks
-use ``wrt="candidate.effort"`` to keep the workload's input symbolic; its
-stationarity check evaluates the derivative at the observed point.
+serves both the point evaluation and the function checks. The conclusion
+concerns its saving at the observed effort. The rule's shape checks use
+``wrt="candidate.review.effort"`` to keep the response's input symbolic; its
+stationarity check evaluates the derivative at the observed point. The
+alternative :math:`t` in the mathematical statement belongs to the general
+argument above, so the decision model needs no extra input or coordinate for it.
 
 A registered implication is part of the trust boundary. The engine checks its
 premises; it does not prove that they imply the conclusion. A failed premise
@@ -587,9 +588,9 @@ checking itself costs time, so six is a uniform upper bound on net saving.
 >>> from sympy import log
 >>> from examples.record_review import EFFORT_DOMAIN, review_context
 >>> from modello.contrib.verification import supremum_below
->>> proposed = review_context().observe(effort=2*log(3))
+>>> proposed = review_context().observe(**{"candidate.review.effort": 2*log(3)})
 >>> ceiling = proposed.with_obligations(supremum_below(
-...     "candidate.net_saving", wrt="effort", domain=EFFORT_DOMAIN,
+...     "candidate.net_saving", wrt="candidate.review.effort", domain=EFFORT_DOMAIN,
 ...     bound=7, name="saving_ceiling"))
 >>> ceiling.explain("saving_ceiling").verdict
 'unresolved'
