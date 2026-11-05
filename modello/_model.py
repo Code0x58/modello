@@ -142,9 +142,13 @@ class _ModelReference:
         }
 
     def __getattr__(self, name: str) -> Any:
-        """Resolve a scalar or a reference to a deeper child."""
+        """Resolve a quantity, local coordinate, or reference to a deeper child."""
         if (name,) in self._modello_fields:
             return self._modello_fields[(name,)]
+        coordinate = getattr(self._modello_model, name, None)
+        if isinstance(coordinate, Coordinate):
+            # Coordinates keep their declaration identity across component copies.
+            return coordinate
         vector = self._modello_model._modello_namespace.vectors.get(name)
         if vector is not None:
             if not vector._finite:

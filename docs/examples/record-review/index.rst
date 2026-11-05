@@ -58,6 +58,20 @@ add :math:`(1/10)\times60=6` minutes per record **in expectation**. Total expect
 work is ten minutes per record, giving capacity of 48 records per 480 staff
 minutes under this workload approximation.
 
+Keep these estimates and their repair-work relationship in a model that we
+can reuse for both a short check and the final plan:
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: RecordWork
+
+>>> from sympy import Rational
+>>> from examples.record_review import RecordWork
+>>> record = RecordWork("record", entry_minutes=4,
+...                     error_fraction=Rational(1, 10), repair_minutes=60)
+>>> record.avoidable_minutes, record.expected_minutes
+(6, 10)
+
 How might checking reduce that repair work? Start with a short check and
 assume a constant checking rate. A short check catches a proportion of the
 errors **still left**, approximately the rate multiplied by the time spent.
@@ -68,9 +82,13 @@ The same short check then catches fewer errors on a second pass, because
 fewer remain. This is our modelling assumption about diminishing returns.
 It describes how checking might work; we would need measurements to assess it.
 
-Add a second ordinary Modello model for this step. Its inputs are the fraction
-of records containing an error, the time to repair one, the checking time,
-and the checking rate:
+Reuse these estimates as a ``record`` component in the short-check model.
+``component(RecordWork)`` gives it the record's quantities, such as
+``record.error_fraction``. The other inputs are the checking time and rate:
+
+.. code-block:: python
+
+   from modello import component
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
@@ -79,16 +97,14 @@ and the checking rate:
 ``caught_share`` is a fraction of the errors present at the start of the step.
 ``remaining_error_fraction`` is a fraction of **all records**. With our inputs:
 
->>> from sympy import Rational
 >>> from examples.record_review import CheckingStep
->>> short = CheckingStep("short", error_fraction=Rational(1, 10),
-...                      repair_minutes=60, checking_minutes=Rational(1, 10),
+>>> short = CheckingStep("short", record=record, checking_minutes=Rational(1, 10),
 ...                      rate=Rational(1, 2))
 >>> short.caught_share
 1/20
 >>> 1000 * short.remaining_error_fraction
 95
->>> short.avoidable_minutes
+>>> short.record.avoidable_minutes
 6
 
 Out of an illustrative 1,000 records, 100 initially need repair; the short
@@ -192,6 +208,8 @@ into an ordinary Python function, ``derive_checking_response(effort, rate)``.
 Its two arguments are the total checking time, ``effort`` (our :math:`t`), and
 the constant checking rate, ``rate`` (our :math:`k`). It returns a SymPy
 expression for the fraction of the original errors caught.
+The initial error fraction and repair cost enter later, when we convert that
+caught share into saved minutes.
 
 The function follows the steps above: divide the effort among short checks,
 take the limit of the share still missed, then subtract that share from one.
@@ -227,12 +245,12 @@ We assume that a caught error needs no further repair time beyond the checking
 time already counted. If the initial error fraction is :math:`p` and a repair
 takes :math:`L` minutes, checking leaves expected repair work
 :math:`pL(1-u(t))` per record. The product :math:`pL` is exactly the
-``avoidable_minutes`` field we calculated above.
+``record.avoidable_minutes`` field we calculated above.
 
 Let :math:`b` be entry time and :math:`a` be the expected repair work that
 perfect checking could avoid. Our illustrative inputs are:
 
-.. list-table:: Inputs and units
+.. list-table:: Quantities and units
    :header-rows: 1
 
    * - Quantity
@@ -385,14 +403,17 @@ when you need to reopen an earlier choice.
 Compose the decision model
 --------------------------
 
-Now put the response inside the workload model. ``component(ExponentialReview)``
-creates a nested response whose fields are available as ``review.value`` and
-``review.rate``. The fields ``entry_minutes`` and ``avoidable_minutes`` represent
-:math:`b` and :math:`a`. ``candidate`` is a proposed checking time, separate from
-the ``effort`` coordinate over which we compare all possible times.
+Now compose the relationships we have built:
 
-``effort = ExponentialReview.effort`` reuses the response's coordinate, so its
-benefit and the total workload vary with the same :math:`t`.
+* ``record`` reuses ``RecordWork``, including entry time :math:`b`, derived
+  avoidable repair work :math:`a`, and baseline workload :math:`b+a`.
+* ``review`` supplies the response :math:`u(t)` and its declared properties.
+* ``budget`` reuses ``EntryBudget`` to relate records and staff time for the
+  chosen plan.
+
+``effort = review.effort`` takes the coordinate from the response component, so
+its benefit and the workload vary with the same :math:`t`. ``candidate`` is a
+proposed checking time, separate from that coordinate over all possible times.
 
 We also record the derivative of net saving and evaluate it at the candidate.
 SymPy's ``Derivative(..., evaluate=False)`` keeps differentiation deferred until
@@ -409,12 +430,18 @@ the candidate for the effort coordinate:
    :language: python
    :pyobject: ReviewPlanning
 
+The two ``candidate_minutes`` assignments connect the chosen workload to
+``budget.minutes_per_record``: they name the same quantity, then give it the
+formula :math:`M(s)` at the candidate :math:`s`. The budget can use that result
+to infer staff time or record count through its existing relationship.
+
 Writing the derivative generates a differentiability obligation automatically.
 The C² claim declared on the response is stronger: it also asks for continuous
 first and second derivatives, for our later quadratic approximation.
 
-The example's ``review_context()`` helper supplies our inputs and registers the
-optimality argument explained below. It leaves the candidate open.
+The example's ``review_context()`` helper accepts our ``RecordWork`` instance
+and checking rate, and registers the optimality argument explained below.
+It leaves the candidate and staffing budget open.
 This helper belongs to the example; :ref:`its implementation
 <verification-example-contract>` shows how to prepare the same context yourself.
 ``expression(path)`` returns a field's resolved SymPy expression, so we can
@@ -422,8 +449,8 @@ inspect the inputs:
 
 >>> from sympy import log
 >>> from examples.record_review import review_context
->>> measured = review_context(avoidable_minutes=short.avoidable_minutes, rate=short.rate)
->>> measured.expression("entry_minutes"), measured.expression("avoidable_minutes")
+>>> measured = review_context(record, rate=short.rate)
+>>> measured.expression("record.entry_minutes"), measured.expression("record.avoidable_minutes")
 (4, 6)
 >>> measured.expression("review.rate")
 1/2
@@ -512,14 +539,18 @@ We save about 1.80 staff minutes per record. Total expected work falls from
 10 to about 8.20 minutes. Returning to our original budget gives a practical
 interpretation:
 
->>> day = EntryBudget("day", staff_minutes=480,
-...                   minutes_per_record=result.data.minutes_per_record)
->>> round(float(day.records), 1)
-58.6
->>> target = EntryBudget("target", records=60,
-...                      minutes_per_record=result.data.minutes_per_record)
->>> round(float(target.staff_minutes), 1)
-491.8
+The chosen workload is already connected to ``budget.minutes_per_record``.
+Supply either a staff-time budget or a target record count in that component.
+The context's ``family`` is Modello's ordinary :doc:`solution family
+</solutions>`; its ``values`` query follows the linked equations and returns
+a set of possible answers. Here each set contains one result:
+
+>>> day = proposed.observe(budget=EntryBudget("day", staff_minutes=480))
+>>> day.family.values(day.symbols.budget.records).evalf(3)
+{58.6}
+>>> target = proposed.observe(budget=EntryBudget("target", records=60))
+>>> target.family.values(target.symbols.budget.staff_minutes).evalf(4)
+{491.8}
 
 The workload curvature is :math:`M''(t_*)=1/2`. Also :math:`M'(t_*)=0`, since
 :math:`M=b+a-G` and the candidate has :math:`G'(t_*)=0`. C² regularity lets us
@@ -543,20 +574,20 @@ record in ten needing repair, the avoidable work becomes :math:`a=3` minutes
 per record. The new marginal saving is :math:`G'(t)=\tfrac32e^{-t/2}-1`, giving
 the candidate :math:`t_*=2\log(3/2)`.
 
-``review_context`` accepts the entry time, avoidable repair work, and rate as
-keyword arguments. Each call starts a fresh context with those inputs, so the
-original observations remain available for comparison:
+Supply revised estimates in a new ``RecordWork`` instance. Its existing
+relationship recalculates the avoidable work. Each ``review_context`` call
+starts a fresh context, so the original observations remain for comparison:
 
->>> shorter_repairs = CheckingStep("shorter repairs", error_fraction=short.error_fraction,
-...                               repair_minutes=30)
->>> revised = review_context(avoidable_minutes=shorter_repairs.avoidable_minutes)
+>>> shorter_repairs = RecordWork("shorter repairs", entry_minutes=record.entry_minutes,
+...                              error_fraction=record.error_fraction, repair_minutes=30)
+>>> revised = review_context(shorter_repairs, rate=short.rate)
 >>> revised = revised.observe(candidate=2*log(Rational(3, 2)))
 >>> revised_result = revised.run(review_plan)
 >>> round(float(revised_result.data.effort), 2)
 0.81
 >>> revised_result.report.explain("global_maximum").verdict
 'strictly true'
->>> measured.expression("avoidable_minutes")
+>>> measured.expression("record.avoidable_minutes")
 6
 
 Cheaper repairs make less checking worthwhile. The same method establishes
@@ -725,7 +756,7 @@ the `results <study/results.json>`_, `baseline evidence <study/exponential.html>
 `alternative evidence <study/rational.html>`_, and
 `blocked replacement <study/capped.html>`_.
 
-For a further experiment, try ``review_context(rate=Rational(1, 3))``. For
+For a further experiment, try ``review_context(record, rate=Rational(1, 3))``. For
 positive :math:`a,k` with :math:`ak>1`, solving :math:`G'(t)=0` gives the
 positive candidate :math:`t_*=\log(ak)/k`. Check its premises before trusting
 the new capacity.

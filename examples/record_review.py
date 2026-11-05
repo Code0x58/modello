@@ -56,22 +56,30 @@ class EntryBudget(Modello):
     staff_minutes = records * minutes_per_record
 
 
+class RecordWork(Modello):
+    """Entry time and expected repair work per record before checking."""
+
+    entry_minutes = InstanceDummy("b", positive=True)
+    error_fraction = InstanceDummy("p", nonnegative=True)
+    repair_minutes = InstanceDummy("L", positive=True)
+    avoidable_minutes = error_fraction * repair_minutes
+    expected_minutes = entry_minutes + avoidable_minutes
+
+
 class CheckingStep(Modello):
     """Approximate a short check that catches a share of the errors still left.
 
-    Physical inputs need error_fraction <= 1 and 0 <= rate * checking_minutes <= 1.
+    Physical inputs need record.error_fraction <= 1 and 0 <= rate * checking_minutes <= 1.
     These are modelling assumptions here, not automatically checked bounds.
     """
 
-    error_fraction = InstanceDummy("p", nonnegative=True)
-    repair_minutes = InstanceDummy("L", positive=True)
+    record = component(RecordWork)
     checking_minutes = InstanceDummy("h", nonnegative=True)
     rate = InstanceDummy("k", real=True)
     caught_share = rate * checking_minutes
     remaining_share = 1 - caught_share
-    remaining_error_fraction = error_fraction * remaining_share
-    avoidable_minutes = error_fraction * repair_minutes
-    expected_repair_minutes = remaining_error_fraction * repair_minutes
+    remaining_error_fraction = record.error_fraction * remaining_share
+    expected_repair_minutes = remaining_error_fraction * record.repair_minutes
 
 
 def derive_checking_response(effort: Expr, rate: Expr) -> Expr:
@@ -122,18 +130,19 @@ class ExponentialReview(VerificationModel):
 class ReviewPlanning(VerificationModel):
     """Expected staff minutes per record, including later repair of missed errors."""
 
+    record = component(RecordWork)
     review = component(ExponentialReview)
-    effort = ExponentialReview.effort
-    entry_minutes = InstanceDummy("b", positive=True)
-    avoidable_minutes = InstanceDummy("a", positive=True)
+    budget = component(EntryBudget)
+    effort = review.effort
     candidate = InstanceDummy("s", nonnegative=True)
-    net_saving = avoidable_minutes * review.value - effort
-    expected_minutes = entry_minutes + avoidable_minutes - net_saving
+    net_saving = record.avoidable_minutes * review.value - effort
+    expected_minutes = record.expected_minutes - net_saving
     # A deferred derivative acts on the resolved curve, rather than the field's
     # placeholder symbol. It also generates a differentiability obligation.
     marginal_saving = Derivative(net_saving, effort, evaluate=False)
     candidate_marginal = Subs(marginal_saving, effort, candidate)
     candidate_saving = Subs(net_saving, effort, candidate)
+    candidate_minutes = budget.minutes_per_record
     candidate_minutes = Subs(expected_minutes, effort, candidate)
 
 
@@ -200,18 +209,19 @@ review_plan = Method(
 )
 
 
-def review_context(*, entry_minutes=4, avoidable_minutes=6, rate=Rational(1, 2)) -> VerificationContext[ReviewPlanning]:
+def review_context(record: RecordWork | None = None, *, rate=Rational(1, 2)) -> VerificationContext[ReviewPlanning]:
     """Start a fresh context with these inputs and the stationary-point rule.
 
-    The candidate stays open. To compare input estimates, call this helper
-    again with new values; observations on an existing context accumulate.
+    Supply a RecordWork instance to reuse estimates. With no instance, use the
+    walkthrough's baseline. The candidate and staffing budget stay open.
     """
+    if record is None:
+        record = RecordWork("record", entry_minutes=4, error_fraction=Rational(1, 10), repair_minutes=60)
     return (
         VerificationContext.for_model(ReviewPlanning, "records")
         .with_rule(STATIONARY_MAXIMUM)
         .observe(
-            entry_minutes=entry_minutes,
-            avoidable_minutes=avoidable_minutes,
+            record=record,
             review=ExponentialReview("response", rate=rate),
         )
     )
@@ -248,7 +258,8 @@ def write_reports(directory: Path, *, plot: bool = False) -> None:
     summary: dict = {
         "versions": {name: metadata.version(name) for name in ("modello", "sympy")},
         "inputs": {
-            path: str(measured.expression(path)) for path in ("entry_minutes", "avoidable_minutes", "review.rate")
+            path: str(measured.expression(path))
+            for path in ("record.entry_minutes", "record.error_fraction", "record.repair_minutes", "review.rate")
         },
         "plans": {},
     }

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from sympy import Rational, Symbol, exp, log, simplify, sqrt
+from sympy import FiniteSet, Rational, Symbol, exp, log, simplify, sqrt
 
 from examples.record_review import (
     CappedReview,
@@ -12,6 +12,7 @@ from examples.record_review import (
     EntryBudget,
     ExponentialReview,
     RationalReview,
+    RecordWork,
     ReviewPlanning,
     derive_checking_response,
     review_context,
@@ -34,14 +35,13 @@ def proposed(measured: VerificationContext[ReviewPlanning]) -> VerificationConte
 def test_short_checks_derive_the_continuous_response():
     short = CheckingStep(
         "short",
-        error_fraction=Rational(1, 10),
-        repair_minutes=60,
+        record=RecordWork("record", entry_minutes=4, error_fraction=Rational(1, 10), repair_minutes=60),
         checking_minutes=Rational(1, 10),
         rate=Rational(1, 2),
     )
     assert short.caught_share == Rational(1, 20)
     assert 1000 * short.remaining_error_fraction == 95
-    assert short.avoidable_minutes == 6
+    assert short.record.avoidable_minutes == 6
     assert short.expected_repair_minutes == Rational(57, 10)
 
     # Use the same name as the helper's bound variable to exercise its scope.
@@ -93,25 +93,29 @@ def test_stationary_candidate_has_a_global_certificate_and_local_curvature(propo
 
 
 def test_capacity_and_staff_budget_can_be_supplied_in_either_direction(proposed):
-    decision = proposed.run(review_plan).data
-    day = EntryBudget("day", staff_minutes=480, minutes_per_record=decision.minutes_per_record)
-    target = EntryBudget("target", records=60, minutes_per_record=decision.minutes_per_record)
-    assert simplify(day.records - 480 / (6 + 2 * log(3))) == 0
-    assert target.staff_minutes == 360 + 120 * log(3)
+    day = proposed.observe(budget=EntryBudget("day", staff_minutes=480))
+    target = proposed.observe(budget=EntryBudget("target", records=60))
+    assert day.run(review_plan).report.explain("global_maximum").verdict == "strictly true"
+    assert target.run(review_plan).data == proposed.run(review_plan).data
+    assert day.family.values(day.symbols.budget.records) == FiniteSet(simplify(480 / (6 + 2 * log(3))))
+    assert target.family.values(target.symbols.budget.staff_minutes) == FiniteSet(360 + 120 * log(3))
 
 
 def test_revised_inputs_recheck_the_optimum_and_its_derivative_domain(measured):
-    revised = review_context(entry_minutes=3, avoidable_minutes=8, rate=Rational(1, 4))
+    record = RecordWork("revised", entry_minutes=3, error_fraction=Rational(1, 5), avoidable_minutes=8)
+    revised = review_context(record, rate=Rational(1, 4))
     result = revised.observe(candidate=4 * log(2)).run(review_plan)
     assert result.report.explain("global_maximum").verdict == "strictly true"
     assert simplify(result.data.effort - 4 * log(2)) == 0
     assert simplify(result.data.minutes_per_record - 7 - 4 * log(2)) == 0
     assert result.data.workload_curvature == Rational(1, 4)
-    assert measured.expression("avoidable_minutes") == 6
+    assert measured.expression("record.avoidable_minutes") == 6
+    assert revised.expression("record.repair_minutes") == 40
 
     # Formal substitution at zero does not establish a two-sided derivative
     # within the coordinate's nonnegative domain.
-    endpoint = review_context(entry_minutes=3, avoidable_minutes=4, rate=Rational(1, 4)).observe(candidate=0)
+    endpoint_record = RecordWork("endpoint", entry_minutes=3, error_fraction=Rational(1, 5), avoidable_minutes=4)
+    endpoint = review_context(endpoint_record, rate=Rational(1, 4)).observe(candidate=0)
     assert endpoint.expression("candidate_marginal").doit() == 0
     with pytest.raises(VerificationError) as error:
         endpoint.run(review_plan)
@@ -171,7 +175,12 @@ def test_retiring_an_exploratory_saving_target_does_not_waive_the_method_contrac
 def test_reports_include_exact_results_and_the_blocked_replacement(tmp_path: Path):
     write_reports(tmp_path, plot=True)
     summary = json.loads((tmp_path / "results.json").read_text())
-    assert summary["inputs"] == {"entry_minutes": "4", "avoidable_minutes": "6", "review.rate": "1/2"}
+    assert summary["inputs"] == {
+        "record.entry_minutes": "4",
+        "record.error_fraction": "1/10",
+        "record.repair_minutes": "60",
+        "review.rate": "1/2",
+    }
     assert summary["plans"]["exponential"]["minutes_per_record"]["exact"] == "2*log(3) + 6"
     assert summary["plans"]["rational"]["minutes_per_record"]["decimal"] > 8.9
     assert "strictly false" in summary["plans"]["capped"]["blocked"]

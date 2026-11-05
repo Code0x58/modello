@@ -50,7 +50,7 @@ def test_replacement_rebinds_coordinates_used_only_inside_native_operators(curve
 
     class Parent(Modello):
         curve = component(old)
-        value = operation(curve.value, old.x)
+        value = operation(curve.value, curve.x)
 
     source = VerificationContext.for_model(Parent)
     changed = source.replace("curve", new)
