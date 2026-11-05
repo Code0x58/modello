@@ -216,6 +216,8 @@ is rejected as a differentiation coordinate with ``ModelDefinitionError``:
 reparameterize the curve explicitly before asking about its derivatives.
 Quantities in unresolved defining cycles, and quantities that depend on them,
 also need reparameterization before serving as coordinates.
+``expression(path, wrt=...)`` keeps the selected quantity symbolic even after
+it has been observed; without ``wrt``, it resolves the observed point.
 ``expression`` and ``sample`` apply the same coordinate validation as property
 checks. Parameter observations, including cyclic observations, do not turn an
 independent quantity into a defined coordinate.
@@ -535,13 +537,20 @@ candidate, and candidate feasibility:
    :start-at: GLOBAL_MAXIMUM = Obligation(
    :end-before: @dataclass
 
+The candidate is a ``ReviewWorkload`` component. Its ``net_saving`` field
+serves both the point evaluation and the function checks. In ``GLOBAL_MAXIMUM``,
+``Subs`` evaluates the same field at ``other_effort``, leaving that alternative
+free while the left side uses the observed effort. The rule's shape checks
+use ``wrt="candidate.effort"`` to keep the workload's input symbolic; its
+stationarity check evaluates the derivative at the observed point.
+
 A registered implication is part of the trust boundary. The engine checks its
 premises; it does not prove that they imply the conclusion. A failed premise
 makes this argument inapplicable and leaves the conclusion unresolved.
 
-The example's ``_evaluate_plan`` callback evaluates the proposed checking time,
-net saving, workload, and workload curvature. A ``Method`` pairs that callback
-with the properties it needs:
+The example's ``_evaluate_plan`` callback reads the proposed checking time,
+net saving, workload, and workload curvature from that component. A ``Method``
+pairs that callback with the properties it needs:
 
 .. literalinclude:: ../../examples/record_review.py
    :language: python
@@ -556,8 +565,8 @@ Python implementation is trusted too.
 
 The convenience function registers the rule and accepts a ``RecordWork``
 component containing the entry and repair estimates, plus the checking rate.
-Its defaults provide the walkthrough's baseline. Each call starts a fresh
-context, leaving the candidate and staffing budget available for later inputs:
+Its defaults provide the walkthrough's baseline. Each call builds a candidate
+workload in a fresh context, leaving its effort and staffing budget open:
 
 .. literalinclude:: ../../examples/record_review.py
    :language: python
@@ -576,9 +585,9 @@ checking itself costs time, so six is a uniform upper bound on net saving.
 >>> from sympy import log
 >>> from examples.record_review import EFFORT_DOMAIN, review_context
 >>> from modello.contrib.verification import supremum_below
->>> proposed = review_context().observe(candidate=2*log(3))
+>>> proposed = review_context().observe(effort=2*log(3))
 >>> ceiling = proposed.with_obligations(supremum_below(
-...     "net_saving", wrt="effort", domain=EFFORT_DOMAIN,
+...     "candidate.net_saving", wrt="effort", domain=EFFORT_DOMAIN,
 ...     bound=7, name="saving_ceiling"))
 >>> ceiling.explain("saving_ceiling").verdict
 'unresolved'

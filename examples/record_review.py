@@ -22,7 +22,6 @@ from sympy import (
     Rational,
     S,
     Subs,
-    diff,
     lambdify,
     limit,
     log,
@@ -127,30 +126,38 @@ class ExponentialReview(VerificationModel):
     )
 
 
-class ReviewPlanning(VerificationModel):
-    """Expected staff minutes per record, including later repair of missed errors."""
+class ReviewWorkload(Modello):
+    """Response, saving, workload, and local derivatives at a supplied effort."""
 
     record = component(RecordWork)
     review = component(ExponentialReview)
-    budget = component(EntryBudget)
-    effort = review.effort
-    candidate = InstanceDummy("s", nonnegative=True)
-    net_saving = record.avoidable_minutes * review.value - effort
+    effort = InstanceDummy("s", nonnegative=True)
+    caught_share = Subs(review.value, review.effort, effort)
+    net_saving = record.avoidable_minutes * caught_share - effort
     expected_minutes = record.expected_minutes - net_saving
     # A deferred derivative acts on the resolved curve, rather than the field's
     # placeholder symbol. It also generates a differentiability obligation.
     marginal_saving = Derivative(net_saving, effort, evaluate=False)
-    candidate_marginal = Subs(marginal_saving, effort, candidate)
-    candidate_saving = Subs(net_saving, effort, candidate)
-    candidate_minutes = budget.minutes_per_record
-    candidate_minutes = Subs(expected_minutes, effort, candidate)
+    workload_curvature = Derivative(expected_minutes, effort, 2, evaluate=False)
+
+
+class ReviewPlanning(VerificationModel):
+    """A candidate workload, its staffing budget, and an alternative effort."""
+
+    candidate = component(ReviewWorkload)
+    budget = component(EntryBudget)
+    effort = candidate.effort
+    other_effort = Coordinate("t", nonnegative=True)
+    minutes_per_record = budget.minutes_per_record
+    minutes_per_record = candidate.expected_minutes
 
 
 GLOBAL_MAXIMUM = Obligation(
     "global_maximum",
-    ReviewPlanning.candidate_saving >= ReviewPlanning.net_saving,
+    ReviewPlanning.candidate.net_saving
+    >= Subs(ReviewPlanning.candidate.net_saving, ReviewPlanning.candidate.effort, ReviewPlanning.other_effort),
     "rule",
-    wrt="effort",
+    wrt="other_effort",
     domain=EFFORT_DOMAIN,
     reason="The proposed checking time maximizes net saving over all nonnegative efforts.",
 )
@@ -159,16 +166,16 @@ STATIONARY_MAXIMUM = InferenceRule(
     "concave_stationary_maximum",
     GLOBAL_MAXIMUM,
     (
-        concave("net_saving", wrt="effort", domain=EFFORT_DOMAIN, name="concavity"),
+        concave("candidate.net_saving", wrt="candidate.effort", domain=EFFORT_DOMAIN, name="concavity"),
         continuously_differentiable(
-            "net_saving",
-            wrt="effort",
+            "candidate.net_saving",
+            wrt="candidate.effort",
             domain=EFFORT_DOMAIN,
             order=1,
             name="differentiability",
         ),
-        equal_to("candidate_marginal", 0, name="stationarity"),
-        nonnegative("candidate", name="feasibility"),
+        equal_to("candidate.marginal_saving", 0, name="stationarity"),
+        nonnegative("candidate.effort", name="feasibility"),
     ),
     source="Concave supporting-line inequality; docs/examples/record-review/index.rst#why-this-is-a-global-optimum",
 )
@@ -186,26 +193,20 @@ class ReviewDecision:
 
 def _evaluate_plan(current: VerificationContext) -> ReviewDecision:
     """Evaluate the proposed plan after its Method has established the premises."""
-    candidate = current.expression("candidate")
-    workload = current.expression("expected_minutes", wrt="effort")
-    effort = current.problem.model.effort
-    values = (
-        candidate,
-        current.expression("candidate_saving").doit(),
-        current.expression("candidate_minutes").doit(),
-        diff(workload, effort, 2).subs(effort, candidate),
+    values = tuple(
+        simplify(current.expression(f"candidate.{field}").doit())
+        for field in ("effort", "net_saving", "expected_minutes", "workload_curvature")
     )
-    values = tuple(simplify(value) for value in values)
     if any(value.free_symbols or value.is_finite is not True or value.is_real is not True for value in values):
-        raise ValueError("Observe all parameters and the candidate before evaluating a plan")
+        raise ValueError("Observe all parameters and the effort before evaluating a plan")
     return ReviewDecision(*values)
 
 
 review_plan = Method(
     "review_plan",
     _evaluate_plan,
-    preconditions=(GLOBAL_MAXIMUM, positive("candidate_minutes", name="positive_workload")),
-    uses=("candidate", "candidate_saving", "candidate_minutes", "expected_minutes"),
+    preconditions=(GLOBAL_MAXIMUM, positive("candidate.expected_minutes", name="positive_workload")),
+    uses=("candidate.effort", "candidate.net_saving", "candidate.expected_minutes", "candidate.workload_curvature"),
 )
 
 
@@ -213,7 +214,7 @@ def review_context(record: RecordWork | None = None, *, rate=Rational(1, 2)) -> 
     """Start a fresh context with these inputs and the stationary-point rule.
 
     Supply a RecordWork instance to reuse estimates. With no instance, use the
-    walkthrough's baseline. The candidate and staffing budget stay open.
+    walkthrough's baseline. The effort and staffing budget stay open.
     """
     if record is None:
         record = RecordWork("record", entry_minutes=4, error_fraction=Rational(1, 10), repair_minutes=60)
@@ -221,8 +222,7 @@ def review_context(record: RecordWork | None = None, *, rate=Rational(1, 2)) -> 
         VerificationContext.for_model(ReviewPlanning, "records")
         .with_rule(STATIONARY_MAXIMUM)
         .observe(
-            record=record,
-            review=ExponentialReview("response", rate=rate),
+            candidate=ReviewWorkload("candidate", record=record, review=ExponentialReview("response", rate=rate)),
         )
     )
 
@@ -251,15 +251,20 @@ def write_reports(directory: Path, *, plot: bool = False) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     measured = review_context()
     contexts = {
-        "exponential": measured.observe(candidate=2 * log(3)),
-        "rational": measured.replace("review", RationalReview).observe(candidate=2 * (sqrt(3) - 1)),
-        "capped": measured.replace("review", CappedReview).observe(candidate=2),
+        "exponential": measured.observe(effort=2 * log(3)),
+        "rational": measured.replace("candidate.review", RationalReview).observe(effort=2 * (sqrt(3) - 1)),
+        "capped": measured.replace("candidate.review", CappedReview).observe(effort=2),
     }
     summary: dict = {
         "versions": {name: metadata.version(name) for name in ("modello", "sympy")},
         "inputs": {
             path: str(measured.expression(path))
-            for path in ("record.entry_minutes", "record.error_fraction", "record.repair_minutes", "review.rate")
+            for path in (
+                "candidate.record.entry_minutes",
+                "candidate.record.error_fraction",
+                "candidate.record.repair_minutes",
+                "candidate.review.rate",
+            )
         },
         "plans": {},
     }
@@ -298,8 +303,8 @@ def _write_plots(contexts: dict[str, VerificationContext[ReviewPlanning]], direc
 
     times = [index / 50 for index in range(301)]
     baseline = contexts["exponential"]
-    effort = baseline.problem.model.effort
-    net_saving = baseline.expression("net_saving", wrt="effort")
+    effort = baseline.symbols.effort
+    net_saving = baseline.expression("candidate.net_saving", wrt="effort").doit()
     benefit, benefit_axes = new_plot("Why spend time checking?", "Minutes per record")
     for expression, label, style in (
         (net_saving, r"Net saving $G(t)$", "-"),
@@ -313,7 +318,8 @@ def _write_plots(contexts: dict[str, VerificationContext[ReviewPlanning]], direc
 
     comparison, comparison_axes = new_plot("Changing the response curve", r"Net saving $G(t)$ (minutes per record)")
     for name, current in contexts.items():
-        evaluate = lambdify(effort, current.expression("net_saving", wrt="effort"), "math")
+        axis = current.symbols.effort
+        evaluate = lambdify(axis, current.expression("candidate.net_saving", wrt="effort").doit(), "math")
         comparison_axes.plot(times, [evaluate(time) for time in times], label=name.capitalize())
     comparison_axes.legend()
     comparison.savefig(directory / "responses.svg", metadata={"Date": None})

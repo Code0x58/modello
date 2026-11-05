@@ -403,23 +403,22 @@ when you need to reopen an earlier choice.
 Compose the decision model
 --------------------------
 
-Now compose the relationships we have built:
+Turn the saving and workload formulas into a reusable model, ``ReviewWorkload``.
+Its ``record`` component supplies entry time, avoidable repair work, and baseline
+workload. Its ``review`` component supplies the response curve and its declared
+properties. An ``effort`` input supplies the checking time for this workload.
 
-* ``record`` reuses ``RecordWork``, including entry time :math:`b`, derived
-  avoidable repair work :math:`a`, and baseline workload :math:`b+a`.
-* ``review`` supplies the response :math:`u(t)` and its declared properties.
-* ``budget`` reuses ``EntryBudget`` to relate records and staff time for the
-  chosen plan.
+The response curve has its own argument, ``review.effort``. SymPy's
+``Subs(review.value, review.effort, effort)`` evaluates that response at the
+workload's input. For an input :math:`s`, this gives the caught share :math:`u(s)`;
+the next two fields express :math:`G(s)` and :math:`M(s)` using the formulas above.
+Unlike the curve's ``Coordinate``, this ``InstanceDummy`` input can be supplied
+as an observation.
 
-``effort = review.effort`` takes the coordinate from the response component, so
-its benefit and the workload vary with the same :math:`t`. ``candidate`` is a
-proposed checking time, separate from that coordinate over all possible times.
-
-We also record the derivative of net saving and evaluate it at the candidate.
-SymPy's ``Derivative(..., evaluate=False)`` keeps differentiation deferred until
+Keep the slope of saving and the curvature of workload in this model too.
+SymPy's ``Derivative(..., evaluate=False)`` defers differentiation until
 Modello has resolved the named quantity to its formula. Without that delay,
-it would differentiate the field's placeholder symbol. ``Subs`` substitutes
-the candidate for the effort coordinate:
+it would differentiate the field's placeholder symbol:
 
 .. code-block:: python
 
@@ -428,20 +427,30 @@ the candidate for the effort coordinate:
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
-   :pyobject: ReviewPlanning
-
-The two ``candidate_minutes`` assignments connect the chosen workload to
-``budget.minutes_per_record``: they name the same quantity, then give it the
-formula :math:`M(s)` at the candidate :math:`s`. The budget can use that result
-to infer staff time or record count through its existing relationship.
+   :pyobject: ReviewWorkload
 
 Writing the derivative generates a differentiability obligation automatically.
 The C² claim declared on the response is stronger: it also asks for continuous
 first and second derivatives, for our later quadratic approximation.
 
+Now make a proposed workload the ``candidate`` component of the decision model.
+``effort = candidate.effort`` exposes its input at the top level, so we can
+supply it with ``observe(effort=...)``. ``other_effort`` will let us compare
+the candidate with every alternative checking time in the optimality argument.
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: ReviewPlanning
+
+The two ``minutes_per_record`` assignments connect the budget to the candidate's
+expected workload. The budget can use that quantity to infer staff time or
+record count through its existing relationship. Saving, workload, and their
+derivatives all come from the same candidate component; no separate candidate
+formulas are needed in this model.
+
 The example's ``review_context()`` helper accepts our ``RecordWork`` instance
-and checking rate, and registers the optimality argument explained below.
-It leaves the candidate and staffing budget open.
+and checking rate, builds the candidate workload, and registers the optimality
+argument explained below. It leaves the effort and staffing budget open.
 This helper belongs to the example; :ref:`its implementation
 <verification-example-contract>` shows how to prepare the same context yourself.
 ``expression(path)`` returns a field's resolved SymPy expression, so we can
@@ -450,14 +459,14 @@ inspect the inputs:
 >>> from sympy import log
 >>> from examples.record_review import review_context
 >>> measured = review_context(record, rate=short.rate)
->>> measured.expression("record.entry_minutes"), measured.expression("record.avoidable_minutes")
+>>> measured.expression("candidate.record.entry_minutes"), measured.expression("candidate.record.avoidable_minutes")
 (4, 6)
->>> measured.expression("review.rate")
+>>> measured.expression("candidate.review.rate")
 1/2
->>> measured.explain("review.value/strictly_increasing").verdict
+>>> measured.explain("candidate.review.value/strictly_increasing").verdict
 'strictly true'
 
-The nested response keeps its claims with the prefix ``review.value``.
+The nested response keeps its claims with the prefix ``candidate.review.value``.
 
 Propose a checking time
 -----------------------
@@ -472,11 +481,20 @@ Setting :math:`G'(t)=0` gives the candidate :math:`t_*=2\log3`, about
 2.20 minutes, where :math:`\log` denotes the natural logarithm. A point with
 zero derivative is called a stationary point.
 We can confirm this exactly. ``doit()`` carries out the deferred derivative
-and substitution in ``candidate_marginal``:
+and substitution in ``candidate.marginal_saving``:
 
->>> proposed = measured.observe(candidate=2*log(3))
->>> proposed.expression("candidate_marginal").doit()
+>>> proposed = measured.observe(effort=2*log(3))
+>>> proposed.expression("candidate.marginal_saving").doit()
 0
+
+An observation evaluates the workload at that input. To inspect the whole
+saving curve instead, pass ``wrt="effort"``: this keeps the input symbolic
+while substituting the observed record estimates and checking rate.
+The returned expression uses this context's effort symbol:
+
+>>> saving_curve = proposed.expression("candidate.net_saving", wrt="effort").doit()
+>>> saving_curve.free_symbols == {proposed.symbols.effort}
+True
 
 Stationarity alone does not establish an optimum. A stationary point might
 be a minimum, and a numerical grid might miss a better point.
@@ -507,6 +525,10 @@ workload for the capacity calculation.
 ``review_context()`` registered the stationary-point implication as a trusted
 inference rule. The checker establishes its premises for our particular curve
 and candidate; it does not prove the general implication itself.
+Its concavity and differentiability checks select ``candidate.effort`` with
+``wrt``, keeping the whole curve available despite the observed checking time.
+The zero-slope check uses the observed point. Thus both kinds of check reuse
+the workload's definitions.
 ``stationarity`` means a zero derivative at the candidate; ``feasibility``
 means a nonnegative candidate. Run the method, then inspect the four premises:
 
@@ -581,13 +603,13 @@ starts a fresh context, so the original observations remain for comparison:
 >>> shorter_repairs = RecordWork("shorter repairs", entry_minutes=record.entry_minutes,
 ...                              error_fraction=record.error_fraction, repair_minutes=30)
 >>> revised = review_context(shorter_repairs, rate=short.rate)
->>> revised = revised.observe(candidate=2*log(Rational(3, 2)))
+>>> revised = revised.observe(effort=2*log(Rational(3, 2)))
 >>> revised_result = revised.run(review_plan)
 >>> round(float(revised_result.data.effort), 2)
 0.81
 >>> revised_result.report.explain("global_maximum").verdict
 'strictly true'
->>> measured.expression("record.avoidable_minutes")
+>>> measured.expression("candidate.record.avoidable_minutes")
 6
 
 Cheaper repairs make less checking worthwhile. The same method establishes
@@ -614,13 +636,13 @@ rate. This is the replacement declaration:
 
 With the same inputs, the new marginal saving is
 :math:`G'(t)=3/(1+t/2)^2-1`. Solving :math:`G'(t)=0` on :math:`t\geq0`
-gives :math:`t_*=2(\sqrt{3}-1)`. Start from ``measured`` so the candidate
+gives :math:`t_*=2(\sqrt{3}-1)`. Start from ``measured`` so the effort
 has not yet been fixed:
 
 >>> from sympy import sqrt
 >>> from examples.record_review import RationalReview
->>> changed = measured.replace("review", RationalReview)
->>> changed = changed.observe(candidate=2*(sqrt(3)-1))
+>>> changed = measured.replace("candidate.review", RationalReview)
+>>> changed = changed.observe(effort=2*(sqrt(3)-1))
 >>> alternative = changed.run(review_plan)
 >>> alternative.report.explain("global_maximum").verdict
 'strictly true'
@@ -631,10 +653,11 @@ has not yet been fixed:
 >>> result.data.minutes_per_record == 6 + 2*log(3)
 True
 
-The same concavity argument establishes its optimum. Keeping the exponential
-candidate instead would fail the stationarity premise; replacing a component
-does not preserve conclusions about the old formula. Our earlier result
-remains available for comparison.
+The candidate's saving, workload, and derivatives now use the replaced response
+automatically. The same concavity argument establishes its optimum. Keeping the
+exponential candidate instead would fail the stationarity premise; replacing
+a component does not preserve conclusions about the old formula. Our earlier
+result remains available for comparison.
 
 Learn from a failed replacement
 -------------------------------
@@ -657,8 +680,8 @@ find out why our method cannot use it:
 
 >>> from examples.record_review import CappedReview
 >>> from modello.contrib.verification import VerificationError
->>> capped = measured.replace("review", CappedReview).observe(candidate=2)
->>> capped.explain("review.value/continuously_differentiable").verdict
+>>> capped = measured.replace("candidate.review", CappedReview).observe(effort=2)
+>>> capped.explain("candidate.review.value/continuously_differentiable").verdict
 'strictly false'
 >>> try:
 ...     capped.run(review_plan)
@@ -674,9 +697,10 @@ original strict increase claim no longer describes it.
 Adopting it would require a response specification that permits this shape,
 as well as an appropriate method.
 
-Evaluate a few points to explore the proposed shape:
+Evaluate a few points to explore the proposed response shape, selecting its
+own effort coordinate:
 
->>> sampled = capped.sample("review.value", wrt="effort", points=(1, 2, 3))
+>>> sampled = capped.sample("candidate.review.value", wrt="candidate.review.effort", points=(1, 2, 3))
 >>> tuple(float(value) for value in sampled.values)
 (0.5, 1.0, 1.0)
 >>> sampled.kind
@@ -705,7 +729,7 @@ respect it:
 
 >>> from modello.contrib.verification import predicate
 >>> ambitious = proposed.with_obligations(predicate(
-...     proposed.symbols.candidate_saving >= 2,
+...     proposed.symbols.candidate.net_saving >= 2,
 ...     name="saving_target", consumer="review_plan",
 ...     reason="The proposed process should save two minutes per record."))
 >>> ambitious.explain("saving_target").verdict

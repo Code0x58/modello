@@ -175,7 +175,7 @@ assert VerificationContext.for_model(VerificationCurve).verify().to_dict()["evid
 assert not {"numpy", "scipy", "matplotlib"} & sys.modules.keys()
 from examples.record_review import review_context, review_plan
 from sympy import log
-decision = review_context().observe(candidate=2*log(3)).run(review_plan).data
+decision = review_context().observe(effort=2*log(3)).run(review_plan).data
 assert decision.minutes_per_record == 6 + 2*log(3)
 assert decision.workload_curvature*2 == 1
 assert not {"numpy", "scipy", "matplotlib"} & sys.modules.keys()
