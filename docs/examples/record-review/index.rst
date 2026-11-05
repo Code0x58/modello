@@ -5,6 +5,38 @@ An archive is digitising paper records. Typing faster increases its daily
 output, but mistakes create work later. A colleague can spend time checking
 each entry before it leaves the team. How much checking is worthwhile?
 
+Start by following a record through the process:
+
+.. mermaid::
+   :alt: Every record is reviewed. Initially correct records stay correct. Initially incorrect records are either corrected or left incorrect and need later repair.
+   :caption: Three groups leave checking: always correct, corrected, and still incorrect.
+
+   flowchart TD
+       accTitle: A record's path through checking
+       accDescr: Every record is reviewed. Initially correct records stay correct. Errors are either corrected during checking or left for later repair.
+       record["Enter a record"] -->|Correct| correct_review
+       record -->|Incorrect| error_review
+       subgraph review["Review every record"]
+           correct_review["Check a correct record"]
+           error_review["Check an incorrect record"]
+       end
+       correct_review --> always_correct["Always correct"]
+       error_review -->|Caught| corrected["Corrected"]
+       error_review -->|Missed| remaining["Still incorrect"]
+       remaining --> repair["Later repair"]
+
+This first model assumes that checking introduces no errors. Correcting an error
+during checking takes no staff minutes beyond the checking minutes already
+counted. Only records still incorrect after checking need the later repair.
+The three groups keep track of each record's path through the process.
+
+One model will answer several questions:
+
+* What fraction of records leave checking correct or still incorrect?
+* What happens as checking minutes grow, or the same short check is repeated?
+* Which checking minutes minimise total staff minutes per record?
+* How many records fit within a staff-minutes budget?
+
 We will build a workload model, use calculus to propose a checking time, and
 check the properties that justify that decision. Then we will change the
 checking response and revisit the result. You need Python and undergraduate
@@ -425,6 +457,18 @@ properties. Read its checking minutes as ``review.minutes_per_record`` and its
 caught share as ``review.caught_share``. The workload uses those quantities directly to
 express :math:`G(t)` and :math:`M(t)`.
 
+The model also records the diagram's three outcome fractions. They are shares
+of **all records**:
+
+* ``always_correct_fraction`` is :math:`1-p`: correct before and after checking.
+* ``corrected_fraction`` is :math:`p\,u(t)`: initially incorrect, then corrected.
+* ``remaining_error_fraction`` is :math:`p(1-u(t))`: still incorrect after checking.
+
+In contrast, ``review.caught_share`` is the share of **initial errors** caught.
+Multiplying by ``record.error_fraction`` converts it to the corrected fraction
+of all records. Each correction avoids ``record.repair_minutes_per_error``
+minutes of later repair, which gives the minutes-saved formula.
+
 The component path tells us which activity a field measures:
 
 .. list-table:: Minutes per record in the workload model
@@ -500,6 +544,90 @@ inspect the inputs:
 
 The nested response keeps its claims with the prefix ``candidate.review.caught_share``.
 
+.. _record-review-outcomes:
+
+Ask about quality and limits
+----------------------------
+
+Before choosing checking minutes for the budget, inspect the three outcome
+groups. Use the same measured inputs and try two checking minutes per record:
+
+>>> two_minutes = measured.observe(**{"candidate.review.minutes_per_record": 2})
+>>> outcome_fields = ("always_correct_fraction", "corrected_fraction", "remaining_error_fraction")
+>>> tuple(round(float(two_minutes.expression(f"candidate.{field}")), 4)
+...       for field in outcome_fields)
+(0.9, 0.0632, 0.0368)
+
+About 90% of records were already correct, 6.32% were corrected during checking,
+and 3.68% still need repair. These are expected proportions, not guaranteed
+counts in a particular batch. The three fractions account for every record:
+
+>>> from sympy import simplify
+>>> simplify(sum(two_minutes.expression(f"candidate.{field}") for field in outcome_fields))
+1
+
+To inspect the whole curve, pass ``wrt="candidate.review.minutes_per_record"``.
+This keeps checking minutes symbolic even in a context with an observed value,
+while retaining the observed record estimates and detection rate. The symbol
+comes from this context's component:
+
+>>> checking_minutes_per_record = two_minutes.symbols.candidate.review.minutes_per_record
+>>> remaining_errors = two_minutes.expression(
+...     "candidate.remaining_error_fraction", wrt="candidate.review.minutes_per_record")
+>>> limit(remaining_errors, checking_minutes_per_record, S.Infinity)
+0
+
+For our positive detection rate, the remaining-error fraction approaches zero.
+This is a quality limit. It does not tell us to check forever: checking itself
+uses staff minutes, so total minutes per record grow without bound:
+
+>>> total_minutes = two_minutes.expression(
+...     "candidate.minutes_per_record", wrt="candidate.review.minutes_per_record")
+>>> limit(total_minutes, checking_minutes_per_record, S.Infinity)
+oo
+
+.. _record-review-equilibrium:
+
+Repeat a short check: the Markov view
+------------------------------------------
+
+If we track only current correctness, the always-correct and corrected groups
+both belong to the **correct** state. Under our constant-detection assumption,
+repeating a fixed short check gives a two-state Markov chain: the next state
+depends on the current state and the same detection probability at each check.
+Write :math:`c` for
+``short.caught_share``; ``short.remaining_share`` is :math:`1-c`.
+
+.. mermaid::
+   :alt: An incorrect record becomes correct with probability c or remains incorrect with probability 1 minus c. A correct record stays correct with probability one.
+   :caption: Transition probabilities for one short check, with 0 < c <= 1.
+
+   flowchart LR
+       accTitle: Correctness after one short check
+       accDescr: An incorrect record becomes correct with probability c or stays incorrect with probability 1 minus c. Correct is an absorbing state.
+       incorrect(("Incorrect")) -->|"Caught: c"| correct(("Correct"))
+       incorrect -->|"Missed: 1 - c"| incorrect
+       correct -->|"Stays correct: 1"| correct
+
+Let :math:`q` be the expected fraction currently incorrect, initially
+``record.error_fraction``. One check leaves the expected fraction
+:math:`q(1-c)`. An **equilibrium**, or fixed point, leaves that expected fraction
+unchanged. Reuse our short-check model to solve this condition:
+
+>>> from sympy import Eq, solve
+>>> q = Symbol("q", nonnegative=True)
+>>> solve(Eq(q, q * short.remaining_share), q)
+[0]
+
+Our short check catches one twentieth of the errors still present, so repeated
+checking tends to the all-correct state. It is **absorbing**: once correct, a
+record stays correct under this model. If a check catches nothing, every
+initial error fraction stays unchanged instead.
+
+This equilibrium concerns correctness after repeated checks. The staffing
+optimum asks a different question: how many checking minutes are worth their
+cost? We now use the same workload model to find that finite choice.
+
 Propose checking minutes
 ----------------------------
 
@@ -522,11 +650,8 @@ and substitution in ``candidate.minutes_saved_derivative``:
 >>> proposed.expression("candidate.minutes_saved_derivative").doit()
 0
 
-An observation evaluates the workload at that input. To inspect the whole
-minutes-saved curve instead, pass ``wrt="candidate.review.minutes_per_record"``.
-This keeps the input symbolic while substituting the observed record estimates
-and detection rate.
-The returned expression uses this context's symbol for checking minutes:
+The minutes-saved curve uses the same input. Keep it symbolic with ``wrt``
+as in the quality-limit calculation:
 
 >>> saving_curve = proposed.expression(
 ...     "candidate.minutes_saved_per_record",

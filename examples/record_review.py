@@ -127,11 +127,14 @@ class ExponentialReview(VerificationModel):
 
 
 class ReviewWorkload(Modello):
-    """Minutes saved and total minutes per record, with their derivatives."""
+    """Record outcome fractions, staff minutes, and their derivatives."""
 
     record = component(RecordWork)
     review = component(ExponentialReview)
-    minutes_saved_per_record = record.repair_minutes_per_record * review.caught_share - review.minutes_per_record
+    always_correct_fraction = 1 - record.error_fraction
+    corrected_fraction = record.error_fraction * review.caught_share
+    remaining_error_fraction = record.error_fraction - corrected_fraction
+    minutes_saved_per_record = corrected_fraction * record.repair_minutes_per_error - review.minutes_per_record
     minutes_per_record = record.minutes_per_record - minutes_saved_per_record
     # A deferred derivative acts on the resolved curve, rather than the field's
     # placeholder symbol. It also generates a differentiability obligation.

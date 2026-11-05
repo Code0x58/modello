@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from sympy import FiniteSet, Rational, Symbol, exp, log, simplify, sqrt
+from sympy import FiniteSet, Rational, S, Symbol, exp, limit, log, simplify, sqrt
 
 from examples.record_review import (
     CappedReview,
@@ -71,6 +71,23 @@ def test_definition_reports_distinguish_parameter_conditions_and_regularity():
     assert positive_detection_rate.explain("caught_share/strictly_increasing").verdict == "strictly true"
     assert context.observe(detection_rate=0).explain("caught_share/strictly_increasing").verdict == "strictly false"
     assert context.explain("caught_share/strictly_increasing").verdict == "conditionally true"
+
+
+def test_outcome_fractions_conserve_records_and_follow_response_replacements(measured):
+    paths = ("always_correct_fraction", "corrected_fraction", "remaining_error_fraction")
+    axis = measured.symbols.candidate.review.minutes_per_record
+    outcomes = tuple(measured.expression(f"candidate.{path}", wrt=axis) for path in paths)
+    assert simplify(sum(outcomes)) == 1
+    assert tuple(value.subs(axis, 0) for value in outcomes) == (Rational(9, 10), 0, Rational(1, 10))
+    assert tuple(limit(value, axis, S.Infinity) for value in outcomes) == (Rational(9, 10), Rational(1, 10), 0)
+
+    changed = measured.replace("candidate.review", RationalReview).observe(**{"candidate.review.minutes_per_record": 2})
+    assert tuple(changed.expression(f"candidate.{path}") for path in paths) == (
+        Rational(9, 10),
+        Rational(1, 20),
+        Rational(1, 20),
+    )
+    assert changed.expression("candidate.minutes_per_record") == 9
 
 
 def test_stationary_candidate_has_a_global_certificate_and_local_curvature(proposed):
