@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, fields
 from importlib import metadata
 from pathlib import Path
 
@@ -17,7 +17,6 @@ from sympy import (
     Derivative,
     Dummy,
     Expr,
-    ImmutableMatrix,
     Interval,
     Piecewise,
     Rational,
@@ -27,10 +26,9 @@ from sympy import (
     log,
     simplify,
     sqrt,
-    sympify,
 )
 
-from modello import InstanceDummy, Modello, Vector, component, inspect_model
+from modello import InstanceDummy, Modello, component
 from modello.contrib.verification import (
     InferenceRule,
     Method,
@@ -80,66 +78,6 @@ class CheckingStep(Modello):
     remaining_share = 1 - caught_share
     remaining_error_fraction = record.error_fraction * remaining_share
     repair_minutes_per_record = remaining_error_fraction * record.repair_minutes_per_error
-
-
-class ReviewTransitions(VerificationContext):
-    """A transition matrix and guarded distribution updates for any state count."""
-
-    @classmethod
-    def for_matrix(cls, P, *, distribution=None):
-        """Start a context for a nonempty square matrix and optional initial row."""
-        matrix = ImmutableMatrix(P)
-        if not matrix.rows or matrix.rows != matrix.cols:
-            raise ValueError("A transition matrix must be nonempty and square")
-
-        # Adapt matrix entries to the existing scalar/vector proof machinery.
-        # The state count and every transition come from P, not named states.
-        class MatrixState(Modello):
-            P = Vector("P", size=matrix.rows * matrix.cols)
-            distribution = Vector("v", size=matrix.rows)
-
-        observations = {"P": list(matrix)}
-        if distribution is not None:
-            observations["distribution"] = distribution
-        context = cls(inspect_model(MatrixState, "transitions", **observations))
-        return replace(context, obligations=context._matrix_obligations())
-
-    @property
-    def P(self) -> ImmutableMatrix:
-        """The transition matrix resolved under this context's observations."""
-        size = len(self.symbols.distribution)
-        return ImmutableMatrix(size, size, [self.expression(entry) for entry in self.symbols.P])
-
-    @property
-    def distribution(self) -> ImmutableMatrix:
-        """The current state probabilities, in the same order as P's rows."""
-        values = [self.expression(entry) for entry in self.symbols.distribution]
-        return ImmutableMatrix(1, len(values), values)
-
-    def _matrix_obligations(self):
-        size = len(self.symbols.distribution)
-        P = ImmutableMatrix(size, size, list(self.symbols.P))
-        return (
-            *(nonnegative(P[i, j], name=f"P_{i}_{j}_nonnegative") for i in range(size) for j in range(size)),
-            *(equal_to(sum(P.row(i)), 1, name=f"P_row_{i}_sum") for i in range(size)),
-        )
-
-    def advance(self, steps=1):
-        """Return a verified result for v P**steps, retaining its proof report."""
-        steps = sympify(steps)
-        if steps.is_integer is not True or steps.is_nonnegative is not True:
-            raise ValueError("The number of checks must be a nonnegative integer")
-        distribution = self.symbols.distribution
-        method = Method(
-            "advance",
-            lambda current: current.distribution * current.P**steps,
-            preconditions=(
-                *self._matrix_obligations(),
-                *(nonnegative(value, name=f"v_{i}_nonnegative") for i, value in enumerate(distribution)),
-                equal_to(sum(distribution), 1, name="distribution_sum"),
-            ),
-        )
-        return self.run(method)
 
 
 def derive_checking_response(minutes_per_record: Expr, detection_rate: Expr) -> Expr:
