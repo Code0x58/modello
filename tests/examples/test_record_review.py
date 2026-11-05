@@ -52,24 +52,28 @@ def test_short_checks_derive_the_continuous_response():
     assert response.subs(effort, 0) == 0
     assert response.subs(rate, 0) == 0
     context = VerificationContext.for_model(ExponentialReview)
-    assert context.expression("value", wrt="effort") == derive_checking_response(
-        context.problem.model.effort, context.symbols.rate
+    assert context.expression("caught_share", wrt="effort") == derive_checking_response(
+        context.symbols.effort, context.symbols.rate
     )
+    review = ExponentialReview("observed", effort=2, rate=Rational(1, 2))
+    assert review.caught_share == 1 - exp(-1)
 
 
 def test_definition_reports_distinguish_parameter_conditions_and_regularity():
     definition = ExponentialReview.definition_report()
-    assert definition.explain("value/strictly_increasing").verdict == "conditionally true"
-    assert definition.explain("value/concave").verdict == "strictly true"
-    assert definition.explain("value/continuously_differentiable").verdict == "strictly true"
+    assert definition.explain("caught_share/strictly_increasing").verdict == "conditionally true"
+    assert definition.explain("caught_share/concave").verdict == "strictly true"
+    assert definition.explain("caught_share/continuously_differentiable").verdict == "strictly true"
     context = VerificationContext.for_model(ExponentialReview)
     positive_rate = context.assume(context.symbols.rate > 0)
-    assert positive_rate.explain("value/strictly_increasing").verdict == "strictly true"
-    assert context.observe(rate=0).explain("value/strictly_increasing").verdict == "strictly false"
-    assert context.explain("value/strictly_increasing").verdict == "conditionally true"
+    assert positive_rate.explain("caught_share/strictly_increasing").verdict == "strictly true"
+    assert context.observe(rate=0).explain("caught_share/strictly_increasing").verdict == "strictly false"
+    assert context.explain("caught_share/strictly_increasing").verdict == "conditionally true"
 
 
 def test_stationary_candidate_has_a_global_certificate_and_local_curvature(proposed):
+    assert proposed.symbols.effort == proposed.symbols.candidate.review.effort
+    assert proposed.symbols.candidate.caught_share == proposed.symbols.candidate.review.caught_share
     result = proposed.run(review_plan)
     decision = result.data
     assert simplify(decision.effort - 2 * log(3)) == 0
@@ -157,7 +161,7 @@ def test_the_capped_curve_retains_its_claims_and_exposes_its_kink(measured):
     capped = measured.replace("candidate.review", CappedReview).observe(effort=2)
     with pytest.raises(VerificationError) as error:
         capped.run(review_plan)
-    regularity = error.value.report.explain("candidate.review.value/continuously_differentiable")
+    regularity = error.value.report.explain("candidate.review.caught_share/continuously_differentiable")
     assert regularity.verdict == "strictly false"
     assert dict(regularity.witness)[capped.symbols.candidate.review.effort] == 2
     assert error.value.report.explain("global_maximum").verdict == "unresolved"

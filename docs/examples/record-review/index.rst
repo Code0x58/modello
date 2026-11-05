@@ -310,12 +310,13 @@ A property we ask the checker to establish is a **proof obligation**.
 ``specifies`` attaches obligations to a field. ``VerificationModel`` attempts
 them when the class is defined, retaining each result for inspection.
 
-In the declaration below, ``effort`` is a ``Coordinate`` for the curve's argument
-:math:`t`. ``rate`` is an ``InstanceDummy`` parameter for :math:`k`. Although
-our story expects a positive rate, we leave it unrestricted so the checker
-can tell us which values establish the requested properties.
+In the declaration below, ``effort`` and ``rate`` are ``InstanceDummy`` inputs
+for checking time :math:`t` and effectiveness :math:`k`. We can supply a
+particular time or keep it symbolic to study the whole response curve.
+Although our story expects a positive rate, we leave it unrestricted so the
+checker can tell us which values establish the requested properties.
 
-The ``value`` field calls ``derive_checking_response(effort, rate)``. This is
+The ``caught_share`` field calls ``derive_checking_response(effort, rate)``. This is
 :ref:`the function we built from the short-step model
 <record-review-response-function>`, now using the model's symbols for :math:`t`
 and :math:`k`. ``specifies`` pairs its returned expression with the three
@@ -330,7 +331,7 @@ the domain for the verification declaration:
 .. code-block:: python
 
    from sympy import Interval, S
-   from modello import Coordinate, InstanceDummy
+   from modello import InstanceDummy
    from modello.contrib.verification import (
        VerificationModel, concave, continuously_differentiable,
        specifies, strictly_increasing,
@@ -343,17 +344,17 @@ the domain for the verification declaration:
    :pyobject: ExponentialReview
 
 ``definition_report()`` contains the results of those checks. ``explain(id)``
-selects one result: ``value/strictly_increasing`` combines the field path
-``value`` with the obligation's name. The commands below import the class
+selects one result: ``caught_share/strictly_increasing`` combines the field path
+``caught_share`` with the obligation's name. The commands below import the class
 whose declaration we have just read.
 
 >>> from examples.record_review import ExponentialReview
 >>> definition = ExponentialReview.definition_report()
->>> definition.explain("value/strictly_increasing").verdict
+>>> definition.explain("caught_share/strictly_increasing").verdict
 'conditionally true'
->>> definition.explain("value/concave").verdict
+>>> definition.explain("caught_share/concave").verdict
 'strictly true'
->>> definition.explain("value/continuously_differentiable").verdict
+>>> definition.explain("caught_share/continuously_differentiable").verdict
 'strictly true'
 
 A verdict concerns the stated domain and the available definitions, data,
@@ -372,11 +373,11 @@ using the symbols that belong to this context, then add it as an assumption:
 
 >>> from modello.contrib.verification import VerificationContext
 >>> curve = VerificationContext.for_model(ExponentialReview)
->>> increase = curve.explain("value/strictly_increasing")
+>>> increase = curve.explain("caught_share/strictly_increasing")
 >>> increase.condition == (curve.symbols.rate > 0)
 True
 >>> positive_rate = curve.assume(curve.symbols.rate > 0)
->>> positive_rate.explain("value/strictly_increasing").verdict
+>>> positive_rate.explain("caught_share/strictly_increasing").verdict
 'strictly true'
 
 An assumption restricts allowed parameter values; an observation fixes a value
@@ -384,15 +385,15 @@ for a particular branch. SymPy's ``Rational(1, 2)`` keeps the observed rate as
 an exact fraction:
 
 >>> from sympy import Rational
->>> curve.observe(rate=Rational(1, 2)).explain("value/strictly_increasing").verdict
+>>> curve.observe(rate=Rational(1, 2)).explain("caught_share/strictly_increasing").verdict
 'strictly true'
 
 With zero effectiveness, the curve is constant and the strict increase claim
 fails:
 
->>> curve.observe(rate=0).explain("value/strictly_increasing").verdict
+>>> curve.observe(rate=0).explain("caught_share/strictly_increasing").verdict
 'strictly false'
->>> curve.explain("value/strictly_increasing").verdict
+>>> curve.explain("caught_share/strictly_increasing").verdict
 'conditionally true'
 
 The earlier context is unchanged. Observations accumulate; to compare different
@@ -408,12 +409,12 @@ Its ``record`` component supplies entry time, avoidable repair work, and baselin
 workload. Its ``review`` component supplies the response curve and its declared
 properties. An ``effort`` input supplies the checking time for this workload.
 
-The response curve has its own argument, ``review.effort``. SymPy's
-``Subs(review.value, review.effort, effort)`` evaluates that response at the
-workload's input. For an input :math:`s`, this gives the caught share :math:`u(s)`;
-the next two fields express :math:`G(s)` and :math:`M(s)` using the formulas above.
-Unlike the curve's ``Coordinate``, this ``InstanceDummy`` input can be supplied
-as an observation.
+Reuse the response's quantities directly: ``effort = review.effort`` names
+the same checking-time input, and ``caught_share = review.caught_share`` names
+the same caught fraction. These are aliases, so supplying effort through either
+path updates one shared quantity. The workload can use that fraction to express
+:math:`G(t)` and :math:`M(t)` without substituting a separate argument into the
+response.
 
 Keep the slope of saving and the curvature of workload in this model too.
 SymPy's ``Derivative(..., evaluate=False)`` defers differentiation until
@@ -422,8 +423,8 @@ it would differentiate the field's placeholder symbol:
 
 .. code-block:: python
 
-   from sympy import Derivative, Subs
-   from modello import component
+   from sympy import Derivative
+   from modello import Coordinate, component
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
@@ -437,6 +438,8 @@ Now make a proposed workload the ``candidate`` component of the decision model.
 ``effort = candidate.effort`` exposes its input at the top level, so we can
 supply it with ``observe(effort=...)``. ``other_effort`` will let us compare
 the candidate with every alternative checking time in the optimality argument.
+It is a ``Coordinate``: a local formula variable, separate from the shared
+input we observe for the candidate.
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
@@ -463,10 +466,10 @@ inspect the inputs:
 (4, 6)
 >>> measured.expression("candidate.review.rate")
 1/2
->>> measured.explain("candidate.review.value/strictly_increasing").verdict
+>>> measured.explain("candidate.review.caught_share/strictly_increasing").verdict
 'strictly true'
 
-The nested response keeps its claims with the prefix ``candidate.review.value``.
+The nested response keeps its claims with the prefix ``candidate.review.caught_share``.
 
 Propose a checking time
 -----------------------
@@ -681,7 +684,7 @@ find out why our method cannot use it:
 >>> from examples.record_review import CappedReview
 >>> from modello.contrib.verification import VerificationError
 >>> capped = measured.replace("candidate.review", CappedReview).observe(effort=2)
->>> capped.explain("candidate.review.value/continuously_differentiable").verdict
+>>> capped.explain("candidate.review.caught_share/continuously_differentiable").verdict
 'strictly false'
 >>> try:
 ...     capped.run(review_plan)
@@ -700,7 +703,7 @@ as well as an appropriate method.
 Evaluate a few points to explore the proposed response shape, selecting its
 own effort coordinate:
 
->>> sampled = capped.sample("candidate.review.value", wrt="candidate.review.effort", points=(1, 2, 3))
+>>> sampled = capped.sample("candidate.caught_share", wrt="effort", points=(1, 2, 3))
 >>> tuple(float(value) for value in sampled.values)
 (0.5, 1.0, 1.0)
 >>> sampled.kind

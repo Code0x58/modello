@@ -100,24 +100,24 @@ class ExponentialReview(VerificationModel):
     that assumption has not been fitted or validated against a real team.
     """
 
-    effort = Coordinate("t", nonnegative=True)
+    effort = InstanceDummy("t", nonnegative=True)
     rate = InstanceDummy("k", real=True)
-    value = specifies(
+    caught_share = specifies(
         derive_checking_response(effort, rate),
         strictly_increasing(
-            "value",
+            "caught_share",
             wrt="effort",
             domain=EFFORT_DOMAIN,
             reason="Extra checking must catch a larger fraction of the missed errors.",
         ),
         concave(
-            "value",
+            "caught_share",
             wrt="effort",
             domain=EFFORT_DOMAIN,
             reason="The marginal benefit must not increase.",
         ),
         continuously_differentiable(
-            "value",
+            "caught_share",
             wrt="effort",
             domain=EFFORT_DOMAIN,
             order=2,
@@ -131,8 +131,8 @@ class ReviewWorkload(Modello):
 
     record = component(RecordWork)
     review = component(ExponentialReview)
-    effort = InstanceDummy("s", nonnegative=True)
-    caught_share = Subs(review.value, review.effort, effort)
+    effort = review.effort
+    caught_share = review.caught_share
     net_saving = record.avoidable_minutes * caught_share - effort
     expected_minutes = record.expected_minutes - net_saving
     # A deferred derivative acts on the resolved curve, rather than the field's
@@ -230,13 +230,15 @@ def review_context(record: RecordWork | None = None, *, rate=Rational(1, 2)) -> 
 class RationalReview(ExponentialReview):
     """An alternative with the same initial slope and slower saturation."""
 
-    value = ExponentialReview.rate * ExponentialReview.effort / (1 + ExponentialReview.rate * ExponentialReview.effort)
+    caught_share = (
+        ExponentialReview.rate * ExponentialReview.effort / (1 + ExponentialReview.rate * ExponentialReview.effort)
+    )
 
 
 class CappedReview(ExponentialReview):
     """A linear response with a plateau whose join violates the inherited C2 claim."""
 
-    value = Piecewise(
+    caught_share = Piecewise(
         (ExponentialReview.rate * ExponentialReview.effort, ExponentialReview.rate * ExponentialReview.effort < 1),
         (1, True),
     )

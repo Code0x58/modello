@@ -480,12 +480,12 @@ curve can still have a pole elsewhere.
 >>> from examples.record_review import ExponentialReview
 >>> from modello.contrib.verification import Method, VerificationContext
 >>> def response_method(current):
-...     curve = current.expression("value", wrt="effort")
+...     curve = current.expression("caught_share", wrt="effort")
 ...     return Method(
-...         "response curve", lambda inner: curve, uses=("value",),
+...         "response curve", lambda inner: curve, uses=("caught_share",),
 ...     ).bind(current)
 >>> measured = VerificationContext.for_model(ExponentialReview, rate=1)
->>> measured.run(response_method).report.explain("value/strictly_increasing").verdict
+>>> measured.run(response_method).report.explain("caught_share/strictly_increasing").verdict
 'strictly true'
 
 Use ``context.run(response_method)`` after branching: it builds the method from
@@ -538,7 +538,9 @@ candidate, and candidate feasibility:
    :end-before: @dataclass
 
 The candidate is a ``ReviewWorkload`` component. Its ``net_saving`` field
-serves both the point evaluation and the function checks. In ``GLOBAL_MAXIMUM``,
+serves both the point evaluation and the function checks. Its ``effort`` and
+``caught_share`` fields alias the response component's quantities directly.
+In ``GLOBAL_MAXIMUM``,
 ``Subs`` evaluates the same field at ``other_effort``, leaving that alternative
 free while the left side uses the observed effort. The rule's shape checks
 use ``wrt="candidate.effort"`` to keep the workload's input symbolic; its
