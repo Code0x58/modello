@@ -17,6 +17,7 @@ from sympy import (
     Derivative,
     Dummy,
     Expr,
+    ImmutableMatrix,
     Interval,
     Piecewise,
     Rational,
@@ -97,6 +98,16 @@ class ReviewTransitions(VerificationModel):
     remaining_error_fraction = (
         current_correct_fraction * correct_to_incorrect + record.error_fraction * incorrect_to_incorrect
     )
+
+    @property
+    def transition_matrix(self) -> ImmutableMatrix:
+        """Transition probabilities with rows/columns ordered (correct, incorrect)."""
+        return ImmutableMatrix(
+            [
+                [self.correct_to_correct, self.correct_to_incorrect],
+                [self.incorrect_to_correct, self.incorrect_to_incorrect],
+            ]
+        )
 
 
 def derive_checking_response(minutes_per_record: Expr, detection_rate: Expr) -> Expr:

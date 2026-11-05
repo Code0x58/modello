@@ -959,6 +959,20 @@ on a correct record, and :math:`c` for correcting an incorrect record. Each
 outgoing row must sum to one, so the two change probabilities determine the
 two stay probabilities. Valid inputs have :math:`0\leq a,c\leq1`.
 
+Collect the four probabilities in a **transition matrix**, ordering the states
+as (correct, incorrect). Rows describe the current state; columns describe the
+next state:
+
+.. math::
+
+   P=\begin{pmatrix}1-a&a\\c&1-c\end{pmatrix},\qquad
+   \boldsymbol{v}_{n+1}=\boldsymbol{v}_n P,\qquad
+   \boldsymbol{v}_n=(1-q_n,\ q_n).
+
+We use row vectors, so the distribution multiplies :math:`P` on the right.
+Each row sums to one. The incorrect component of the product is exactly
+:math:`(1-q_n)a+q_n(1-c)`.
+
 Reuse ``RecordWork`` for the current error fraction and add these relationships
 as another model. ``nonnegative`` checks the stay probabilities and the current
 correct fraction; together with the input symbols' nonnegative assumptions,
@@ -999,12 +1013,33 @@ The expected error fraction rises from 10% to 10.4% after this check: many more
 records start correct than incorrect. Better detection alone does not ensure
 that checking improves the overall error fraction.
 
+The model's ``transition_matrix`` property returns a native SymPy matrix.
+Use it to update the whole distribution, checking the row sums and the scalar
+result against the model:
+
+>>> from sympy import Matrix
+>>> transition_matrix = fallible.family.one().transition_matrix
+>>> transition_matrix == Matrix([[Rational(99, 100), Rational(1, 100)],
+...                              [Rational(1, 20), Rational(19, 20)]])
+True
+>>> list(transition_matrix * Matrix([1, 1]))
+[1, 1]
+>>> distribution = Matrix([[1 - record.error_fraction, record.error_fraction]])
+>>> after_one = distribution * transition_matrix
+>>> list(after_one)
+[112/125, 13/125]
+>>> after_one[0, 1] == fallible.expression("remaining_error_fraction")
+True
+
 Find the balance point from the model's update, keeping the current error
 fraction symbolic with ``wrt``:
 
 >>> from sympy import Eq, solve
 >>> q = fallible.symbols.record.error_fraction
 >>> next_fraction = fallible.expression("remaining_error_fraction", wrt="record.error_fraction")
+>>> matrix_next_fraction = (Matrix([[1 - q, q]]) * transition_matrix)[0, 1]
+>>> simplify(matrix_next_fraction - next_fraction)
+0
 >>> solve(Eq(q, next_fraction), q)
 [1/6]
 
@@ -1022,6 +1057,12 @@ expression into a recurrence:
 ...     initial={0: record.error_fraction})
 >>> limit(repeated.at(n).doit(), n, S.Infinity)
 1/6
+
+Matrix powers describe repeated checks too: :math:`\boldsymbol{v}_n=
+\boldsymbol{v}_0 P^n`. They agree with the scalar recurrence:
+
+>>> (distribution * transition_matrix**3)[0, 1] == repeated.at(3).doit()
+True
 
 For valid probabilities, convergence to the fixed point holds when
 :math:`0<a+c<2`. If :math:`a=c=0`, every initial fraction stays unchanged.
