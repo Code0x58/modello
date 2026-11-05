@@ -134,9 +134,8 @@ for :math:`t` minutes:
 
 With no checking, no errors are caught. More checking catches more, but the
 gain shrinks as fewer errors remain. For a positive rate the caught fraction
-approaches one. The example's ``derive_checking_response`` function performs
-this limit and supplies the curve to the verification model below. SymPy has
-derived a consequence of our assumption; it has not validated the assumption.
+approaches one. SymPy has derived a consequence of our assumption; it has not
+validated the assumption.
 
 .. note::
 
@@ -182,6 +181,44 @@ derived a consequence of our assumption; it has not validated the assumption.
    <https://docs.sympy.org/latest/modules/solvers/solvers.html#sympy.solvers.recurr.rsolve>`_
    finds a closed form for this linear recurrence. Both routes use the same
    initial value and transition, and give the same continuous response.
+
+.. _record-review-response-function:
+
+Reuse the derivation
+--------------------
+
+We will need this response when we build the workload model. Put the calculation
+into an ordinary Python function, ``derive_checking_response(effort, rate)``.
+Its two arguments are the total checking time, ``effort`` (our :math:`t`), and
+the constant checking rate, ``rate`` (our :math:`k`). It returns a SymPy
+expression for the fraction of the original errors caught.
+
+The function follows the steps above: divide the effort among short checks,
+take the limit of the share still missed, then subtract that share from one.
+Its temporary count ``steps`` plays the role of :math:`N`. SymPy's ``Dummy``
+gives that count a fresh symbol so it cannot clash with the input symbols;
+``Expr`` is the SymPy expression type used in the type annotations.
+
+.. code-block:: python
+
+   from sympy import Dummy, Expr, S, limit
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: derive_checking_response
+
+The example module contains this definition. Import it and check that it
+returns the response we derived above:
+
+>>> from examples.record_review import derive_checking_response
+>>> response = derive_checking_response(t, k)
+>>> response
+1 - exp(-k*t)
+>>> response == 1 - remaining
+True
+
+Both inputs can remain symbolic. The result is an expression in those symbols,
+ready to use as a field in another model.
 
 Count the benefit and cost in minutes
 -------------------------------------
@@ -260,15 +297,21 @@ In the declaration below, ``effort`` is a ``Coordinate`` for the curve's argumen
 our story expects a positive rate, we leave it unrestricted so the checker
 can tell us which values establish the requested properties.
 
+The ``value`` field calls ``derive_checking_response(effort, rate)``. This is
+:ref:`the function we built from the short-step model
+<record-review-response-function>`, now using the model's symbols for :math:`t`
+and :math:`k`. ``specifies`` pairs its returned expression with the three
+requested properties.
+
 Field paths use the Python attribute names: ``wrt="effort"`` selects
 :math:`t`. ``EFFORT_DOMAIN`` is
 the interval of nonnegative real efforts, so the claims concern every
-:math:`t\geq0`. The module uses these imports and domain:
+:math:`t\geq0`. With the function above already defined, add these imports and
+the domain for the verification declaration:
 
 .. code-block:: python
 
    from sympy import Interval, S
-   from examples.record_review import derive_checking_response
    from modello import Coordinate, InstanceDummy
    from modello.contrib.verification import (
        VerificationModel, concave, continuously_differentiable,
