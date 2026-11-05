@@ -973,82 +973,82 @@ We use row vectors, so the distribution multiplies :math:`P` on the right.
 Each row sums to one. The incorrect component of the product is exactly
 :math:`(1-q_n)a+q_n(1-c)`.
 
-Reuse ``RecordWork`` for the current error fraction and add these relationships
-as another model. ``nonnegative`` checks the stay probabilities and the current
-correct fraction; together with the input symbols' nonnegative assumptions,
-these checks establish the probability bounds:
+Use a context whose input is the matrix itself. ``ReviewTransitions`` obtains
+the number of states from :math:`P` and checks its entries and row sums.
+Its ``advance`` method also checks that the initial distribution is
+nonnegative and sums to one before computing :math:`vP^n`. It returns the
+usual result containing both data and a verification report.
+
+The context adapts matrix entries to Modello's existing scalar and vector
+verification machinery. State names and the two-state formulas belong to this
+example's parameterisation:
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
    :pyobject: ReviewTransitions
 
-First recover the original short check by setting the introduced-error
-probability to zero:
+First recover the original short check by supplying its matrix, with zero
+probability of introducing an error:
 
+>>> from sympy import Matrix
 >>> from examples.record_review import ReviewTransitions
->>> original = VerificationContext.for_model(
-...     ReviewTransitions, record=record,
-...     correct_to_incorrect=0, incorrect_to_correct=short.caught_share)
->>> original.expression("remaining_error_fraction") == short.remaining_error_fraction
+>>> distribution = [1 - record.error_fraction, record.error_fraction]
+>>> original = ReviewTransitions.for_matrix(
+...     [[1, 0], [short.caught_share, short.remaining_share]],
+...     distribution=distribution)
+>>> original.advance().data[0, 1] == short.remaining_error_fraction
 True
 
 Now supply an error-creation rate of one tenth per minute. Our short check
 takes one tenth of a minute, giving :math:`a=1/100`; its existing detection
-model gives :math:`c=1/20`. Both transition parameters come from the same
-short-check duration:
+model gives :math:`c=1/20`. These choices construct :math:`P`; the context
+and its calculations remain the same:
 
 >>> error_creation_rate = Rational(1, 10)
->>> fallible = VerificationContext.for_model(
-...     ReviewTransitions, record=record,
-...     correct_to_incorrect=error_creation_rate * short.minutes_per_record,
-...     incorrect_to_correct=short.caught_share)
->>> fallible.explain("correct_to_correct/nonnegative").verdict
+>>> a = error_creation_rate * short.minutes_per_record
+>>> c = short.caught_share
+>>> P = Matrix([[1 - a, a], [c, 1 - c]])
+>>> fallible = ReviewTransitions.for_matrix(P, distribution=distribution)
+>>> fallible.P == P
+True
+>>> list(fallible.P * Matrix([1, 1]))
+[1, 1]
+>>> after_one = fallible.advance()
+>>> list(after_one.data)
+[112/125, 13/125]
+>>> after_one.report.explain("P_row_0_sum").verdict
 'strictly true'
->>> fallible.explain("incorrect_to_incorrect/nonnegative").verdict
-'strictly true'
->>> fallible.expression("remaining_error_fraction")
-13/125
 
 The expected error fraction rises from 10% to 10.4% after this check: many more
 records start correct than incorrect. Better detection alone does not ensure
 that checking improves the overall error fraction.
 
-The model's ``transition_matrix`` property returns a native SymPy matrix.
-Use it to update the whole distribution, checking the row sums and the scalar
-result against the model:
+Find stationary distributions directly from :math:`\pi P=\pi`, with their
+entries summing to one. The code uses :math:`P`'s size, so the same equations
+apply when we supply a different number of states:
 
->>> from sympy import Matrix
->>> transition_matrix = fallible.family.one().transition_matrix
->>> transition_matrix == Matrix([[Rational(99, 100), Rational(1, 100)],
-...                              [Rational(1, 20), Rational(19, 20)]])
+>>> from sympy import solve, symbols
+>>> weights = symbols(f"pi_0:{fallible.P.rows}", nonnegative=True)
+>>> stationary = Matrix(1, fallible.P.rows, weights)
+>>> balance = list(stationary * fallible.P - stationary) + [sum(stationary) - 1]
+>>> solve(balance, weights, dict=True)
+[{pi_0: 5/6, pi_1: 1/6}]
+
+Errors introduced and corrected balance at this distribution. Its incorrect
+fraction is one sixth. A stationary distribution and convergence to it are
+separate questions.
+
+Matrix powers describe repeated checks: :math:`v_n=v_0P^n`. They agree with
+the guarded computation:
+
+>>> fallible.advance(3).data == Matrix([distribution]) * fallible.P**3
 True
->>> list(transition_matrix * Matrix([1, 1]))
-[1, 1]
->>> distribution = Matrix([[1 - record.error_fraction, record.error_fraction]])
->>> after_one = distribution * transition_matrix
->>> list(after_one)
-[112/125, 13/125]
->>> after_one[0, 1] == fallible.expression("remaining_error_fraction")
-True
 
-Find the balance point from the model's update, keeping the current error
-fraction symbolic with ``wrt``:
+For two states we can also recover the scalar recurrence from :math:`P`.
+There is no separately maintained update formula:
 
->>> from sympy import Eq, solve
->>> q = fallible.symbols.record.error_fraction
->>> next_fraction = fallible.expression("remaining_error_fraction", wrt="record.error_fraction")
->>> matrix_next_fraction = (Matrix([[1 - q, q]]) * transition_matrix)[0, 1]
->>> simplify(matrix_next_fraction - next_fraction)
-0
->>> solve(Eq(q, next_fraction), q)
-[1/6]
-
-In general, the update is :math:`q_{n+1}=(1-q_n)a+q_n(1-c)`. Its fixed point
-is :math:`q_*=a/(a+c)` when :math:`a+c>0`: errors introduced and corrected
-balance there. With our parameters, repeated checking approaches an error
-fraction of one sixth. We can derive that limit by feeding the same model
-expression into a recurrence:
-
+>>> q = Symbol("q", nonnegative=True)
+>>> next_fraction = (Matrix([[1 - q, q]]) * fallible.P)[0, 1]
 >>> from modello import Index, Recurrence, Series
 >>> n = Index("n", nonnegative=True)
 >>> errors = Series("errors", n)
@@ -1057,33 +1057,60 @@ expression into a recurrence:
 ...     initial={0: record.error_fraction})
 >>> limit(repeated.at(n).doit(), n, S.Infinity)
 1/6
-
-Matrix powers describe repeated checks too: :math:`\boldsymbol{v}_n=
-\boldsymbol{v}_0 P^n`. They agree with the scalar recurrence:
-
->>> (distribution * transition_matrix**3)[0, 1] == repeated.at(3).doit()
+>>> fallible.advance(3).data[0, 1] == repeated.at(3).doit()
 True
 
-For valid probabilities, convergence to the fixed point holds when
-:math:`0<a+c<2`. If :math:`a=c=0`, every initial fraction stays unchanged.
-If :math:`a=c=1`, records alternate between correct and incorrect; an initial
-error fraction other than one half oscillates instead of converging.
-An equilibrium and convergence to it are separate questions.
+The same context accepts a three-state matrix without changing the model or
+analysis code. This one cycles through its states:
 
-The two change probabilities can come from measurements or more elaborate
-expressions involving reviewer skill, checking minutes, or record difficulty.
-The transition model and its update remain the same. Modello can also infer
-change probabilities from supplied stay probabilities through their equations.
+>>> cycle = ReviewTransitions.for_matrix(
+...     [[0, 1, 0], [0, 0, 1], [1, 0, 0]], distribution=[1, 0, 0])
+>>> list(cycle.advance().data)
+[0, 1, 0]
+>>> list(cycle.advance(3).data)
+[1, 0, 0]
 
->>> inferred = ReviewTransitions(
-...     "from stays", record=record, correct_to_correct=Rational(99, 100),
-...     incorrect_to_incorrect=short.remaining_share)
->>> inferred.correct_to_incorrect, inferred.incorrect_to_correct
-(1/100, 1/20)
+This is a valid transition matrix, but this initial distribution keeps cycling.
+For convergence, a useful sufficient condition is that every entry of
+:math:`P` is strictly positive. We can add that as an extra obligation for a
+convergence argument, separately from the requirements for a finite update.
+Use the context's symbolic entries so these obligations follow further
+observations and assumptions:
 
-For more states, the same construction has an :math:`N\times N` transition
-matrix, one row per current state and one column per next state, with each
-row summing to one.
+>>> from modello.contrib.verification import positive
+>>> mixing = fallible.with_obligations(*(
+...     positive(entry, name=f"positive_P_{i}", consumer="convergence")
+...     for i, entry in enumerate(fallible.symbols.P)))
+>>> mixing.explain("positive_P_0").verdict
+'strictly true'
+
+The two-state parameterisation can also remain symbolic. The same matrix
+requirements now retain conditions on the parameters:
+
+>>> a, c = symbols("a c", nonnegative=True)
+>>> symbolic = ReviewTransitions.for_matrix([[1 - a, a], [c, 1 - c]])
+>>> symbolic.explain("P_0_0_nonnegative").verdict
+'conditionally true'
+>>> bounded = symbolic.assume(a <= 1, c <= 1)
+>>> bounded.explain("P_0_0_nonnegative").verdict
+'strictly true'
+
+A supplied matrix whose row sums are wrong fails that obligation, and
+``advance`` stays blocked:
+
+>>> invalid = ReviewTransitions.for_matrix([[1, 1], [0, 1]], distribution=[1, 0])
+>>> invalid.explain("P_row_0_sum").verdict
+'strictly false'
+>>> try:
+...     invalid.advance()
+... except VerificationError as error:
+...     print(error.report.explain("P_row_0_sum").verdict)
+strictly false
+
+More elaborate rate, skill, or difficulty models can construct :math:`P`
+instead. A different state count supplies a different square matrix. The
+transition context, its probability requirements, and the calculations in terms
+of :math:`P` continue to apply.
 
 This extension revisits the original assumption that checking cannot create
 errors. Its equilibrium concerns repeated checking; a staffing optimum would
