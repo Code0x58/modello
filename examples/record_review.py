@@ -80,6 +80,25 @@ class CheckingStep(Modello):
     repair_minutes_per_record = remaining_error_fraction * record.repair_minutes_per_error
 
 
+class ReviewTransitions(VerificationModel):
+    """All four correctness transitions for one check, including introduced errors.
+
+    Transition values are probabilities per check. The two change probabilities
+    determine the stay probabilities; their nonnegativity checks give the upper
+    bounds. Record error_fraction supplies the current incorrect fraction.
+    """
+
+    record = component(RecordWork)
+    correct_to_incorrect = InstanceDummy("a", nonnegative=True)
+    incorrect_to_correct = InstanceDummy("c", nonnegative=True)
+    correct_to_correct = specifies(1 - correct_to_incorrect, nonnegative("correct_to_correct"))
+    incorrect_to_incorrect = specifies(1 - incorrect_to_correct, nonnegative("incorrect_to_incorrect"))
+    current_correct_fraction = specifies(1 - record.error_fraction, nonnegative("current_correct_fraction"))
+    remaining_error_fraction = (
+        current_correct_fraction * correct_to_incorrect + record.error_fraction * incorrect_to_incorrect
+    )
+
+
 def derive_checking_response(minutes_per_record: Expr, detection_rate: Expr) -> Expr:
     """Derive the caught share from the checking minutes per record and detection rate."""
     steps = Dummy("N", integer=True, positive=True)

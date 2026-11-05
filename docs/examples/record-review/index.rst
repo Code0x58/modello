@@ -586,48 +586,6 @@ uses staff minutes, so total minutes per record grow without bound:
 >>> limit(total_minutes, checking_minutes_per_record, S.Infinity)
 oo
 
-.. _record-review-equilibrium:
-
-Repeat a short check: the Markov view
-------------------------------------------
-
-If we track only current correctness, the always-correct and corrected groups
-both belong to the **correct** state. Under our constant-detection assumption,
-repeating a fixed short check gives a two-state Markov chain: the next state
-depends on the current state and the same detection probability at each check.
-Write :math:`c` for
-``short.caught_share``; ``short.remaining_share`` is :math:`1-c`.
-
-.. mermaid::
-   :alt: An incorrect record becomes correct with probability c or remains incorrect with probability 1 minus c. A correct record stays correct with probability one.
-   :caption: Transition probabilities for one short check, with 0 < c <= 1.
-
-   flowchart LR
-       accTitle: Correctness after one short check
-       accDescr: An incorrect record becomes correct with probability c or stays incorrect with probability 1 minus c. Correct is an absorbing state.
-       incorrect(("Incorrect")) -->|"Caught: c"| correct(("Correct"))
-       incorrect -->|"Missed: 1 - c"| incorrect
-       correct -->|"Stays correct: 1"| correct
-
-Let :math:`q` be the expected fraction currently incorrect, initially
-``record.error_fraction``. One check leaves the expected fraction
-:math:`q(1-c)`. An **equilibrium**, or fixed point, leaves that expected fraction
-unchanged. Reuse our short-check model to solve this condition:
-
->>> from sympy import Eq, solve
->>> q = Symbol("q", nonnegative=True)
->>> solve(Eq(q, q * short.remaining_share), q)
-[0]
-
-Our short check catches one twentieth of the errors still present, so repeated
-checking tends to the all-correct state. It is **absorbing**: once correct, a
-record stays correct under this model. If a check catches nothing, every
-initial error fraction stays unchanged instead.
-
-This equilibrium concerns correctness after repeated checks. The staffing
-optimum asks a different question: how many checking minutes are worth their
-cost? We now use the same workload model to find that finite choice.
-
 Propose checking minutes
 ----------------------------
 
@@ -964,3 +922,129 @@ when you want to adapt the method, or :ref:`checked bounds
 <verification-bound-hints>` when a proof needs an extra argument. The
 :doc:`verification reference </contrib/verification>` covers the detailed
 binding, replacement, domain, and execution rules.
+
+.. _record-review-equilibrium:
+
+Extend the model: review can introduce errors
+---------------------------------------------
+
+So far, a correct record stays correct. That made the all-correct state an
+uneventful endpoint of repeated checking. Suppose checking can also introduce
+an error, perhaps while editing an already-correct entry. We can extend the
+model by supplying probabilities for every possible transition.
+
+Track current correctness as two states: **correct** and **incorrect**.
+The always-correct and corrected groups from the introduction both belong to
+the correct state here. Every ordered pair of states is possible, including
+staying in the same state. This is a **complete directed graph with
+self-loops**, with transition pairs :math:`S\times S`. Two states give four
+transition probabilities:
+
+.. mermaid::
+   :alt: Correct records stay correct with probability 1 minus a or become incorrect with probability a. Incorrect records become correct with probability c or stay incorrect with probability 1 minus c.
+   :caption: All four transitions for one check; outgoing probabilities from each state sum to one.
+
+   flowchart LR
+       accTitle: All correctness transitions during a check
+       accDescr: Correct becomes incorrect with probability a and stays correct with probability 1 minus a. Incorrect becomes correct with probability c and stays incorrect with probability 1 minus c.
+       correct(("Correct")) -->|"Error introduced: a"| incorrect(("Incorrect"))
+       incorrect -->|"Error corrected: c"| correct
+       correct -->|"Stays correct: 1 - a"| correct
+       incorrect -->|"Stays incorrect: 1 - c"| incorrect
+
+The arrows carry probabilities for **one check**. A rate per minute gives a
+short-step probability by multiplying it by the checking minutes, just as in
+``CheckingStep``. Write :math:`a` for the probability of introducing an error
+on a correct record, and :math:`c` for correcting an incorrect record. Each
+outgoing row must sum to one, so the two change probabilities determine the
+two stay probabilities. Valid inputs have :math:`0\leq a,c\leq1`.
+
+Reuse ``RecordWork`` for the current error fraction and add these relationships
+as another model. ``nonnegative`` checks the stay probabilities and the current
+correct fraction; together with the input symbols' nonnegative assumptions,
+these checks establish the probability bounds:
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: ReviewTransitions
+
+First recover the original short check by setting the introduced-error
+probability to zero:
+
+>>> from examples.record_review import ReviewTransitions
+>>> original = VerificationContext.for_model(
+...     ReviewTransitions, record=record,
+...     correct_to_incorrect=0, incorrect_to_correct=short.caught_share)
+>>> original.expression("remaining_error_fraction") == short.remaining_error_fraction
+True
+
+Now supply an error-creation rate of one tenth per minute. Our short check
+takes one tenth of a minute, giving :math:`a=1/100`; its existing detection
+model gives :math:`c=1/20`. Both transition parameters come from the same
+short-check duration:
+
+>>> error_creation_rate = Rational(1, 10)
+>>> fallible = VerificationContext.for_model(
+...     ReviewTransitions, record=record,
+...     correct_to_incorrect=error_creation_rate * short.minutes_per_record,
+...     incorrect_to_correct=short.caught_share)
+>>> fallible.explain("correct_to_correct/nonnegative").verdict
+'strictly true'
+>>> fallible.explain("incorrect_to_incorrect/nonnegative").verdict
+'strictly true'
+>>> fallible.expression("remaining_error_fraction")
+13/125
+
+The expected error fraction rises from 10% to 10.4% after this check: many more
+records start correct than incorrect. Better detection alone does not ensure
+that checking improves the overall error fraction.
+
+Find the balance point from the model's update, keeping the current error
+fraction symbolic with ``wrt``:
+
+>>> from sympy import Eq, solve
+>>> q = fallible.symbols.record.error_fraction
+>>> next_fraction = fallible.expression("remaining_error_fraction", wrt="record.error_fraction")
+>>> solve(Eq(q, next_fraction), q)
+[1/6]
+
+In general, the update is :math:`q_{n+1}=(1-q_n)a+q_n(1-c)`. Its fixed point
+is :math:`q_*=a/(a+c)` when :math:`a+c>0`: errors introduced and corrected
+balance there. With our parameters, repeated checking approaches an error
+fraction of one sixth. We can derive that limit by feeding the same model
+expression into a recurrence:
+
+>>> from modello import Index, Recurrence, Series
+>>> n = Index("n", nonnegative=True)
+>>> errors = Series("errors", n)
+>>> repeated = Recurrence(
+...     errors[n], next_fraction.subs(q, errors[n - 1]),
+...     initial={0: record.error_fraction})
+>>> limit(repeated.at(n).doit(), n, S.Infinity)
+1/6
+
+For valid probabilities, convergence to the fixed point holds when
+:math:`0<a+c<2`. If :math:`a=c=0`, every initial fraction stays unchanged.
+If :math:`a=c=1`, records alternate between correct and incorrect; an initial
+error fraction other than one half oscillates instead of converging.
+An equilibrium and convergence to it are separate questions.
+
+The two change probabilities can come from measurements or more elaborate
+expressions involving reviewer skill, checking minutes, or record difficulty.
+The transition model and its update remain the same. Modello can also infer
+change probabilities from supplied stay probabilities through their equations.
+
+>>> inferred = ReviewTransitions(
+...     "from stays", record=record, correct_to_correct=Rational(99, 100),
+...     incorrect_to_incorrect=short.remaining_share)
+>>> inferred.correct_to_incorrect, inferred.incorrect_to_correct
+(1/100, 1/20)
+
+For more states, the same construction has an :math:`N\times N` transition
+matrix, one row per current state and one column per next state, with each
+row summing to one.
+
+This extension revisits the original assumption that checking cannot create
+errors. Its equilibrium concerns repeated checking; a staffing optimum would
+also need a workload model that counts the newly introduced errors. The
+earlier optimum was established for the original response and assumptions.
