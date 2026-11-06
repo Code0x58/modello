@@ -21,6 +21,7 @@ from sympy import (
     Piecewise,
     Rational,
     S,
+    Subs,
     lambdify,
     limit,
     log,
@@ -28,7 +29,7 @@ from sympy import (
     sqrt,
 )
 
-from modello import InstanceDummy, Modello, component
+from modello import Index, InstanceDummy, Modello, Recurrence, Series, component
 from modello.contrib.verification import (
     InferenceRule,
     Method,
@@ -127,8 +128,8 @@ class ExponentialReview(VerificationModel):
     )
 
 
-class ReviewWorkload(Modello):
-    """Record outcome fractions, staff minutes, and their derivatives."""
+class ReviewModel(Modello):
+    """Outcome fractions for one pass, shared by workload and repeated review."""
 
     record = component(RecordWork)
     review = component(ExponentialReview)
@@ -136,14 +137,23 @@ class ReviewWorkload(Modello):
     introduced_error_fraction = (1 - record.error_fraction) * review.introduced_error_share
     always_correct_fraction = 1 - record.error_fraction - introduced_error_fraction
     remaining_error_fraction = record.error_fraction - corrected_fraction + introduced_error_fraction
+
+
+class ReviewWorkload(ReviewModel):
+    """Staff minutes and derivatives of the shared record outcomes."""
+
     minutes_saved_per_record = (
-        corrected_fraction - introduced_error_fraction
-    ) * record.repair_minutes_per_error - review.minutes_per_record
-    minutes_per_record = record.minutes_per_record - minutes_saved_per_record
+        ReviewModel.corrected_fraction - ReviewModel.introduced_error_fraction
+    ) * ReviewModel.record.repair_minutes_per_error - ReviewModel.review.minutes_per_record
+    minutes_per_record = ReviewModel.record.minutes_per_record - minutes_saved_per_record
     # A deferred derivative acts on the resolved curve, rather than the field's
     # placeholder symbol. It also generates a differentiability obligation.
-    minutes_saved_derivative = Derivative(minutes_saved_per_record, review.minutes_per_record, evaluate=False)
-    minutes_per_record_second_derivative = Derivative(minutes_per_record, review.minutes_per_record, 2, evaluate=False)
+    minutes_saved_derivative = Derivative(
+        minutes_saved_per_record, ReviewModel.review.minutes_per_record, evaluate=False
+    )
+    minutes_per_record_second_derivative = Derivative(
+        minutes_per_record, ReviewModel.review.minutes_per_record, 2, evaluate=False
+    )
 
 
 class ReviewPlanning(VerificationModel):
@@ -276,6 +286,30 @@ class FallibleReview(ExponentialReview):
 
     error_creation_rate = InstanceDummy("r", nonnegative=True)
     introduced_error_share = derive_checking_response(ExponentialReview.minutes_per_record, error_creation_rate)
+
+
+class ReviewEquilibrium(ReviewModel):
+    """Infer an error fraction unchanged by one pass of fallible review."""
+
+    review = component(FallibleReview)
+    error_fraction = ReviewModel.record.error_fraction
+    error_fraction = ReviewModel.remaining_error_fraction
+
+
+class RepeatedReview(ReviewModel):
+    """Infer pass count from checking minutes and query the resulting error fraction."""
+
+    review = component(FallibleReview)
+    passes = InstanceDummy("N", integer=True, nonnegative=True)
+    checking_minutes_per_record = passes * review.minutes_per_record
+    n = Index("n", nonnegative=True)
+    errors = Series("errors", n, nonnegative=True)
+    law = Recurrence(
+        errors[n],
+        Subs(ReviewModel.remaining_error_fraction, ReviewModel.record.error_fraction, errors[n - 1]),
+        initial={0: ReviewModel.record.error_fraction},
+    )
+    final_error_fraction = errors[passes]
 
 
 def write_reports(directory: Path, *, plot: bool = False) -> None:

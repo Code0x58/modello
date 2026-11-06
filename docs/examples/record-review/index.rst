@@ -454,12 +454,11 @@ when you need to reopen an earlier choice.
 Compose the decision model
 --------------------------
 
-Turn the saving and workload formulas into a reusable model, ``ReviewWorkload``.
+Keep the record outcomes in a reusable ``ReviewModel``.
 Its ``record`` component supplies entry time, avoidable repair work, and baseline
 workload. Its ``review`` component supplies the response curve and its declared
 properties. Read its checking minutes as ``review.minutes_per_record`` and its
-caught share as ``review.caught_share``. The workload uses those quantities directly to
-express :math:`G(t)` and :math:`M(t)`.
+caught share as ``review.caught_share``.
 
 The model also records the diagram's three outcome fractions. They are shares
 of **all records**:
@@ -478,6 +477,15 @@ records made incorrect by checking. It is zero for the response above. If the
 review introduces errors, they join ``remaining_error_fraction`` and their
 repair cost reduces the minutes saved. The same workload equations cover both
 possibilities; only the review component needs to change.
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: ReviewModel
+
+``ReviewWorkload`` extends this model with staff minutes and derivatives.
+It inherits the outcome relationships and components, using them to express
+:math:`G(t)` and :math:`M(t)`. Later, equilibrium and repeated-review questions
+will reuse those same outcomes.
 
 The component path tells us which activity a field measures:
 
@@ -962,8 +970,11 @@ For illustration, use an error-creation rate of one hundredth per minute and
 the same two checking minutes as before:
 
 >>> from examples.record_review import FallibleReview
->>> extended = measured.replace("candidate.review", FallibleReview)
->>> extended = extended.observe(**{"candidate.review.error_creation_rate": Rational(1, 100)})
+>>> response = FallibleReview("response", detection_rate=short.detection_rate,
+...                           error_creation_rate=Rational(1, 100))
+>>> extended = measured.replace("candidate.review", FallibleReview).observe(**{
+...     "candidate.review.error_creation_rate": response.error_creation_rate,
+... })
 >>> fallible = extended.observe(**{"candidate.review.minutes_per_record": 2})
 >>> tuple(round(float(fallible.expression(f"candidate.{field}")), 4)
 ...       for field in outcome_fields)
@@ -1057,33 +1068,63 @@ using the observed context:
 >>> simplify(after_one[0, 1] - fallible.expression("candidate.remaining_error_fraction"))
 0
 
-Keep this pass's duration and rates fixed for repeated checks. An equilibrium
-error fraction :math:`q_*` satisfies :math:`q_*=(1-q_*)a+q_*(1-c)`:
+Keep this pass's duration and rates fixed for repeated checks. At equilibrium,
+the error fraction before and after a pass is the same. Declare that equality
+in a model, reusing ``ReviewModel`` and its review component:
 
->>> from sympy import Eq, solve
->>> q = Symbol("q", nonnegative=True)
->>> next_fraction = (Matrix([[1 - q, q]]) * P)[0, 1]
->>> equilibrium = solve(Eq(q, next_fraction), q)[0]
->>> round(float(equilibrium), 4)
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: ReviewEquilibrium
+
+The two ``error_fraction`` assignments join the starting and remaining error
+fractions, just as the earlier budget model joined quantities across components.
+Reuse the response's rates and supply the two-minute pass duration. Leave the
+record's error fraction unknown so Modello can infer it:
+
+>>> from examples.record_review import ReviewEquilibrium
+>>> equilibrium = ReviewEquilibrium("unchanged quality", review=response,
+...                                 **{"review.minutes_per_record": 2})
+>>> round(float(equilibrium.error_fraction), 4)
 0.0304
 
-Matrix powers give the distribution after several passes. The same update
-also supplies a scalar recurrence, with no separately maintained formula:
+For a finite run of checks, give the model a total checking time instead
+of choosing a pass count. ``RepeatedReview`` relates that time to pass
+duration, and uses the existing remaining-error formula as its recurrence.
+``Subs`` evaluates that formula at the previous pass's error fraction. The
+initial value comes from the record model. Add the substitution operator to
+the recurrence imports we used earlier:
 
->>> from modello import Index, Recurrence, Series
->>> n = Index("n", nonnegative=True)
->>> errors = Series("errors", n)
->>> repeated = Recurrence(
-...     errors[n], next_fraction.subs(q, errors[n - 1]),
-...     initial={0: record.error_fraction})
->>> simplify((initial * P**3)[0, 1] - repeated.at(3).doit())
+.. code-block:: python
+
+   from sympy import Subs
+   from modello import Index, Recurrence, Series
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: RepeatedReview
+
+``final_error_fraction`` queries the recurrence at the inferred pass count.
+
+Spend four checking minutes per record, reusing the bound two-minute review
+from the equilibrium question and the original record estimates:
+
+>>> from examples.record_review import RepeatedReview
+>>> repeated = RepeatedReview("four checking minutes", record=record,
+...                           review=equilibrium.review, checking_minutes_per_record=4)
+>>> repeated.passes
+2
+>>> round(float(repeated.final_error_fraction), 4)
+0.0388
+
+Modello infers two passes and about 3.88% remaining errors. The recurrence and
+matrix view agree at that inferred count:
+
+>>> simplify((initial * P**repeated.passes)[0, 1] - repeated.final_error_fraction)
 0
->>> round(float((initial * P**3)[0, 1]), 4)
-0.0333
 
-After three passes, about 3.33% remain incorrect. This is a different question
-from extending the duration of one pass, which changes both responses and
-therefore changes :math:`P`.
+This describes whole passes at the chosen duration. Total staff time also
+includes entry and repair work. Extending a single pass's duration is another
+question: it changes both responses and therefore changes :math:`P`.
 
 Check the transition properties in the same context
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1117,16 +1158,6 @@ positive. Add those stronger obligations when exploring that argument:
 ...     for i, entry in enumerate(symbolic_P)))
 >>> mixing.explain("positive_P_1").verdict
 'strictly true'
-
-Row sums alone do not establish convergence. For example, a three-state
-transition matrix can keep cycling:
-
->>> cycle = Matrix([[0, 1, 0], [0, 0, 1], [1, 0, 0]])
->>> cycle_initial = Matrix([[1, 0, 0]])
->>> list(cycle_initial * cycle)
-[0, 1, 0]
->>> list(cycle_initial * cycle**3)
-[1, 0, 0]
 
 These are proof goals; they do not automatically guard native SymPy
 calculations. A computation that relies on them can list them as a
