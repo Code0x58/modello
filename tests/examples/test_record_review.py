@@ -29,7 +29,7 @@ def measured() -> VerificationContext[ReviewPlanning]:
 
 @pytest.fixture(scope="module")
 def proposed(measured: VerificationContext[ReviewPlanning]) -> VerificationContext[ReviewPlanning]:
-    return measured.observe(**{"candidate.review.minutes_per_record": 2 * log(3)})
+    return measured.observe(**{"candidate.review.response.minutes_per_record": 2 * log(3)})
 
 
 def test_short_checks_derive_the_continuous_response():
@@ -75,14 +75,16 @@ def test_definition_reports_distinguish_parameter_conditions_and_regularity():
 
 def test_outcome_fractions_conserve_records_and_follow_response_replacements(measured):
     paths = ("always_correct_fraction", "corrected_fraction", "remaining_error_fraction")
-    axis = measured.symbols.candidate.review.minutes_per_record
-    outcomes = tuple(measured.expression(f"candidate.{path}", wrt=axis) for path in paths)
+    axis = measured.symbols.candidate.review.response.minutes_per_record
+    outcomes = tuple(measured.expression(f"candidate.review.{path}", wrt=axis) for path in paths)
     assert simplify(sum(outcomes)) == 1
     assert tuple(value.subs(axis, 0) for value in outcomes) == (Rational(9, 10), 0, Rational(1, 10))
     assert tuple(limit(value, axis, S.Infinity) for value in outcomes) == (Rational(9, 10), Rational(1, 10), 0)
 
-    changed = measured.replace("candidate.review", RationalReview).observe(**{"candidate.review.minutes_per_record": 2})
-    assert tuple(changed.expression(f"candidate.{path}") for path in paths) == (
+    changed = measured.replace("candidate.review.response", RationalReview).observe(
+        **{"candidate.review.response.minutes_per_record": 2}
+    )
+    assert tuple(changed.expression(f"candidate.review.{path}") for path in paths) == (
         Rational(9, 10),
         Rational(1, 20),
         Rational(1, 20),
@@ -110,13 +112,15 @@ def test_stationary_candidate_has_a_global_certificate_and_local_curvature(propo
     assert simplify(maximum.expression - decision.minutes_saved_per_record) == 0
     # The rule checks the whole curve despite the observed checking time;
     # stationarity is checked at that observed point instead.
-    axis = proposed.symbols.candidate.review.minutes_per_record
+    axis = proposed.symbols.candidate.review.response.minutes_per_record
     for name in ("concavity", "differentiability"):
         assert premises[name].expression.free_symbols == {axis}
         assert premises[name].coordinate == axis
     assert premises["stationarity"].expression.doit() == 0
     # Independent values of the workload on either side of the proposed point.
-    workload = proposed.expression("candidate.minutes_per_record", wrt="candidate.review.minutes_per_record").doit()
+    workload = proposed.expression(
+        "candidate.minutes_per_record", wrt="candidate.review.response.minutes_per_record"
+    ).doit()
     assert workload.subs(axis, 2) > decision.minutes_per_record
     assert workload.subs(axis, Rational(5, 2)) > decision.minutes_per_record
 
@@ -134,22 +138,23 @@ def test_revised_inputs_recheck_the_optimum_and_its_derivative_domain(measured):
     record = RecordWork(
         "revised", entry_minutes_per_record=3, error_fraction=Rational(1, 5), repair_minutes_per_record=8
     )
-    revised = review_context(record, detection_rate=Rational(1, 4))
-    result = revised.observe(**{"candidate.review.minutes_per_record": 4 * log(2)}).run(review_plan)
+    response = ExponentialReview("response", detection_rate=Rational(1, 4), error_creation_rate=0)
+    revised = review_context(record, response=response)
+    result = revised.observe(**{"candidate.review.response.minutes_per_record": 4 * log(2)}).run(review_plan)
     assert result.report.explain("global_maximum").verdict == "strictly true"
     assert simplify(result.data.checking_minutes_per_record - 4 * log(2)) == 0
     assert simplify(result.data.minutes_per_record - 7 - 4 * log(2)) == 0
     assert result.data.minutes_per_record_second_derivative == Rational(1, 4)
-    assert measured.expression("candidate.record.repair_minutes_per_record") == 6
-    assert revised.expression("candidate.record.repair_minutes_per_error") == 40
+    assert measured.expression("candidate.review.record.repair_minutes_per_record") == 6
+    assert revised.expression("candidate.review.record.repair_minutes_per_error") == 40
 
     # Formal substitution at zero does not establish a two-sided derivative
     # within the coordinate's nonnegative domain.
     endpoint_record = RecordWork(
         "endpoint", entry_minutes_per_record=3, error_fraction=Rational(1, 5), repair_minutes_per_record=4
     )
-    endpoint = review_context(endpoint_record, detection_rate=Rational(1, 4)).observe(
-        **{"candidate.review.minutes_per_record": 0}
+    endpoint = review_context(endpoint_record, response=response).observe(
+        **{"candidate.review.response.minutes_per_record": 0}
     )
     assert endpoint.expression("candidate.minutes_saved_derivative").doit() == 0
     with pytest.raises(VerificationError) as error:
@@ -158,41 +163,49 @@ def test_revised_inputs_recheck_the_optimum_and_its_derivative_domain(measured):
 
 
 def test_a_wrong_candidate_and_an_unregistered_rule_do_not_establish_an_optimum(measured):
-    wrong = measured.observe(**{"candidate.review.minutes_per_record": 1})
+    wrong = measured.observe(**{"candidate.review.response.minutes_per_record": 1})
     with pytest.raises(VerificationError) as error:
         wrong.run(review_plan)
     assert error.value.context is wrong
     assert error.value.report.explain("global_maximum/stationarity").verdict == "strictly false"
     assert error.value.report.explain("global_maximum").verdict == "unresolved"
-    unregistered = VerificationContext.for_model(ReviewPlanning).observe(**{"candidate.review.minutes_per_record": 1})
+    unregistered = VerificationContext.for_model(ReviewPlanning).observe(
+        **{"candidate.review.response.minutes_per_record": 1}
+    )
     with pytest.raises(VerificationError) as error:
         unregistered.run(review_plan)
     assert error.value.report.explain("global_maximum").verdict == "unresolved"
 
 
 def test_replacement_rechecks_the_candidate_and_preserves_the_baseline(measured, proposed):
-    stale = proposed.replace("candidate.review", RationalReview)
+    stale = proposed.replace("candidate.review.response", RationalReview)
     with pytest.raises(VerificationError) as error:
         stale.run(review_plan)
     assert error.value.report.explain("global_maximum/stationarity").verdict == "strictly false"
-    changed = measured.replace("candidate.review", RationalReview).observe(
-        **{"candidate.review.minutes_per_record": 2 * (sqrt(3) - 1)}
+    changed = measured.replace("candidate.review.response", RationalReview).observe(
+        **{"candidate.review.response.minutes_per_record": 2 * (sqrt(3) - 1)}
     )
     decision = changed.run(review_plan).data
     assert decision.minutes_saved_per_record == 8 - 4 * sqrt(3)
     assert decision.minutes_per_record == 2 + 4 * sqrt(3)
     assert decision.minutes_per_record_second_derivative == sqrt(3) / 3
-    assert measured.expression("candidate.review.detection_rate") == Rational(1, 2)
+    supplied = review_context(
+        response=RationalReview("response", detection_rate=Rational(1, 2), error_creation_rate=0)
+    ).observe(**{"candidate.review.response.minutes_per_record": 2 * (sqrt(3) - 1)})
+    assert supplied.run(review_plan).data == decision
+    assert measured.expression("candidate.review.response.detection_rate") == Rational(1, 2)
     assert proposed.run(review_plan).data.minutes_per_record == 6 + 2 * log(3)
 
 
 def test_the_capped_curve_retains_its_claims_and_exposes_its_kink(measured):
-    capped = measured.replace("candidate.review", CappedReview).observe(**{"candidate.review.minutes_per_record": 2})
+    capped = measured.replace("candidate.review.response", CappedReview).observe(
+        **{"candidate.review.response.minutes_per_record": 2}
+    )
     with pytest.raises(VerificationError) as error:
         capped.run(review_plan)
-    regularity = error.value.report.explain("candidate.review.caught_share/continuously_differentiable")
+    regularity = error.value.report.explain("candidate.review.response.caught_share/continuously_differentiable")
     assert regularity.verdict == "strictly false"
-    assert dict(regularity.witness)[capped.symbols.candidate.review.minutes_per_record] == 2
+    assert dict(regularity.witness)[capped.symbols.candidate.review.response.minutes_per_record] == 2
     assert error.value.report.explain("global_maximum").verdict == "unresolved"
 
 
@@ -215,10 +228,11 @@ def test_reports_include_exact_results_and_the_blocked_replacement(tmp_path: Pat
     write_reports(tmp_path, plot=True)
     summary = json.loads((tmp_path / "results.json").read_text())
     assert summary["inputs"] == {
-        "candidate.record.entry_minutes_per_record": "4",
-        "candidate.record.error_fraction": "1/10",
-        "candidate.record.repair_minutes_per_error": "60",
-        "candidate.review.detection_rate": "1/2",
+        "candidate.review.record.entry_minutes_per_record": "4",
+        "candidate.review.record.error_fraction": "1/10",
+        "candidate.review.record.repair_minutes_per_error": "60",
+        "candidate.review.response.detection_rate": "1/2",
+        "candidate.review.response.error_creation_rate": "0",
     }
     assert summary["plans"]["exponential"]["minutes_per_record"]["exact"] == "2*log(3) + 6"
     assert summary["plans"]["rational"]["minutes_per_record"]["decimal"] > 8.9

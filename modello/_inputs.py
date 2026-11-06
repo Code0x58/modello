@@ -84,10 +84,14 @@ class _InputCapture:
 
     def _add_component(self, attr: str, value: object) -> None:
         """Copy the declared child shape into an independent parent scope."""
-        child = self.model._modello_namespace.nested_models.get(attr)
-        if child is None:
-            raise ModelInputError(f"Unknown model attribute {attr!r}")
-        self._add_component_at((attr,), child._modello_model, value, attr)
+        path = tuple(attr.split("."))
+        model = self.model
+        for name in path:
+            child = model._modello_namespace.nested_models.get(name)
+            if child is None:
+                raise ModelInputError(f"Unknown model attribute {attr!r}")
+            model = child._modello_model
+        self._add_component_at(path, model, value, attr)
 
     def _add_component_at(self, prefix: FieldPath, child_model: type[Modello], value: object, group: str) -> None:
         if not isinstance(value, child_model):

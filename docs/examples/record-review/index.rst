@@ -368,9 +368,9 @@ The ``caught_share`` field calls
 and :math:`k`. ``specifies`` pairs its returned expression with the three
 requested properties.
 
-``introduced_error_share = S.Zero`` states the assumption that checking creates
-no errors; ``S.Zero`` is SymPy's zero. Keeping this outcome in the review
-component lets us change that assumption later.
+``introduced_error_share`` uses the same derivation with an
+``error_creation_rate``. We will initially observe that rate as zero to model
+checking that creates no errors, then revisit that observation later.
 
 Field paths use the Python attribute names: ``wrt="minutes_per_record"`` selects
 :math:`t`. ``CHECKING_MINUTES_DOMAIN`` is
@@ -456,9 +456,9 @@ Compose the decision model
 
 Keep the record outcomes in a reusable ``ReviewModel``.
 Its ``record`` component supplies entry time, avoidable repair work, and baseline
-workload. Its ``review`` component supplies the response curve and its declared
-properties. Read its checking minutes as ``review.minutes_per_record`` and its
-caught share as ``review.caught_share``.
+workload. Its ``response`` component supplies the response curve and its declared
+properties. Read its checking minutes as ``response.minutes_per_record`` and its
+caught share as ``response.caught_share``.
 
 The model also records the diagram's three outcome fractions. They are shares
 of **all records**:
@@ -467,25 +467,25 @@ of **all records**:
 * ``corrected_fraction`` is :math:`p\,u(t)`: initially incorrect, then corrected.
 * ``remaining_error_fraction`` is :math:`p(1-u(t))`: still incorrect after checking.
 
-In contrast, ``review.caught_share`` is the share of **initial errors** caught.
+In contrast, ``response.caught_share`` is the share of **initial errors** caught.
 Multiplying by ``record.error_fraction`` converts it to the corrected fraction
 of all records. Each correction avoids ``record.repair_minutes_per_error``
 minutes of later repair, which gives the minutes-saved formula.
 
 The workload also counts ``introduced_error_fraction``: initially correct
-records made incorrect by checking. It is zero for the response above. If the
+records made incorrect by checking. It is zero when the error-creation rate is zero. If the
 review introduces errors, they join ``remaining_error_fraction`` and their
 repair cost reduces the minutes saved. The same workload equations cover both
-possibilities; only the review component needs to change.
+possibilities; the response component supplies the error-creation rate.
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
    :pyobject: ReviewModel
 
-``ReviewWorkload`` extends this model with staff minutes and derivatives.
-It inherits the outcome relationships and components, using them to express
-:math:`G(t)` and :math:`M(t)`. Later, equilibrium and repeated-review questions
-will reuse those same outcomes.
+``ReviewWorkload`` contains a ``ReviewModel`` as its ``review`` component.
+It uses the child's outcome fractions to express staff minutes :math:`G(t)`
+and :math:`M(t)`. Equilibrium and repeated-review questions will use that same
+component type.
 
 The component path tells us which activity a field measures:
 
@@ -495,10 +495,10 @@ The component path tells us which activity a field measures:
    * - Field
      - Meaning
      - Expression
-   * - ``record.minutes_per_record``
+   * - ``review.record.minutes_per_record``
      - Total before checking
      - :math:`b+a`
-   * - ``review.minutes_per_record``
+   * - ``review.response.minutes_per_record``
      - Checking minutes
      - :math:`t`
    * - ``minutes_saved_per_record``
@@ -510,7 +510,7 @@ The component path tells us which activity a field measures:
 
 Keep the derivatives in this model too. ``minutes_saved_derivative`` is
 :math:`G'(t)`, and ``minutes_per_record_second_derivative`` is :math:`M''(t)`.
-Both differentiate with respect to ``review.minutes_per_record``.
+Both differentiate with respect to ``review.response.minutes_per_record``.
 SymPy's ``Derivative(..., evaluate=False)`` defers differentiation until
 Modello has resolved the named quantity to its formula. Without that delay,
 it would differentiate the field's placeholder symbol:
@@ -541,9 +541,10 @@ record count through its existing relationship. Saving, workload, and their
 derivatives all come from the same candidate component; no separate candidate
 formulas are needed in this model.
 
-The example's ``review_context()`` helper accepts our ``RecordWork`` instance
-and detection rate, builds the candidate workload, and registers the optimality
-argument explained below. It leaves the checking minutes and staffing budget open.
+The example's ``review_context()`` helper accepts our ``RecordWork`` and
+``ExponentialReview`` instances, binds those components, and registers the
+optimality argument explained below. It leaves checking minutes and the
+staffing budget open.
 This helper belongs to the example; :ref:`its implementation
 <verification-example-contract>` shows how to prepare the same context yourself.
 ``expression(path)`` returns a field's resolved SymPy expression, so we can
@@ -551,16 +552,18 @@ inspect the inputs:
 
 >>> from sympy import log
 >>> from examples.record_review import review_context
->>> measured = review_context(record, detection_rate=short.detection_rate)
->>> (measured.expression("candidate.record.entry_minutes_per_record"),
-...  measured.expression("candidate.record.repair_minutes_per_record"))
+>>> response = ExponentialReview("response", detection_rate=short.detection_rate,
+...                              error_creation_rate=0)
+>>> measured = review_context(record, response=response)
+>>> (measured.expression("candidate.review.record.entry_minutes_per_record"),
+...  measured.expression("candidate.review.record.repair_minutes_per_record"))
 (4, 6)
->>> measured.expression("candidate.review.detection_rate")
+>>> measured.expression("candidate.review.response.detection_rate")
 1/2
->>> measured.explain("candidate.review.caught_share/strictly_increasing").verdict
+>>> measured.explain("candidate.review.response.caught_share/strictly_increasing").verdict
 'strictly true'
 
-The nested response keeps its claims with the prefix ``candidate.review.caught_share``.
+The nested response keeps its claims with the prefix ``candidate.review.response.caught_share``.
 
 .. _record-review-outcomes:
 
@@ -570,9 +573,9 @@ Ask about quality and limits
 Before choosing checking minutes for the budget, inspect the three outcome
 groups. Use the same measured inputs and try two checking minutes per record:
 
->>> two_minutes = measured.observe(**{"candidate.review.minutes_per_record": 2})
+>>> two_minutes = measured.observe(**{"candidate.review.response.minutes_per_record": 2})
 >>> outcome_fields = ("always_correct_fraction", "corrected_fraction", "remaining_error_fraction")
->>> tuple(round(float(two_minutes.expression(f"candidate.{field}")), 4)
+>>> tuple(round(float(two_minutes.expression(f"candidate.review.{field}")), 4)
 ...       for field in outcome_fields)
 (0.9, 0.0632, 0.0368)
 
@@ -581,17 +584,17 @@ and 3.68% still need repair. These are expected proportions, not guaranteed
 counts in a particular batch. The three fractions account for every record:
 
 >>> from sympy import simplify
->>> simplify(sum(two_minutes.expression(f"candidate.{field}") for field in outcome_fields))
+>>> simplify(sum(two_minutes.expression(f"candidate.review.{field}") for field in outcome_fields))
 1
 
-To inspect the whole curve, pass ``wrt="candidate.review.minutes_per_record"``.
+To inspect the whole curve, pass ``wrt="candidate.review.response.minutes_per_record"``.
 This keeps checking minutes symbolic even in a context with an observed value,
 while retaining the observed record estimates and detection rate. The symbol
 comes from this context's component:
 
->>> checking_minutes_per_record = two_minutes.symbols.candidate.review.minutes_per_record
+>>> checking_minutes_per_record = two_minutes.symbols.candidate.review.response.minutes_per_record
 >>> remaining_errors = two_minutes.expression(
-...     "candidate.remaining_error_fraction", wrt="candidate.review.minutes_per_record")
+...     "candidate.review.remaining_error_fraction", wrt="candidate.review.response.minutes_per_record")
 >>> limit(remaining_errors, checking_minutes_per_record, S.Infinity)
 0
 
@@ -600,7 +603,7 @@ This is a quality limit. It does not tell us to check forever: checking itself
 uses staff minutes, so total minutes per record grow without bound:
 
 >>> total_minutes = two_minutes.expression(
-...     "candidate.minutes_per_record", wrt="candidate.review.minutes_per_record")
+...     "candidate.minutes_per_record", wrt="candidate.review.response.minutes_per_record")
 >>> limit(total_minutes, checking_minutes_per_record, S.Infinity)
 oo
 
@@ -617,12 +620,12 @@ Setting :math:`G'(t)=0` gives the candidate :math:`t_*=2\log3`, about
 2.20 minutes, where :math:`\log` denotes the natural logarithm. A point with
 zero derivative is called a stationary point.
 We can confirm this exactly. Checking minutes belong to the nested response, at
-``candidate.review.minutes_per_record``. Supply that scalar using its dotted path as a
+``candidate.review.response.minutes_per_record``. Supply that scalar using its dotted path as a
 dictionary key; Python's ``**`` passes the dictionary to ``observe``.
 ``doit()`` carries out the deferred derivative
 and substitution in ``candidate.minutes_saved_derivative``:
 
->>> proposed = measured.observe(**{"candidate.review.minutes_per_record": 2*log(3)})
+>>> proposed = measured.observe(**{"candidate.review.response.minutes_per_record": 2*log(3)})
 >>> proposed.expression("candidate.minutes_saved_derivative").doit()
 0
 
@@ -631,8 +634,8 @@ as in the quality-limit calculation:
 
 >>> saving_curve = proposed.expression(
 ...     "candidate.minutes_saved_per_record",
-...     wrt="candidate.review.minutes_per_record").doit()
->>> saving_curve.free_symbols == {proposed.symbols.candidate.review.minutes_per_record}
+...     wrt="candidate.review.response.minutes_per_record").doit()
+>>> saving_curve.free_symbols == {proposed.symbols.candidate.review.response.minutes_per_record}
 True
 
 Stationarity alone does not establish an optimum. A stationary point might
@@ -664,7 +667,7 @@ workload for the capacity calculation.
 ``review_context()`` registered the stationary-point implication as a trusted
 inference rule. The checker establishes its premises for our particular curve
 and candidate; it does not prove the general implication itself.
-Its concavity and differentiability checks select ``candidate.review.minutes_per_record`` with
+Its concavity and differentiability checks select ``candidate.review.response.minutes_per_record`` with
 ``wrt``, keeping the whole curve available despite the observed checking time.
 The zero-slope check uses the observed point. Thus both kinds of check reuse
 the workload's definitions.
@@ -743,14 +746,14 @@ starts a fresh context, so the original observations remain for comparison:
 >>> shorter_repairs = RecordWork(
 ...     "shorter repairs", entry_minutes_per_record=record.entry_minutes_per_record,
 ...     error_fraction=record.error_fraction, repair_minutes_per_error=30)
->>> revised = review_context(shorter_repairs, detection_rate=short.detection_rate)
->>> revised = revised.observe(**{"candidate.review.minutes_per_record": 2*log(Rational(3, 2))})
+>>> revised = review_context(shorter_repairs, response=response)
+>>> revised = revised.observe(**{"candidate.review.response.minutes_per_record": 2*log(Rational(3, 2))})
 >>> revised_result = revised.run(review_plan)
 >>> round(float(revised_result.data.checking_minutes_per_record), 2)
 0.81
 >>> revised_result.report.explain("global_maximum").verdict
 'strictly true'
->>> measured.expression("candidate.record.repair_minutes_per_record")
+>>> measured.expression("candidate.review.record.repair_minutes_per_record")
 6
 
 Cheaper repairs make less checking worthwhile. The same method establishes
@@ -782,8 +785,8 @@ have not yet been fixed:
 
 >>> from sympy import sqrt
 >>> from examples.record_review import RationalReview
->>> changed = measured.replace("candidate.review", RationalReview)
->>> changed = changed.observe(**{"candidate.review.minutes_per_record": 2*(sqrt(3)-1)})
+>>> changed = measured.replace("candidate.review.response", RationalReview)
+>>> changed = changed.observe(**{"candidate.review.response.minutes_per_record": 2*(sqrt(3)-1)})
 >>> alternative = changed.run(review_plan)
 >>> alternative.report.explain("global_maximum").verdict
 'strictly true'
@@ -821,9 +824,9 @@ find out why our method cannot use it:
 
 >>> from examples.record_review import CappedReview
 >>> from modello.contrib.verification import VerificationError
->>> capped = measured.replace("candidate.review", CappedReview).observe(
-...     **{"candidate.review.minutes_per_record": 2})
->>> capped.explain("candidate.review.caught_share/continuously_differentiable").verdict
+>>> capped = measured.replace("candidate.review.response", CappedReview).observe(
+...     **{"candidate.review.response.minutes_per_record": 2})
+>>> capped.explain("candidate.review.response.caught_share/continuously_differentiable").verdict
 'strictly false'
 >>> try:
 ...     capped.run(review_plan)
@@ -843,8 +846,8 @@ Evaluate a few points to explore the proposed response shape, selecting its
 checking-minutes input:
 
 >>> sampled = capped.sample(
-...     "candidate.review.caught_share",
-...     wrt="candidate.review.minutes_per_record", points=(1, 2, 3))
+...     "candidate.review.response.caught_share",
+...     wrt="candidate.review.response.minutes_per_record", points=(1, 2, 3))
 >>> tuple(float(value) for value in sampled.values)
 (0.5, 1.0, 1.0)
 >>> sampled.kind
@@ -924,7 +927,8 @@ the `results <study/results.json>`_, `baseline evidence <study/exponential.html>
 `alternative evidence <study/rational.html>`_, and
 `blocked replacement <study/capped.html>`_.
 
-For a further experiment, try ``review_context(record, detection_rate=Rational(1, 3))``. For
+For a further experiment, supply a response with detection rate
+``Rational(1, 3)`` and zero error-creation rate. For
 positive :math:`a,k` with :math:`ak>1`, solving :math:`G'(t)=0` gives the
 positive candidate :math:`t_*=\log(ak)/k`. Check its premises before trusting
 the new capacity.
@@ -943,43 +947,26 @@ binding, replacement, domain, and execution rules.
 
 .. _record-review-equilibrium:
 
-Extend the review component: checking can introduce errors
-----------------------------------------------------------
+Change an observation: checking can introduce errors
+----------------------------------------------------
 
-The review component is the place to change the process. It supplies the
-response; ``ReviewWorkload`` turns that response into corrected and remaining
-error fractions, staff minutes, and derivatives.
+The same response model can introduce errors as well as correct them. Its
+``error_creation_rate`` determines the share of initially correct records made
+incorrect by a check: :math:`1-e^{-rt}`. The baseline used a zero rate.
 
-So far, ``review.introduced_error_share`` is zero. Let it instead describe
-the share of initially correct records made incorrect by a check. Use the
-same constant-rate construction that gave us ``caught_share``, now with an
-``error_creation_rate`` per minute:
+Supply a response with an error-creation rate of one hundredth per minute.
+Start a fresh context with the same record estimates and detection rate, then
+observe the same two checking minutes as before. Each pass's outcomes depend
+on the record's state at its start:
 
-.. literalinclude:: ../../../examples/record_review.py
-   :language: python
-   :pyobject: FallibleReview
-
-This reuses ``derive_checking_response`` to give
-:math:`1-e^{-rt}`, where :math:`r` is the error-creation rate. It is zero
-when checking takes no time or the rate is zero. ``caught_share`` retains
-its existing definition. We count each pass's outcomes from the record's
-state at the start of that pass.
-
-Replace the existing review component, as we did for the rational response.
-For illustration, use an error-creation rate of one hundredth per minute and
-the same two checking minutes as before:
-
->>> from examples.record_review import FallibleReview
->>> response = FallibleReview("response", detection_rate=short.detection_rate,
-...                           error_creation_rate=Rational(1, 100))
->>> extended = measured.replace("candidate.review", FallibleReview).observe(**{
-...     "candidate.review.error_creation_rate": response.error_creation_rate,
-... })
->>> fallible = extended.observe(**{"candidate.review.minutes_per_record": 2})
->>> tuple(round(float(fallible.expression(f"candidate.{field}")), 4)
+>>> response = ExponentialReview("response", detection_rate=short.detection_rate,
+...                              error_creation_rate=Rational(1, 100))
+>>> extended = review_context(record, response=response)
+>>> fallible = extended.observe(**{"candidate.review.response.minutes_per_record": 2})
+>>> tuple(round(float(fallible.expression(f"candidate.review.{field}")), 4)
 ...       for field in outcome_fields)
 (0.8822, 0.0632, 0.0546)
->>> round(float(fallible.expression("candidate.introduced_error_fraction")), 4)
+>>> round(float(fallible.expression("candidate.review.introduced_error_fraction")), 4)
 0.0178
 
 The corrected fraction is still 6.32% of all records. Checking also introduces
@@ -987,7 +974,7 @@ errors into 1.78%, leaving 5.46% incorrect instead of the earlier 3.68%.
 Introduced errors are part of the remaining-error group, so the same three
 outcome groups still account for every record:
 
->>> simplify(sum(fallible.expression(f"candidate.{field}") for field in outcome_fields))
+>>> simplify(sum(fallible.expression(f"candidate.review.{field}") for field in outcome_fields))
 1
 
 Assume an introduced error takes the same repair minutes as an original error.
@@ -998,24 +985,15 @@ formulas need replacing:
 ...       for current in (two_minutes, fallible))
 (8.2073, 9.2765)
 
-A zero error-creation rate recovers the original result:
-
->>> no_new_errors = measured.replace("candidate.review", FallibleReview).observe(**{
-...     "candidate.review.error_creation_rate": 0,
-...     "candidate.review.minutes_per_record": 2,
-... })
->>> no_new_errors.expression("candidate.minutes_per_record") == two_minutes.expression("candidate.minutes_per_record")
-True
-
 The old optimal checking time needs reconsidering. At :math:`2\log3`, the
 updated minutes-saved derivative is negative:
 
->>> old_choice = extended.observe(**{"candidate.review.minutes_per_record": 2 * log(3)})
+>>> old_choice = extended.observe(**{"candidate.review.response.minutes_per_record": 2 * log(3)})
 >>> old_choice.expression("candidate.minutes_saved_derivative").doit().is_negative
 True
 
 That point no longer satisfies the stationarity premise of ``review_plan``.
-The response replacement updates the model's derivatives; the verification
+The changed response inputs update the model's derivatives; the verification
 workflow checks the premises needed to justify a new decision.
 
 View the same outcomes as transitions
@@ -1057,24 +1035,20 @@ calculated by the workload model. ``applyfunc`` resolves each matrix entry
 using the observed context:
 
 >>> from sympy import Matrix
->>> review = extended.symbols.candidate.review
+>>> response_symbols = extended.symbols.candidate.review.response
 >>> symbolic_P = Matrix([
-...     [1 - review.introduced_error_share, review.introduced_error_share],
-...     [review.caught_share, 1 - review.caught_share],
+...     [1 - response_symbols.introduced_error_share, response_symbols.introduced_error_share],
+...     [response_symbols.caught_share, 1 - response_symbols.caught_share],
 ... ])
 >>> P = symbolic_P.applyfunc(fallible.expression)
 >>> initial = Matrix([[1 - record.error_fraction, record.error_fraction]])
 >>> after_one = initial * P
->>> simplify(after_one[0, 1] - fallible.expression("candidate.remaining_error_fraction"))
+>>> simplify(after_one[0, 1] - fallible.expression("candidate.review.remaining_error_fraction"))
 0
 
 Keep this pass's duration and rates fixed for repeated checks. At equilibrium,
 the error fraction before and after a pass is the same. Declare that equality
 in a model, reusing ``ReviewModel`` and its review component:
-
-.. literalinclude:: ../../../examples/record_review.py
-   :language: python
-   :pyobject: FallibleReviewModel
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
@@ -1086,8 +1060,10 @@ Reuse the response's rates and supply the two-minute pass duration. Leave the
 record's error fraction unknown so Modello can infer it:
 
 >>> from examples.record_review import ReviewEquilibrium
->>> equilibrium = ReviewEquilibrium("unchanged quality", review=response,
-...                                 **{"review.minutes_per_record": 2})
+>>> equilibrium = ReviewEquilibrium("unchanged quality", **{
+...     "review.response": response,
+...     "review.response.minutes_per_record": 2,
+... })
 >>> round(float(equilibrium.error_fraction), 4)
 0.0304
 
@@ -1116,7 +1092,7 @@ from the equilibrium question and the original record estimates:
 
 >>> from examples.record_review import RepeatedReview
 >>> repeated = RepeatedReview("four checking minutes", record=record,
-...                           review=equilibrium.review, checking_minutes_per_record=4)
+...                           response=equilibrium.review.response, checking_minutes_per_record=4)
 >>> repeated.passes
 2
 >>> round(float(repeated.final_error_fraction), 4)
@@ -1146,7 +1122,7 @@ existing context, using symbolic component fields so they follow observations:
 ...       for i in range(symbolic_P.rows)),
 ... )
 >>> transitions = extended.with_obligations(*probability_obligations)
->>> checked = transitions.observe(**{"candidate.review.minutes_per_record": 2})
+>>> checked = transitions.observe(**{"candidate.review.response.minutes_per_record": 2})
 >>> checked.explain("P_0_1_nonnegative").verdict
 'strictly true'
 >>> symbolic_P.applyfunc(checked.expression) == P
@@ -1171,5 +1147,5 @@ calculations. A computation that relies on them can list them as a
 entries summing to one.
 
 The same model now supports questions about outcome fractions, workload,
-checking time, and repeated passes. Changing its response component updates
+checking time, and repeated passes. Changing the response updates
 the dependent calculations; each argument still needs its own premises.

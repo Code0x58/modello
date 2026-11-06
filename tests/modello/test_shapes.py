@@ -108,19 +108,28 @@ def test_component_instances_supply_independent_symbolic_shapes():
     assert problem.symbols.left.innovations[0] != problem.symbols.right.innovations[0]
 
 
-@pytest.mark.parametrize("inputs", ["component", "dotted"])
+@pytest.mark.parametrize("inputs", ["component", "nested-component", "dotted"])
 @pytest.mark.parametrize("count", [0, 3])
 def test_observed_totals_infer_window_sizes_from_component_quantities(inputs, count):
     class Step(Modello):
         minutes = InstanceDummy("minutes", positive=True)
 
-    class Schedule(Modello):
+    class Settings(Modello):
         step = component(Step)
+
+    class Schedule(Modello):
+        settings = component(Settings)
         N = InstanceDummy("N", integer=True, nonnegative=True)
-        total_minutes = N * step.minutes
+        total_minutes = N * settings.step.minutes
         states = Vector("states", size=N + 1)
 
-    observations = {"step": Step("step", minutes=2)} if inputs == "component" else {"step.minutes": 2}
+    step = Step("step", minutes=2)
+    if inputs == "component":
+        observations = {"settings": Settings("settings", step=step)}
+    elif inputs == "nested-component":
+        observations = {"settings.step": step}
+    else:
+        observations = {"settings.step.minutes": 2}
     case = Schedule("total", total_minutes=2 * count, **observations)
     assert case.N == count
     assert len(case.states) == count + 1

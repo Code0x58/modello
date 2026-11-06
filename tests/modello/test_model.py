@@ -15,8 +15,31 @@ from modello import (
     component,
     inspect_model,
 )
+from modello.errors import ModelInputError
 
 from ._models import Increment, Pair, Reading, Scalar, ScalarComponent
+
+
+def test_nested_component_observations_preserve_equations_and_input_groups():
+    class Stage(Modello):
+        reading = component(Increment)
+        result = 2 * reading.y
+
+    class Workflow(Modello):
+        stage = component(Stage)
+        result = stage.result
+
+    source = Increment("reading", x=3)
+    case = Workflow("nested", **{"stage.reading": source})
+    assert case.result == 8
+    assert case.stage.reading.x == source.x
+    problem = inspect_model(Workflow, "family", **{"stage.reading": source})
+    assert problem.solutions().one().result == case.result
+    assert {constraint.input for constraint in problem.constraints if constraint.input} == {"stage.reading"}
+    assert not any(constraint.input for constraint in problem.without("stage.reading").constraints)
+    for path in ("stage.missing", "_modello_model.stage.reading"):
+        with pytest.raises(ModelInputError, match="Unknown model attribute"):
+            Workflow("unknown slot", **{path: source})
 
 
 def test_multiple_inheritance_expr_conflict():

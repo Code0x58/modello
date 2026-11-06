@@ -92,17 +92,19 @@ CHECKING_MINUTES_DOMAIN = Interval(0, S.Infinity)
 
 
 class ExponentialReview(VerificationModel):
-    """A constant-rate checking response that introduces no errors.
+    """Constant-rate correction and error-introduction responses.
 
     ``minutes_per_record`` measures checking; ``detection_rate`` is per minute.
-    The rate is deliberately real: increasing response needs detection_rate > 0.
+    The detection rate is deliberately real: increasing response needs it > 0.
+    The nonnegative error-creation rate is zero in the baseline scenario.
     The curve follows from a constant detection rate for errors still left;
     that assumption has not been fitted or validated against a real team.
     """
 
     minutes_per_record = InstanceDummy("t", nonnegative=True)
     detection_rate = InstanceDummy("k", real=True)
-    introduced_error_share = S.Zero
+    error_creation_rate = InstanceDummy("r", nonnegative=True)
+    introduced_error_share = derive_checking_response(minutes_per_record, error_creation_rate)
     caught_share = specifies(
         derive_checking_response(minutes_per_record, detection_rate),
         strictly_increasing(
@@ -131,27 +133,26 @@ class ReviewModel(Modello):
     """Outcome fractions for one pass, shared by workload and repeated review."""
 
     record = component(RecordWork)
-    review = component(ExponentialReview)
-    corrected_fraction = record.error_fraction * review.caught_share
-    introduced_error_fraction = (1 - record.error_fraction) * review.introduced_error_share
+    response = component(ExponentialReview)
+    corrected_fraction = record.error_fraction * response.caught_share
+    introduced_error_fraction = (1 - record.error_fraction) * response.introduced_error_share
     always_correct_fraction = 1 - record.error_fraction - introduced_error_fraction
     remaining_error_fraction = record.error_fraction - corrected_fraction + introduced_error_fraction
 
 
-class ReviewWorkload(ReviewModel):
+class ReviewWorkload(Modello):
     """Staff minutes and derivatives of the shared record outcomes."""
 
+    review = component(ReviewModel)
     minutes_saved_per_record = (
-        ReviewModel.corrected_fraction - ReviewModel.introduced_error_fraction
-    ) * ReviewModel.record.repair_minutes_per_error - ReviewModel.review.minutes_per_record
-    minutes_per_record = ReviewModel.record.minutes_per_record - minutes_saved_per_record
+        review.corrected_fraction - review.introduced_error_fraction
+    ) * review.record.repair_minutes_per_error - review.response.minutes_per_record
+    minutes_per_record = review.record.minutes_per_record - minutes_saved_per_record
     # A deferred derivative acts on the resolved curve, rather than the field's
     # placeholder symbol. It also generates a differentiability obligation.
-    minutes_saved_derivative = Derivative(
-        minutes_saved_per_record, ReviewModel.review.minutes_per_record, evaluate=False
-    )
+    minutes_saved_derivative = Derivative(minutes_saved_per_record, review.response.minutes_per_record, evaluate=False)
     minutes_per_record_second_derivative = Derivative(
-        minutes_per_record, ReviewModel.review.minutes_per_record, 2, evaluate=False
+        minutes_per_record, review.response.minutes_per_record, 2, evaluate=False
     )
 
 
@@ -178,19 +179,19 @@ STATIONARY_MAXIMUM = InferenceRule(
     (
         concave(
             "candidate.minutes_saved_per_record",
-            wrt="candidate.review.minutes_per_record",
+            wrt="candidate.review.response.minutes_per_record",
             domain=CHECKING_MINUTES_DOMAIN,
             name="concavity",
         ),
         continuously_differentiable(
             "candidate.minutes_saved_per_record",
-            wrt="candidate.review.minutes_per_record",
+            wrt="candidate.review.response.minutes_per_record",
             domain=CHECKING_MINUTES_DOMAIN,
             order=1,
             name="differentiability",
         ),
         equal_to("candidate.minutes_saved_derivative", 0, name="stationarity"),
-        nonnegative("candidate.review.minutes_per_record", name="feasibility"),
+        nonnegative("candidate.review.response.minutes_per_record", name="feasibility"),
     ),
     source="Concave supporting-line inequality; docs/examples/record-review/index.rst#why-this-is-a-global-optimum",
 )
@@ -211,7 +212,7 @@ def _evaluate_plan(current: VerificationContext) -> ReviewDecision:
     values = tuple(
         simplify(current.expression(f"candidate.{field}").doit())
         for field in (
-            "review.minutes_per_record",
+            "review.response.minutes_per_record",
             "minutes_saved_per_record",
             "minutes_per_record",
             "minutes_per_record_second_derivative",
@@ -227,7 +228,7 @@ review_plan = Method(
     _evaluate_plan,
     preconditions=(GLOBAL_MAXIMUM, positive("candidate.minutes_per_record", name="positive_workload")),
     uses=(
-        "candidate.review.minutes_per_record",
+        "candidate.review.response.minutes_per_record",
         "candidate.minutes_saved_per_record",
         "candidate.minutes_per_record",
         "candidate.minutes_per_record_second_derivative",
@@ -236,26 +237,25 @@ review_plan = Method(
 
 
 def review_context(
-    record: RecordWork | None = None, *, detection_rate=Rational(1, 2)
+    record: RecordWork | None = None, *, response: ExponentialReview | None = None
 ) -> VerificationContext[ReviewPlanning]:
     """Start a fresh context with these inputs and the stationary-point rule.
 
-    Supply a RecordWork instance to reuse estimates. With no instance, use the
-    walkthrough's baseline. Checking minutes and the staffing budget stay open.
+    Supply record estimates and a response component, or use the baseline
+    with no introduced errors. Checking minutes and the staffing budget stay open.
     """
     if record is None:
         record = RecordWork(
             "record", entry_minutes_per_record=4, error_fraction=Rational(1, 10), repair_minutes_per_error=60
         )
-    return (
-        VerificationContext.for_model(ReviewPlanning, "records")
-        .with_rule(STATIONARY_MAXIMUM)
-        .observe(
-            candidate=ReviewWorkload(
-                "candidate", record=record, review=ExponentialReview("response", detection_rate=detection_rate)
-            ),
-        )
-    )
+    if response is None:
+        response = ExponentialReview("response", detection_rate=Rational(1, 2), error_creation_rate=0)
+    context = VerificationContext.for_model(ReviewPlanning, "records").with_rule(STATIONARY_MAXIMUM)
+    if type(record) is not RecordWork:
+        context = context.replace("candidate.review.record", type(record))
+    if type(response) is not ExponentialReview:
+        context = context.replace("candidate.review.response", type(response))
+    return context.observe(**{"candidate.review.record": record, "candidate.review.response": response})
 
 
 class RationalReview(ExponentialReview):
@@ -280,33 +280,21 @@ class CappedReview(ExponentialReview):
     )
 
 
-class FallibleReview(ExponentialReview):
-    """Also introduce errors into initially correct records at a constant rate."""
-
-    error_creation_rate = InstanceDummy("r", nonnegative=True)
-    introduced_error_share = derive_checking_response(ExponentialReview.minutes_per_record, error_creation_rate)
-
-
-class FallibleReviewModel(ReviewModel):
-    """The shared record outcomes with a fallible response component."""
-
-    review = component(FallibleReview)
-
-
-class ReviewEquilibrium(FallibleReviewModel):
+class ReviewEquilibrium(Modello):
     """Infer an error fraction unchanged by one pass of fallible review."""
 
-    error_fraction = FallibleReviewModel.record.error_fraction
-    error_fraction = FallibleReviewModel.remaining_error_fraction
+    review = component(ReviewModel)
+    error_fraction = review.record.error_fraction
+    error_fraction = review.remaining_error_fraction
 
 
 class RepeatedReview(Modello):
     """Infer pass count from checking minutes and query the resulting error fraction."""
 
-    review = component(FallibleReview)
+    response = component(ExponentialReview)
     passes = InstanceDummy("N", integer=True, nonnegative=True)
-    checking_minutes_per_record = passes * review.minutes_per_record
-    states = model_vector(FallibleReviewModel, size=passes + 1)
+    checking_minutes_per_record = passes * response.minutes_per_record
+    states = model_vector(ReviewModel, size=passes + 1)
     record = states[0].record
     n = Index("n")
     progression = model_recurrence(
@@ -316,11 +304,11 @@ class RepeatedReview(Modello):
         repair_minutes_per_error=record.repair_minutes_per_error,
     )
     review_settings = model_recurrence(
-        states[n].review,
+        states[n].response,
         start=0,
-        minutes_per_record=review.minutes_per_record,
-        detection_rate=review.detection_rate,
-        error_creation_rate=review.error_creation_rate,
+        minutes_per_record=response.minutes_per_record,
+        detection_rate=response.detection_rate,
+        error_creation_rate=response.error_creation_rate,
     )
     final_error_fraction = states[-1].record.error_fraction
 
@@ -334,12 +322,12 @@ def write_reports(directory: Path, *, plot: bool = False) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     measured = review_context()
     contexts = {
-        "exponential": measured.observe(**{"candidate.review.minutes_per_record": 2 * log(3)}),
-        "rational": measured.replace("candidate.review", RationalReview).observe(
-            **{"candidate.review.minutes_per_record": 2 * (sqrt(3) - 1)}
+        "exponential": measured.observe(**{"candidate.review.response.minutes_per_record": 2 * log(3)}),
+        "rational": measured.replace("candidate.review.response", RationalReview).observe(
+            **{"candidate.review.response.minutes_per_record": 2 * (sqrt(3) - 1)}
         ),
-        "capped": measured.replace("candidate.review", CappedReview).observe(
-            **{"candidate.review.minutes_per_record": 2}
+        "capped": measured.replace("candidate.review.response", CappedReview).observe(
+            **{"candidate.review.response.minutes_per_record": 2}
         ),
     }
     summary: dict = {
@@ -347,10 +335,11 @@ def write_reports(directory: Path, *, plot: bool = False) -> None:
         "inputs": {
             path: str(measured.expression(path))
             for path in (
-                "candidate.record.entry_minutes_per_record",
-                "candidate.record.error_fraction",
-                "candidate.record.repair_minutes_per_error",
-                "candidate.review.detection_rate",
+                "candidate.review.record.entry_minutes_per_record",
+                "candidate.review.record.error_fraction",
+                "candidate.review.record.repair_minutes_per_error",
+                "candidate.review.response.detection_rate",
+                "candidate.review.response.error_creation_rate",
             )
         },
         "plans": {},
@@ -390,9 +379,9 @@ def _write_plots(contexts: dict[str, VerificationContext[ReviewPlanning]], direc
 
     sample_minutes_per_record = [index / 50 for index in range(301)]
     baseline = contexts["exponential"]
-    minutes_per_record = baseline.symbols.candidate.review.minutes_per_record
+    minutes_per_record = baseline.symbols.candidate.review.response.minutes_per_record
     minutes_saved_per_record = baseline.expression(
-        "candidate.minutes_saved_per_record", wrt="candidate.review.minutes_per_record"
+        "candidate.minutes_saved_per_record", wrt="candidate.review.response.minutes_per_record"
     ).doit()
     benefit, benefit_axes = new_plot("Why spend time checking?", "Minutes per record")
     for expression, label, style in (
@@ -412,10 +401,12 @@ def _write_plots(contexts: dict[str, VerificationContext[ReviewPlanning]], direc
 
     comparison, comparison_axes = new_plot("Changing the response curve", r"Minutes saved per record $G(t)$")
     for name, current in contexts.items():
-        axis = current.symbols.candidate.review.minutes_per_record
+        axis = current.symbols.candidate.review.response.minutes_per_record
         evaluate = lambdify(
             axis,
-            current.expression("candidate.minutes_saved_per_record", wrt="candidate.review.minutes_per_record").doit(),
+            current.expression(
+                "candidate.minutes_saved_per_record", wrt="candidate.review.response.minutes_per_record"
+            ).doit(),
             "math",
         )
         comparison_axes.plot(

@@ -543,7 +543,7 @@ built-in property check:
 The candidate is a ``ReviewWorkload`` component. Its ``minutes_saved_per_record``
 field serves both the point evaluation and the function checks. The conclusion
 concerns its minutes saved at the observed checking minutes. The rule's shape
-checks use ``wrt="candidate.review.minutes_per_record"`` to keep the response's
+checks use ``wrt="candidate.review.response.minutes_per_record"`` to keep the response's
 input symbolic; its stationarity check evaluates the derivative at the observed point. The
 alternative :math:`t` in the mathematical statement belongs to the general
 argument above, so the decision model needs no extra input or coordinate for it.
@@ -569,7 +569,8 @@ workload. The callback executes after those premises are established; its
 Python implementation is trusted too.
 
 The convenience function registers the rule and accepts a ``RecordWork``
-component containing the entry and repair estimates, plus the detection rate.
+component containing the entry and repair estimates, plus an ``ExponentialReview``
+response component containing the correction and error-creation rates.
 Its defaults provide the walkthrough's baseline. Each call builds a candidate
 workload in a fresh context, leaving its checking minutes and staffing budget open:
 
@@ -590,9 +591,9 @@ checking itself costs time, so six is a uniform upper bound on minutes saved.
 >>> from sympy import log
 >>> from examples.record_review import CHECKING_MINUTES_DOMAIN, review_context
 >>> from modello.contrib.verification import supremum_below
->>> proposed = review_context().observe(**{"candidate.review.minutes_per_record": 2*log(3)})
+>>> proposed = review_context().observe(**{"candidate.review.response.minutes_per_record": 2*log(3)})
 >>> ceiling = proposed.with_obligations(supremum_below(
-...     "candidate.minutes_saved_per_record", wrt="candidate.review.minutes_per_record",
+...     "candidate.minutes_saved_per_record", wrt="candidate.review.response.minutes_per_record",
 ...     domain=CHECKING_MINUTES_DOMAIN,
 ...     bound=7, name="saving_ceiling"))
 >>> ceiling.explain("saving_ceiling").verdict

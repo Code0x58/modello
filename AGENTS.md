@@ -11,6 +11,11 @@ Native SymPy substitution remains appropriate when substitution itself is the
 mathematical subject or is needed internally; it is not a model-composition
 adapter. Check new public examples for this pattern before finishing.
 
+Compose models with `component(...)` when reusing their inputs and outputs.
+Do not add subclass wrappers merely to select a component or formulate a new
+question about an existing model. Use parameters for different observations;
+reserve inheritance for changes to the model's own equations or properties.
+
 Use uv 0.13.1 or newer. Before committing, run the relevant checks from CI:
 
 * `uv sync --locked --dev --group docs` (Python 3.12+ for documentation tooling)

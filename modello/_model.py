@@ -747,17 +747,20 @@ def _has_symbolic_shape(model: type[Modello]) -> bool:
 def _component_shape_bindings(namespace: ModelloMetaNamespace, values: Mapping[str, object]) -> dict[Symbol, Basic]:
     """Read supplied component scalars before the finite window is prepared."""
     bindings: dict[Symbol, Basic] = {}
-    for name, child in namespace.nested_models.items():
+    for name, value in values.items():
+        path = tuple(name.split("."))
         # Collections and their views need a window before their fields exist.
-        if name in namespace.collections or name in namespace.views:
+        if path[0] in namespace.collections or path[0] in namespace.views:
             continue
-        value = values.get(name)
-        for path, symbol in child._modello_fields.items():
-            if isinstance(value, child._modello_model):
-                bindings[symbol] = _path_value(value, path)
-            dotted = _path_label((name, *path))
-            if dotted in values and values[dotted] is not None:
-                bindings[symbol] = _scalar_expression(values[dotted], f"{dotted} must be a scalar expression")
+        try:
+            target = _path_value(namespace.reference_at(path[:1]), path[1:])
+        except (AttributeError, IndexError, KeyError, TypeError):
+            continue
+        if isinstance(target, _ModelReference) and isinstance(value, target._modello_model):
+            for field_path, symbol in target._modello_fields.items():
+                bindings[symbol] = _path_value(value, field_path)
+        elif len(path) > 1 and isinstance(target, Symbol) and value is not None:
+            bindings[target] = _scalar_expression(value, f"{name} must be a scalar expression")
     return bindings
 
 
