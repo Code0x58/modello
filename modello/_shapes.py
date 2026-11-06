@@ -7,6 +7,9 @@ from collections.abc import Mapping
 from sympy import Basic, Eq, Integer, Symbol, check_assumptions, solve, sympify
 
 from modello._collections import _ModelVectorSpec
+from modello._evaluation import _substitute
+from modello._operators import _scalar_expression
+from modello._reconstruction import _OPERATORS
 from modello.errors import ModelInputError
 from modello.vectors import Vector, _vector_input
 
@@ -16,6 +19,7 @@ def _dimensions(
     fields: Mapping[str, Symbol],
     definitions: Mapping[str, Basic],
     values: Mapping[str, object],
+    component_values: Mapping[Symbol, Basic] | None = None,
 ) -> dict[Symbol, Integer]:
     """Use supplied lengths and scalar observations as simultaneous shape equations."""
     axes = {name: sympify(vector.shape[0]) for name, vector in vectors.items()}
@@ -35,6 +39,18 @@ def _dimensions(
             value = values.get(name, definitions.get(name, symbol))
             if value != symbol:
                 equations.append(Eq(symbol, sympify(value)))
+    observations = {
+        name: _scalar_expression(value, f"{name} must be a scalar expression")
+        for name, value in values.items()
+        if name in fields and fields[name] not in symbols and value is not None
+    }
+    known = {**(component_values or {}), **{fields[name]: value for name, value in observations.items()}}
+    for name, value in observations.items():
+        # A total or another observed output can determine the window length.
+        # Native operations and state queries need the prepared model's resolver.
+        residual = _substitute(definitions.get(name, fields[name]) - value, known)
+        if residual.free_symbols and residual.free_symbols <= symbols and not residual.has(Vector, *_OPERATORS):
+            equations.append(Eq(residual, 0))
     candidates = solve(equations, sorted(symbols, key=str), dict=True) if equations else []
     complete = [
         candidate

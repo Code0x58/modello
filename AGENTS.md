@@ -1,3 +1,16 @@
+Express public Modello examples through model composition. Reuse bound
+components and nested members directly, and join existing quantities with
+model equations. Do not use `sympy.Subs` or `.subs()` to feed inputs into an
+existing model or reconnect its outputs. For repeated nested models, use
+`model_vector` and `model_recurrence` with direct member references, retaining
+each member's own equations. Avoid extracting or duplicating a model's formula
+and solving it manually when Modello can infer the requested quantity.
+
+This applies to documentation and examples as well as library interfaces.
+Native SymPy substitution remains appropriate when substitution itself is the
+mathematical subject or is needed internally; it is not a model-composition
+adapter. Check new public examples for this pattern before finishing.
+
 Use uv 0.13.1 or newer. Before committing, run the relevant checks from CI:
 
 * `uv sync --locked --dev --group docs` (Python 3.12+ for documentation tooling)

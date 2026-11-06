@@ -13,7 +13,7 @@ from sympy.tensor.array import NDimArray
 from modello._collections import _Location, _ModelVectorSpec, _Selection, _UnresolvedSelection
 from modello._expressions import _declaration, _DefinitionResolver, _substitute
 from modello._model_laws import ModelRecurrence, _ModelLawSpec
-from modello._operators import _FunctionSymbol, _SymbolicTemplate
+from modello._operators import _FunctionSymbol, _scalar_expression, _SymbolicTemplate
 from modello._paths import _path_label, _path_value
 from modello._problem import ConstraintKind, FieldPath, _algebra
 from modello._reconstruction import _rebind
@@ -744,6 +744,23 @@ def _has_symbolic_shape(model: type[Modello]) -> bool:
     )
 
 
+def _component_shape_bindings(namespace: ModelloMetaNamespace, values: Mapping[str, object]) -> dict[Symbol, Basic]:
+    """Read supplied component scalars before the finite window is prepared."""
+    bindings: dict[Symbol, Basic] = {}
+    for name, child in namespace.nested_models.items():
+        # Collections and their views need a window before their fields exist.
+        if name in namespace.collections or name in namespace.views:
+            continue
+        value = values.get(name)
+        for path, symbol in child._modello_fields.items():
+            if isinstance(value, child._modello_model):
+                bindings[symbol] = _path_value(value, path)
+            dotted = _path_label((name, *path))
+            if dotted in values and values[dotted] is not None:
+                bindings[symbol] = _scalar_expression(values[dotted], f"{dotted} must be a scalar expression")
+    return bindings
+
+
 def _specialize_model(model: type[ShapeModel], values: Mapping[str, object]) -> type[ShapeModel]:
     """Choose a finite declaration without changing the reusable model class."""
     namespace = model._modello_namespace
@@ -763,7 +780,11 @@ def _specialize_model(model: type[ShapeModel], values: Mapping[str, object]) -> 
     pending = namespace.views.keys() - namespace.nested_models.keys()
     if finite and not children and not pending and not namespace.pending_laws:
         return model
-    dimensions = {} if finite else _dimensions(axes, namespace.dummies, namespace.attrs, values)
+    dimensions = (
+        {}
+        if finite
+        else _dimensions(axes, namespace.dummies, namespace.attrs, values, _component_shape_bindings(namespace, values))
+    )
     known = _known_integers(namespace, values, dimensions)
     selected = {}
     locations = [namespace.views[name].location for name in pending]

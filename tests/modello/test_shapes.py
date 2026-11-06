@@ -6,7 +6,7 @@ from copy import deepcopy
 import pytest
 from sympy import Derivative, Rational
 
-from modello import Index, InstanceDummy, Modello, Vector, component, inspect_model, vector
+from modello import Index, InstanceDummy, Modello, Recurrence, Series, Vector, component, inspect_model, vector
 from modello.errors import ModelInputError, SolutionCountError
 from tests.modello._models import DrivenSequence as ObservedAutoregression
 
@@ -20,9 +20,12 @@ def test_shape_preparation_preserves_derivative_coordinates_when_a_field_is_obse
         squared = x**2
         slope = Derivative(squared, x)
 
-    case = Measurement("point", samples=[1, 2], x=point)
+    observations = {"samples": [1, 2], "x": point, "slope": 2 * point}
+    case = Measurement("point", **observations)
     assert case.N == 2
     assert case.slope == 2 * point
+    family = inspect_model(Measurement, "family", **observations).solutions()
+    assert family.one().slope == 2 * point
 
 
 def test_symbolic_vector_substitution_preserves_coordinate_identities():
@@ -103,3 +106,50 @@ def test_component_instances_supply_independent_symbolic_shapes():
     result = problem.solutions().one()
     assert (result.left.N, result.right.N, result.total) == (2, 4, 13)
     assert problem.symbols.left.innovations[0] != problem.symbols.right.innovations[0]
+
+
+@pytest.mark.parametrize("inputs", ["component", "dotted"])
+@pytest.mark.parametrize("count", [0, 3])
+def test_observed_totals_infer_window_sizes_from_component_quantities(inputs, count):
+    class Step(Modello):
+        minutes = InstanceDummy("minutes", positive=True)
+
+    class Schedule(Modello):
+        step = component(Step)
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        total_minutes = N * step.minutes
+        states = Vector("states", size=N + 1)
+
+    observations = {"step": Step("step", minutes=2)} if inputs == "component" else {"step.minutes": 2}
+    case = Schedule("total", total_minutes=2 * count, **observations)
+    assert case.N == count
+    assert len(case.states) == count + 1
+    family = inspect_model(Schedule, "family", total_minutes=2 * count, **observations).solutions()
+    assert family.expression(family.symbols.N) == count
+    with pytest.raises(ModelInputError, match="conflict"):
+        Schedule("conflicting size", N=count + 1, total_minutes=2 * count, **observations)
+
+
+@pytest.mark.parametrize("shape", [{"samples": [1, 2]}, {"N": 2}])
+@pytest.mark.parametrize("operation", ["derivative", "recurrence"])
+def test_operator_output_observations_are_resolved_after_window_preparation(shape, operation):
+    class Growth(Modello):
+        N = InstanceDummy("N", integer=True, nonnegative=True)
+        x = InstanceDummy("x", real=True)
+        samples = Vector("samples", size=N)
+        if operation == "derivative":
+            final = Derivative(N * x, x, evaluate=False)
+        else:
+            n = Index("n")
+            T = Series("T", n)
+            law = Recurrence(T[n], 2 * T[n - 1], initial={0: 1})
+            final = T[N]
+
+    expected = 2 if operation == "derivative" else 4
+    case = Growth("observed output", x=1, final=expected, **shape)
+    assert case.N == 2
+    assert case.final == expected
+    family = inspect_model(Growth, "family", x=1, final=expected, **shape).solutions()
+    assert family.expression(family.symbols.final) == expected
+    with pytest.raises(SolutionCountError):
+        Growth("conflicting output", x=1, final=expected + 1, **shape)

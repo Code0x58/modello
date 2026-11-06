@@ -21,7 +21,6 @@ from sympy import (
     Piecewise,
     Rational,
     S,
-    Subs,
     lambdify,
     limit,
     log,
@@ -29,7 +28,7 @@ from sympy import (
     sqrt,
 )
 
-from modello import Index, InstanceDummy, Modello, Recurrence, Series, component
+from modello import Index, InstanceDummy, Modello, component, model_recurrence, model_vector
 from modello.contrib.verification import (
     InferenceRule,
     Method,
@@ -288,28 +287,42 @@ class FallibleReview(ExponentialReview):
     introduced_error_share = derive_checking_response(ExponentialReview.minutes_per_record, error_creation_rate)
 
 
-class ReviewEquilibrium(ReviewModel):
-    """Infer an error fraction unchanged by one pass of fallible review."""
+class FallibleReviewModel(ReviewModel):
+    """The shared record outcomes with a fallible response component."""
 
     review = component(FallibleReview)
-    error_fraction = ReviewModel.record.error_fraction
-    error_fraction = ReviewModel.remaining_error_fraction
 
 
-class RepeatedReview(ReviewModel):
+class ReviewEquilibrium(FallibleReviewModel):
+    """Infer an error fraction unchanged by one pass of fallible review."""
+
+    error_fraction = FallibleReviewModel.record.error_fraction
+    error_fraction = FallibleReviewModel.remaining_error_fraction
+
+
+class RepeatedReview(Modello):
     """Infer pass count from checking minutes and query the resulting error fraction."""
 
     review = component(FallibleReview)
     passes = InstanceDummy("N", integer=True, nonnegative=True)
     checking_minutes_per_record = passes * review.minutes_per_record
-    n = Index("n", nonnegative=True)
-    errors = Series("errors", n, nonnegative=True)
-    law = Recurrence(
-        errors[n],
-        Subs(ReviewModel.remaining_error_fraction, ReviewModel.record.error_fraction, errors[n - 1]),
-        initial={0: ReviewModel.record.error_fraction},
+    states = model_vector(FallibleReviewModel, size=passes + 1)
+    record = states[0].record
+    n = Index("n")
+    progression = model_recurrence(
+        states[n].record,
+        error_fraction=states[n - 1].remaining_error_fraction,
+        entry_minutes_per_record=record.entry_minutes_per_record,
+        repair_minutes_per_error=record.repair_minutes_per_error,
     )
-    final_error_fraction = errors[passes]
+    review_settings = model_recurrence(
+        states[n].review,
+        start=0,
+        minutes_per_record=review.minutes_per_record,
+        detection_rate=review.detection_rate,
+        error_creation_rate=review.error_creation_rate,
+    )
+    final_error_fraction = states[-1].record.error_fraction
 
 
 def write_reports(directory: Path, *, plot: bool = False) -> None:

@@ -1074,6 +1074,10 @@ in a model, reusing ``ReviewModel`` and its review component:
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
+   :pyobject: FallibleReviewModel
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
    :pyobject: ReviewEquilibrium
 
 The two ``error_fraction`` assignments join the starting and remaining error
@@ -1089,21 +1093,23 @@ record's error fraction unknown so Modello can infer it:
 
 For a finite run of checks, give the model a total checking time instead
 of choosing a pass count. ``RepeatedReview`` relates that time to pass
-duration, and uses the existing remaining-error formula as its recurrence.
-``Subs`` evaluates that formula at the previous pass's error fraction. The
-initial value comes from the record model. Add the substitution operator to
-the recurrence imports we used earlier:
+duration and keeps a review model at each record boundary. Link a record's
+error fraction directly to the preceding model's remaining-error fraction.
+Each member retains its own outcome equations:
 
 .. code-block:: python
 
-   from sympy import Subs
-   from modello import Index, Recurrence, Series
+   from modello import Index, model_recurrence, model_vector
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
    :pyobject: RepeatedReview
 
-``final_error_fraction`` queries the recurrence at the inferred pass count.
+There are ``passes + 1`` boundaries, including the initial record. ``record``
+is a view of that initial record. ``progression`` connects successive records,
+and ``review_settings`` shares the chosen response parameters across members.
+``final_error_fraction`` reads the last record directly. With zero passes,
+the last record is the initial one.
 
 Spend four checking minutes per record, reusing the bound two-minute review
 from the equilibrium question and the original record estimates:
