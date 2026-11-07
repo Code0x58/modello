@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
 from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, TypeVar, cast
+from uuid import UUID
 
 from sympy import Basic, Expr, Integer, Lambda, Symbol, sympify
 from sympy.matrices import MatrixBase
@@ -86,6 +87,7 @@ class _ModelReference:
     _modello_bindings: dict[Basic, Basic] = field(default_factory=dict)
     _modello_path: FieldPath = ()
     _modello_view: bool = False
+    _modello_scope: UUID | None = field(default=None, repr=False)
 
     @classmethod
     def _modello_create(cls, model: type[Modello], name: str) -> _ModelReference:
@@ -125,6 +127,10 @@ class _ModelReference:
     def __bool__(self) -> bool:
         return True if not hasattr(self._modello_model, "_modello_collection_size") else bool(len(self))
 
+    def __hash__(self) -> int:
+        """Allow scoped component references as keys without hashing mutable metadata."""
+        return hash((self._modello_model, self._modello_path, self._modello_scope))
+
     def __iter__(self) -> Any:
         return (self[i] for i in range(len(self)))
 
@@ -143,8 +149,12 @@ class _ModelReference:
 
     def __getattr__(self, name: str) -> Any:
         """Resolve a quantity, local coordinate, or reference to a deeper child."""
-        if (name,) in self._modello_fields:
-            return self._modello_fields[(name,)]
+        # Copy and pickle inspect the namespace before restoring its fields.
+        fields = self.__dict__.get("_modello_fields")
+        if fields is None:
+            raise AttributeError(name)
+        if (name,) in fields:
+            return fields[(name,)]
         coordinate = getattr(self._modello_model, name, None)
         if isinstance(coordinate, Coordinate):
             # Coordinates keep their declaration identity across component copies.
@@ -189,6 +199,7 @@ class _ModelReference:
             self._modello_child_fields.get(name, {}),
             bindings,
             (*self._modello_path, name),
+            _modello_scope=self._modello_scope,
         )
 
 
@@ -355,6 +366,7 @@ class ModelloMetaNamespace(dict):
                 {symbol: value.xreplace(replacements) for symbol, value in child._modello_bindings.items()},
                 child._modello_path,
                 child._modello_view,
+                child._modello_scope,
             )
             for key, child in self.nested_models.items()
         }

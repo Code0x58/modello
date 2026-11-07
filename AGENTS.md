@@ -16,6 +16,10 @@ Do not add subclass wrappers merely to select a component or formulate a new
 question about an existing model. Use parameters for different observations;
 reserve inheritance for changes to the model's own equations or properties.
 
+Prefer verification `context.symbols` references for observations and
+replacements, and `context.model` for field reads. Use `expression` for
+symbolic function queries and string paths when the path itself is data.
+
 Use uv 0.13.1 or newer. Before committing, run the relevant checks from CI:
 
 * `uv sync --locked --dev --group docs` (Python 3.12+ for documentation tooling)

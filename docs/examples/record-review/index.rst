@@ -547,23 +547,26 @@ optimality argument explained below. It leaves checking minutes and the
 staffing budget open.
 This helper belongs to the example; :ref:`its implementation
 <verification-example-contract>` shows how to prepare the same context yourself.
-``expression(path)`` returns a field's resolved SymPy expression, so we can
-inspect the inputs:
+Read resolved fields through ``model`` using their ordinary Python attributes:
 
 >>> from sympy import log
 >>> from examples.record_review import review_context
 >>> response = ExponentialReview("response", detection_rate=short.detection_rate,
 ...                              error_creation_rate=0)
 >>> measured = review_context(record, response=response)
->>> (measured.expression("candidate.review.record.entry_minutes_per_record"),
-...  measured.expression("candidate.review.record.repair_minutes_per_record"))
+>>> (measured.model.candidate.review.record.entry_minutes_per_record,
+...  measured.model.candidate.review.record.repair_minutes_per_record)
 (4, 6)
->>> measured.expression("candidate.review.response.detection_rate")
+>>> measured.model.candidate.review.response.detection_rate
 1/2
 >>> measured.explain("candidate.review.response.caught_share/strictly_increasing").verdict
 'strictly true'
 
 The nested response keeps its claims with the prefix ``candidate.review.response.caught_share``.
+Both ``model`` and ``symbols`` retain the declared component types for editor
+completion. ``model`` resolves the current observations; ``symbols`` supplies
+the field references used to add observations or replace a component. The
+names are checked as attributes, before either operation runs.
 
 .. _record-review-outcomes:
 
@@ -573,10 +576,12 @@ Ask about quality and limits
 Before choosing checking minutes for the budget, inspect the three outcome
 groups. Use the same measured inputs and try two checking minutes per record:
 
->>> two_minutes = measured.observe(**{"candidate.review.response.minutes_per_record": 2})
->>> outcome_fields = ("correct_to_correct_fraction", "corrected_fraction", "remaining_error_fraction")
->>> tuple(round(float(two_minutes.expression(f"candidate.review.{field}")), 4)
-...       for field in outcome_fields)
+>>> two_minutes = measured.observe({measured.symbols.candidate.review.response.minutes_per_record: 2})
+>>> from examples.record_review import ReviewModel
+>>> def outcome_fractions(review: ReviewModel):
+...     return (review.correct_to_correct_fraction, review.corrected_fraction,
+...             review.remaining_error_fraction)
+>>> tuple(round(float(value), 4) for value in outcome_fractions(two_minutes.model.candidate.review))
 (0.9, 0.0632, 0.0368)
 
 About 90% of records were already correct, 6.32% were corrected during checking,
@@ -584,17 +589,18 @@ and 3.68% still need repair. These are expected proportions, not guaranteed
 counts in a particular batch. The three fractions account for every record:
 
 >>> from sympy import simplify
->>> simplify(sum(two_minutes.expression(f"candidate.review.{field}") for field in outcome_fields))
+>>> simplify(sum(outcome_fractions(two_minutes.model.candidate.review)))
 1
 
-To inspect the whole curve, pass ``wrt="candidate.review.response.minutes_per_record"``.
+To inspect the whole curve, use ``expression`` with a ``wrt`` reference.
 This keeps checking minutes symbolic even in a context with an observed value,
 while retaining the observed record estimates and detection rate. The symbol
 comes from this context's component:
 
 >>> checking_minutes_per_record = two_minutes.symbols.candidate.review.response.minutes_per_record
 >>> remaining_errors = two_minutes.expression(
-...     "candidate.review.remaining_error_fraction", wrt="candidate.review.response.minutes_per_record")
+...     two_minutes.symbols.candidate.review.remaining_error_fraction,
+...     wrt=checking_minutes_per_record)
 >>> limit(remaining_errors, checking_minutes_per_record, S.Infinity)
 0
 
@@ -603,7 +609,7 @@ This is a quality limit. It does not tell us to check forever: checking itself
 uses staff minutes, so total minutes per record grow without bound:
 
 >>> total_minutes = two_minutes.expression(
-...     "candidate.minutes_per_record", wrt="candidate.review.response.minutes_per_record")
+...     two_minutes.symbols.candidate.minutes_per_record, wrt=checking_minutes_per_record)
 >>> limit(total_minutes, checking_minutes_per_record, S.Infinity)
 oo
 
@@ -620,21 +626,21 @@ Setting :math:`G'(t)=0` gives the candidate :math:`t_*=2\log3`, about
 2.20 minutes, where :math:`\log` denotes the natural logarithm. A point with
 zero derivative is called a stationary point.
 We can confirm this exactly. Checking minutes belong to the nested response, at
-``candidate.review.response.minutes_per_record``. Supply that scalar using its dotted path as a
-dictionary key; Python's ``**`` passes the dictionary to ``observe``.
+``candidate.review.response.minutes_per_record``. Supply its reference from
+``measured.symbols`` as the dictionary key passed to ``observe``.
 ``doit()`` carries out the deferred derivative
 and substitution in ``candidate.minutes_saved_derivative``:
 
->>> proposed = measured.observe(**{"candidate.review.response.minutes_per_record": 2*log(3)})
->>> proposed.expression("candidate.minutes_saved_derivative").doit()
+>>> proposed = measured.observe({measured.symbols.candidate.review.response.minutes_per_record: 2*log(3)})
+>>> proposed.model.candidate.minutes_saved_derivative.doit()
 0
 
 The minutes-saved curve uses the same input. Keep it symbolic with ``wrt``
 as in the quality-limit calculation:
 
 >>> saving_curve = proposed.expression(
-...     "candidate.minutes_saved_per_record",
-...     wrt="candidate.review.response.minutes_per_record").doit()
+...     proposed.symbols.candidate.minutes_saved_per_record,
+...     wrt=proposed.symbols.candidate.review.response.minutes_per_record).doit()
 >>> saving_curve.free_symbols == {proposed.symbols.candidate.review.response.minutes_per_record}
 True
 
@@ -747,13 +753,13 @@ starts a fresh context, so the original observations remain for comparison:
 ...     "shorter repairs", entry_minutes_per_record=record.entry_minutes_per_record,
 ...     error_fraction=record.error_fraction, repair_minutes_per_error=30)
 >>> revised = review_context(shorter_repairs, response=response)
->>> revised = revised.observe(**{"candidate.review.response.minutes_per_record": 2*log(Rational(3, 2))})
+>>> revised = revised.observe({revised.symbols.candidate.review.response.minutes_per_record: 2*log(Rational(3, 2))})
 >>> revised_result = revised.run(review_plan)
 >>> round(float(revised_result.data.checking_minutes_per_record), 2)
 0.81
 >>> revised_result.report.explain("global_maximum").verdict
 'strictly true'
->>> measured.expression("candidate.review.record.repair_minutes_per_record")
+>>> measured.model.candidate.review.record.repair_minutes_per_record
 6
 
 Cheaper repairs make less checking worthwhile. The same method establishes
@@ -785,8 +791,8 @@ have not yet been fixed:
 
 >>> from sympy import sqrt
 >>> from examples.record_review import RationalReview
->>> changed = measured.replace("candidate.review.response", RationalReview)
->>> changed = changed.observe(**{"candidate.review.response.minutes_per_record": 2*(sqrt(3)-1)})
+>>> changed = measured.replace(measured.symbols.candidate.review.response, RationalReview)
+>>> changed = changed.observe({changed.symbols.candidate.review.response.minutes_per_record: 2*(sqrt(3)-1)})
 >>> alternative = changed.run(review_plan)
 >>> alternative.report.explain("global_maximum").verdict
 'strictly true'
@@ -824,8 +830,8 @@ find out why our method cannot use it:
 
 >>> from examples.record_review import CappedReview
 >>> from modello.contrib.verification import VerificationError
->>> capped = measured.replace("candidate.review.response", CappedReview).observe(
-...     **{"candidate.review.response.minutes_per_record": 2})
+>>> capped = measured.replace(measured.symbols.candidate.review.response, CappedReview)
+>>> capped = capped.observe({capped.symbols.candidate.review.response.minutes_per_record: 2})
 >>> capped.explain("candidate.review.response.caught_share/continuously_differentiable").verdict
 'strictly false'
 >>> try:
@@ -846,8 +852,8 @@ Evaluate a few points to explore the proposed response shape, selecting its
 checking-minutes input:
 
 >>> sampled = capped.sample(
-...     "candidate.review.response.caught_share",
-...     wrt="candidate.review.response.minutes_per_record", points=(1, 2, 3))
+...     capped.symbols.candidate.review.response.caught_share,
+...     wrt=capped.symbols.candidate.review.response.minutes_per_record, points=(1, 2, 3))
 >>> tuple(float(value) for value in sampled.values)
 (0.5, 1.0, 1.0)
 >>> sampled.kind
@@ -962,11 +968,10 @@ on the record's state at its start:
 >>> response = ExponentialReview("response", detection_rate=short.detection_rate,
 ...                              error_creation_rate=Rational(1, 100))
 >>> extended = review_context(record, response=response)
->>> fallible = extended.observe(**{"candidate.review.response.minutes_per_record": 2})
->>> tuple(round(float(fallible.expression(f"candidate.review.{field}")), 4)
-...       for field in outcome_fields)
+>>> fallible = extended.observe({extended.symbols.candidate.review.response.minutes_per_record: 2})
+>>> tuple(round(float(value), 4) for value in outcome_fractions(fallible.model.candidate.review))
 (0.8822, 0.0632, 0.0546)
->>> round(float(fallible.expression("candidate.review.introduced_error_fraction")), 4)
+>>> round(float(fallible.model.candidate.review.introduced_error_fraction), 4)
 0.0178
 
 The corrected fraction is still 6.32% of all records. Checking also introduces
@@ -974,22 +979,22 @@ errors into 1.78%, leaving 5.46% incorrect instead of the earlier 3.68%.
 Introduced errors are part of the remaining-error group, so the same three
 outcome groups still account for every record:
 
->>> simplify(sum(fallible.expression(f"candidate.review.{field}") for field in outcome_fields))
+>>> simplify(sum(outcome_fractions(fallible.model.candidate.review)))
 1
 
 Assume an introduced error takes the same repair minutes as an original error.
 The existing workload now counts those repairs too. No staffing or derivative
 formulas need replacing:
 
->>> tuple(round(float(current.expression("candidate.minutes_per_record")), 4)
+>>> tuple(round(float(current.model.candidate.minutes_per_record), 4)
 ...       for current in (two_minutes, fallible))
 (8.2073, 9.2765)
 
 The old optimal checking time needs reconsidering. At :math:`2\log3`, the
 updated minutes-saved derivative is negative:
 
->>> old_choice = extended.observe(**{"candidate.review.response.minutes_per_record": 2 * log(3)})
->>> old_choice.expression("candidate.minutes_saved_derivative").doit().is_negative
+>>> old_choice = extended.observe({extended.symbols.candidate.review.response.minutes_per_record: 2 * log(3)})
+>>> old_choice.model.candidate.minutes_saved_derivative.doit().is_negative
 True
 
 That point no longer satisfies the stationarity premise of ``review_plan``.
@@ -1101,7 +1106,7 @@ p0
 >>> observed_P = review_P.applyfunc(fallible.expression)
 >>> after_one = finite_response(observed_P[0, 1], observed_P[1, 0],
 ...                             record.error_fraction, 1)
->>> simplify(after_one - fallible.expression("candidate.review.remaining_error_fraction"))
+>>> simplify(after_one - fallible.model.candidate.review.remaining_error_fraction)
 0
 
 The existing response is one choice of matrix entries. Its one-pass result
@@ -1117,18 +1122,20 @@ recurrence at the inferred pass count:
    :pyobject: RepeatedReview
 
 >>> from examples.record_review import RepeatedReview
->>> repeated = RepeatedReview("four checking minutes", checking_minutes_per_record=4, **{
-...     "review.record": record,
-...     "review.response": response,
-...     "review.response.minutes_per_record": 2,
+>>> repeated = VerificationContext.for_model(RepeatedReview, "four checking minutes")
+>>> repeated = repeated.observe({
+...     repeated.symbols.review.record: record,
+...     repeated.symbols.review.response: response,
+...     repeated.symbols.review.response.minutes_per_record: 2,
+...     repeated.symbols.checking_minutes_per_record: 4,
 ... })
->>> repeated.passes
+>>> repeated.model.passes
 2
->>> round(float(repeated.final_error_fraction), 4)
+>>> round(float(repeated.model.final_error_fraction.doit()), 4)
 0.0388
->>> simplify(repeated.final_error_fraction
+>>> simplify(repeated.model.final_error_fraction.doit()
 ...          - finite_response(observed_P[0, 1], observed_P[1, 0],
-...                            record.error_fraction, repeated.passes))
+...                            record.error_fraction, repeated.model.passes))
 0
 
 For zero passes the recurrence returns the initial composition. This avoids
@@ -1177,7 +1184,7 @@ fields, so they follow observations and replacements:
 ...       for i in range(review_P.rows)),
 ... )
 >>> transitions = extended.with_obligations(*probability_obligations)
->>> checked = transitions.observe(**{"candidate.review.response.minutes_per_record": 2})
+>>> checked = transitions.observe({transitions.symbols.candidate.review.response.minutes_per_record: 2})
 >>> checked.explain("P_0_1_nonnegative").verdict
 'strictly true'
 >>> review_P.applyfunc(checked.expression) == observed_P
@@ -1274,17 +1281,17 @@ estimates, rates, and probability obligations. The outcome and workload
 equations stay the same:
 
 >>> from examples.record_review import ContinuousReview
->>> continuous = transitions.replace("candidate.review.response", ContinuousReview)
->>> continuous = continuous.observe(**{"candidate.review.response.minutes_per_record": 2})
->>> round(float(continuous.expression("candidate.review.remaining_error_fraction")), 4)
+>>> continuous = transitions.replace(transitions.symbols.candidate.review.response, ContinuousReview)
+>>> continuous = continuous.observe({continuous.symbols.candidate.review.response.minutes_per_record: 2})
+>>> round(float(continuous.model.candidate.review.remaining_error_fraction), 4)
 0.0486
 >>> continuous.explain("P_0_1_nonnegative").verdict
 'strictly true'
 >>> continuous.explain("candidate.review.response.caught_share/continuously_differentiable").verdict
 'strictly true'
->>> recovered = two_minutes.replace("candidate.review.response", ContinuousReview)
->>> simplify(recovered.expression("candidate.minutes_per_record")
-...          - two_minutes.expression("candidate.minutes_per_record"))
+>>> recovered = two_minutes.replace(two_minutes.symbols.candidate.review.response, ContinuousReview)
+>>> simplify(recovered.model.candidate.minutes_per_record
+...          - two_minutes.model.candidate.minutes_per_record)
 0
 
 The coupled response leaves about 4.86% incorrect after two minutes, compared

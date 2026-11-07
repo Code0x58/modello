@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field as dataclass_field, replace
 from functools import cached_property
+from itertools import chain
 from types import MappingProxyType, new_class
 from typing import ClassVar, Generic, TypeVar, cast
 
@@ -32,9 +33,22 @@ from sympy.assumptions import global_assumptions
 from sympy.logic.boolalg import Boolean
 from sympy.polys.polyerrors import PolynomialError
 
-from modello import ConstraintKind, Coordinate, Modello, annotate, annotate_model, component, inspect_model
+from modello import (
+    ConstraintKind,
+    Coordinate,
+    Modello,
+    ModelVectorValue,
+    ScalarValue,
+    VectorValue,
+    annotate,
+    annotate_model,
+    component,
+    inspect_model,
+)
+from modello._collections import _Selection
 from modello._evaluation import _evaluate
 from modello._expressions import _definition_resolver, _DefinitionResolver
+from modello._model import _ModelReference
 from modello._operators import _bound_coordinates, _empty_reduction, _scalar_atoms, _ScopedExpression, _SymbolicTemplate
 from modello._problem import ModelConstraint
 from modello._reconstruction import _BINDERS, _expression_key, _predicate_parts, _rebind
@@ -42,7 +56,7 @@ from modello._symbols import BoundInstanceDummy
 from modello.diagnostics import ModelProblem
 from modello.errors import ModelDefinitionError, ModelInputError, ModelValidationError
 from modello.series import Recurrence, _project_series, _SeriesTerm
-from modello.solutions import _field_domain, _membership
+from modello.solutions import SolutionFamily, _field_domain, _membership
 
 from ._proof import (
     Attempt,
@@ -79,6 +93,48 @@ from ._records import (
 
 ModelT = TypeVar("ModelT", bound=Modello)
 ValueT = TypeVar("ValueT")
+InputKeyT = TypeVar("InputKeyT")
+_InputValue = ScalarValue | VectorValue | Modello | ModelVectorValue[Modello]
+
+
+@dataclass(frozen=True)
+class _ModelValues:
+    """Resolve the existing typed field namespace without selecting a solution."""
+
+    _reference: _ModelReference | _Selection
+    _expression: Callable[[Basic], Basic]
+
+    def _resolved(self, value):
+        if isinstance(value, (_ModelReference, _Selection)):
+            return _ModelValues(value, self._expression)
+        if isinstance(value, tuple):
+            return tuple(self._resolved(item) for item in value)
+        if isinstance(value, Basic):
+            return self._expression(value)
+        if callable(value):
+            return lambda *args, **kwargs: self._resolved(value(*args, **kwargs))
+        return value
+
+    def __getattr__(self, name: str):
+        reference = self.__dict__.get("_reference")
+        if reference is None:
+            raise AttributeError(name)
+        return self._resolved(getattr(reference, name))
+
+    def __getitem__(self, index: object):
+        return self._resolved(self._reference[index])
+
+    def __len__(self) -> int:
+        return len(self._reference)
+
+    def __bool__(self) -> bool:
+        return bool(self._reference)
+
+    def __iter__(self):
+        return (self[index] for index in range(len(self)))
+
+    def __dir__(self):
+        return sorted(set(super().__dir__()) | self._reference._modello_model._modello_namespace.keys())
 
 
 def _unique_expressions(values: Iterable[Basic]) -> tuple[Basic, ...]:
@@ -189,7 +245,7 @@ class _Context:
         )
 
     @cached_property
-    def family(self):
+    def family(self) -> SolutionFamily:
         return self.problem.solutions().where(*self.assumptions)
 
 
@@ -334,8 +390,18 @@ class VerificationContext(Generic[ModelT]):
     def symbols(self) -> ModelT:
         return self.problem.symbols
 
+    @cached_property
+    def model(self) -> ModelT:
+        """Read resolved fields through their declared model and component types.
+
+        This read-only namespace has the same fields as ``symbols``. It retains
+        unresolved parameters and held operations, without selecting a solution
+        or establishing proof obligations. Use ``symbols`` to select inputs.
+        """
+        return cast(ModelT, _ModelValues(cast(_ModelReference, self.symbols), self.expression))
+
     @property
-    def family(self):
+    def family(self) -> SolutionFamily[ModelT]:
         """The existing exact solution family, evaluated only on explicit demand."""
         return self._context.family
 
@@ -364,12 +430,18 @@ class VerificationContext(Generic[ModelT]):
         return {**_coordinates(self.problem.model), **self._fields}
 
     @cached_property
-    def _labels(self) -> tuple[tuple[Symbol, str], ...]:
+    def _field_paths(self) -> dict[Symbol, str]:
+        """Choose one observable path for each identity, including aliases."""
         labels: dict[Symbol, str] = {}
         for path, symbol in self._fields.items():
             previous = labels.get(symbol)
             if previous is None or (path.count("."), len(path)) < (previous.count("."), len(previous)):
                 labels[symbol] = path
+        return labels
+
+    @cached_property
+    def _labels(self) -> tuple[tuple[Symbol, str], ...]:
+        labels = dict(self._field_paths)
         paths: dict[Coordinate, str] = {}
         for path, coordinate in self._references.items():
             if not isinstance(coordinate, Coordinate):
@@ -557,9 +629,43 @@ class VerificationContext(Generic[ModelT]):
             checked.append(condition)
         return replace(self, assumptions=(*self.assumptions, *checked))
 
-    def observe(self, **observations) -> VerificationContext[ModelT]:
-        """Bind scalar or component observations on a new context."""
-        return replace(self, problem=self.problem._capture_inputs(**observations))
+    def _component_path(self, reference: str | Modello) -> str:
+        if isinstance(reference, str):
+            return reference
+        if not isinstance(reference, _ModelReference) or not reference._modello_path:
+            raise ModelDefinitionError("Select a component through this verification context's symbols")
+        if reference._modello_scope != self.problem._scope:
+            raise ModelValidationError("Use this verification context's component references")
+        return ".".join(reference._modello_path)
+
+    def _input_path(self, reference: object) -> str:
+        if isinstance(reference, str):
+            return reference
+        if isinstance(reference, _ModelReference):
+            return self._component_path(cast(Modello, reference))
+        if isinstance(reference, Symbol):
+            path = self._field_paths.get(reference)
+            if path is not None:
+                return path
+            self._require_symbols(reference)
+        raise ModelInputError("Observe a scalar or component selected through this verification context's symbols")
+
+    def observe(
+        self,
+        observations: Mapping[InputKeyT, _InputValue] | None = None,
+        /,
+        **inputs: _InputValue,
+    ) -> VerificationContext[ModelT]:
+        """Bind reference-keyed observations or constructor-style inputs immutably."""
+        if observations is not None and not isinstance(observations, Mapping):
+            raise ModelInputError("Pass a mapping from model references to observed values")
+        values: dict[str, _InputValue] = {}
+        for reference, value in chain((observations or {}).items(), inputs.items()):
+            path = self._input_path(reference)
+            if path in values:
+                raise ModelInputError(f"More than one observation selects {path!r}")
+            values[path] = value
+        return replace(self, problem=self.problem._capture_inputs(**values))
 
     def without_assumptions(self, *conditions: Basic, reason: str) -> VerificationContext[ModelT]:
         """Remove explicitly recorded assumptions, retaining why they changed.
@@ -624,7 +730,8 @@ class VerificationContext(Generic[ModelT]):
             raise ModelDefinitionError("Inference rules need a source and a unique rule name")
         return replace(self, rules=(*self.rules, rule))
 
-    def replace(self, component_path: str, model: type[Modello]) -> VerificationContext[ModelT]:
+    def replace(self, component_path: str | Modello, model: type[Modello]) -> VerificationContext[ModelT]:
+        component_path = self._component_path(component_path)
         declaration = _replace_component(self.problem.model, tuple(component_path.split(".")), model)
         problem = inspect_model(cast(type[ModelT], declaration), self.problem.name)
         mapping: dict[Basic, Basic] = {}

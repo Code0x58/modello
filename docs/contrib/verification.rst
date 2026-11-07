@@ -58,6 +58,38 @@ Use these rules when a replacement or proof attempt needs closer inspection.
 The :ref:`API reference <verification-api>` below lists the workflow objects and
 property functions.
 
+Select inputs and read model fields
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``context.symbols`` and ``context.model`` both carry the declared model type,
+including nested component types. Editors can complete their attributes and
+type checkers can reject missing names. Use ``symbols`` to select scalar inputs
+or whole components in an observation mapping, and to select a replacement:
+
+>>> from examples.record_review import RationalReview, review_context
+>>> context = review_context()
+>>> observed = context.observe({context.symbols.candidate.review.response.minutes_per_record: 2})
+>>> observed.model.candidate.review.response.minutes_per_record
+2
+>>> changed = context.replace(context.symbols.candidate.review.response, RationalReview)
+>>> changed = changed.observe({changed.symbols.candidate.review.response.minutes_per_record: 2})
+>>> changed.model.candidate.minutes_per_record
+9
+
+``model`` is a read-only field namespace. Its scalar and vector expressions,
+recurrence laws, and model-collection members use the context's observations
+and assumptions. It retains free parameters and held operations, without
+selecting a solution or establishing proof obligations. Use ``run`` for a
+computation guarded by those obligations, or ``family.values`` to inspect
+possible results.
+
+After ``replace``, take references from the returned context's ``symbols``.
+Selectors from another model problem are rejected. Reading ``model`` can
+produce a constant, so select observations through ``symbols`` instead.
+``expression(subject, wrt=coordinate)`` remains useful when the coordinate must
+stay symbolic despite an observation. Both arguments accept native references.
+Constructor-style keyword observations and string paths remain accepted.
+
 Specifications, obligations, and inference rules
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -480,7 +512,7 @@ curve can still have a pole elsewhere.
 >>> from examples.record_review import ExponentialReview
 >>> from modello.contrib.verification import Method, VerificationContext
 >>> def response_method(current):
-...     curve = current.expression("caught_share", wrt="minutes_per_record")
+...     curve = current.expression(current.symbols.caught_share, wrt=current.symbols.minutes_per_record)
 ...     return Method(
 ...         "response curve", lambda inner: curve, uses=("caught_share",),
 ...     ).bind(current)
@@ -591,9 +623,11 @@ checking itself costs time, so six is a uniform upper bound on minutes saved.
 >>> from sympy import log
 >>> from examples.record_review import CHECKING_MINUTES_DOMAIN, review_context
 >>> from modello.contrib.verification import supremum_below
->>> proposed = review_context().observe(**{"candidate.review.response.minutes_per_record": 2*log(3)})
+>>> proposed = review_context()
+>>> proposed = proposed.observe({proposed.symbols.candidate.review.response.minutes_per_record: 2*log(3)})
 >>> ceiling = proposed.with_obligations(supremum_below(
-...     "candidate.minutes_saved_per_record", wrt="candidate.review.response.minutes_per_record",
+...     proposed.symbols.candidate.minutes_saved_per_record,
+...     wrt=proposed.symbols.candidate.review.response.minutes_per_record,
 ...     domain=CHECKING_MINUTES_DOMAIN,
 ...     bound=7, name="saving_ceiling"))
 >>> ceiling.explain("saving_ceiling").verdict

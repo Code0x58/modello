@@ -1,8 +1,9 @@
+# mypy: warn-unused-ignores
 """Installed typing contracts for the opt-in verification API."""
 
 from typing import TYPE_CHECKING
 
-from modello import Coordinate, InstanceDummy
+from modello import Coordinate, InstanceDummy, SolutionFamily, component
 from modello.contrib.verification import (
     Evidence,
     Method,
@@ -20,6 +21,10 @@ class TypedCurve(VerificationModel):
     value = a * x**3
 
 
+class TypedStudy(VerificationModel):
+    curve = component(TypedCurve)
+
+
 if TYPE_CHECKING:
     from typing import assert_type
 
@@ -27,7 +32,22 @@ if TYPE_CHECKING:
     assert_type(context, VerificationContext[TypedCurve])
     assert_type(context.verify().evidence, tuple[Evidence, ...])
     assert_type(context.symbols, TypedCurve)
+    assert_type(context.model, TypedCurve)
+    assert_type(context.model.a, InstanceDummy)
+    assert_type(context.family, SolutionFamily[TypedCurve])
     assert_type(context.observe(a=1), VerificationContext[TypedCurve])
+    assert_type(context.observe({context.symbols.a: 1}), VerificationContext[TypedCurve])
+    scalar_inputs = {context.symbols.a: 1}
+    assert_type(context.observe(scalar_inputs), VerificationContext[TypedCurve])
+    study = VerificationContext.for_model(TypedStudy)
+    assert_type(study.model.curve, TypedCurve)
+    assert_type(study.symbols.curve, TypedCurve)
+    assert_type(study.observe({study.symbols.curve: TypedCurve("curve", a=1)}), VerificationContext[TypedStudy])
+    component_inputs = {study.symbols.curve: TypedCurve("curve", a=1)}
+    assert_type(study.observe(component_inputs), VerificationContext[TypedStudy])
+    assert_type(study.replace(study.symbols.curve, TypedCurve), VerificationContext[TypedStudy])
+    study.model.missing  # type: ignore[attr-defined]
+    study.symbols.curve.missing  # type: ignore[attr-defined]
     assert_type(context.assume(context.symbols.a > 0), VerificationContext[TypedCurve])
     assert_type(context.with_bound_hint("bound", upper=1), VerificationContext[TypedCurve])
     assert_type(context.without_assumptions(reason="Keep the unchanged branch typed."), VerificationContext[TypedCurve])

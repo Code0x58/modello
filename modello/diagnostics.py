@@ -6,10 +6,11 @@ contradiction. Solver failure alone establishes neither.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field as dataclass_field, replace
 from functools import cached_property
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Generic, Mapping, cast
+from uuid import UUID, uuid4
 
 from sympy import (
     Abs,
@@ -165,6 +166,7 @@ class ModelProblem(Generic[ModelT]):
     constraints: tuple[ModelConstraint, ...]
     candidates: tuple[Candidate, ...] = ()
     _template_bindings: tuple[tuple[Basic, Basic], ...] = ()
+    _scope: UUID = dataclass_field(default_factory=uuid4, compare=False, repr=False)
 
     @cached_property
     def _declaration_bindings(self) -> dict[Basic, Basic]:
@@ -208,7 +210,10 @@ class ModelProblem(Generic[ModelT]):
         return cast(
             ModelT,
             _ModelReference(
-                self.model, {field.path: field.symbol for field in self.fields}, self._declaration_bindings
+                self.model,
+                {field.path: field.symbol for field in self.fields},
+                self._declaration_bindings,
+                _modello_scope=self._scope,
             ),
         )
 

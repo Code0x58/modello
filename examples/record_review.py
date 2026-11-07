@@ -211,15 +211,16 @@ class ReviewDecision:
     minutes_per_record_second_derivative: Expr
 
 
-def _evaluate_plan(current: VerificationContext) -> ReviewDecision:
+def _evaluate_plan(current: VerificationContext[ReviewPlanning]) -> ReviewDecision:
     """Evaluate the proposed plan after its Method has established the premises."""
+    candidate = current.model.candidate
     values = tuple(
-        simplify(current.expression(f"candidate.{field}").doit())
-        for field in (
-            "review.response.minutes_per_record",
-            "minutes_saved_per_record",
-            "minutes_per_record",
-            "minutes_per_record_second_derivative",
+        simplify(value.doit())
+        for value in (
+            candidate.review.response.minutes_per_record,
+            candidate.minutes_saved_per_record,
+            candidate.minutes_per_record,
+            candidate.minutes_per_record_second_derivative,
         )
     )
     if any(value.free_symbols or value.is_finite is not True or value.is_real is not True for value in values):
@@ -256,10 +257,12 @@ def review_context(
         response = ExponentialReview("response", detection_rate=Rational(1, 2), error_creation_rate=0)
     context = VerificationContext.for_model(ReviewPlanning, "records").with_rule(STATIONARY_MAXIMUM)
     if type(record) is not RecordWork:
-        context = context.replace("candidate.review.record", type(record))
+        context = context.replace(context.symbols.candidate.review.record, type(record))
     if type(response) is not ExponentialReview:
-        context = context.replace("candidate.review.response", type(response))
-    return context.observe(**{"candidate.review.record": record, "candidate.review.response": response})
+        context = context.replace(context.symbols.candidate.review.response, type(response))
+    return context.observe(
+        {context.symbols.candidate.review.record: record, context.symbols.candidate.review.response: response}
+    )
 
 
 class RationalReview(ExponentialReview):
@@ -383,14 +386,14 @@ def write_reports(directory: Path, *, plot: bool = False) -> None:
     """
     directory.mkdir(parents=True, exist_ok=True)
     measured = review_context()
+    rational = measured.replace(measured.symbols.candidate.review.response, RationalReview)
+    capped = measured.replace(measured.symbols.candidate.review.response, CappedReview)
     contexts = {
-        "exponential": measured.observe(**{"candidate.review.response.minutes_per_record": 2 * log(3)}),
-        "rational": measured.replace("candidate.review.response", RationalReview).observe(
-            **{"candidate.review.response.minutes_per_record": 2 * (sqrt(3) - 1)}
+        "exponential": measured.observe({measured.symbols.candidate.review.response.minutes_per_record: 2 * log(3)}),
+        "rational": rational.observe(
+            {rational.symbols.candidate.review.response.minutes_per_record: 2 * (sqrt(3) - 1)}
         ),
-        "capped": measured.replace("candidate.review.response", CappedReview).observe(
-            **{"candidate.review.response.minutes_per_record": 2}
-        ),
+        "capped": capped.observe({capped.symbols.candidate.review.response.minutes_per_record: 2}),
     }
     summary: dict = {
         "versions": {name: metadata.version(name) for name in ("modello", "sympy")},
@@ -443,7 +446,7 @@ def _write_plots(contexts: dict[str, VerificationContext[ReviewPlanning]], direc
     baseline = contexts["exponential"]
     minutes_per_record = baseline.symbols.candidate.review.response.minutes_per_record
     minutes_saved_per_record = baseline.expression(
-        "candidate.minutes_saved_per_record", wrt="candidate.review.response.minutes_per_record"
+        baseline.symbols.candidate.minutes_saved_per_record, wrt=minutes_per_record
     ).doit()
     benefit, benefit_axes = new_plot("Why spend time checking?", "Minutes per record")
     for expression, label, style in (
@@ -466,9 +469,7 @@ def _write_plots(contexts: dict[str, VerificationContext[ReviewPlanning]], direc
         axis = current.symbols.candidate.review.response.minutes_per_record
         evaluate = lambdify(
             axis,
-            current.expression(
-                "candidate.minutes_saved_per_record", wrt="candidate.review.response.minutes_per_record"
-            ).doit(),
+            current.expression(current.symbols.candidate.minutes_saved_per_record, wrt=axis).doit(),
             "math",
         )
         comparison_axes.plot(
