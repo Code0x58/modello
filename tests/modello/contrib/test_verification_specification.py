@@ -29,9 +29,9 @@ class Study(Modello):
 
 @dataclass(frozen=True)
 class Claims:
+    implication: InferenceRule
     increasing_input: Obligation
     conclusion: Obligation
-    implication: InferenceRule
     identities: tuple[Obligation, ...] = ()
 
 
@@ -39,10 +39,10 @@ def claims(symbols: Study) -> Claims:
     premise = positive(symbols.curve.x)
     conclusion = Obligation("original_conclusion", symbols.curve.value, "rule")
     return Claims(
-        premise,
-        conclusion,
-        InferenceRule("original_rule", conclusion, (premise,), "A positive input has a positive square."),
-        (equal_to(S.One, S.One), equal_to(S.One, S.One)),
+        implication=InferenceRule("original_rule", conclusion, (premise,), "A positive input has a positive square."),
+        increasing_input=premise,
+        conclusion=conclusion,
+        identities=(equal_to(S.One, S.One), equal_to(S.One, S.One)),
     )
 
 
@@ -79,14 +79,19 @@ def test_catalog_replacement_rebuilds_names_and_preserves_only_added_goals_and_r
     context = base.with_specification(lambda symbols: ValueClaim(positive(symbols.curve.value)))
     context = context.observe({context.symbols.curve.x: 2})
     context = context.with_obligations(positive(context.symbols.curve.x, name="extra"))
+    context = context.with_rule(
+        InferenceRule("extra_rule", Obligation("extra_conclusion", context.symbols.curve.x, "rule"), (), "Test rule")
+    )
     changed = context.replace(context.symbols.curve, Decreasing)
     assert changed.explain(changed.specification.value).verdict == "strictly false"
     assert context.explain(context.specification.value).verdict == "strictly true"
     assert len(changed.obligations) == 2
     assert changed.explain("extra").verdict == "strictly true"
+    assert changed.explain(changed.rules[0]).verdict == "strictly true"
     removed = changed.with_specification(lambda symbols: None)
     assert removed.specification is None
     assert tuple(item.name for item in removed.obligations) == ("extra",)
+    assert removed.rules == changed.rules
     with pytest.raises(ModelInputError, match="Change the specification"):
         changed.without_obligations(changed.specification.value, reason="Change the named declaration instead.")
     assert removed.without_obligations(removed.obligations[0], reason="Retire the added goal.").obligations == ()

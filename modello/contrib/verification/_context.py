@@ -323,7 +323,7 @@ def _replace_component(model: type[Modello], path: tuple[str, ...], replacement:
     for annotation in namespace.annotations.get(_Obligations, {}).values():
         if isinstance(annotation, _Obligations):
             for claim in annotation.obligations:
-                for value in (claim.subject, claim.wrt, claim.domain, claim.bound, claim.expected, claim.at):
+                for value in claim._expression_fields().values():
                     if isinstance(value, Basic):
                         used.update(_scoped_symbols(value))
     used.update(own_coordinates.values())
@@ -396,28 +396,35 @@ class VerificationContext(Generic[ModelT, SpecificationT]):
     _specification: object = dataclass_field(default=None, kw_only=True, repr=False)
     _specification_members: tuple[ProofDeclaration, ...] = dataclass_field(default=(), kw_only=True, repr=False)
 
+    def _additional_declarations(self) -> tuple[tuple[Obligation, ...], tuple[InferenceRule, ...]]:
+        """Separate exploratory records from those rebuilt by the catalog factory."""
+        specified = {id(item) for item in self._specification_members}
+        return (
+            tuple(item for item in self.obligations if id(item) not in specified),
+            tuple(item for item in self.rules if id(item) not in specified),
+        )
+
     def __post_init__(self) -> None:
         if self._specification_factory is not None:
-            previous = {id(item) for item in self._specification_members}
+            additional_obligations, additional_rules = self._additional_declarations()
             specification, members = _named_specification(self._specification_factory(self.symbols))
-            obligations = tuple(item for item in members if isinstance(item, Obligation))
-            rules = tuple(item for item in members if isinstance(item, InferenceRule))
+            obligations: list[Obligation] = []
+            rules: list[InferenceRule] = []
             for declaration in members:
-                claims = (
-                    (declaration.conclusion, *declaration.premises)
-                    if isinstance(declaration, InferenceRule)
-                    else (declaration,)
-                )
+                if isinstance(declaration, Obligation):
+                    obligations.append(declaration)
+                    claims: tuple[Obligation, ...] = (declaration,)
+                else:
+                    rules.append(declaration)
+                    claims = (declaration.conclusion, *declaration.premises)
                 for claim in claims:
-                    for value in (claim.subject, claim.wrt, claim.domain, claim.bound, claim.expected, claim.at):
+                    for value in claim._expression_fields().values():
                         if isinstance(value, Basic):
                             self._require_symbols(value)
             object.__setattr__(self, "_specification", specification)
             object.__setattr__(self, "_specification_members", members)
-            object.__setattr__(
-                self, "obligations", (*obligations, *(item for item in self.obligations if id(item) not in previous))
-            )
-            object.__setattr__(self, "rules", (*rules, *(item for item in self.rules if id(item) not in previous)))
+            object.__setattr__(self, "obligations", (*obligations, *additional_obligations))
+            object.__setattr__(self, "rules", (*rules, *additional_rules))
 
         # Catalog field names are now assigned. Check every registration route,
         # including direct construction and separately added inference rules.
@@ -948,7 +955,7 @@ class VerificationContext(Generic[ModelT, SpecificationT]):
                 coordinate_references(
                     *(
                         f"{prefix}.{value}" if prefix and isinstance(value, str) else value
-                        for value in (claim.subject, claim.wrt, claim.domain, claim.bound, claim.expected, claim.at)
+                        for value in claim._expression_fields().values()
                     )
                 )
         assumptions = []
@@ -996,27 +1003,21 @@ class VerificationContext(Generic[ModelT, SpecificationT]):
         problem = replace(problem, constraints=(*problem.constraints, *observations))
 
         def rebound(claim):
-            payloads = (claim.subject, claim.wrt, claim.domain, claim.bound, claim.expected, claim.at)
-            bindings = {**mapping, **coordinate_bindings(*payloads)}
-
-            def value(item):
-                return _rebind(item, bindings) if isinstance(item, Basic) else item
-
+            fields = claim._expression_fields()
+            bindings = {**mapping, **coordinate_bindings(*fields.values())}
             return replace(
                 claim,
-                subject=value(claim.subject),
-                wrt=value(claim.wrt),
-                expected=value(claim.expected),
-                domain=value(claim.domain),
-                bound=value(claim.bound),
-                at=value(claim.at),
+                **{
+                    name: _rebind(value, bindings) if isinstance(value, Basic) else value
+                    for name, value in fields.items()
+                },
             )
 
-        specified = {id(member) for member in self._specification_members}
+        additional_obligations, additional_rules = self._additional_declarations()
         return VerificationContext(
             problem,
             tuple(assumptions),
-            tuple(rebound(item) for item in self.obligations if id(item) not in specified),
+            tuple(rebound(item) for item in additional_obligations),
             tuple((key, _rebind(hint, {**mapping, **coordinate_bindings(hint)})) for key, hint in self.bound_hints),
             tuple(
                 replace(
@@ -1024,8 +1025,7 @@ class VerificationContext(Generic[ModelT, SpecificationT]):
                     conclusion=rebound(rule.conclusion),
                     premises=tuple(rebound(item) for item in rule.premises),
                 )
-                for rule in self.rules
-                if id(rule) not in specified
+                for rule in additional_rules
             ),
             (*self.changes, *invalidated),
             _specification_factory=self._specification_factory,

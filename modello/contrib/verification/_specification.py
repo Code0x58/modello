@@ -37,21 +37,23 @@ def _named_specification(value: SpecificationT) -> tuple[SpecificationT, tuple[P
     """Name each declaration once and keep shared inference-rule references intact."""
     if value is not None and (not is_dataclass(value) or isinstance(value, type)):
         raise ModelDefinitionError("Return a frozen dataclass as the specification, or None to remove it")
-    nodes = tuple(_specification_nodes(value))
     named: dict[int, ProofDeclaration] = {}
+    rules: dict[int, tuple[str, InferenceRule]] = {}
     # Conclusions and premises can refer to obligations declared later in the
-    # dataclass, so name all obligations before reconnecting the inference rules.
-    for path, declaration in nodes:
-        if isinstance(declaration, Obligation) and id(declaration) not in named:
-            named[id(declaration)] = replace(declaration, name=path)
-    for path, declaration in nodes:
-        if isinstance(declaration, InferenceRule) and id(declaration) not in named:
-            named[id(declaration)] = replace(
-                declaration,
-                name=path,
-                conclusion=cast(Obligation, named.get(id(declaration.conclusion), declaration.conclusion)),
-                premises=tuple(cast(Obligation, named.get(id(item), item)) for item in declaration.premises),
-            )
+    # dataclass. Name obligations as we visit them; defer only the rules.
+    for path, declaration in _specification_nodes(value):
+        if isinstance(declaration, Obligation):
+            if id(declaration) not in named:
+                named[id(declaration)] = replace(declaration, name=path)
+        else:
+            rules.setdefault(id(declaration), (path, declaration))
+    for identity, (path, rule) in rules.items():
+        named[identity] = replace(
+            rule,
+            name=path,
+            conclusion=cast(Obligation, named.get(id(rule.conclusion), rule.conclusion)),
+            premises=tuple(cast(Obligation, named.get(id(item), item)) for item in rule.premises),
+        )
 
     def rebuild(item):
         if isinstance(item, (Obligation, InferenceRule)):

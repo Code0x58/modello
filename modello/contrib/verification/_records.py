@@ -61,21 +61,20 @@ class Obligation:
     reason: str = field(default="", kw_only=True)
     source: str = field(default="", kw_only=True)
 
+    def _expression_fields(self) -> dict[str, Subject | Formula | None]:
+        """The claim's symbolic payload, including paths and formula callbacks."""
+        return {
+            "subject": self.subject,
+            "wrt": self.wrt,
+            "domain": self.domain,
+            "bound": self.bound,
+            "expected": self.expected,
+            "at": self.at,
+        }
+
     def _proposition(self) -> tuple:
         """Match mathematical statements independently of their motivation."""
-        return _expression_key(
-            (
-                self.name,
-                self.subject,
-                self.property,
-                self.wrt,
-                self.domain,
-                self.order,
-                self.bound,
-                self.expected,
-                self.at,
-            )
-        )
+        return _expression_key((self.name, self.property, self.order, tuple(self._expression_fields().values())))
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name or not isinstance(self.domain, Set):
@@ -374,31 +373,31 @@ class VerificationReport:
     labels: tuple[tuple[Symbol, str], ...] = ()
 
     def __post_init__(self) -> None:
-        pending = list(self.evidence)
         ids: set[str] = set()
-        while pending:
-            item = pending.pop()
+        for item in self._walk():
             if item.id in ids:
                 raise ModelDefinitionError(f"Evidence IDs must be unique within a verification report: {item.id}")
             ids.add(item.id)
+
+    def _walk(self):
+        """Visit nested evidence without depending on Python's recursion limit."""
+        pending = list(self.evidence)
+        while pending:
+            item = pending.pop()
+            yield item
             pending.extend(item.premises)
 
     def explain(self, obligation_id: str | Obligation | InferenceRule) -> Evidence:
         """Find evidence by ID, obligation, or an inference rule's conclusion."""
 
-        def search(items):
-            for item in items:
-                yield item
-                yield from search(item.premises)
-
         subject = obligation_id.conclusion if isinstance(obligation_id, InferenceRule) else obligation_id
         if isinstance(subject, str):
-            matches = [item for item in search(self.evidence) if item.id == subject]
+            matches = [item for item in self._walk() if item.id == subject]
         else:
             proposition = subject._proposition()
             matches = [item for item in self.evidence if item.obligation._proposition() == proposition]
             if not matches:
-                matches = [item for item in search(self.evidence) if item.obligation._proposition() == proposition]
+                matches = [item for item in self._walk() if item.obligation._proposition() == proposition]
             named = [item for item in matches if item.id == subject.name]
             if named:
                 matches = named

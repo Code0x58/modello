@@ -21,6 +21,27 @@ class _TextPrinter(StrPrinter):
     def __init__(self, labels):
         super().__init__()
         self.labels = dict(labels)
+        spellings = defaultdict(set)
+        for symbol, label in labels:
+            spellings[str(symbol)].add(label)
+        self._step_labels = {text: next(iter(names)) for text, names in spellings.items() if len(names) == 1}
+        self._step_pattern = re.compile(
+            r"(?<![\w.])(?:"
+            + "|".join(re.escape(text) for text in sorted(self._step_labels, key=len, reverse=True))
+            + r")(?![\w.])"
+        )
+
+    def text(self, value):
+        if value is None:
+            return None
+        return self.doprint(value) if isinstance(value, Basic) else str(value)
+
+    def step(self, value):
+        return (
+            self._step_pattern.sub(lambda match: self._step_labels[match.group()], value)
+            if self._step_labels
+            else value
+        )
 
     def _print(self, expression, **kwargs):
         if isinstance(expression, Symbol) and expression in self.labels:
@@ -39,67 +60,51 @@ class _MathPrinter(MathMLPresentationPrinter):
         return super()._print(expression, **kwargs)
 
 
-def _text(report, value):
-    if value is None:
-        return None
-    return _TextPrinter(report.labels).doprint(value) if isinstance(value, Basic) else str(value)
-
-
-def _evidence(report: VerificationReport, evidence: Evidence):
+def _evidence(printer: _TextPrinter, evidence: Evidence):
     claim = evidence.resolved or evidence.obligation
     declared = evidence.obligation
-    spellings = defaultdict(set)
-    for symbol, label in report.labels:
-        spellings[str(symbol)].add(label)
-    labels = {text: next(iter(names)) for text, names in spellings.items() if len(names) == 1}
-    pattern = re.compile(
-        r"(?<![\w.])(?:" + "|".join(re.escape(text) for text in sorted(labels, key=len, reverse=True)) + r")(?![\w.])"
-    )
-
-    def step_text(value):
-        return pattern.sub(lambda match: labels[match.group()], value) if labels else value
-
     return {
         "id": evidence.id,
         "property": claim.property,
         "verdict": evidence.verdict,
-        "declared_subject": _text(report, declared.subject),
-        "declared_coordinate": _text(report, declared.wrt),
-        "declared_domain": _text(report, declared.domain),
-        "expected_template": _text(report, evidence.expected_template),
-        "subject": str(claim.subject) if isinstance(claim.subject, str) else _text(report, claim.subject),
-        "expression": _text(report, evidence.expression),
-        "coordinate": _text(report, evidence.coordinate),
-        "domain": _text(report, claim.domain),
+        "declared_subject": printer.text(declared.subject),
+        "declared_coordinate": printer.text(declared.wrt),
+        "declared_domain": printer.text(declared.domain),
+        "expected_template": printer.text(evidence.expected_template),
+        "subject": printer.text(claim.subject),
+        "expression": printer.text(evidence.expression),
+        "coordinate": printer.text(evidence.coordinate),
+        "domain": printer.text(claim.domain),
         "order": claim.order,
-        "at": _text(report, claim.at),
-        "expected": _text(report, claim.expected),
-        "target_bound": _text(report, claim.bound),
-        "bound_hint": _text(report, evidence.hint),
-        "source_operands": [_text(report, value) for value in evidence.source_operands],
-        "condition": _text(report, evidence.condition),
+        "at": printer.text(claim.at),
+        "expected": printer.text(claim.expected),
+        "target_bound": printer.text(claim.bound),
+        "bound_hint": printer.text(evidence.hint),
+        "source_operands": [printer.text(value) for value in evidence.source_operands],
+        "condition": printer.text(evidence.condition),
         "condition_strength": evidence.condition_strength,
         "consumer": evidence.obligation.consumer,
         "reason": evidence.obligation.reason,
         "source": evidence.obligation.source,
         "kind": evidence.kind,
-        "steps": [step_text(step) for step in evidence.steps],
+        "steps": [printer.step(step) for step in evidence.steps],
         "dependencies": list(evidence.dependencies),
         "witness": [
-            {"symbol": _text(report, symbol), "value": _text(report, value)} for symbol, value in evidence.witness
+            {"symbol": printer.text(symbol), "value": printer.text(value)} for symbol, value in evidence.witness
         ],
-        "premises": [_evidence(report, item) for item in evidence.premises],
+        "premises": [_evidence(printer, item) for item in evidence.premises],
     }
 
 
 def report_dict(report: VerificationReport):
+    printer = _TextPrinter(report.labels)
     payload = {
         "schema_version": 2,
         "model": report.model,
         "assumptions_consistent": report.consistent,
-        "assumptions": [_text(report, value) for value in report.assumptions],
+        "assumptions": [printer.text(value) for value in report.assumptions],
         "issues": list(report.issues),
-        "evidence": [_evidence(report, item) for item in report.evidence],
+        "evidence": [_evidence(printer, item) for item in report.evidence],
     }
     payload["evidence_sha256"] = sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     payload["environment"] = {
@@ -114,7 +119,7 @@ def _math(report, expression):
         rendered = _MathPrinter(report.labels).doprint(expression)
         return f'<math xmlns="http://www.w3.org/1998/Math/MathML" display="block">{rendered}</math>'
     except (TypeError, ValueError, NotImplementedError):
-        return f"<pre>{escape(_text(report, expression))}</pre>"
+        return f"<pre>{escape(_TextPrinter(report.labels).text(expression))}</pre>"
 
 
 def report_html(report: VerificationReport, title: str):
