@@ -1,3 +1,28 @@
+Express public Modello examples through model composition. Reuse bound
+components and nested members directly, and join existing quantities with
+model equations. Do not use `sympy.Subs` or `.subs()` to feed inputs into an
+existing model or reconnect its outputs. For repeated nested models, use
+`model_vector` and `model_recurrence` with direct member references, retaining
+each member's own equations. Avoid extracting or duplicating a model's formula
+and solving it manually when Modello can infer the requested quantity.
+
+This applies to documentation and examples as well as library interfaces.
+Native SymPy substitution remains appropriate when substitution itself is the
+mathematical subject or is needed internally; it is not a model-composition
+adapter. Check new public examples for this pattern before finishing.
+
+Compose models with `component(...)` when reusing their inputs and outputs.
+Do not add subclass wrappers merely to select a component or formulate a new
+question about an existing model. Use parameters for different observations;
+reserve inheritance for changes to the model's own equations or properties.
+
+Prefer verification `context.symbols` references for observations and
+replacements, and `context.model` for field reads. Use `expression` for
+symbolic function queries and string paths when the path itself is data.
+Name investigation proof declarations in a frozen dataclass catalog, bind it
+with `with_specification`, and pass its obligation/rule objects to `explain`
+instead of repeating report-ID strings.
+
 Use uv 0.13.1 or newer. Before committing, run the relevant checks from CI:
 
 * `uv sync --locked --dev --group docs` (Python 3.12+ for documentation tooling)
@@ -12,7 +37,7 @@ Use uv 0.13.1 or newer. Before committing, run the relevant checks from CI:
 
 Format code with `uv run --dev ruff format .`. Keep `docs/` up to date with
 user-facing behavior, API, and workflow changes. Test and document new behavior;
-documentation must compile without warnings. The library supports Python 3.10+.
+documentation must compile without warnings. The library supports Python 3.11+.
 
 Commit `uv.lock` after dependency updates. Release publishing must validate the
 release commit and tag, then publish only the validated distribution artifact

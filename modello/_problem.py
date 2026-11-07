@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, Mapping, TypeVar
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, Mapping, TypeVar, assert_never
 
 from sympy import Basic, Expr, FiniteSet, Interval, S, Set, Symbol
 from sympy.printing.str import StrPrinter
@@ -16,20 +16,6 @@ from modello._symbols import Index
 from modello.errors import ModelValidationError
 from modello.vectors import Vector
 
-if sys.version_info >= (3, 11):
-    from enum import StrEnum as _StrEnum
-else:
-    from enum import Enum
-
-    class _StrEnum(str, Enum):
-        """String-enum behaviour for the supported Python 3.10 runtime."""
-
-        __str__ = str.__str__
-
-        def __format__(self, format_spec: str) -> str:
-            return str.__format__(self, format_spec)
-
-
 if TYPE_CHECKING:
     from modello import Modello, ScalarValue
     from modello.diagnostics import ModelProblem
@@ -37,10 +23,29 @@ if TYPE_CHECKING:
 ModelT = TypeVar("ModelT", bound="Modello")
 
 Status = Literal["consistent", "inconsistent", "unknown"]
-Verdict = Literal["satisfied", "violated", "unknown"]
 
 
-class ConstraintKind(_StrEnum):
+class Verdict(StrEnum):
+    """A candidate check's string label and three-valued truth."""
+
+    SATISFIED = "satisfied"
+    VIOLATED = "violated"
+    UNKNOWN = "unknown"
+
+    def truth_value(self) -> bool | None:
+        """Return True for satisfaction, False for violation, None if undecided."""
+        match self:
+            case Verdict.SATISFIED:
+                return True
+            case Verdict.VIOLATED:
+                return False
+            case Verdict.UNKNOWN:
+                return None
+            case _ as unexpected:
+                assert_never(unexpected)
+
+
+class ConstraintKind(StrEnum):
     """A defining equation, supplied input, or inferred component result."""
 
     DEFINITION = "definition"
@@ -159,6 +164,9 @@ class ResidualCheck:
     residual: Basic
     verdict: Verdict
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "verdict", Verdict(self.verdict))
+
 
 @dataclass(frozen=True)
 class AssumptionCheck:
@@ -179,11 +187,18 @@ class CandidateCheck:
     assumptions: tuple[AssumptionCheck, ...]
     verdict: Verdict
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "verdict", Verdict(self.verdict))
+
 
 def _assumptions_verdict(checks: tuple[AssumptionCheck, ...]) -> Verdict:
-    if any(check.actual is not None and check.actual != check.expected for check in checks):
-        return "violated"
-    return "satisfied" if all(check.actual == check.expected for check in checks) else "unknown"
+    verdict = Verdict.SATISFIED
+    for check in checks:
+        if check.actual is None:
+            verdict = Verdict.UNKNOWN
+        elif check.actual != check.expected:
+            return Verdict.VIOLATED
+    return verdict
 
 
 def _common_prefix(left: FieldPath, right: FieldPath) -> FieldPath:

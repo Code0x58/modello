@@ -6,10 +6,11 @@ contradiction. Solver failure alone establishes neither.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field as dataclass_field, replace
 from functools import cached_property
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Generic, Mapping, cast
+from uuid import UUID, uuid4
 
 from sympy import (
     Abs,
@@ -36,7 +37,6 @@ from sympy import (
 from sympy.core.function import AppliedUndef
 from sympy.solvers.solveset import NonlinearError
 
-from modello._evaluation import _rebind
 from modello._expressions import _evaluate, _substitute
 from modello._inputs import _InputCapture
 from modello._model import ModelloMeta, _ModelReference
@@ -61,6 +61,7 @@ from modello._problem import (
     _domain,
     _FieldPrinter,
 )
+from modello._reconstruction import _rebind
 from modello.errors import ModelInputError, ModelSolveError as ModelSolveError, ModelValidationError
 from modello.solutions import SolutionFamily
 from modello.vectors import Vector
@@ -165,6 +166,7 @@ class ModelProblem(Generic[ModelT]):
     constraints: tuple[ModelConstraint, ...]
     candidates: tuple[Candidate, ...] = ()
     _template_bindings: tuple[tuple[Basic, Basic], ...] = ()
+    _scope: UUID = dataclass_field(default_factory=uuid4, compare=False, repr=False)
 
     @cached_property
     def _declaration_bindings(self) -> dict[Basic, Basic]:
@@ -208,7 +210,10 @@ class ModelProblem(Generic[ModelT]):
         return cast(
             ModelT,
             _ModelReference(
-                self.model, {field.path: field.symbol for field in self.fields}, self._declaration_bindings
+                self.model,
+                {field.path: field.symbol for field in self.fields},
+                self._declaration_bindings,
+                _modello_scope=self._scope,
             ),
         )
 
@@ -520,33 +525,49 @@ def _audit(
             raise ModelValidationError("Candidate contains conflicting values for aliases")
         bindings[item.field.symbol] = item.value
     residuals = []
+    residuals_verdict = Verdict.SATISFIED
     for c, (lhs, rhs) in zip(constraints, _algebra(constraints, problem.templates.values()).equations, strict=True):
         left, right = lhs.xreplace(bindings), _substitute(rhs, bindings)
         verdict: Verdict
         if not isinstance(left, Expr) or not isinstance(right, Expr):
-            residual, verdict = right, "unknown"
+            residual, verdict = right, Verdict.UNKNOWN
         elif _definitely_undefined(left) or _definitely_undefined(right) or right.is_finite is False:
-            residual, verdict = S.NaN, "violated"
+            residual, verdict = S.NaN, Verdict.VIOLATED
         else:
             residual = simplify(_evaluate(left - right))
             if tolerances is not None:
-                verdict = "unknown"
+                verdict = Verdict.UNKNOWN
                 if left.is_number is True and right.is_number is True and right.is_finite is True:
                     atol, rtol = tolerances
                     within = Abs(residual) <= atol + rtol * Abs(right)
-                    verdict = "satisfied" if within is S.true else "violated" if within is S.false else "unknown"
+                    verdict = (
+                        Verdict.SATISFIED
+                        if within is S.true
+                        else Verdict.VIOLATED
+                        if within is S.false
+                        else Verdict.UNKNOWN
+                    )
             elif (
                 c.right.has(Float)
                 or left.has(Float)
                 or right.has(Float)
                 or any(symbol.is_commutative is not True for symbol in c.symbols)
             ):
-                verdict = "unknown"
+                verdict = Verdict.UNKNOWN
             else:
                 verdict = (
-                    "satisfied" if residual.is_zero is True else "violated" if residual.is_zero is False else "unknown"
+                    Verdict.SATISFIED
+                    if residual.is_zero is True
+                    else Verdict.VIOLATED
+                    if residual.is_zero is False
+                    else Verdict.UNKNOWN
                 )
         residuals.append(ResidualCheck(c, residual, verdict))
+        # Retain every residual, even after the overall audit is known to fail.
+        if verdict is Verdict.VIOLATED:
+            residuals_verdict = Verdict.VIOLATED
+        elif verdict is Verdict.UNKNOWN and residuals_verdict is Verdict.SATISFIED:
+            residuals_verdict = Verdict.UNKNOWN
     assumptions = tuple(
         AssumptionCheck(item, predicate, expected, getattr(item.value, f"is_{predicate}", None))
         for item in candidate.values
@@ -564,17 +585,21 @@ def _audit(
         )
         for item in candidate.values
     )
-    closed = all(
-        field.symbol in bindings
-        and not bindings[field.symbol].free_symbols
-        and bindings[field.symbol].is_number is True
-        and bindings[field.symbol].is_finite is True
-        for field in _canonical_fields(problem)
-    )
     domains = _assumptions_verdict(assumptions)
-    violated = domains == "violated" or any(check.verdict == "violated" for check in residuals)
-    satisfied = closed and domains == "satisfied" and all(check.verdict == "satisfied" for check in residuals)
-    verdict = "violated" if violated else "satisfied" if satisfied else "unknown"
+    if domains is Verdict.VIOLATED or residuals_verdict is Verdict.VIOLATED:
+        verdict = Verdict.VIOLATED
+    elif domains is Verdict.UNKNOWN or residuals_verdict is Verdict.UNKNOWN:
+        verdict = Verdict.UNKNOWN
+    else:
+        # Only a satisfied audit needs a closed, finite numerical assignment.
+        closed = all(
+            field.symbol in bindings
+            and not bindings[field.symbol].free_symbols
+            and bindings[field.symbol].is_number is True
+            and bindings[field.symbol].is_finite is True
+            for field in _canonical_fields(problem)
+        )
+        verdict = Verdict.SATISFIED if closed else Verdict.UNKNOWN
     return CandidateCheck(candidate, tuple(residuals), assumptions, verdict)
 
 
@@ -586,7 +611,7 @@ def _violation(problem: ModelProblem, check: CandidateCheck) -> str:
                 f"{problem.format(assumption.value.value)}, violating {assumption.predicate}={assumption.expected}."
             )
     for residual in check.residuals:
-        if residual.verdict == "violated":
+        if residual.verdict == Verdict.VIOLATED:
             return f"c{residual.constraint.index} has impossible residual {problem.format(residual.residual)}."
     return "No closed witness or exact contradiction was established."
 
@@ -749,12 +774,12 @@ class _Analyser:
             return self.cache[key]
         if len(self.cache) >= self.max_checks:
             self.exhausted = True
-            empty = CandidateCheck(_candidate(self.problem, {}), (), (), "unknown")
+            empty = CandidateCheck(_candidate(self.problem, {}), (), (), Verdict.UNKNOWN)
             return _Assessment("unknown", "Subset check budget exhausted.", empty)
         try:
             result = self._assess(constraints)
         except Exception as error:
-            empty = CandidateCheck(_candidate(self.problem, {}), (), (), "unknown")
+            empty = CandidateCheck(_candidate(self.problem, {}), (), (), Verdict.UNKNOWN)
             result = _Assessment("unknown", f"Diagnostic check raised {type(error).__name__}: {error}", empty)
         self.cache[key] = result
         return result
@@ -767,11 +792,11 @@ class _Analyser:
             return _Assessment(
                 "inconsistent", "An exact linear combination proves a contradiction.", deductions, linear
             )
-        if deductions.verdict == "violated":
+        if deductions.verdict == Verdict.VIOLATED:
             return _Assessment("inconsistent", _violation(self.problem, deductions), deductions, linear)
         expressions.update(fixed)
         deductions = _audit(self.problem, constraints, _candidate(self.problem, expressions))
-        if deductions.verdict == "violated":
+        if deductions.verdict == Verdict.VIOLATED:
             return _Assessment("inconsistent", _violation(self.problem, deductions), deductions, linear)
         solution_sets = _solution_sets(self.problem, constraints, expressions)
         if any(result.values is S.EmptySet for result in solution_sets):
@@ -828,7 +853,7 @@ class _Analyser:
         for solution in solutions:
             check = _audit(self.problem, constraints, _candidate(self.problem, solution))
             generated.append(check)
-            witness = check if check.verdict == "satisfied" else self._witness(constraints, solution)
+            witness = check if check.verdict == Verdict.SATISFIED else self._witness(constraints, solution)
             if witness is not None:
                 return _Assessment(
                     "consistent",
@@ -859,7 +884,7 @@ class _Analyser:
                 for field in self.problem.fields
             }
             check = _audit(self.problem, constraints, _candidate(self.problem, values))
-            if check.verdict == "satisfied":
+            if check.verdict == Verdict.SATISFIED:
                 return check
         return None
 
@@ -867,7 +892,7 @@ class _Analyser:
         problem = self.problem
         original = self.assess(problem.constraints)
         candidates = tuple(problem.check(candidate) for candidate in problem.candidates) + original.candidates
-        witness = original.witness or next((check for check in candidates if check.verdict == "satisfied"), None)
+        witness = original.witness or next((check for check in candidates if check.verdict == Verdict.SATISFIED), None)
         status: Status = "consistent" if witness is not None else original.status
         reason = (
             "A solver candidate is a checked closed witness."

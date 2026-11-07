@@ -2,8 +2,38 @@
 
 import pytest
 import sympy
-from sympy import Array, Function, Subs, Sum, Symbol, diff, srepr
+from sympy import Array, Function, Product, S, Subs, Sum, Symbol, diff, log, srepr
 from sympy.series.sequences import RecursiveSeq
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=RecursionError,
+    reason="SymPy finite logarithm Product evalf recurses instead of returning nan; diagnostics in docstring",
+)
+def test_finite_logarithm_product_evaluates_its_undefined_factor_without_recursion():
+    """SymPy 1.14.0 recurses on a finite product containing log(0)*log(1).
+
+    Standalone reproducer, with no Modello imports::
+
+        i = Symbol("i", integer=True)
+        Product(log(i), (i, 0, 1)).evalf()  # RecursionError; expected nan
+
+    Product.doit leaves this product unevaluated, and evalf_prod repeatedly
+    calls evalf(expr.doit()). Inspect sympy/core/evalf.py:evalf_prod and
+    sympy/concrete/products.py:Product.doit. Expanding these two factors first
+    produces nan directly. No upstream issue number has been established here.
+    Remove this strict xfail after an upstream fix.
+    """
+    i = Symbol("i", integer=True)
+    source = Product(log(i), (i, 0, 1))
+    try:
+        actual = source.evalf()
+    except RecursionError as error:
+        raise RecursionError(
+            f"SymPy {sympy.__version__}: source={source!r}; srepr={srepr(source)}; expected=nan"
+        ) from error
+    assert actual is S.NaN, f"SymPy {sympy.__version__}: source={source!r}; actual={actual}; expected=nan"
 
 
 @pytest.mark.xfail(

@@ -23,7 +23,7 @@ from sympy import (
     simplify,
 )
 
-from modello._evaluation import _ConditionalValue, _evaluate_scalar, _pending, _substitute
+from modello._evaluation import _evaluate_scalar, _substitute
 from modello._operators import (
     _affine_coefficients,
     _bound_coordinates,
@@ -35,6 +35,7 @@ from modello._operators import (
     _SymbolicTemplate,
     _value_condition,
 )
+from modello._reconstruction import _ConditionalValue, _pending
 from modello._symbols import _minimal_assumptions
 from modello._values import ScalarValue
 from modello.errors import ModelInputError

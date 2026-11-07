@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING, Mapping
 from sympy import Expr, Symbol
 
 from modello._collections import ModelObservations
-from modello._evaluation import _rebind
 from modello._model import _BoundField
 from modello._operators import _FunctionSymbol, _scalar_expression
 from modello._paths import _path_label, _path_value
 from modello._problem import ConstraintKind, FieldPath, ModelConstraint
+from modello._reconstruction import _rebind
 from modello.errors import ModelInputError
 from modello.vectors import _vector_input
 
@@ -38,8 +38,9 @@ class _InputCapture:
     ) -> tuple[ModelConstraint, ...]:
         """Append observations in constructor order without changing the source."""
         for attr, value in values.items():
-            if attr in self.model._modello_namespace.dummies:
-                self._add_scalar((attr,), value, self.bindings, attr)
+            path = tuple(attr.split("."))
+            if path in self.fields:
+                self._add_scalar(path, value, self.bindings, attr)
             elif attr in self.model._modello_namespace.vectors:
                 vector = self.model._modello_namespace.vectors[attr]
                 entries = _vector_input(value, len(vector), attr)
@@ -83,10 +84,14 @@ class _InputCapture:
 
     def _add_component(self, attr: str, value: object) -> None:
         """Copy the declared child shape into an independent parent scope."""
-        child = self.model._modello_namespace.nested_models.get(attr)
-        if child is None:
-            raise ModelInputError(f"Unknown model attribute {attr!r}")
-        self._add_component_at((attr,), child._modello_model, value, attr)
+        path = tuple(attr.split("."))
+        model = self.model
+        for name in path:
+            child = model._modello_namespace.nested_models.get(name)
+            if child is None:
+                raise ModelInputError(f"Unknown model attribute {attr!r}")
+            model = child._modello_model
+        self._add_component_at(path, model, value, attr)
 
     def _add_component_at(self, prefix: FieldPath, child_model: type[Modello], value: object, group: str) -> None:
         if not isinstance(value, child_model):

@@ -9,7 +9,7 @@ This walkthrough builds up four ways to express a problem: scalar quantities,
 components, vectors, and recurrent states. It uses basic Python and SymPy's
 mathematical notation. For a quick choice by formula or scope, see
 :doc:`modelling`.
-Install with Python 3.10 or newer:
+Install with Python 3.11 or newer:
 
 .. code-block:: console
 

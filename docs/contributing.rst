@@ -1,11 +1,140 @@
 Contributing and releases
 =========================
 
-Use uv 0.13.1 or newer. The library and CI support Python 3.10 through 3.15.
-Documentation tooling requires Python 3.12 or newer; notebook tooling has its
-own optional Python 3.11+ group. All environments share the root ``uv.lock``.
+This guide is for contributors updating code, examples, and documentation.
+Start with the locked environment and validation commands, then follow the PR
+review steps. Use the architecture sections to locate the implementation of a
+behavior; the final sections cover documentation hosting and releases.
+
+Use uv 0.13.1 or newer. The library and CI support Python 3.11 through 3.15.
+Documentation tooling requires Python 3.12 or newer. Notebook tooling is an
+optional dependency group. All environments share the root ``uv.lock``.
 The ``docs`` group includes pandas and Polars for Sphinx-tested recipes, which
 the ordinary pytest suite excludes.
+
+Validation
+----------
+
+Install the locked development environment and run the complete test suite,
+including doctests:
+
+.. code-block:: console
+
+   $ uv sync --locked --dev --group docs --python 3.12
+   $ uv run --locked --dev pytest
+   $ uv run --locked --group docs sphinx-build --fail-on-warning --keep-going \
+       --builder=doctest docs docs/_build/doctest
+   $ uv run --locked --group docs sphinx-build --fail-on-warning --keep-going \
+       --builder=html docs docs/_build/html
+
+Use ``.. doctest::`` with imports, setup, and expected results. Named groups give
+examples independent namespaces, as in the DataFrame recipes. Use
+``.. testcode::`` and ``.. testoutput::`` for non-interactive examples.
+Sphinx runs these blocks with the docs dependencies; pytest's
+``--doctest-glob=*.rst`` also runs interactive prompts outside the recipe page.
+For a focused check, run ``uv run --locked --dev pytest --no-cov docs/modelling.rst``.
+
+Unset ``PYTEST_DISABLE_PLUGIN_AUTOLOAD`` before running pytest if your shell
+defines it. CI also checks formatting, lint, types, documentation, and both
+distribution formats. The commands are maintained in ``AGENTS.md`` and
+``.github/workflows/ci.yml``.
+
+Mirror source packages under ``tests/`` and use ``test_<module>.py``, omitting a
+module's leading underscore. Use ``test_init.py`` for package entry points and
+keep repository-wide checks at the test root.
+
+When Node.js is available, pytest also exercises the frontend's proposal state
+against real Flask response fixtures. It covers bulk vector edits, subsequent
+coordinate edits, restoring a vector while retaining a separate target, and
+preserving the applied case after rejection. This optional check does not
+replace visual browser review and adds no runtime dependency to the library.
+
+Keep regressions focused on distinct behavior and independent mathematical
+checks. Share immutable cases and baseline results through module-scoped
+fixtures when several tests use the same inputs. Keep fresh execution where
+it checks that replacement or assumption changes preserve the earlier branch.
+Combine overlapping checks instead of repeating full symbolic or numerical
+studies; retain distinct boundary cases and method gates.
+
+CI runs the complete suite on every supported Python version. Python 3.14
+collects full-library coverage; the other versions run without tracing.
+Test jobs retain the 15-minute limit and export their full-suite results.
+The full local coverage command in
+``AGENTS.md`` remains the required validation before committing.
+
+Measure slow tests before changing their implementation:
+
+.. code-block:: console
+
+   $ uv run --locked --dev pytest --no-cov --durations=25 \
+       tests/modello/contrib/test_verification*.py
+   $ uv run --locked --dev python -m cProfile -o /tmp/verification-tests.prof \
+       -m pytest --no-cov tests/modello/contrib/test_verification_piecewise.py
+   $ uv run --locked --dev python -c \
+       "import pstats; \
+       pstats.Stats('/tmp/verification-tests.prof').sort_stats('cumulative').print_stats(25)"
+
+Use the same interpreter and coverage settings for before/after timings.
+Inspect repeated domain proofs, expression binding, and solver work separately;
+profiling overhead itself is not a CI runtime measurement. Performance changes
+must retain source guards, proof scopes, and assumption-context isolation.
+
+Refresh dependencies with ``uv lock --upgrade`` and commit ``uv.lock``.
+Dependabot proposes grouped weekly dependency and GitHub Actions updates.
+Workflows do not schedule rebuilds.
+
+Distribution checks install the wheel outside the checkout, rebuild the source
+distribution, and repeat the runtime and typing checks. They also exercise the
+packaged examples and fixtures, then install the locked GUI extra and exercise
+the gallery and its assets. Builds use the installed, locked backend. Start
+with an empty ``dist`` directory so the checks receive exactly one wheel and
+one source distribution.
+
+The wheel bundles the ``examples`` modules and fixtures. ``modello[examples]``
+selects their optional runtime requirements; currently these are satisfied by
+the standard library and the core SymPy dependency, so the extra's requirement
+list is empty. Add future example-specific dependencies to this extra. Package
+selection and data files belong in the setuptools configuration, independently
+of dependency selection.
+
+Review before a PR
+------------------
+
+Before pushing changes for a PR or creating/updating one, ask the coding agent
+to spawn a fresh ``pre_pr_review`` subagent. It compares the complete branch
+with the PR's target branch, including relevant local changes. The reviewer
+checks documentation and Python changes, then suggests a concise PR title and
+body describing the final behavior. Address actionable findings and reassess
+affected areas after further edits or target changes.
+
+For example, ask: "Spawn pre_pr_review to review this branch against
+origin/master before updating its PR." For an existing PR, use its actual base
+branch; the feature branch's tracking upstream is not its review target.
+
+The custom Codex agent is defined in ``.codex/agents/pre_pr_review.toml``. Its
+main prompt selects focused documents under ``.codex/agents/pre_pr_review/``
+after inspecting the branch. They cover Sphinx documentation, Python code with
+docstrings and comments, modelling architecture, tests, diagnostic contracts,
+visual examples, and PR descriptions. Load only the areas relevant to the
+change. If custom agent roles are unavailable, ``AGENTS.md`` instructs the coding
+agent to pass the same prompt to a general subagent.
+
+Install the Git reminders in this checkout:
+
+.. code-block:: console
+
+   $ git config extensions.worktreeConfig true
+   $ git config --worktree core.hooksPath .githooks
+
+The hook setting applies only to this checkout, including when working in a
+linked worktree. Check any existing ``core.hooksPath`` setting and hooks before
+replacing them. Repeat setup for new clones or worktrees as needed.
+
+The ``pre-commit`` and ``pre-push`` hooks print a short prompt asking the coding
+agent whether a fresh review is needed. They are non-blocking reminders: they
+do not start a model, read answers from the terminal, or verify that a review
+took place. ``AGENTS.md`` requires the coding agent to complete the review
+before a PR push or creation/update, including updates made without a Git push.
 
 Reading the core
 ----------------
@@ -61,6 +190,9 @@ Text and LaTeX contexts receive the explicit vector schema, including public and
 chart aliases. They choose names within the current component without guessing
 vector identities from their scalar coordinate paths.
 
+Keep behavior for a closed enum on the enum itself. Use ``match`` with a final
+``assert_never`` case so type checking rejects a missing implementation when a
+member is added. Python 3.11 provides native ``StrEnum`` and ``assert_never``.
 ``_values.py`` holds structural input types; ``_symbols.py`` owns independent
 quantity identities and local indices. ``vectors.py`` implements immutable
 scalar containers and finite comprehensions without importing model or GUI
@@ -74,6 +206,53 @@ shares coordinate traversal and bracketed display paths across consumers.
 The GUI separates layout and permissions, MathML printing, bounded input parsing,
 and vector summaries under ``_gui/``. Finance and time-series examples stay above
 these layers.
+
+``contrib/verification`` binds scoped claims to immutable problem snapshots and
+refreshes definition reports through an opt-in ``VerificationModel`` subclass hook.
+Proof attempts retain parameter guards, inference-rule premises, and unresolved
+outcomes. Method contracts select the evidence they consume. Numerical and
+plotting dependencies remain in optional example methods; the symbolic
+extension imports neither. Report JSON is a descriptive audit export; it cannot
+reconstruct a context. The record-review example connects exact stationary
+candidates to a concavity argument, then rechecks the same premises after
+replacing its response curve.
+
+Keep the extension boundary at evidence and proof policy. Core model
+declarations must preserve the meaning of their equations before any extension
+can inspect them. The shared symbolic changes have the following scope:
+
+``_reconstruction.py``
+    Rebind and reconstruct expressions without losing operand domains or local
+    binder identities. A held ``0*log(x)`` and a selector involving ``log(x)``
+    must still be undefined at zero in an ordinary ``Modello``. Equal native
+    ``Subs`` expressions can have different local coordinates; tree-rewrite
+    caches must preserve both scopes.
+
+``_evaluation.py``
+    Evaluate native calculus operations and finite indexed data. Resolved
+    operands use the shared reconstruction layer, so construction and evaluation
+    preserve the same source domains and local coordinates.
+
+``_expressions.py``
+    Preserve declaration sources and expand directed dependencies with local
+    coordinates protected. The resolver factory separates dependency ordering
+    from evaluation, so ordinary solving and symbolic inspection share cycle
+    handling without forcing either consumer to execute native operators.
+
+``_operators.py``
+    Retain domain guards inside their binders and handle empty reductions using
+    native identities, including a zero-length integral whose inactive body
+    contains a cycle. Reversed discrete bounds retain SymPy semantics.
+
+``contrib/verification``
+    Interpret obligations, quantify domains, retain source guards used by proofs,
+    deduplicate premises and observations, evaluate native-operation
+    preconditions, apply inference rules, classify evidence, and gate methods.
+
+Core modules import no extension, including inside functions. They do not
+register proof predicates or select verification policies. Keep general fixes
+in core only when plain-model regressions establish their behavior; keep
+verification-specific interpretation and bookkeeping in the extension.
 
 ``series.py`` declares relative recurrences. ``contrib/stochastic.py`` provides
 the opt-in Itô extension; the core resolver uses scoped declaration hooks without
@@ -178,99 +357,6 @@ while delegating supported scalar algebra to SymPy. Scoped expansion diagnoses
 implicit calculus through cyclic definitions; unknown assumptions remain
 distinct from disproven ones. Finite data reductions and explicit zero-rate
 kernels avoid slower generic symbolic work without discarding valid cases.
-
-Validation
-----------
-
-Install the locked development environment and run the complete test suite,
-including doctests:
-
-.. code-block:: console
-
-   $ uv sync --locked --dev --group docs --python 3.12
-   $ uv run --locked --dev pytest
-   $ uv run --locked --group docs sphinx-build --fail-on-warning --keep-going --builder=doctest docs docs/_build/doctest
-   $ uv run --locked --group docs sphinx-build --fail-on-warning --keep-going --builder=html docs docs/_build/html
-
-Use ``.. doctest::`` with imports, setup, and expected results. Named groups give
-examples independent namespaces, as in the DataFrame recipes. Use
-``.. testcode::`` and ``.. testoutput::`` for non-interactive examples.
-Sphinx runs these blocks with the docs dependencies; pytest's
-``--doctest-glob=*.rst`` also runs interactive prompts outside the recipe page.
-For a focused check, run ``uv run --locked --dev pytest --no-cov docs/modelling.rst``.
-
-Unset ``PYTEST_DISABLE_PLUGIN_AUTOLOAD`` before running pytest if your shell
-defines it. CI also checks formatting, lint, types, documentation, and both
-distribution formats. The commands are maintained in ``AGENTS.md`` and
-``.github/workflows/ci.yml``.
-
-Mirror source packages under ``tests/`` and use ``test_<module>.py``, omitting a
-module's leading underscore. Use ``test_init.py`` for package entry points and
-keep repository-wide checks at the test root.
-
-When Node.js is available, pytest also exercises the frontend's proposal state
-against real Flask response fixtures. It covers bulk vector edits, subsequent
-coordinate edits, restoring a vector while retaining a separate target, and
-preserving the applied case after rejection. This optional check does not
-replace visual browser review and adds no runtime dependency to the library.
-
-Keep regressions focused on distinct behavior and independent mathematical
-checks. Refresh dependencies with ``uv lock --upgrade`` and commit ``uv.lock``.
-Dependabot proposes grouped weekly dependency and GitHub Actions updates.
-Workflows do not schedule rebuilds.
-
-Distribution checks install the wheel outside the checkout, rebuild the source
-distribution, and repeat the runtime and typing checks. They also exercise the
-packaged examples and fixtures, then install the locked GUI extra and exercise
-the gallery and its assets. Builds use the installed, locked backend. Start
-with an empty ``dist`` directory so the checks receive exactly one wheel and
-one source distribution.
-
-The wheel bundles the ``examples`` modules and fixtures. ``modello[examples]``
-selects their optional runtime requirements; currently these are satisfied by
-the standard library and the core SymPy dependency, so the extra's requirement
-list is empty. Add future example-specific dependencies to this extra. Package
-selection and data files belong in the setuptools configuration, independently
-of dependency selection.
-
-Review before a PR
-------------------
-
-Before pushing changes for a PR or creating/updating one, ask the coding agent
-to spawn a fresh ``pre_pr_review`` subagent. It compares the complete branch
-with the PR's target branch, including relevant local changes. The reviewer
-checks documentation and Python changes, then suggests a concise PR title and
-body describing the final behavior. Address actionable findings and reassess
-affected areas after further edits or target changes.
-
-For example, ask: "Spawn pre_pr_review to review this branch against
-origin/master before updating its PR." For an existing PR, use its actual base
-branch; the feature branch's tracking upstream is not its review target.
-
-The custom Codex agent is defined in ``.codex/agents/pre_pr_review.toml``. Its
-main prompt selects focused documents under ``.codex/agents/pre_pr_review/``
-after inspecting the branch. They cover Sphinx documentation, Python code with
-docstrings and comments, modelling architecture, tests, diagnostic contracts,
-visual examples, and PR descriptions. Load only the areas relevant to the
-change. If custom agent roles are unavailable, ``AGENTS.md`` instructs the coding
-agent to pass the same prompt to a general subagent.
-
-Install the Git reminders in this checkout:
-
-.. code-block:: console
-
-   $ git config extensions.worktreeConfig true
-   $ git config --worktree core.hooksPath .githooks
-
-The hook setting applies only to this checkout, including when working in a
-linked worktree. Check any existing ``core.hooksPath`` setting and hooks before
-replacing them. Repeat setup for new clones or worktrees as needed.
-
-The ``pre-commit`` and ``pre-push`` hooks print a short prompt asking the coding
-agent whether a fresh review is needed. They are non-blocking reminders: they
-do not start a model, read answers from the terminal, or verify that a review
-took place. ``AGENTS.md`` requires the coding agent to complete the review
-before a PR push or creation/update, including updates made without a Git push.
 
 Read the Docs
 -------------

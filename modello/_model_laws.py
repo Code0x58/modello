@@ -8,9 +8,9 @@ from typing import Any, Callable, Mapping
 from sympy import Basic, Expr, Symbol, Tuple
 
 from modello._collections import _Location
-from modello._evaluation import _rebind
 from modello._operators import _DeclarationSymbol, _SymbolicTemplate
 from modello._paths import FieldPath
+from modello._reconstruction import _rebind
 from modello.vectors import Vector
 
 

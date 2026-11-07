@@ -5,7 +5,7 @@ Express a problem as named quantities and relationships, then supply the
 observations you have. The same model can calculate results, infer missing
 inputs, or keep a formula while an input is unknown.
 
-Install with Python 3.10 or newer:
+Install with Python 3.11 or newer:
 
 .. code-block:: console
 
@@ -75,6 +75,7 @@ the API and diagnostic guarantees are separate reference material.
 
    contrib/stochastic
    contrib/validation
+   contrib/verification
 
 .. toctree::
    :caption: Recipes
@@ -82,11 +83,18 @@ the API and diagnostic guarantees are separate reference material.
 
    recipes/dataframe-validation
 
+To explore how mathematical properties affect a model's calculations, work
+through :doc:`planning record checking <examples/record-review/index>`.
+It builds one practical example using calculus, then revisits the decision
+as assumptions and components change. The :doc:`verification reference
+<contrib/verification>` describes the extension's contracts and proof limits.
+
 .. toctree::
    :caption: Applications
    :maxdepth: 1
 
    examples/applications/index
+   examples/record-review/index
    examples/portfolio/index
    examples/reconciliation/index
    examples/solution_families/index

@@ -1,4 +1,4 @@
-"""Core imports point downwards; research layers stay independent of presentation."""
+"""Core imports point downwards; verification layers stay independent of presentation."""
 
 import ast
 import subprocess
@@ -18,6 +18,7 @@ def test_core_imports_follow_the_dependency_layers(pytestconfig: pytest.Config) 
                 "modello._values",
                 "modello._operators",
                 "modello.vectors",
+                "modello._reconstruction",
                 "modello._evaluation",
                 "modello._collections",
                 "modello._model_laws",
@@ -34,9 +35,10 @@ def test_core_imports_follow_the_dependency_layers(pytestconfig: pytest.Config) 
             )
         )
     }
-    for module, level in layers.items():
-        filename = "__init__.py" if module == "modello" else module.rsplit(".", 1)[1] + ".py"
-        tree = ast.parse((pytestconfig.rootpath / "modello" / filename).read_text())
+    for source in sorted((pytestconfig.rootpath / "modello").glob("*.py")):
+        module = "modello" if source.stem == "__init__" else f"modello.{source.stem}"
+        level = layers.get(module)
+        tree = ast.parse(source.read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING":
                 node.body = []
@@ -52,7 +54,10 @@ def test_core_imports_follow_the_dependency_layers(pytestconfig: pytest.Config) 
             else:
                 continue
             for dependency in dependencies:
-                if dependency in layers:
+                assert dependency != "modello.contrib" and not dependency.startswith("modello.contrib."), (
+                    f"{module} imports the extension layer {dependency}"
+                )
+                if level is not None and dependency in layers:
                     assert layers[dependency] < level, f"{module} imports the higher layer {dependency}"
 
 
@@ -92,6 +97,15 @@ assert ItoProcess(x, 0, 1, t).drift(x**2).doit() == 1
 
 from modello.contrib.validation import WindowValidator
 assert not {'pandas', 'polars', 'numpy'} & sys.modules.keys()
+
+from modello.contrib.verification import VerificationContext, VerificationModel, specifies, strictly_increasing
+class VerificationCurve(VerificationModel):
+    x = modello.Coordinate('x', real=True)
+    value = specifies(x**3, strictly_increasing('value', wrt='x', consumer='test', reason='Order matters'))
+assert VerificationCurve.definition_report().evidence[0].verdict == 'strictly true'
+assert VerificationContext.for_model(VerificationCurve).verify().to_dict()['evidence']
+import examples.record_review
+assert not {'numpy', 'scipy', 'matplotlib'} & sys.modules.keys()
 """
     result = subprocess.run(
         [sys.executable, "-c", program], cwd=pytestconfig.rootpath, capture_output=True, text=True, timeout=30

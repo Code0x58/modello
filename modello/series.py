@@ -25,7 +25,6 @@ from sympy import (
 )
 
 from modello._evaluation import (
-    _ConditionalValue,
     _evaluate_scalar,
     _expand_finite_indexed,
     _indexed_value,
@@ -45,6 +44,7 @@ from modello._operators import (
     _SymbolicTemplate,
     _value_condition,
 )
+from modello._reconstruction import _ConditionalValue
 from modello._symbols import Index, _minimal_assumptions
 from modello._values import ScalarValue, SymbolicScalar
 from modello.errors import ModelInputError

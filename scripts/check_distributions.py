@@ -26,13 +26,16 @@ assert Path(modello.__file__).resolve().is_relative_to(Path(sys.prefix).resolve(
 distribution = metadata.distribution("modello")
 assert distribution.metadata["License-Expression"] == "MIT AND OFL-1.1"
 assert distribution.metadata.get_all("License-File")
-assert distribution.metadata["Requires-Python"] == ">=3.10"
+assert distribution.metadata["Requires-Python"] == ">=3.11"
 assert Path(modello.__file__).with_name("py.typed").is_file()
 assert "examples" in distribution.metadata.get_all("Provides-Extra", ())
 assert "gui" in distribution.metadata.get_all("Provides-Extra", ())
 assert "pandas" not in distribution.metadata.get_all("Provides-Extra", ())
-assert not any(requirement.lower().startswith(("pandas", "polars", "numpy"))
+assert not any(requirement.lower().startswith(("pandas", "polars"))
                for requirement in distribution.requires or ())
+for requirement in distribution.requires or ():
+    if requirement.lower().startswith(("numpy", "scipy", "matplotlib")):
+        assert re.search(r";\s*extra\s*==\s*['\"]numerics['\"]", requirement), requirement
 assert not Path(modello.__file__).with_name("contrib").joinpath("pandas.py").exists()
 assert "pandas" not in sys.modules
 assert "flask" not in sys.modules
@@ -163,6 +166,20 @@ audit = validator.audit(((100, 0), (90, 10)))
 assert (audit.row_count, audit.valid_rows, audit.assumed_rows) == (2, 1, 1)
 assert audit.valid is None and audit.first_invalid is None
 assert not {"pandas", "polars", "numpy"} & sys.modules.keys()
+from modello.contrib.verification import VerificationContext, VerificationModel, specifies, strictly_increasing
+class VerificationCurve(VerificationModel):
+    x = modello.Coordinate("x", real=True)
+    value = specifies(x**3, strictly_increasing("value", wrt="x", consumer="smoke", reason="Order matters"))
+assert VerificationCurve.definition_report().evidence[0].verdict == "strictly true"
+assert VerificationContext.for_model(VerificationCurve).verify().to_dict()["evidence"]
+assert not {"numpy", "scipy", "matplotlib"} & sys.modules.keys()
+from examples.record_review import review_context, review_plan
+from sympy import log
+study = review_context()
+decision = study.observe({study.symbols.candidate.review.response.minutes_per_record: 2*log(3)}).run(review_plan).data
+assert decision.minutes_per_record == 6 + 2*log(3)
+assert decision.minutes_per_record_second_derivative*2 == 1
+assert not {"numpy", "scipy", "matplotlib"} & sys.modules.keys()
 vector_snapshot = Explorer(window).snapshot()
 assert vector_snapshot["vectors"][0]["shape"] == [3]
 assert "mover" in vector_snapshot["vectors"][0]["symbol_mathml"]
@@ -273,6 +290,24 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
     assert json.loads((directory / "report.json").read_text())["snapshots"][-1]["nav"] == 3066.9
     assert (directory / "report.html").read_text().startswith("<!doctype html>")
     print(f"Validated all installed example runners from {wheel.name}", flush=True)
+    install("numerics")
+    study = directory / "record-review"
+    subprocess.run(
+        [str(python), "-I", "-m", "examples.record_review", "--plot", "--output", str(study)],
+        cwd=directory,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    plans = json.loads((study / "results.json").read_text())["plans"]
+    assert set(plans) == {"exponential", "rational", "capped"}
+    assert plans["exponential"]["minutes_per_record_second_derivative"]["exact"] == "1/2"
+    assert "blocked" in plans["capped"]
+    for name in plans:
+        assert json.loads((study / f"{name}.json").read_text())["evidence"]
+        assert (study / f"{name}.html").is_file()
+    assert (study / "benefit.svg").is_file()
+    assert (study / "responses.svg").is_file()
+    print("Validated the installed record-review study, evidence, and optional plot", flush=True)
     install("gui")
     subprocess.run([str(python), "-I", "-c", GUI_SMOKE_TEST], cwd=directory, check=True)
     typing_checks = []
@@ -283,6 +318,7 @@ def check_wheel(wheel: Path, directory: Path, requirements: Mapping[str, Path], 
         "tests/examples/test_data.py",
         "tests/examples/reconcile_typing.py",
         "tests/examples/portfolio/typing_contracts.py",
+        "tests/modello/contrib/verification_typing.py",
     ):
         source = Path(__file__).resolve().parents[1] / path
         target = directory / source.name
@@ -326,7 +362,9 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="modello-distributions-") as temporary:
         scratch = Path(temporary)
-        requirements = {extra: scratch / f"{extra or 'runtime'}-requirements.txt" for extra in ("", "examples", "gui")}
+        requirements = {
+            extra: scratch / f"{extra or 'runtime'}-requirements.txt" for extra in ("", "examples", "gui", "numerics")
+        }
         for extra, target in requirements.items():
             options = ("--extra", extra) if extra else ()
             subprocess.run(

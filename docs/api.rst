@@ -97,6 +97,15 @@ API reference
    model instance types for editors and type checkers. Constructor keyword names
    and compatible component classes are checked at runtime.
 
+   Whole component observations can use dotted paths to target a nested slot,
+   just like scalar observations. The declared component keeps its equations;
+   copied observations retain their provenance and whole-argument input group.
+
+   Component paths also expose local coordinates. For example, ``curve.time``
+   can supply the variable for a parent's ``Derivative`` or ``Subs`` when the
+   child declares that coordinate. Coordinates retain their declaration identity
+   across component copies.
+
    See :doc:`nesting` for a walkthrough.
 
 .. autoclass:: InstanceDummy

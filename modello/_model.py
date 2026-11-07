@@ -5,18 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
 from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, TypeVar, cast
+from uuid import UUID
 
 from sympy import Basic, Expr, Integer, Lambda, Symbol, sympify
 from sympy.matrices import MatrixBase
 from sympy.tensor.array import NDimArray
 
 from modello._collections import _Location, _ModelVectorSpec, _Selection, _UnresolvedSelection
-from modello._evaluation import _rebind
 from modello._expressions import _declaration, _DefinitionResolver, _substitute
 from modello._model_laws import ModelRecurrence, _ModelLawSpec
-from modello._operators import _FunctionSymbol, _SymbolicTemplate
+from modello._operators import _FunctionSymbol, _scalar_expression, _SymbolicTemplate
 from modello._paths import _path_label, _path_value
 from modello._problem import ConstraintKind, FieldPath, _algebra
+from modello._reconstruction import _rebind
 from modello._shapes import _dimensions
 from modello._symbols import BoundInstanceDummy as BoundInstanceDummy, Coordinate, InstanceDummy as InstanceDummy
 from modello._values import (
@@ -86,6 +87,7 @@ class _ModelReference:
     _modello_bindings: dict[Basic, Basic] = field(default_factory=dict)
     _modello_path: FieldPath = ()
     _modello_view: bool = False
+    _modello_scope: UUID | None = field(default=None, repr=False)
 
     @classmethod
     def _modello_create(cls, model: type[Modello], name: str) -> _ModelReference:
@@ -125,6 +127,10 @@ class _ModelReference:
     def __bool__(self) -> bool:
         return True if not hasattr(self._modello_model, "_modello_collection_size") else bool(len(self))
 
+    def __hash__(self) -> int:
+        """Allow scoped component references as keys without hashing mutable metadata."""
+        return hash((self._modello_model, self._modello_path, self._modello_scope))
+
     def __iter__(self) -> Any:
         return (self[i] for i in range(len(self)))
 
@@ -142,9 +148,17 @@ class _ModelReference:
         }
 
     def __getattr__(self, name: str) -> Any:
-        """Resolve a scalar or a reference to a deeper child."""
-        if (name,) in self._modello_fields:
-            return self._modello_fields[(name,)]
+        """Resolve a quantity, local coordinate, or reference to a deeper child."""
+        # Copy and pickle inspect the namespace before restoring its fields.
+        fields = self.__dict__.get("_modello_fields")
+        if fields is None:
+            raise AttributeError(name)
+        if (name,) in fields:
+            return fields[(name,)]
+        coordinate = getattr(self._modello_model, name, None)
+        if isinstance(coordinate, Coordinate):
+            # Coordinates keep their declaration identity across component copies.
+            return coordinate
         vector = self._modello_model._modello_namespace.vectors.get(name)
         if vector is not None:
             if not vector._finite:
@@ -185,6 +199,7 @@ class _ModelReference:
             self._modello_child_fields.get(name, {}),
             bindings,
             (*self._modello_path, name),
+            _modello_scope=self._modello_scope,
         )
 
 
@@ -351,6 +366,7 @@ class ModelloMetaNamespace(dict):
                 {symbol: value.xreplace(replacements) for symbol, value in child._modello_bindings.items()},
                 child._modello_path,
                 child._modello_view,
+                child._modello_scope,
             )
             for key, child in self.nested_models.items()
         }
@@ -740,6 +756,26 @@ def _has_symbolic_shape(model: type[Modello]) -> bool:
     )
 
 
+def _component_shape_bindings(namespace: ModelloMetaNamespace, values: Mapping[str, object]) -> dict[Symbol, Basic]:
+    """Read supplied component scalars before the finite window is prepared."""
+    bindings: dict[Symbol, Basic] = {}
+    for name, value in values.items():
+        path = tuple(name.split("."))
+        # Collections and their views need a window before their fields exist.
+        if path[0] in namespace.collections or path[0] in namespace.views:
+            continue
+        try:
+            target = _path_value(namespace.reference_at(path[:1]), path[1:])
+        except (AttributeError, IndexError, KeyError, TypeError):
+            continue
+        if isinstance(target, _ModelReference) and isinstance(value, target._modello_model):
+            for field_path, symbol in target._modello_fields.items():
+                bindings[symbol] = _path_value(value, field_path)
+        elif len(path) > 1 and isinstance(target, Symbol) and value is not None:
+            bindings[target] = _scalar_expression(value, f"{name} must be a scalar expression")
+    return bindings
+
+
 def _specialize_model(model: type[ShapeModel], values: Mapping[str, object]) -> type[ShapeModel]:
     """Choose a finite declaration without changing the reusable model class."""
     namespace = model._modello_namespace
@@ -759,7 +795,11 @@ def _specialize_model(model: type[ShapeModel], values: Mapping[str, object]) -> 
     pending = namespace.views.keys() - namespace.nested_models.keys()
     if finite and not children and not pending and not namespace.pending_laws:
         return model
-    dimensions = {} if finite else _dimensions(axes, namespace.dummies, namespace.attrs, values)
+    dimensions = (
+        {}
+        if finite
+        else _dimensions(axes, namespace.dummies, namespace.attrs, values, _component_shape_bindings(namespace, values))
+    )
     known = _known_integers(namespace, values, dimensions)
     selected = {}
     locations = [namespace.views[name].location for name in pending]

@@ -10,7 +10,7 @@ a symbolic formula. [SymPy](https://www.sympy.org/) handles the algebra.
 pip install modello
 ```
 
-Requires Python 3.10+ and SymPy 1.14+.
+Requires Python 3.11+ and SymPy 1.14+.
 
 ## Start with a relationship
 
@@ -77,7 +77,8 @@ formulas while using the same observations and modelling interface.
 
 - [Documentation](https://modello.readthedocs.io/) and [API reference](docs/api.rst).
 - [Practical applications](docs/examples/applications/index.rst): invoices, production, and circuits.
-- [Research examples](docs/examples/portfolio/index.rst): portfolio reporting and calibration.
+- [Planning record checking](docs/examples/record-review/index.rst): build a practical model using calculus, then verify its properties as assumptions and components change. The [verification reference](docs/contrib/verification.rst) describes the extension's contracts and proof limits.
+- [Account executions](docs/examples/portfolio/index.rst): track shares and cash, or infer missing execution terms.
 - [Reconciliation](docs/examples/reconciliation/index.rst): compare source data and infer suspect inputs.
 - [Observed data validation](docs/contrib/validation.rst): check recurrence histories and follow [pandas/Polars recipes](docs/recipes/dataframe-validation.rst).
 - [Contributing](docs/contributing.rst): setup, checks, documentation, and releases.

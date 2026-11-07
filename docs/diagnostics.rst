@@ -95,6 +95,17 @@ each equation residual, each domain predicate, and a ``verdict`` of
 ``satisfied``, ``violated``, or ``unknown``. Missing values and undecided checks
 prevent a satisfied verdict; a proven violation still takes precedence.
 
+These labels are string-valued ``Verdict`` enum members, available from
+``modello.diagnostics``. They retain their string comparison, formatting, and
+JSON behavior. ``truth_value()`` returns ``True``, ``False``, or ``None`` for
+``satisfied``, ``violated``, and ``unknown``, respectively:
+
+>>> from modello.diagnostics import Verdict
+>>> Verdict.SATISFIED.truth_value()
+True
+>>> Verdict.UNKNOWN.truth_value() is None
+True
+
 By default this requires exact evidence, so float equations remain unknown.
 Pass ``atol`` or ``rtol`` explicitly for numerical acceptance using
 ``abs(observed-expected) <= atol + rtol*abs(expected)``; the omitted tolerance
@@ -208,6 +219,9 @@ Recorded problems and reports
 .. autoclass:: FieldValue
 
 .. autoclass:: CandidateCheck
+
+.. autoclass:: Verdict
+   :members: truth_value
 
 .. autoclass:: SolutionSet
 

@@ -1,6 +1,7 @@
 """Shared problem records, candidate lookup, and symbolic field labels."""
 
 import json
+from dataclasses import replace
 
 import pytest
 from sympy import (
@@ -17,7 +18,7 @@ from modello import (
     component,
     inspect_model,
 )
-from modello._problem import Candidate, ConstraintKind, FieldValue
+from modello._problem import Candidate, ConstraintKind, FieldValue, Verdict
 
 from ._models import Check, Operators, Reading
 
@@ -40,6 +41,26 @@ def test_input_constraint_keeps_string_enum_compatibility():
     assert f"{direct.constraints[-1].kind:>7}" == "  input"
     assert json.dumps(direct.constraints[-1].kind) == '"input"'
     assert "[input 'x']" in str(direct)
+
+
+@pytest.mark.parametrize("label,truth", (("satisfied", True), ("violated", False), ("unknown", None)))
+def test_candidate_verdict_keeps_string_labels_and_three_valued_truth(label, truth):
+    verdict = Verdict(label)
+    assert verdict == label
+    assert str(verdict) == label
+    assert f"{verdict:>12}" == f"{label:>12}"
+    assert json.dumps(verdict) == json.dumps(label)
+    assert verdict.truth_value() is truth
+
+
+def test_check_records_normalize_existing_string_verdict_arguments():
+    problem = inspect_model(Reading, "reading", x=2)
+    audit = problem.check(Candidate((FieldValue(problem.field("x"), 2), FieldValue(problem.field("squared"), 4))))
+    assert audit.verdict is Verdict.SATISFIED
+    for record in (audit, *audit.residuals):
+        reconstructed = replace(record, verdict=record.verdict.value)
+        assert reconstructed == record
+        assert reconstructed.verdict is record.verdict
 
 
 def test_candidate_lookup_rejects_conflicting_alias_values(positive_problem):

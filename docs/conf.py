@@ -31,7 +31,7 @@ autodoc_member_order = "bysource"
 intersphinx_mapping = {"python": ("https://docs.python.org/3", None)}
 
 
-def write_research_report(app: Sphinx, exception: Exception | None) -> None:
+def write_example_reports(app: Sphinx, exception: Exception | None) -> None:
     """Publish the runnable example with each successful HTML documentation build."""
     if exception is None and app.builder is not None and app.builder.format == "html":
         output = Path(app.outdir) / "examples" / "portfolio" / "report.html"
@@ -42,7 +42,14 @@ def write_research_report(app: Sphinx, exception: Exception | None) -> None:
             check=True,
             stdout=subprocess.DEVNULL,
         )
+        study = Path(app.outdir) / "examples" / "record-review" / "study"
+        subprocess.run(
+            [sys.executable, "-m", "examples.record_review", "--plot", "--output", str(study)],
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
 
 
 def setup(app: Sphinx) -> None:
-    app.connect("build-finished", write_research_report)
+    app.connect("build-finished", write_example_reports)

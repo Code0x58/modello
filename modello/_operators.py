@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, TypeVar, assert_never, cast
 
 from sympy import (
     And,
@@ -61,7 +62,7 @@ def _scalar_expression(
     return expression
 
 
-def _scalar_atoms(expression: Basic, kind: type[_Atom]) -> set[_Atom]:
+def _scalar_atoms(expression: Basic, kind: type[_Atom] | tuple[type[_Atom], ...]) -> set[_Atom]:
     """Find scalar terms without entering the local bodies of declarations."""
     found: set[_Atom] = set()
     pending = [expression]
@@ -103,16 +104,48 @@ def _defined_part(expression: Expr) -> Expr:
     return expression
 
 
+def _held_reduction(expression: Expr, args: tuple[Basic, ...]) -> Expr:
+    """Rebuild validated reduction arguments without folding inner binders."""
+    result = Expr.__new__(expression.func, *args)
+    result.is_commutative = args[0].is_commutative
+    return result
+
+
 def _conditioned(expression: Expr, condition: Basic) -> Expr:
     if condition is not S.true:
         try:
             condition = refine(condition)
-        except (NotImplementedError, ValueError):
+        except (NotImplementedError, ValueError, RecursionError):
             # An unsupported assumption proof must leave the domain intact.
             pass
     if condition is S.true:
         return expression
-    return piecewise_fold(Piecewise((expression, condition), (S.NaN, True)))
+    result = Piecewise((expression, condition), (S.NaN, True))
+    if expression.has(_SymbolicTemplate, _ScopedOperator, Sum, Product, Integral, Derivative, Limit, Subs):
+        # Folding through a binder lifts its local branch conditions outside
+        # their scope, and can create derivatives of inactive undefined values.
+        return result
+    return piecewise_fold(result)
+
+
+def _empty_reduction(expression: Basic) -> Expr | None:
+    """Return a supported empty reduction's identity with its endpoint guards."""
+    if not isinstance(expression, (Sum, Product, Integral)):
+        return None
+    if isinstance(expression, Integral) and len(expression.limits) != 1:
+        # Only integrals with one limit have a supported shortcut.
+        return None
+    # Discrete reductions are empty at upper=lower-1. Further reversal changes
+    # the sum's sign or takes the product's reciprocal.
+    empty_width = 0 if isinstance(expression, Integral) else -1
+    has_empty_limit = any(
+        len(limit) == 3 and simplify(limit[2] - limit[1]) == empty_width for limit in expression.limits
+    )
+    if not has_empty_limit:
+        return None
+    endpoint_domain = And(*(_denominator_condition(bound) for limit in expression.limits for bound in limit[1:]))
+    identity = S.One if isinstance(expression, Product) else S.Zero
+    return _conditioned(identity, endpoint_domain)
 
 
 class _ScopedExpression:
@@ -217,12 +250,41 @@ def _definitely_undefined(expression: Basic) -> bool:
     return any(_definitely_undefined(arg) for arg in expression.args)
 
 
-def _value_condition(requirements: Mapping[str, bool], value: Expr) -> Basic:
-    """Retain declared domain requirements on an evaluated scalar value."""
+class _SignPredicate(StrEnum):
+    """Sign assumptions with relational guards for a known real value."""
+
+    POSITIVE = "positive"
+    NONNEGATIVE = "nonnegative"
+    NEGATIVE = "negative"
+    NONPOSITIVE = "nonpositive"
+    ZERO = "zero"
+    NONZERO = "nonzero"
+
+    def condition(self, value: Expr) -> Basic:
+        """Express this sign assumption as a relation on a real scalar."""
+        match self:
+            case _SignPredicate.POSITIVE:
+                return value > 0
+            case _SignPredicate.NONNEGATIVE:
+                return value >= 0
+            case _SignPredicate.NEGATIVE:
+                return value < 0
+            case _SignPredicate.NONPOSITIVE:
+                return value <= 0
+            case _SignPredicate.ZERO:
+                return Eq(value, 0)
+            case _SignPredicate.NONZERO:
+                return ~Eq(value, 0)
+            case _ as unexpected:
+                assert_never(unexpected)
+
+
+def _value_condition(assumptions: Mapping[str, bool], value: Expr) -> Basic:
+    """Retain declared SymPy assumptions on an evaluated scalar value."""
     if _definitely_undefined(value):
         return S.false
     conditions = []
-    for predicate, expected in requirements.items():
+    for predicate, expected in assumptions.items():
         known = getattr(value, f"is_{predicate}", None)
         if known is not None:
             if known != expected:
@@ -230,23 +292,15 @@ def _value_condition(requirements: Mapping[str, bool], value: Expr) -> Basic:
             continue
         if not hasattr(Q, predicate):
             raise ModelInputError(f"Symbolic laws do not support the {predicate!r} assumption")
-        if value.is_real is True and predicate in {
-            "positive",
-            "nonnegative",
-            "negative",
-            "nonpositive",
-            "zero",
-            "nonzero",
-        }:
-            condition = {
-                "positive": value > 0,
-                "nonnegative": value >= 0,
-                "negative": value < 0,
-                "nonpositive": value <= 0,
-                "zero": Eq(value, 0),
-                "nonzero": ~Eq(value, 0),
-            }[predicate]
-        else:
-            condition = getattr(Q, predicate)(value)
+        sign = None
+        if value.is_real is True:
+            try:
+                sign = _SignPredicate(predicate)
+            except ValueError:
+                # SymPy's assumption vocabulary also includes non-sign keys.
+                pass
+        # Solvers can consume real sign relations directly. Other values or
+        # assumptions retain SymPy's predicate without an order claim.
+        condition = sign.condition(value) if sign is not None else getattr(Q, predicate)(value)
         conditions.append(condition if expected else ~condition)
     return And(*conditions)

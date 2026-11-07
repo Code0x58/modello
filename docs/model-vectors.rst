@@ -92,6 +92,13 @@ Partial observations and inverse solving
 window length. Its keys are vector positions; negative keys follow Python
 indexing. A complete sequence may instead contain model instances and ``None``.
 An input vector, complete state sequence, or explicit size field determines N.
+Scalar relationships can also determine it before the window is prepared.
+For example, a declared ``total_minutes = N * step.minutes`` infers ``N`` from
+the observed total and a supplied ``step`` component (including a nested
+component observation or its dotted scalar inputs). The shape equations must
+determine one nonnegative integer size.
+Calculus, finite reductions, and recurrence outputs are checked after the
+window is prepared.
 
 The same model infers an execution price from terminal cash:
 

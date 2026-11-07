@@ -258,6 +258,34 @@ def test_continuous_and_empty_families_retain_selection_error_context(check_prob
         band.section(through=reference)
 
 
+@pytest.mark.parametrize(
+    "invalid_model, unknown_first, evaluations",
+    [(True, True, 0), (False, False, 1), (False, True, 2)],
+    ids=["model-violation", "first-condition-false", "unknown-before-false"],
+)
+def test_section_short_circuits_on_definite_violations(monkeypatch, invalid_model, unknown_first, evaluations):
+    problem = inspect_model(Reading, "reference audit")
+    unknown = Symbol("bound", real=True) > 0
+    negative = problem.symbols.x < 0
+    conditions = (unknown, negative) if unknown_first else (negative, unknown)
+    family = problem.solutions().where(*conditions)
+    reference = Reading("reference", x=2)
+    if invalid_model:
+        reference.squared = 5
+
+    evaluated = []
+    evaluate = solutions._evaluate_predicates
+
+    def counted(condition):
+        evaluated.append(condition)
+        return evaluate(condition)
+
+    monkeypatch.setattr(solutions, "_evaluate_predicates", counted)
+    with pytest.raises(ModelValidationError):
+        family.section(through=reference)
+    assert len(evaluated) == evaluations
+
+
 def test_typed_symbol_tree_and_nested_observations_share_constructor_provenance():
     class Joined(Modello):
         left = component(Check)
@@ -294,6 +322,29 @@ def test_typed_symbol_tree_and_nested_observations_share_constructor_provenance(
     section = problem.solutions().section(symbols.alias, symbols.left.reading.x, through=case)
     assert tuple(field.symbol for field in section.parameters) == (symbols.left.reading.x,)
     assert section.expression(symbols.left.total) == symbols.left.reading.x**2 + 1
+
+
+def test_scalar_path_inputs_work_in_construction_inspection_and_observation():
+    constructed = Check("constructed", **{"reading.x": 2})
+    assert constructed.reading.squared == 4 and constructed.total == 5
+
+    problem = inspect_model(Check, "paths")
+    family = problem.solutions()
+    observed = family.observe(**{"reading.x": 2})
+    point = observed.one()
+    assert point.reading.x == 2 and point.total == 5
+    constraint = observed.problem.constraints[-1]
+    assert (constraint.path, constraint.kind, constraint.input) == (("reading", "x"), ConstraintKind.INPUT, "reading.x")
+    assert inspect_model(Check, "inspected", **{"reading.x": 2}).solutions().one().total == 5
+    assert observed.observe(**{"reading.x": 3}).is_empty is True
+    assert family.observe(**{"reading.x": S.ImaginaryUnit}).is_empty is True
+
+    original = problem.constraints
+    with pytest.raises(ModelInputError, match="Unknown model attribute"):
+        family.observe(**{"reading.x": 2, "reading.missing": 3})
+    with pytest.raises(ModelInputError, match="scalar"):
+        family.observe(**{"reading.x": {"x": 2}})
+    assert problem.constraints is original and family.problem is problem
 
 
 def test_failed_component_observation_leaves_existing_snapshots_unchanged(check_problem):

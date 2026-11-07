@@ -27,11 +27,11 @@ jobs:
     timeout-minutes: 15
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      COVERAGE_SOURCE: ${{ matrix.python-version == '3.14' && 'modello' || '' }}
     strategy:
       fail-fast: false
       matrix:
         python-version:
-          - "3.10"
           - "3.11"
           - "3.12"
           - "3.13"
@@ -75,10 +75,14 @@ jobs:
       - name: Run tests
         run: |
           unset PYTEST_DISABLE_PLUGIN_AUTOLOAD
-          uv run --dev pytest --verbosity=2 --cov=modello --cov-report=xml --junit-xml=test-results.xml
+          test_coverage_args=(--no-cov)
+          if [[ "$COVERAGE_SOURCE" == "modello" ]]; then
+            test_coverage_args=(--cov-reset --cov="$COVERAGE_SOURCE" --cov-report=xml)
+          fi
+          uv run --dev pytest --verbosity=2 "${test_coverage_args[@]}" --junit-xml=test-results.xml
 
       - name: Upload coverage to Codecov
-        if: (success() || hashFiles('coverage.xml') != '') && env.CODECOV_TOKEN != ''
+        if: (success() || hashFiles('coverage.xml') != '') && env.CODECOV_TOKEN != '' && env.COVERAGE_SOURCE != ''
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ env.CODECOV_TOKEN }}

@@ -16,7 +16,7 @@ from modello import (
     component,
     inspect_model,
 )
-from modello.diagnostics import Candidate, FieldValue
+from modello.diagnostics import Candidate, FieldValue, Verdict
 
 from ._models import Check, Operators, Reading, Scalar, Sum, Wave
 
@@ -48,6 +48,29 @@ def test_candidate_audit_rejects_fields_from_another_problem(positive_problem):
     foreign = Candidate((FieldValue(other.field("x"), 1),))
     with pytest.raises(ModelValidationError, match="another problem"):
         p.check(foreign)
+
+
+@pytest.mark.parametrize("unknown_first", [True, False])
+@pytest.mark.parametrize("known", [(2, 5, Verdict.VIOLATED), (-1, 1, Verdict.SATISFIED)], ids=["equation", "domain"])
+def test_candidate_audit_retains_mixed_evidence_with_violation_precedence(unknown_first, known):
+    class PositivePair(Modello):
+        x = InstanceDummy("x", positive=True)
+        y = InstanceDummy("y", positive=True)
+        first = x**2
+        second = y**2
+
+    problem = inspect_model(PositivePair, "mixed evidence")
+    unresolved = (Symbol("input", real=True), Symbol("output", real=True), Verdict.UNKNOWN)
+    first, second = (unresolved, known) if unknown_first else (known, unresolved)
+    candidate = Candidate(
+        tuple(
+            FieldValue(problem.field(name), value)
+            for name, value in (("x", first[0]), ("first", first[1]), ("y", second[0]), ("second", second[1]))
+        )
+    )
+    audit = problem.check(candidate)
+    assert audit.verdict is Verdict.VIOLATED
+    assert tuple(check.verdict for check in audit.residuals) == (first[2], second[2])
 
 
 def test_numeric_candidate_checks_are_explicit_and_do_not_infer_values():
@@ -348,17 +371,20 @@ def test_parameter_conditions_and_floats_are_not_generic_rank_proofs():
 
 
 @pytest.mark.parametrize(
-    "value, verdict",
+    "value, verdict, truth",
     [
-        pytest.param(S.One, "satisfied", id="positive"),
-        pytest.param(S.Zero, "violated", id="outside-domain"),
-        pytest.param(S.NaN, "violated", id="undefined"),
-        pytest.param(Symbol("unknown"), "unknown", id="undecided"),
+        pytest.param(S.One, "satisfied", True, id="positive"),
+        pytest.param(S.Zero, "violated", False, id="outside-domain"),
+        pytest.param(S.NaN, "violated", False, id="undefined"),
+        pytest.param(Symbol("unknown"), "unknown", None, id="undecided"),
     ],
 )
-def test_candidate_audits_check_domains_and_definedness(positive_problem, value, verdict):
+def test_candidate_audits_check_domains_and_definedness(positive_problem, value, verdict, truth):
     candidate = Candidate((FieldValue(positive_problem.field("x"), value),))
-    assert positive_problem.check(candidate).verdict == verdict
+    audit = positive_problem.check(candidate)
+    assert audit.verdict == verdict
+    assert isinstance(audit.verdict, Verdict)
+    assert audit.verdict.truth_value() is truth
 
 
 def test_a_derived_pole_is_an_undefined_deduction():

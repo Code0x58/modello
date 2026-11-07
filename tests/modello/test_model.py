@@ -2,19 +2,44 @@
 
 import pytest
 from sympy import (
+    Derivative,
     S,
     Symbol,
 )
 
 from modello import (
     BoundInstanceDummy,
+    Coordinate,
     InstanceDummy,
     Modello,
     component,
     inspect_model,
 )
+from modello.errors import ModelInputError
 
 from ._models import Increment, Pair, Reading, Scalar, ScalarComponent
+
+
+def test_nested_component_observations_preserve_equations_and_input_groups():
+    class Stage(Modello):
+        reading = component(Increment)
+        result = 2 * reading.y
+
+    class Workflow(Modello):
+        stage = component(Stage)
+        result = stage.result
+
+    source = Increment("reading", x=3)
+    case = Workflow("nested", **{"stage.reading": source})
+    assert case.result == 8
+    assert case.stage.reading.x == source.x
+    problem = inspect_model(Workflow, "family", **{"stage.reading": source})
+    assert problem.solutions().one().result == case.result
+    assert {constraint.input for constraint in problem.constraints if constraint.input} == {"stage.reading"}
+    assert not any(constraint.input for constraint in problem.without("stage.reading").constraints)
+    for path in ("stage.missing", "_modello_model.stage.reading"):
+        with pytest.raises(ModelInputError, match="Unknown model attribute"):
+            Workflow("unknown slot", **{path: source})
 
 
 def test_multiple_inheritance_expr_conflict():
@@ -161,6 +186,36 @@ def test_nested_reference_unknown_attributes():
 
     with pytest.raises(AttributeError, match="Scalar.*nope"):
         ScalarComponent.child.nope
+
+
+def test_component_coordinates_support_inherited_and_nested_calculus():
+    class Curve(Modello):
+        time = Coordinate("t", nonnegative=True)
+        value = time**2
+
+    class Inherited(Curve):
+        pass
+
+    class Wrapper(Modello):
+        curve = component(Inherited)
+
+    class Slope(Modello):
+        wrapper = component(Wrapper)
+        time = wrapper.curve.time
+        value = Derivative(wrapper.curve.value, wrapper.curve.time, evaluate=False)
+
+    assert Slope.time is Curve.time
+    assert Slope("slope").value == 2 * Curve.time
+
+    class Hidden(Curve):
+        time = None
+        value = S.One
+
+    class Parent(Modello):
+        curve = component(Hidden)
+
+    with pytest.raises(AttributeError, match="has no model attribute 'time'"):
+        Parent.curve.time
 
 
 def test_scalar_and_nested_fields_cannot_change_kinds():

@@ -39,7 +39,7 @@ from modello._inputs import _validate_vector_values
 from modello._model import _has_symbolic_shape
 from modello._operators import _definitely_undefined
 from modello._paths import _path_label, _path_value
-from modello._problem import _FieldPrinter
+from modello._problem import Verdict, _FieldPrinter
 from modello.diagnostics import Candidate, ConstraintKind, FieldValue, ModelConstraint, ModelField, ModelProblem
 from modello.errors import ModelInputError, ModelValidationError, SolverBackendError
 
@@ -217,7 +217,7 @@ def _preview(problem: ModelProblem) -> tuple[dict[Symbol, Expr], str]:
     rejected_paths: set[str] = set()
     for values in proposals:
         audit = problem.check(Candidate(tuple(FieldValue(f, values[f.symbol]) for f in problem.fields)))
-        if audit.verdict != "violated":
+        if audit.verdict != Verdict.VIOLATED:
             accepted.append((values, audit.verdict))
             continue
         rejected_paths.update(
@@ -226,7 +226,7 @@ def _preview(problem: ModelProblem) -> tuple[dict[Symbol, Expr], str]:
             if check.actual not in (None, check.expected)
         )
         rejected_paths.update(
-            _path_label(check.constraint.path) for check in audit.residuals if check.verdict == "violated"
+            _path_label(check.constraint.path) for check in audit.residuals if check.verdict == Verdict.VIOLATED
         )
     if len(accepted) != 1:
         message = (
@@ -642,7 +642,7 @@ def _input_state(symbol: Symbol, supplied: Mapping[Symbol, Expr], initial: Mappi
 def _preview_status(raw: bool, verdict: str) -> tuple[str, str]:
     if raw:
         return "raw", "Definitions only; recorded inputs retained"
-    if verdict == "satisfied":
+    if verdict == Verdict.SATISFIED:
         return "checked", "All equations and domains checked"
     return "conditional", "Symbolic or undecided: not a validated numeric state"
 

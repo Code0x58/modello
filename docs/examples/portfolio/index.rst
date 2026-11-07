@@ -100,6 +100,8 @@ baskets, external data, heterogeneous ledger events, and reports. Its event
 adapter retains individual transitions for cash flows, income, and fills.
 Use the recurrence above for a homogeneous window of executions.
 
+.. _portfolio-continuous-execution:
+
 The `continuous execution study
 <https://github.com/Code0x58/modello/blob/master/examples/portfolio/optimal_execution.py>`_
 uses SymPy to derive differential equations, integrate onto a discrete grid,

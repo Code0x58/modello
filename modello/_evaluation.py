@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from functools import cache
-from typing import Mapping, NamedTuple
+from typing import Mapping
 
 from sympy import (
     Add,
@@ -41,16 +40,9 @@ from modello._operators import (
     _ScopedOperator,
     _SymbolicTemplate,
 )
+from modello._reconstruction import _BINDERS, _OPERATORS, _ConditionalValue, _has_calculus, _rebuild
 from modello._symbols import Index
 from modello.vectors import _VectorElement, _VectorFormula
-
-_OPERATORS = (Sum, Product, Integral, Derivative, Limit, Subs, _VectorElement, _ScopedOperator)
-_BINDERS = (Sum, Product, Integral, Derivative, Limit, Subs, _VectorFormula, _SymbolicTemplate, _ScopedOperator)
-
-
-class _ConditionalValue(NamedTuple):
-    value: Expr
-    condition: Basic
 
 
 def _evaluate_scalar(expression: Expr) -> _ConditionalValue:
@@ -95,31 +87,6 @@ def _evaluate(expression: Basic) -> Basic:
     if not isinstance(expression, Expr):
         return expression.func(*args) if args != expression.args else expression
     return _rebuild(expression, args, _denominator_condition(expression))
-
-
-def _rebuild(expression: Expr, args: tuple[Basic, ...], condition: Basic) -> Expr:
-    """Rebuild resolved arguments without dropping domains or pending operations."""
-    condition = And(condition, *(_denominator_condition(arg) for arg in args if isinstance(arg, Expr)))
-    if condition is S.false:
-        return S.NaN
-    args = tuple(_defined_part(arg) if isinstance(arg, Expr) else arg for arg in args)
-    if isinstance(expression, (Add, Mul)) and any(_pending(arg) for arg in args):
-        value = expression.func(*args, evaluate=False)
-    else:
-        value = expression.func(*args) if args != expression.args else expression
-    return _conditioned(value, condition)
-
-
-def _pending(expression: Basic) -> bool:
-    return (
-        _has_calculus(expression)
-        or bool(_scalar_atoms(expression, _VectorElement))
-        or any(bool(operator.protected_symbols) for operator in _scalar_atoms(expression, _ScopedOperator))
-    )
-
-
-def _has_calculus(expression: Basic) -> bool:
-    return any(_scalar_atoms(expression, kind) for kind in (Derivative, Integral, Limit))
 
 
 def _independent_condition(condition: Basic, variables: set[Basic]) -> Basic:
@@ -321,29 +288,6 @@ def _substitute(expression: Basic, values: Mapping[Symbol, Basic]) -> Basic:
             ):
                 return expression.subs(values, simultaneous=True)
     return expression.xreplace(values)
-
-
-def _rebind(expression: Basic, values: Mapping[Basic, Basic]) -> Basic:
-    """Rename a declaration without losing exclusions when arithmetic collapses."""
-    if not values:
-        return expression
-
-    @cache
-    def replace(value: Basic) -> Basic:
-        if value in values:
-            return values[value]
-        args = tuple(replace(arg) for arg in value.args)
-        if args == value.args:
-            return value
-        result = value.func(*args)
-        condition = _denominator_condition(value) if isinstance(value, Expr) else S.true
-        if condition is not S.true and isinstance(result, Expr):
-            condition = condition.xreplace(values)
-            if _denominator_condition(result) != condition:
-                result = _conditioned(result, condition)
-        return result
-
-    return replace(expression)
 
 
 def _protect_limits(expression: Basic, values: Mapping[Symbol, Basic]) -> Basic:
