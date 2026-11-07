@@ -9,7 +9,7 @@ Start by following a record through the process:
 
 .. mermaid::
    :alt: Every record is reviewed. Initially correct records stay correct. Initially incorrect records are either corrected or left incorrect and need later repair.
-   :caption: Three groups leave checking: always correct, corrected, and still incorrect.
+   :caption: Three groups leave checking: correct before and after, corrected, and still incorrect.
 
    flowchart TD
        accTitle: A record's path through checking
@@ -20,7 +20,7 @@ Start by following a record through the process:
            correct_review["Check a correct record"]
            error_review["Check an incorrect record"]
        end
-       correct_review --> always_correct["Always correct"]
+       correct_review --> correct_to_correct["Correct before and after"]
        error_review -->|Caught| corrected["Corrected"]
        error_review -->|Missed| remaining["Still incorrect"]
        remaining --> repair["Later repair"]
@@ -460,10 +460,10 @@ workload. Its ``response`` component supplies the response curve and its declare
 properties. Read its checking minutes as ``response.minutes_per_record`` and its
 caught share as ``response.caught_share``.
 
-The model also records the diagram's three outcome fractions. They are shares
-of **all records**:
+The model also records the diagram's three outcome fractions. With the baseline
+zero error-creation rate, these shares of **all records** are:
 
-* ``always_correct_fraction`` is :math:`1-p`: correct before and after checking.
+* ``correct_to_correct_fraction`` is :math:`1-p`: correct before and after checking.
 * ``corrected_fraction`` is :math:`p\,u(t)`: initially incorrect, then corrected.
 * ``remaining_error_fraction`` is :math:`p(1-u(t))`: still incorrect after checking.
 
@@ -574,7 +574,7 @@ Before choosing checking minutes for the budget, inspect the three outcome
 groups. Use the same measured inputs and try two checking minutes per record:
 
 >>> two_minutes = measured.observe(**{"candidate.review.response.minutes_per_record": 2})
->>> outcome_fields = ("always_correct_fraction", "corrected_fraction", "remaining_error_fraction")
+>>> outcome_fields = ("correct_to_correct_fraction", "corrected_fraction", "remaining_error_fraction")
 >>> tuple(round(float(two_minutes.expression(f"candidate.review.{field}")), 4)
 ...       for field in outcome_fields)
 (0.9, 0.0632, 0.0368)
@@ -1029,123 +1029,269 @@ columns for the next:
    P=\begin{pmatrix}1-a&a\\c&1-c\end{pmatrix},\qquad
    \boldsymbol{v}_{n+1}=\boldsymbol{v}_nP.
 
-Build :math:`P` from the same review component and apply it to the initial
-distribution. Its incorrect component is the remaining-error fraction already
-calculated by the workload model. ``applyfunc`` resolves each matrix entry
-using the observed context:
+Keep :math:`P` independent of a particular response formula. A row vector
+:math:`(1-p_0,p_0)` describes the initial **composition** of the records: the
+fractions correct and incorrect. Mathematically this is a probability
+distribution over the two states. Multiplication by :math:`P` gives the
+composition after one pass.
 
->>> from sympy import Matrix
+Because the shares add to one, only the incorrect share needs its own
+sequence. The following helper builds that sequence from the matrix product,
+rather than copying the review model's formula:
+
+.. code-block:: python
+
+   from sympy import Eq, ImmutableMatrix, Lambda
+   from sympy.matrices import MatrixBase
+   from modello import Index, Recurrence, Series
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: transition_recurrence
+
+Here ``previous`` is the composition before the next pass. Its product with
+``P`` supplies the recurrence's next incorrect share. The same law works for
+any row-stochastic two-state matrix, with states ordered (correct, incorrect).
+
+>>> from sympy import Lambda, Matrix
+>>> from examples.record_review import transition_recurrence
+>>> a, c = Symbol("a", nonnegative=True), Symbol("c", nonnegative=True)
+>>> p0 = Symbol("p0", nonnegative=True)
+>>> N = Symbol("N", integer=True, positive=True)
+>>> P = Matrix([[1 - a, a], [c, 1 - c]])
+>>> initial = Matrix([[1 - p0, p0]])
+>>> law = transition_recurrence(P, p0)
+>>> law.at(0).doit()
+p0
+>>> simplify(law.at(1).doit() - (initial * P)[0, 1])
+0
+>>> response_after_N = law.at(N).doit()
+
+``Recurrence`` has derived the response at an arbitrary pass count. In a
+more readable form, it is
+
+.. math::
+
+   p_N=\begin{cases}
+     p_0, & a+c=0,\\
+     \dfrac{a}{a+c}
+       +\left(p_0-\dfrac{a}{a+c}\right)(1-a-c)^N, & a+c>0.
+   \end{cases}
+
+The calculation used nonnegative :math:`a,c`. Their probability interpretation
+also needs :math:`a,c\leq1` and :math:`0\leq p_0\leq1`. For
+:math:`0<a+c<2`, the power tends to zero, leaving the stationary fraction
+:math:`a/(a+c)`. A matrix that swaps the two states on every pass has
+:math:`a=c=1` and can oscillate; a stationary fraction alone does not establish
+convergence. If both transition shares are zero, the matrix is the identity
+and every pass leaves the initial composition unchanged.
+
+``Lambda`` packages the derived expression as a symbolic function of the two
+transition shares, initial composition, and pass count. Choosing matrix
+entries is now enough to choose the response:
+
+>>> finite_response = Lambda((a, c, p0, N), response_after_N)
+>>> finite_response(0, 0, p0, 5)
+p0
 >>> response_symbols = extended.symbols.candidate.review.response
->>> symbolic_P = Matrix([
+>>> review_P = Matrix([
 ...     [1 - response_symbols.introduced_error_share, response_symbols.introduced_error_share],
 ...     [response_symbols.caught_share, 1 - response_symbols.caught_share],
 ... ])
->>> P = symbolic_P.applyfunc(fallible.expression)
->>> initial = Matrix([[1 - record.error_fraction, record.error_fraction]])
->>> after_one = initial * P
->>> simplify(after_one[0, 1] - fallible.expression("candidate.review.remaining_error_fraction"))
+>>> observed_P = review_P.applyfunc(fallible.expression)
+>>> after_one = finite_response(observed_P[0, 1], observed_P[1, 0],
+...                             record.error_fraction, 1)
+>>> simplify(after_one - fallible.expression("candidate.review.remaining_error_fraction"))
 0
 
-Keep this pass's duration and rates fixed for repeated checks. At equilibrium,
-the error fraction before and after a pass is the same. Declare that equality
-in a model, reusing ``ReviewModel`` and its review component:
+The existing response is one choice of matrix entries. Its one-pass result
+agrees with ``ReviewModel``. Keep those entries fixed to ask about repeated
+two-minute passes.
+
+``RepeatedReview`` reuses the same recurrence helper. It contains the existing
+review model, relates total checking time to pass duration, and queries the
+recurrence at the inferred pass count:
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: RepeatedReview
+
+>>> from examples.record_review import RepeatedReview
+>>> repeated = RepeatedReview("four checking minutes", checking_minutes_per_record=4, **{
+...     "review.record": record,
+...     "review.response": response,
+...     "review.response.minutes_per_record": 2,
+... })
+>>> repeated.passes
+2
+>>> round(float(repeated.final_error_fraction), 4)
+0.0388
+>>> simplify(repeated.final_error_fraction
+...          - finite_response(observed_P[0, 1], observed_P[1, 0],
+...                            record.error_fraction, repeated.passes))
+0
+
+For zero passes the recurrence returns the initial composition. This avoids
+building a finite history merely to query its last value. Total staff time
+still includes entry and repair work as well as checking.
+
+The same matrix recurrence also has a long-run limit for these observed
+probabilities:
+
+>>> long_run_errors = limit(
+...     finite_response(observed_P[0, 1], observed_P[1, 0], record.error_fraction, N),
+...     N, S.Infinity)
+>>> round(float(long_run_errors), 4)
+0.0304
+
+We can ask the original outcome model for its equilibrium too. Reuse its
+components and join the error fractions before and after a pass:
 
 .. literalinclude:: ../../../examples/record_review.py
    :language: python
    :pyobject: ReviewEquilibrium
-
-The two ``error_fraction`` assignments join the starting and remaining error
-fractions, just as the earlier budget model joined quantities across components.
-Reuse the response's rates and supply the two-minute pass duration. Leave the
-record's error fraction unknown so Modello can infer it:
 
 >>> from examples.record_review import ReviewEquilibrium
 >>> equilibrium = ReviewEquilibrium("unchanged quality", **{
 ...     "review.response": response,
 ...     "review.response.minutes_per_record": 2,
 ... })
->>> round(float(equilibrium.error_fraction), 4)
-0.0304
-
-For a finite run of checks, give the model a total checking time instead
-of choosing a pass count. ``RepeatedReview`` relates that time to pass
-duration and keeps a review model at each record boundary. Link a record's
-error fraction directly to the preceding model's remaining-error fraction.
-Each member retains its own outcome equations:
-
-.. code-block:: python
-
-   from modello import Index, model_recurrence, model_vector
-
-.. literalinclude:: ../../../examples/record_review.py
-   :language: python
-   :pyobject: RepeatedReview
-
-There are ``passes + 1`` boundaries, including the initial record. ``record``
-is a view of that initial record. ``progression`` connects successive records,
-and ``review_settings`` shares the chosen response parameters across members.
-``final_error_fraction`` reads the last record directly. With zero passes,
-the last record is the initial one.
-
-Spend four checking minutes per record, reusing the bound two-minute review
-from the equilibrium question and the original record estimates:
-
->>> from examples.record_review import RepeatedReview
->>> repeated = RepeatedReview("four checking minutes", record=record,
-...                           response=equilibrium.review.response, checking_minutes_per_record=4)
->>> repeated.passes
-2
->>> round(float(repeated.final_error_fraction), 4)
-0.0388
-
-Modello infers two passes and about 3.88% remaining errors. The recurrence and
-matrix view agree at that inferred count:
-
->>> simplify((initial * P**repeated.passes)[0, 1] - repeated.final_error_fraction)
+>>> simplify(equilibrium.error_fraction - long_run_errors)
 0
 
-This describes whole passes at the chosen duration. Total staff time also
-includes entry and repair work. Extending a single pass's duration is another
-question: it changes both responses and therefore changes :math:`P`.
+The equilibrium equality identifies a fixed point. The recurrence explains
+when repeated passes approach it.
 
 Check the transition properties in the same context
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The matrix is a view of the review model. Add probability obligations to its
-existing context, using symbolic component fields so they follow observations:
+The probability premises belong to the chosen matrix. For the current
+review response, attach them to its existing context using symbolic component
+fields, so they follow observations and replacements:
 
 >>> from modello.contrib.verification import equal_to, nonnegative, positive
 >>> probability_obligations = (
-...     *(nonnegative(symbolic_P[i, j], name=f"P_{i}_{j}_nonnegative")
-...       for i in range(symbolic_P.rows) for j in range(symbolic_P.cols)),
-...     *(equal_to(sum(symbolic_P.row(i)), 1, name=f"P_row_{i}_sum")
-...       for i in range(symbolic_P.rows)),
+...     *(nonnegative(review_P[i, j], name=f"P_{i}_{j}_nonnegative")
+...       for i in range(review_P.rows) for j in range(review_P.cols)),
+...     *(equal_to(sum(review_P.row(i)), 1, name=f"P_row_{i}_sum")
+...       for i in range(review_P.rows)),
 ... )
 >>> transitions = extended.with_obligations(*probability_obligations)
 >>> checked = transitions.observe(**{"candidate.review.response.minutes_per_record": 2})
 >>> checked.explain("P_0_1_nonnegative").verdict
 'strictly true'
->>> symbolic_P.applyfunc(checked.expression) == P
+>>> review_P.applyfunc(checked.expression) == observed_P
 True
 
 These obligations describe a row-stochastic matrix: entries are nonnegative
 and each row sums to one. They also bound every entry above by one.
 
 For convergence to a unique stationary distribution, a useful sufficient
-condition for a finite row-stochastic matrix is that every entry is strictly
-positive. Add those stronger obligations when exploring that argument:
+condition here is that all four entries are strictly positive. It gives
+:math:`0<a,c<1` and therefore :math:`|1-a-c|<1`. Add those stronger
+obligations when using that argument:
 
 >>> mixing = checked.with_obligations(*(
 ...     positive(entry, name=f"positive_P_{i}", consumer="convergence")
-...     for i, entry in enumerate(symbolic_P)))
+...     for i, entry in enumerate(review_P)))
 >>> mixing.explain("positive_P_1").verdict
 'strictly true'
 
 These are proof goals; they do not automatically guard native SymPy
 calculations. A computation that relies on them can list them as a
-``Method``'s preconditions. An initial distribution also needs nonnegative
+``Method``'s preconditions. An initial composition also needs nonnegative
 entries summing to one.
 
-The same model now supports questions about outcome fractions, workload,
-checking time, and repeated passes. Changing the response updates
-the dependent calculations; each argument still needs its own premises.
+Derive a continuous response from shorter steps
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The limit above spends more time checking as it adds passes. A different
+question keeps the total checking time :math:`t` fixed and divides it into
+more steps. This lets a record change state more than once during one check:
+an error can be corrected and another introduced afterwards.
+
+For a short step lasting :math:`h` minutes, take the correction share to be
+:math:`kh` and the error-introduction share to be :math:`rh`:
+
+.. math::
+
+   P_h=\begin{pmatrix}1-rh&rh\\kh&1-kh\end{pmatrix},
+   \qquad h=t/N.
+
+For nonnegative rates, this is a probability matrix once the steps are
+short enough that :math:`rh\leq1` and :math:`kh\leq1`. The recurrence stays
+the same: choose these entries, evaluate at :math:`N` steps, and let
+:math:`N\to\infty` at fixed :math:`t`.
+
+``derive_continuous_transitions`` performs those operations. It first derives
+the response for independent nonnegative :math:`a,c`, then uses ``Lambda`` to
+supply the short-step entries and SymPy to take the limit. Starting wholly
+correct or wholly incorrect gives the two rows of the continuous matrix.
+The explicit zero-total-rate branch retains the degenerate limit; when both
+physical rates are zero, the result is the identity matrix.
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: derive_continuous_transitions
+
+For :math:`k>0,r\geq0`, the derived composition after :math:`t` minutes is
+
+.. math::
+
+   p(t)=\frac{r}{k+r}
+        +\left(p_0-\frac{r}{k+r}\right)e^{-(k+r)t}.
+
+The two matrix entries needed by the review model are
+
+.. math::
+
+   a(t)=P(t)_{0,1}=\frac{r}{k+r}\left(1-e^{-(k+r)t}\right),
+   \qquad
+   c(t)=P(t)_{1,0}=\frac{k}{k+r}\left(1-e^{-(k+r)t}\right).
+
+These account for both directions throughout the check. They replace the
+earlier assumption of separate responses ``1-exp(-r*t)`` and ``1-exp(-k*t)``
+for one pass. With :math:`r=0`, the introduced share is zero and the caught
+share is exactly the original ``1-exp(-k*t)``.
+
+The entries describe the state at the end of checking. The share :math:`a(t)`
+starts correct and ends incorrect; :math:`c(t)` starts incorrect and ends
+correct. Any intervening changes of state are already included.
+
+The extension uses those cells directly. The matrix below is expressed in
+the parent model's inputs, so inheritance rebinds its entries along with the
+existing property claims. Only ``detection_rate`` is redeclared, to strengthen
+its domain to positive rates; checking minutes and the error-creation rate
+are inherited:
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :start-at: # The parent inputs keep their identities
+   :end-before: class ReviewEquilibrium
+
+Replace the response in the context that already carries our record
+estimates, rates, and probability obligations. The outcome and workload
+equations stay the same:
+
+>>> from examples.record_review import ContinuousReview
+>>> continuous = transitions.replace("candidate.review.response", ContinuousReview)
+>>> continuous = continuous.observe(**{"candidate.review.response.minutes_per_record": 2})
+>>> round(float(continuous.expression("candidate.review.remaining_error_fraction")), 4)
+0.0486
+>>> continuous.explain("P_0_1_nonnegative").verdict
+'strictly true'
+>>> continuous.explain("candidate.review.response.caught_share/continuously_differentiable").verdict
+'strictly true'
+>>> recovered = two_minutes.replace("candidate.review.response", ContinuousReview)
+>>> simplify(recovered.expression("candidate.minutes_per_record")
+...          - two_minutes.expression("candidate.minutes_per_record"))
+0
+
+The coupled response leaves about 4.86% incorrect after two minutes, compared
+with 5.46% for the earlier one-pass assumption. Its long-time error fraction
+is :math:`r/(k+r)`, here :math:`1/51` or about 1.96%. The zero-error-creation
+baseline is recovered without changes to the workload model.
+
+The matrix now drives finite-pass inference, the continuous limit, and the
+replacement response. The same context can then check the premises needed
+for a workload or optimality calculation with that response.

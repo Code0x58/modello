@@ -16,8 +16,11 @@ from pathlib import Path
 from sympy import (
     Derivative,
     Dummy,
+    Eq,
     Expr,
+    ImmutableMatrix,
     Interval,
+    Lambda,
     Piecewise,
     Rational,
     S,
@@ -27,8 +30,9 @@ from sympy import (
     simplify,
     sqrt,
 )
+from sympy.matrices import MatrixBase
 
-from modello import Index, InstanceDummy, Modello, component, model_recurrence, model_vector
+from modello import Index, InstanceDummy, Modello, Recurrence, Series, component
 from modello.contrib.verification import (
     InferenceRule,
     Method,
@@ -136,7 +140,7 @@ class ReviewModel(Modello):
     response = component(ExponentialReview)
     corrected_fraction = record.error_fraction * response.caught_share
     introduced_error_fraction = (1 - record.error_fraction) * response.introduced_error_share
-    always_correct_fraction = 1 - record.error_fraction - introduced_error_fraction
+    correct_to_correct_fraction = 1 - record.error_fraction - introduced_error_fraction
     remaining_error_fraction = record.error_fraction - corrected_fraction + introduced_error_fraction
 
 
@@ -280,6 +284,71 @@ class CappedReview(ExponentialReview):
     )
 
 
+def transition_recurrence(P: MatrixBase, initial_error_fraction: Expr) -> Recurrence:
+    """Evolve a two-state composition using a row-stochastic transition matrix.
+
+    Rows and columns are ordered (correct, incorrect). Conservation of records
+    leaves one independent share, so a scalar recurrence represents both states.
+    Probability bounds and row sums are premises to check separately.
+    """
+    if P.shape != (2, 2):
+        raise ValueError("The record-review transition matrix must have two rows and two columns")
+    n = Index("n", nonnegative=True)
+    errors = Series("p", n, real=True)
+    previous = ImmutableMatrix([[1 - errors[n - 1], errors[n - 1]]])
+    return Recurrence(errors[n], (previous * P)[0, 1], initial={0: initial_error_fraction})
+
+
+def derive_continuous_transitions(
+    minutes_per_record: Expr, detection_rate: Expr, error_creation_rate: Expr
+) -> ImmutableMatrix:
+    """Derive a continuous two-state response from increasingly short checks.
+
+    First solve the recurrence for independent, nonnegative transition shares.
+    Then parameterize those shares by short-step rates and take the limit at
+    fixed total checking time. The zero-total-rate branch retains the affine
+    limit too; with physical nonnegative rates this is the identity matrix.
+    """
+    a, c = (Dummy(name, nonnegative=True) for name in ("a", "c"))
+    initial = Dummy("p", real=True)
+    steps = Dummy("N", integer=True, positive=True)
+    P = ImmutableMatrix([[1 - a, a], [c, 1 - c]])
+    discrete = Lambda((a, c, initial), transition_recurrence(P, initial).at(steps).doit())
+
+    minutes, correction, creation = (Dummy(name, positive=True) for name in ("t", "k", "r"))
+    step = ImmutableMatrix(
+        [
+            [1 - creation * minutes / steps, creation * minutes / steps],
+            [correction * minutes / steps, 1 - correction * minutes / steps],
+        ]
+    )
+    after_steps = discrete(step[0, 1], step[1, 0], initial)
+    continuous = Lambda((minutes, correction, creation, initial), simplify(limit(after_steps, steps, S.Infinity)))
+    rows = []
+    for starting_errors in (S.Zero, S.One):
+        errors = Piecewise(
+            (starting_errors + error_creation_rate * minutes_per_record, Eq(detection_rate + error_creation_rate, 0)),
+            (continuous(minutes_per_record, detection_rate, error_creation_rate, starting_errors), True),
+        )
+        rows.append([1 - errors, errors])
+    return ImmutableMatrix(rows).applyfunc(simplify)
+
+
+# The parent inputs keep their identities when its response equations change.
+P = derive_continuous_transitions(
+    ExponentialReview.minutes_per_record, ExponentialReview.detection_rate, ExponentialReview.error_creation_rate
+)
+
+
+class ContinuousReview(ExponentialReview):
+    """Allow correction and error creation throughout a single check, with k > 0."""
+
+    # Refine this input's domain; the other inputs and claims are inherited.
+    detection_rate = InstanceDummy("k", positive=True)
+    introduced_error_share = P[0, 1]
+    caught_share = P[1, 0]
+
+
 class ReviewEquilibrium(Modello):
     """Infer an error fraction unchanged by one pass of fallible review."""
 
@@ -289,28 +358,21 @@ class ReviewEquilibrium(Modello):
 
 
 class RepeatedReview(Modello):
-    """Infer pass count from checking minutes and query the resulting error fraction."""
+    """Infer pass count and evolve record composition with the same matrix law."""
 
-    response = component(ExponentialReview)
+    review = component(ReviewModel)
     passes = InstanceDummy("N", integer=True, nonnegative=True)
-    checking_minutes_per_record = passes * response.minutes_per_record
-    states = model_vector(ReviewModel, size=passes + 1)
-    record = states[0].record
-    n = Index("n")
-    progression = model_recurrence(
-        states[n].record,
-        error_fraction=states[n - 1].remaining_error_fraction,
-        entry_minutes_per_record=record.entry_minutes_per_record,
-        repair_minutes_per_error=record.repair_minutes_per_error,
+    checking_minutes_per_record = passes * review.response.minutes_per_record
+    progression = transition_recurrence(
+        ImmutableMatrix(
+            [
+                [1 - review.response.introduced_error_share, review.response.introduced_error_share],
+                [review.response.caught_share, 1 - review.response.caught_share],
+            ]
+        ),
+        review.record.error_fraction,
     )
-    review_settings = model_recurrence(
-        states[n].response,
-        start=0,
-        minutes_per_record=response.minutes_per_record,
-        detection_rate=response.detection_rate,
-        error_creation_rate=response.error_creation_rate,
-    )
-    final_error_fraction = states[-1].record.error_fraction
+    final_error_fraction = progression.at(passes)
 
 
 def write_reports(directory: Path, *, plot: bool = False) -> None:

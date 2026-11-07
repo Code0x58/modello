@@ -4,19 +4,23 @@ import json
 from pathlib import Path
 
 import pytest
-from sympy import FiniteSet, Rational, S, Symbol, exp, limit, log, simplify, sqrt
+from sympy import FiniteSet, Lambda, Matrix, Rational, S, Symbol, exp, limit, log, simplify, sqrt
 
 from examples.record_review import (
     CappedReview,
     CheckingStep,
+    ContinuousReview,
     EntryBudget,
     ExponentialReview,
     RationalReview,
     RecordWork,
+    RepeatedReview,
     ReviewPlanning,
     derive_checking_response,
+    derive_continuous_transitions,
     review_context,
     review_plan,
+    transition_recurrence,
     write_reports,
 )
 from modello.contrib.verification import VerificationContext, VerificationError, predicate
@@ -74,7 +78,7 @@ def test_definition_reports_distinguish_parameter_conditions_and_regularity():
 
 
 def test_outcome_fractions_conserve_records_and_follow_response_replacements(measured):
-    paths = ("always_correct_fraction", "corrected_fraction", "remaining_error_fraction")
+    paths = ("correct_to_correct_fraction", "corrected_fraction", "remaining_error_fraction")
     axis = measured.symbols.candidate.review.response.minutes_per_record
     outcomes = tuple(measured.expression(f"candidate.review.{path}", wrt=axis) for path in paths)
     assert simplify(sum(outcomes)) == 1
@@ -207,6 +211,72 @@ def test_the_capped_curve_retains_its_claims_and_exposes_its_kink(measured):
     assert regularity.verdict == "strictly false"
     assert dict(regularity.witness)[capped.symbols.candidate.review.response.minutes_per_record] == 2
     assert error.value.report.explain("global_maximum").verdict == "unresolved"
+
+
+def test_transition_recurrence_evolves_the_initial_composition():
+    initial = Matrix([[Rational(9, 10), Rational(1, 10)]])
+    for P in (
+        Matrix.eye(2),
+        Matrix([[0, 1], [1, 0]]),
+        Matrix([[1, 0], [Rational(1, 2), Rational(1, 2)]]),
+        Matrix([[Rational(3, 4), Rational(1, 4)], [Rational(1, 2), Rational(1, 2)]]),
+    ):
+        law = transition_recurrence(P, initial[0, 1])
+        for count in (0, 1, 5):
+            assert law.at(count).doit() == (initial * P**count)[0, 1]
+    with pytest.raises(ValueError, match="two rows and two columns"):
+        transition_recurrence(Matrix.eye(3), S.Zero)
+
+
+@pytest.fixture(scope="module")
+def continuous_transitions():
+    minutes, correction, creation = (Symbol(name, nonnegative=True) for name in ("t", "k", "r"))
+    return Lambda((minutes, correction, creation), derive_continuous_transitions(minutes, correction, creation))
+
+
+@pytest.mark.parametrize(
+    ("correction", "creation"),
+    [(0, 0), (Rational(1, 2), 0), (0, Rational(1, 100)), (Rational(1, 2), Rational(1, 100))],
+)
+def test_continuous_matrix_matches_the_generator_including_zero_rates(continuous_transitions, correction, creation):
+    generator = Matrix([[-creation, creation], [correction, -correction]])
+    for minutes in (0, 2):
+        P = continuous_transitions(minutes, correction, creation)
+        assert (P - (minutes * generator).exp()).applyfunc(simplify) == Matrix.zeros(2)
+        assert (P * Matrix.ones(2, 1)).applyfunc(simplify) == Matrix.ones(2, 1)
+
+
+def test_matrix_response_reuses_workload_contracts_and_inferred_pass_counts(proposed):
+    recovered = proposed.replace("candidate.review.response", ContinuousReview)
+    assert recovered.run(review_plan).data == proposed.run(review_plan).data
+    response = ContinuousReview("response", detection_rate=Rational(1, 2), error_creation_rate=Rational(1, 100))
+    changed = review_context(response=response).observe(**{"candidate.review.response.minutes_per_record": 2})
+    expected = Rational(1, 51) + (Rational(1, 10) - Rational(1, 51)) * exp(-Rational(51, 50))
+    assert simplify(changed.expression("candidate.review.remaining_error_fraction") - expected) == 0
+    assert (
+        changed.explain("candidate.review.response.caught_share/continuously_differentiable").verdict == "strictly true"
+    )
+    record = RecordWork(
+        "record", entry_minutes_per_record=4, error_fraction=Rational(1, 10), repair_minutes_per_error=60
+    )
+    original = ExponentialReview(
+        "response", minutes_per_record=2, detection_rate=Rational(1, 2), error_creation_rate=Rational(1, 100)
+    )
+    P = Matrix(
+        [
+            [1 - original.introduced_error_share, original.introduced_error_share],
+            [original.caught_share, 1 - original.caught_share],
+        ]
+    )
+    for count in (0, 2):
+        repeated = RepeatedReview(
+            "whole passes",
+            **{"review.record": record, "review.response": original},
+            checking_minutes_per_record=2 * count,
+        )
+        assert repeated.passes == count
+        expected_errors = (Matrix([[1 - record.error_fraction, record.error_fraction]]) * P**count)[0, 1]
+        assert simplify(repeated.final_error_fraction - expected_errors) == 0
 
 
 def test_retiring_an_exploratory_saving_target_does_not_waive_the_method_contract(proposed):
