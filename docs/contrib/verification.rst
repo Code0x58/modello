@@ -90,6 +90,54 @@ produce a constant, so select observations through ``symbols`` instead.
 stay symbolic despite an observation. Both arguments accept native references.
 Constructor-style keyword observations and string paths remain accepted.
 
+Name an investigation's proof declarations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use ``with_specification(factory)`` to name additional obligations and trusted
+inference rules in an ordinary frozen dataclass. The factory receives the
+context's typed ``symbols`` tree. Dataclass fields and tuple positions become
+the declarations' names, preserving their concrete Python types:
+
+>>> from dataclasses import dataclass
+>>> from modello.contrib.verification import Obligation, positive
+>>> @dataclass(frozen=True)
+... class CheckingSpecification:
+...     positive_rate: Obligation
+>>> named = context.with_specification(
+...     lambda symbols: CheckingSpecification(positive(symbols.candidate.review.response.detection_rate)))
+>>> named.explain(named.specification.positive_rate).verdict
+'strictly true'
+>>> named.verify().explain(named.specification.positive_rate).id
+'positive_rate'
+
+``specification`` is the typed catalog. ``obligations`` and ``rules`` are
+read-only inventories of the context-level declarations, including any added
+through ``with_obligations`` or ``with_rule``. Obligations attached to model
+fields through ``specifies`` remain part of the model and are also checked;
+the context catalog names the investigation's additional declarations.
+``specifies`` stays a declaration function rather than a second metadata tree.
+
+The catalog is rebuilt on immutable context updates. Factories must use the
+symbols they receive, so component replacement binds the declarations to the
+new model. Shared obligations keep one canonical name, and inference-rule
+conclusions and premises retain their references to those named declarations.
+Premise names are checked for uniqueness when a rule is registered, after
+catalog field names have been assigned.
+Changing a named declaration uses ``with_specification``; returning ``None``
+removes the catalog while retaining separately added goals and rules.
+``without_obligations`` still removes separately added exploratory goals.
+
+``explain`` accepts an obligation, a registered inference rule, or a report ID.
+An obligation not already registered can be attempted without adding it to the
+context. Explaining a rule attempts its conclusion. Reports accept these
+objects too and retain the same string IDs for exported evidence.
+``with_bound_hint`` and ``without_obligations`` also accept obligation records.
+
+The optional second type parameter records the catalog type:
+``VerificationContext[ReviewPlanning, ReviewSpecification]``. The existing
+``VerificationContext[ReviewPlanning]`` form denotes a context without a
+catalog. Python 3.11 and 3.12 use ``typing_extensions`` for this typing default.
+
 Specifications, obligations, and inference rules
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -662,7 +710,7 @@ guarded computation; ``InferenceRule`` describes an explicitly trusted implicati
 .. autoclass:: VerificationModel
    :members:
 
-.. autoclass:: VerificationContext
+.. autoclass:: VerificationContext(problem, assumptions=(), obligations=(), bound_hints=(), rules=(), changes=())
    :members:
 
 .. autoclass:: Method

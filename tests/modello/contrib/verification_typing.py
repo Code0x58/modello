@@ -1,11 +1,13 @@
 # mypy: warn-unused-ignores
 """Installed typing contracts for the opt-in verification API."""
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from modello import Coordinate, InstanceDummy, SolutionFamily, component
 from modello.contrib.verification import (
     Evidence,
+    InferenceRule,
     Method,
     Obligation,
     VerificationContext,
@@ -25,6 +27,12 @@ class TypedStudy(VerificationModel):
     curve = component(TypedCurve)
 
 
+@dataclass(frozen=True)
+class TypedSpecification:
+    sign: Obligation
+    rule: InferenceRule | None = None
+
+
 if TYPE_CHECKING:
     from typing import assert_type
 
@@ -34,6 +42,21 @@ if TYPE_CHECKING:
     assert_type(context.symbols, TypedCurve)
     assert_type(context.model, TypedCurve)
     assert_type(context.model.a, InstanceDummy)
+    assert_type(context.specification, None)
+    named = context.with_specification(
+        lambda symbols: TypedSpecification(strictly_increasing(symbols.value, wrt=symbols.x))
+    )
+    assert_type(named, VerificationContext[TypedCurve, TypedSpecification])
+    assert_type(named.specification, TypedSpecification)
+    assert_type(named.specification.sign, Obligation)
+    assert_type(named.observe(a=1), VerificationContext[TypedCurve, TypedSpecification])
+    assert_type(named.assume(named.symbols.a > 0), VerificationContext[TypedCurve, TypedSpecification])
+    assert_type(named.explain(named.specification.sign), Evidence)
+    assert_type(named.verify().explain(named.specification.sign), Evidence)
+    assert_type(named.obligations, tuple[Obligation, ...])
+    assert_type(named.rules, tuple[InferenceRule, ...])
+    named.specification.missing  # type: ignore[attr-defined]
+    assert_type(named.with_specification(lambda symbols: None), VerificationContext[TypedCurve])
     assert_type(context.family, SolutionFamily[TypedCurve])
     assert_type(context.observe(a=1), VerificationContext[TypedCurve])
     assert_type(context.observe({context.symbols.a: 1}), VerificationContext[TypedCurve])

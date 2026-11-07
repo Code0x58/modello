@@ -383,13 +383,25 @@ class VerificationReport:
             ids.add(item.id)
             pending.extend(item.premises)
 
-    def explain(self, obligation_id: str) -> Evidence:
+    def explain(self, obligation_id: str | Obligation | InferenceRule) -> Evidence:
+        """Find evidence by ID, obligation, or an inference rule's conclusion."""
+
         def search(items):
             for item in items:
                 yield item
                 yield from search(item.premises)
 
-        matches = [item for item in search(self.evidence) if item.id == obligation_id]
+        subject = obligation_id.conclusion if isinstance(obligation_id, InferenceRule) else obligation_id
+        if isinstance(subject, str):
+            matches = [item for item in search(self.evidence) if item.id == subject]
+        else:
+            proposition = subject._proposition()
+            matches = [item for item in self.evidence if item.obligation._proposition() == proposition]
+            if not matches:
+                matches = [item for item in search(self.evidence) if item.obligation._proposition() == proposition]
+            named = [item for item in matches if item.id == subject.name]
+            if named:
+                matches = named
         if len(matches) != 1:
             raise KeyError(obligation_id)
         return matches[0]
@@ -434,16 +446,14 @@ class InferenceRule:
     version: str = "1"
 
     def __post_init__(self) -> None:
-        premises: dict[str, Obligation] = {}
+        premises: dict[tuple, Obligation] = {}
         for obligation in self.premises:
             if not isinstance(obligation, Obligation):
                 raise ModelDefinitionError("Inference-rule premises must be Obligation records")
-            if obligation.name in premises and (
-                premises[obligation.name] != obligation
-                or premises[obligation.name]._proposition() != obligation._proposition()
-            ):
-                raise ModelDefinitionError(f"InferenceRule premise names must be unique: {obligation.name}")
-            premises[obligation.name] = obligation
+            # Keep distinct premises until a catalog can supply their names.
+            # Complete scoped records can already share one evidence item.
+            key = (obligation._proposition(), obligation.consumer, obligation.reason, obligation.source)
+            premises.setdefault(key, obligation)
         object.__setattr__(self, "premises", tuple(premises.values()))
 
 
@@ -458,10 +468,10 @@ class Method(Generic[ResultT]):
     execute: Callable[..., ResultT]
     preconditions: tuple[Obligation, ...] = ()
     uses: tuple[str, ...] = ()
-    bound_context: VerificationContext | None = field(default=None, repr=False, compare=False)
+    bound_context: VerificationContext[Any, object] | None = field(default=None, repr=False, compare=False)
     bound_assumptions: frozenset[Basic] | None = field(default=None, repr=False, compare=False)
 
-    def bind(self, context: VerificationContext) -> Method[ResultT]:
+    def bind(self, context: VerificationContext[Any, object]) -> Method[ResultT]:
         """Bind context-specific expressions to their full immutable context.
 
         Rebuild a bound method after branching. Rebinding stale preconditions
@@ -501,6 +511,6 @@ class Sample:
 class VerificationError(ModelValidationError):
     """A blocked computation retaining its verification context and report."""
 
-    def __init__(self, message: str, context: VerificationContext, report: VerificationReport) -> None:
+    def __init__(self, message: str, context: VerificationContext[Any, object], report: VerificationReport) -> None:
         self.context, self.report = context, report
         super().__init__(message)

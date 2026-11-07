@@ -1,6 +1,6 @@
 """Deductive verification of mathematical model properties.
 
-This module needs only SymPy. Numerical backends and plotting are imported by
+This module uses the core dependencies. Numerical backends and plotting are imported by
 the methods that use them, never by ordinary Modello or symbolic verification.
 """
 

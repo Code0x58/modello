@@ -682,9 +682,9 @@ means a nonnegative candidate. Run the method, then inspect the four premises:
 
 >>> from examples.record_review import review_plan
 >>> result = proposed.run(review_plan)
->>> result.report.explain("global_maximum").verdict
+>>> result.report.explain(proposed.specification.stationary_maximum).verdict
 'strictly true'
->>> for premise in result.report.explain("global_maximum").premises:
+>>> for premise in result.report.explain(proposed.specification.stationary_maximum).premises:
 ...     print(premise.obligation.name, premise.verdict)
 concavity strictly true
 differentiability strictly true
@@ -757,7 +757,7 @@ starts a fresh context, so the original observations remain for comparison:
 >>> revised_result = revised.run(review_plan)
 >>> round(float(revised_result.data.checking_minutes_per_record), 2)
 0.81
->>> revised_result.report.explain("global_maximum").verdict
+>>> revised_result.report.explain(revised.specification.stationary_maximum).verdict
 'strictly true'
 >>> measured.model.candidate.review.record.repair_minutes_per_record
 6
@@ -794,7 +794,7 @@ have not yet been fixed:
 >>> changed = measured.replace(measured.symbols.candidate.review.response, RationalReview)
 >>> changed = changed.observe({changed.symbols.candidate.review.response.minutes_per_record: 2*(sqrt(3)-1)})
 >>> alternative = changed.run(review_plan)
->>> alternative.report.explain("global_maximum").verdict
+>>> alternative.report.explain(changed.specification.stationary_maximum).verdict
 'strictly true'
 >>> alternative.data.minutes_per_record
 2 + 4*sqrt(3)
@@ -837,7 +837,7 @@ find out why our method cannot use it:
 >>> try:
 ...     capped.run(review_plan)
 ... except VerificationError as error:
-...     print(error.report.explain("global_maximum").verdict)
+...     print(error.report.explain(capped.specification.stationary_maximum).verdict)
 unresolved
 
 Two minutes actually maximises this piecewise model: minutes saved rises before
@@ -1098,11 +1098,8 @@ entries is now enough to choose the response:
 >>> finite_response = Lambda((a, c, p0, N), response_after_N)
 >>> finite_response(0, 0, p0, 5)
 p0
->>> response_symbols = extended.symbols.candidate.review.response
->>> review_P = Matrix([
-...     [1 - response_symbols.introduced_error_share, response_symbols.introduced_error_share],
-...     [response_symbols.caught_share, 1 - response_symbols.caught_share],
-... ])
+>>> from examples.record_review import review_transition_matrix
+>>> review_P = review_transition_matrix(extended.symbols.candidate.review.response)
 >>> observed_P = review_P.applyfunc(fallible.expression)
 >>> after_one = finite_response(observed_P[0, 1], observed_P[1, 0],
 ...                             record.error_fraction, 1)
@@ -1172,21 +1169,34 @@ when repeated passes approach it.
 Check the transition properties in the same context
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The probability premises belong to the chosen matrix. For the current
-review response, attach them to its existing context using symbolic component
-fields, so they follow observations and replacements:
+The probability premises belong to the chosen matrix. Give them a Python
+schema so an editor can complete their names and a type checker can reject a
+missing attribute. The example uses an ordinary frozen dataclass:
 
->>> from modello.contrib.verification import equal_to, nonnegative, positive
->>> probability_obligations = (
-...     *(nonnegative(review_P[i, j], name=f"P_{i}_{j}_nonnegative")
-...       for i in range(review_P.rows) for j in range(review_P.cols)),
-...     *(equal_to(sum(review_P.row(i)), 1, name=f"P_row_{i}_sum")
-...       for i in range(review_P.rows)),
-... )
->>> transitions = extended.with_obligations(*probability_obligations)
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: ReviewSpecification
+
+The same catalog already names the stationary-point inference rule.
+Its tuple fields can hold obligations for a matrix of any finite shape.
+A factory fills those fields from the current model symbols:
+
+.. literalinclude:: ../../../examples/record_review.py
+   :language: python
+   :pyobject: transition_specification
+
+``with_specification`` binds the factory to the context. ``specification``
+returns its typed catalog; ``obligations`` and ``rules`` expose the active
+context-level goals and inference rules as read-only tuples. The catalog's
+field names and tuple positions supply report IDs automatically:
+
+>>> from examples.record_review import transition_specification
+>>> transitions = extended.with_specification(transition_specification)
 >>> checked = transitions.observe({transitions.symbols.candidate.review.response.minutes_per_record: 2})
->>> checked.explain("P_0_1_nonnegative").verdict
+>>> checked.explain(checked.specification.nonnegative_entries[0][1]).verdict
 'strictly true'
+>>> len(checked.obligations), len(checked.rules)
+(6, 1)
 >>> review_P.applyfunc(checked.expression) == observed_P
 True
 
@@ -1198,10 +1208,9 @@ condition here is that all four entries are strictly positive. It gives
 :math:`0<a,c<1` and therefore :math:`|1-a-c|<1`. Add those stronger
 obligations when using that argument:
 
->>> mixing = checked.with_obligations(*(
-...     positive(entry, name=f"positive_P_{i}", consumer="convergence")
-...     for i, entry in enumerate(review_P)))
->>> mixing.explain("positive_P_1").verdict
+>>> mixing = checked.with_specification(
+...     lambda symbols: transition_specification(symbols, mixing=True))
+>>> mixing.explain(mixing.specification.positive_entries[0][1]).verdict
 'strictly true'
 
 These are proof goals; they do not automatically guard native SymPy
@@ -1277,15 +1286,16 @@ are inherited:
    :end-before: class ReviewEquilibrium
 
 Replace the response in the context that already carries our record
-estimates, rates, and probability obligations. The outcome and workload
-equations stay the same:
+estimates, rates, and probability obligations. Its specification factory runs
+with the replacement's symbols, so the typed catalog follows the new response.
+The outcome and workload equations stay the same:
 
 >>> from examples.record_review import ContinuousReview
 >>> continuous = transitions.replace(transitions.symbols.candidate.review.response, ContinuousReview)
 >>> continuous = continuous.observe({continuous.symbols.candidate.review.response.minutes_per_record: 2})
 >>> round(float(continuous.model.candidate.review.remaining_error_fraction), 4)
 0.0486
->>> continuous.explain("P_0_1_nonnegative").verdict
+>>> continuous.explain(continuous.specification.nonnegative_entries[0][1]).verdict
 'strictly true'
 >>> continuous.explain("candidate.review.response.caught_share/continuously_differentiable").verdict
 'strictly true'

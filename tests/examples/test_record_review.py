@@ -16,6 +16,7 @@ from examples.record_review import (
     RecordWork,
     RepeatedReview,
     ReviewPlanning,
+    ReviewSpecification,
     derive_checking_response,
     derive_continuous_transitions,
     review_context,
@@ -27,12 +28,14 @@ from modello.contrib.verification import VerificationContext, VerificationError,
 
 
 @pytest.fixture(scope="module")
-def measured() -> VerificationContext[ReviewPlanning]:
+def measured() -> VerificationContext[ReviewPlanning, ReviewSpecification]:
     return review_context()
 
 
 @pytest.fixture(scope="module")
-def proposed(measured: VerificationContext[ReviewPlanning]) -> VerificationContext[ReviewPlanning]:
+def proposed(
+    measured: VerificationContext[ReviewPlanning, ReviewSpecification],
+) -> VerificationContext[ReviewPlanning, ReviewSpecification]:
     return measured.observe(**{"candidate.review.response.minutes_per_record": 2 * log(3)})
 
 

@@ -19,6 +19,9 @@ reserve inheritance for changes to the model's own equations or properties.
 Prefer verification `context.symbols` references for observations and
 replacements, and `context.model` for field reads. Use `expression` for
 symbolic function queries and string paths when the path itself is data.
+Name investigation proof declarations in a frozen dataclass catalog, bind it
+with `with_specification`, and pass its obligation/rule objects to `explain`
+instead of repeating report-ID strings.
 
 Use uv 0.13.1 or newer. Before committing, run the relevant checks from CI:
 

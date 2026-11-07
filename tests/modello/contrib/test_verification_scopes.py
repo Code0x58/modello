@@ -289,7 +289,7 @@ def test_rules_and_duplicate_ids_distinguish_native_substitution_scopes(substitu
     with pytest.raises(ModelDefinitionError, match="Obligation IDs"):
         context.with_obligations(valid).verify(obligations=(invalid,))
     with pytest.raises(ModelDefinitionError, match="premise names"):
-        InferenceRule("duplicate", valid, (valid, invalid), source="Test rule")
+        context.with_rule(InferenceRule("duplicate", valid, (valid, invalid), source="Test rule"))
     trusted = context.with_rule(InferenceRule("real derivative", valid, (), source="Derivative of a constant"))
     assert trusted.verify(obligations=(valid,)).explain("identity").kind == "rule"
     evidence = trusted.verify(obligations=(invalid,)).explain("identity")

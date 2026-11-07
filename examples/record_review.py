@@ -202,6 +202,41 @@ STATIONARY_MAXIMUM = InferenceRule(
 
 
 @dataclass(frozen=True)
+class ReviewSpecification:
+    """Named declarations for the selected stage of the investigation."""
+
+    stationary_maximum: InferenceRule
+    nonnegative_entries: tuple[tuple[Obligation, ...], ...] = ()
+    normalized_rows: tuple[Obligation, ...] = ()
+    positive_entries: tuple[tuple[Obligation, ...], ...] = ()
+
+
+def review_transition_matrix(response: ExponentialReview) -> ImmutableMatrix:
+    """Order the current response's transitions as (correct, incorrect)."""
+    return ImmutableMatrix(
+        [
+            [1 - response.introduced_error_share, response.introduced_error_share],
+            [response.caught_share, 1 - response.caught_share],
+        ]
+    )
+
+
+def transition_specification(symbols: ReviewPlanning, *, mixing: bool = False) -> ReviewSpecification:
+    """Name the matrix's probability premises, with optional convergence goals."""
+    P = review_transition_matrix(symbols.candidate.review.response)
+    return ReviewSpecification(
+        stationary_maximum=STATIONARY_MAXIMUM,
+        nonnegative_entries=tuple(tuple(nonnegative(entry) for entry in P.row(i)) for i in range(P.rows)),
+        normalized_rows=tuple(equal_to(sum(P.row(i)), 1) for i in range(P.rows)),
+        positive_entries=tuple(
+            tuple(positive(entry, consumer="convergence") for entry in P.row(i)) for i in range(P.rows)
+        )
+        if mixing
+        else (),
+    )
+
+
+@dataclass(frozen=True)
 class ReviewDecision:
     """Checking, saved, and total minutes per record, plus the total's second derivative."""
 
@@ -211,7 +246,7 @@ class ReviewDecision:
     minutes_per_record_second_derivative: Expr
 
 
-def _evaluate_plan(current: VerificationContext[ReviewPlanning]) -> ReviewDecision:
+def _evaluate_plan(current: VerificationContext[ReviewPlanning, object]) -> ReviewDecision:
     """Evaluate the proposed plan after its Method has established the premises."""
     candidate = current.model.candidate
     values = tuple(
@@ -243,7 +278,7 @@ review_plan = Method(
 
 def review_context(
     record: RecordWork | None = None, *, response: ExponentialReview | None = None
-) -> VerificationContext[ReviewPlanning]:
+) -> VerificationContext[ReviewPlanning, ReviewSpecification]:
     """Start a fresh context with these inputs and the stationary-point rule.
 
     Supply record estimates and a response component, or use the baseline
@@ -255,7 +290,9 @@ def review_context(
         )
     if response is None:
         response = ExponentialReview("response", detection_rate=Rational(1, 2), error_creation_rate=0)
-    context = VerificationContext.for_model(ReviewPlanning, "records").with_rule(STATIONARY_MAXIMUM)
+    context = VerificationContext.for_model(ReviewPlanning, "records").with_specification(
+        lambda symbols: ReviewSpecification(STATIONARY_MAXIMUM)
+    )
     if type(record) is not RecordWork:
         context = context.replace(context.symbols.candidate.review.record, type(record))
     if type(response) is not ExponentialReview:
@@ -367,12 +404,7 @@ class RepeatedReview(Modello):
     passes = InstanceDummy("N", integer=True, nonnegative=True)
     checking_minutes_per_record = passes * review.response.minutes_per_record
     progression = transition_recurrence(
-        ImmutableMatrix(
-            [
-                [1 - review.response.introduced_error_share, review.response.introduced_error_share],
-                [review.response.caught_share, 1 - review.response.caught_share],
-            ]
-        ),
+        review_transition_matrix(review.response),
         review.record.error_fraction,
     )
     final_error_fraction = progression.at(passes)
@@ -429,7 +461,9 @@ def write_reports(directory: Path, *, plot: bool = False) -> None:
         _write_plots(contexts, directory)
 
 
-def _write_plots(contexts: dict[str, VerificationContext[ReviewPlanning]], directory: Path) -> None:
+def _write_plots(
+    contexts: dict[str, VerificationContext[ReviewPlanning, ReviewSpecification]], directory: Path
+) -> None:
     """Draw the initial tradeoff and later replacements separately as numerical observations."""
     from matplotlib.backends.backend_svg import FigureCanvasSVG
     from matplotlib.figure import Figure

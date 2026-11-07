@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field as dataclass_field, replace
@@ -9,6 +10,11 @@ from functools import cached_property
 from itertools import chain
 from types import MappingProxyType, new_class
 from typing import ClassVar, Generic, TypeVar, cast
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar as DefaultTypeVar
+else:
+    from typing_extensions import TypeVar as DefaultTypeVar
 
 from sympy import (
     And,
@@ -90,10 +96,13 @@ from ._records import (
     nonzero,
     predicate,
 )
+from ._specification import ProofDeclaration, _named_specification
 
 ModelT = TypeVar("ModelT", bound=Modello)
 ValueT = TypeVar("ValueT")
 InputKeyT = TypeVar("InputKeyT")
+SpecificationT = DefaultTypeVar("SpecificationT", covariant=True, default=None)
+NewSpecificationT = TypeVar("NewSpecificationT")
 _InputValue = ScalarValue | VectorValue | Modello | ModelVectorValue[Modello]
 
 
@@ -369,7 +378,7 @@ def _replace_component(model: type[Modello], path: tuple[str, ...], replacement:
 
 
 @dataclass(frozen=True)
-class VerificationContext(Generic[ModelT]):
+class VerificationContext(Generic[ModelT, SpecificationT]):
     """Immutable definitions, observations, assumptions, and proof obligations.
 
     Construction does not solve the model or establish its obligations.
@@ -381,10 +390,71 @@ class VerificationContext(Generic[ModelT]):
     bound_hints: tuple[tuple[str, Expr], ...] = ()
     rules: tuple[InferenceRule, ...] = ()
     changes: tuple[str, ...] = ()
+    _specification_factory: Callable[[ModelT], SpecificationT] | None = dataclass_field(
+        default=None, kw_only=True, repr=False, compare=False
+    )
+    _specification: object = dataclass_field(default=None, kw_only=True, repr=False)
+    _specification_members: tuple[ProofDeclaration, ...] = dataclass_field(default=(), kw_only=True, repr=False)
+
+    def __post_init__(self) -> None:
+        if self._specification_factory is not None:
+            previous = {id(item) for item in self._specification_members}
+            specification, members = _named_specification(self._specification_factory(self.symbols))
+            obligations = tuple(item for item in members if isinstance(item, Obligation))
+            rules = tuple(item for item in members if isinstance(item, InferenceRule))
+            for declaration in members:
+                claims = (
+                    (declaration.conclusion, *declaration.premises)
+                    if isinstance(declaration, InferenceRule)
+                    else (declaration,)
+                )
+                for claim in claims:
+                    for value in (claim.subject, claim.wrt, claim.domain, claim.bound, claim.expected, claim.at):
+                        if isinstance(value, Basic):
+                            self._require_symbols(value)
+            object.__setattr__(self, "_specification", specification)
+            object.__setattr__(self, "_specification_members", members)
+            object.__setattr__(
+                self, "obligations", (*obligations, *(item for item in self.obligations if id(item) not in previous))
+            )
+            object.__setattr__(self, "rules", (*rules, *(item for item in self.rules if id(item) not in previous)))
+
+        # Catalog field names are now assigned. Check every registration route,
+        # including direct construction and separately added inference rules.
+        rule_names: set[str] = set()
+        for rule in self.rules:
+            if not rule.source or rule.name in rule_names:
+                raise ModelDefinitionError("Inference rules need a source and a unique rule name")
+            rule_names.add(rule.name)
+            premise_names: set[str] = set()
+            for premise in rule.premises:
+                if premise.name in premise_names:
+                    raise ModelDefinitionError(f"InferenceRule premise names must be unique: {premise.name}")
+                premise_names.add(premise.name)
 
     @classmethod
     def for_model(cls, model: type[ModelT], name: str = "verification", **observations) -> VerificationContext[ModelT]:
-        return cls(inspect_model(model, name, **observations))
+        return cast(VerificationContext[ModelT], cls(inspect_model(model, name, **observations)))
+
+    @property
+    def specification(self) -> SpecificationT:
+        """The typed frozen dataclass naming this context's goals and rules.
+
+        Names come from dataclass fields and tuple positions. The catalog is
+        rebuilt from the current symbols on each immutable context update.
+        ``None`` denotes a context without a named catalog.
+        """
+        return cast(SpecificationT, self._specification)
+
+    def with_specification(
+        self, factory: Callable[[ModelT], NewSpecificationT]
+    ) -> VerificationContext[ModelT, NewSpecificationT]:
+        """Declare named obligations and rules with a frozen dataclass factory."""
+        if not callable(factory):
+            raise ModelDefinitionError("Supply a specification factory that accepts the current model symbols")
+        # The constructor rebuilds the catalog before this typed copy is returned.
+        context = cast(VerificationContext[ModelT, NewSpecificationT], self)
+        return replace(context, _specification_factory=factory)
 
     @property
     def symbols(self) -> ModelT:
@@ -618,7 +688,7 @@ class VerificationContext(Generic[ModelT]):
         self._require_symbols(value)
         return cast(Expr, self._bind(value, frozenset() if variable is None else frozenset({variable})))
 
-    def assume(self, *conditions) -> VerificationContext[ModelT]:
+    def assume(self, *conditions) -> VerificationContext[ModelT, SpecificationT]:
         """Add logical premises on a new context, retaining their native scopes."""
         checked = []
         for value in conditions:
@@ -655,7 +725,7 @@ class VerificationContext(Generic[ModelT]):
         observations: Mapping[InputKeyT, _InputValue] | None = None,
         /,
         **inputs: _InputValue,
-    ) -> VerificationContext[ModelT]:
+    ) -> VerificationContext[ModelT, SpecificationT]:
         """Bind reference-keyed observations or constructor-style inputs immutably."""
         if observations is not None and not isinstance(observations, Mapping):
             raise ModelInputError("Pass a mapping from model references to observed values")
@@ -667,7 +737,7 @@ class VerificationContext(Generic[ModelT]):
             values[path] = value
         return replace(self, problem=self.problem._capture_inputs(**values))
 
-    def without_assumptions(self, *conditions: Basic, reason: str) -> VerificationContext[ModelT]:
+    def without_assumptions(self, *conditions: Basic, reason: str) -> VerificationContext[ModelT, SpecificationT]:
         """Remove explicitly recorded assumptions, retaining why they changed.
 
         Declaration domains and observations are unaffected. Each new report
@@ -689,13 +759,15 @@ class VerificationContext(Generic[ModelT]):
             changes=(*self.changes, *(f"Removed assumption {condition}: {reason.strip()}" for condition in removed)),
         )
 
-    def with_obligations(self, *obligations: Obligation) -> VerificationContext[ModelT]:
+    def with_obligations(self, *obligations: Obligation) -> VerificationContext[ModelT, SpecificationT]:
         """Add proof goals without treating them as assumptions."""
         if any(not isinstance(item, Obligation) for item in obligations):
             raise ModelDefinitionError("with_obligations accepts Obligation records")
         return replace(self, obligations=(*self.obligations, *obligations))
 
-    def without_obligations(self, *obligation_ids: str, reason: str) -> VerificationContext[ModelT]:
+    def without_obligations(
+        self, *obligation_ids: str | Obligation, reason: str
+    ) -> VerificationContext[ModelT, SpecificationT]:
         """Remove context-added goals; method and declaration obligations remain.
 
         Change a declaration or component to change its annotations. Automatic
@@ -703,7 +775,10 @@ class VerificationContext(Generic[ModelT]):
         """
         if not isinstance(reason, str) or not reason.strip():
             raise ModelInputError("Record a reason when removing obligations")
-        removed = tuple(dict.fromkeys(obligation_ids))
+        removed = tuple(dict.fromkeys(item.name if isinstance(item, Obligation) else item for item in obligation_ids))
+        declared = {item.name for item in self._specification_members if isinstance(item, Obligation)}
+        if declared.intersection(removed):
+            raise ModelInputError("Change the specification to remove its declared obligations")
         available = {item.name for item in self.obligations}
         missing = tuple(key for key in removed if key not in available)
         if missing:
@@ -714,7 +789,7 @@ class VerificationContext(Generic[ModelT]):
             changes=(*self.changes, *(f"Removed obligation {key}: {reason.strip()}" for key in removed)),
         )
 
-    def with_bound_hint(self, obligation_id: str, *, upper) -> VerificationContext[ModelT]:
+    def with_bound_hint(self, obligation_id: str | Obligation, *, upper) -> VerificationContext[ModelT, SpecificationT]:
         """Propose a uniform upper bound; every check must establish it."""
         try:
             value = sympify(upper)
@@ -722,15 +797,17 @@ class VerificationContext(Generic[ModelT]):
             raise ModelInputError("An upper-bound hint must be a scalar expression") from error
         if not isinstance(value, Expr):
             raise ModelInputError("An upper-bound hint must be a scalar expression")
+        if isinstance(obligation_id, Obligation):
+            obligation_id = obligation_id.name
         return replace(self, bound_hints=tuple({**dict(self.bound_hints), obligation_id: value}.items()))
 
-    def with_rule(self, rule: InferenceRule) -> VerificationContext[ModelT]:
+    def with_rule(self, rule: InferenceRule) -> VerificationContext[ModelT, SpecificationT]:
         """Register a trusted inference rule whose premises must be verified."""
-        if not rule.source or any(item.name == rule.name for item in self.rules):
-            raise ModelDefinitionError("Inference rules need a source and a unique rule name")
         return replace(self, rules=(*self.rules, rule))
 
-    def replace(self, component_path: str | Modello, model: type[Modello]) -> VerificationContext[ModelT]:
+    def replace(
+        self, component_path: str | Modello, model: type[Modello]
+    ) -> VerificationContext[ModelT, SpecificationT]:
         component_path = self._component_path(component_path)
         declaration = _replace_component(self.problem.model, tuple(component_path.split(".")), model)
         problem = inspect_model(cast(type[ModelT], declaration), self.problem.name)
@@ -935,10 +1012,11 @@ class VerificationContext(Generic[ModelT]):
                 at=value(claim.at),
             )
 
+        specified = {id(member) for member in self._specification_members}
         return VerificationContext(
             problem,
             tuple(assumptions),
-            tuple(rebound(item) for item in self.obligations),
+            tuple(rebound(item) for item in self.obligations if id(item) not in specified),
             tuple((key, _rebind(hint, {**mapping, **coordinate_bindings(hint)})) for key, hint in self.bound_hints),
             tuple(
                 replace(
@@ -947,8 +1025,10 @@ class VerificationContext(Generic[ModelT]):
                     premises=tuple(rebound(item) for item in rule.premises),
                 )
                 for rule in self.rules
+                if id(rule) not in specified
             ),
             (*self.changes, *invalidated),
+            _specification_factory=self._specification_factory,
         )
 
     def _dependencies(self, value: Basic, *, include_declarations: bool = False) -> tuple[str, ...]:
@@ -1664,8 +1744,18 @@ class VerificationContext(Generic[ModelT]):
         )
         return report, frozenset(key for key, _, _ in automatic)
 
-    def explain(self, obligation_id: str) -> Evidence:
-        return self.verify().explain(obligation_id)
+    def explain(self, obligation_id: str | Obligation | InferenceRule) -> Evidence:
+        """Explain a named goal or attempt the supplied obligation or rule conclusion."""
+        if isinstance(obligation_id, str):
+            return self.verify().explain(obligation_id)
+        if isinstance(obligation_id, InferenceRule):
+            if obligation_id not in self.rules:
+                raise ModelDefinitionError("Register the inference rule before explaining its conclusion")
+            obligation = obligation_id.conclusion
+        else:
+            obligation = obligation_id
+        declared = any(item._proposition() == obligation._proposition() for _, item, _ in self._declared())
+        return self.verify(obligations=() if declared else (obligation,)).explain(obligation)
 
     def sample(self, subject: str | Basic, *, wrt: str | Symbol, points) -> Sample:
         """Evaluate finite points as observations, without discharging obligations."""
@@ -1721,7 +1811,7 @@ class VerificationContext(Generic[ModelT]):
 
     def run(
         self,
-        method: Method[ResultT] | Callable[[VerificationContext[ModelT]], Method[ResultT]],
+        method: Method[ResultT] | Callable[[VerificationContext[ModelT, SpecificationT]], Method[ResultT]],
         **settings,
     ) -> VerificationResult[ResultT]:
         """Run a prepared method or build one for this context before checking it."""

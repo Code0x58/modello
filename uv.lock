@@ -2126,6 +2126,7 @@ name = "modello"
 source = { editable = "." }
 dependencies = [
     { name = "sympy" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
 
 [package.optional-dependencies]
@@ -2178,6 +2179,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.1.1" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=7.1.0" },
     { name = "sympy", specifier = ">=1.14.0" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'", specifier = ">=4.12" },
 ]
 provides-extras = ["examples", "gui", "numerics", "test"]
 

@@ -144,8 +144,12 @@ def test_rule_premise_ids_reuse_identical_evidence_and_reject_conflicts():
         b = InstanceDummy("b", real=True)
 
     conclusion = Obligation("combined", "a", "rule")
+    context = VerificationContext.for_model(Parameters)
+    conflicting = InferenceRule("conflict", conclusion, (positive("a"), positive("b")), "Explicit test rule")
     with pytest.raises(ModelDefinitionError, match="premise names must be unique"):
-        InferenceRule("conflict", conclusion, (positive("a"), positive("b")), "Explicit test rule")
+        context.with_rule(conflicting)
+    with pytest.raises(ModelDefinitionError, match="premise names must be unique"):
+        VerificationContext(context.problem, rules=(conflicting,))
     premise = positive("a")
     rule = InferenceRule("reused", conclusion, (premise, premise), "Explicit test rule")
     assert rule.premises == (premise,)
